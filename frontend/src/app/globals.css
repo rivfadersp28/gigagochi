@@ -1,0 +1,141 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #f7f6f0;
+  --surface: #fffdf7;
+  --surface-raised: #fffefa;
+  --control: #f1efe7;
+  --ink: #24231f;
+  --ink-soft: #3d3a33;
+  --ink-muted: #6f6a5d;
+  --ink-faint: #9b9484;
+  --line: rgba(36, 35, 31, 0.16);
+  --line-soft: rgba(36, 35, 31, 0.09);
+  --leaf: #3f7f55;
+  --leaf-strong: #316845;
+  --leaf-soft: rgba(63, 127, 85, 0.22);
+  --danger: #9f2d2d;
+  --danger-bg: #fff1ee;
+  --danger-line: rgba(159, 45, 45, 0.22);
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --tg-safe-area-inset-top: 0px;
+  --tg-safe-area-inset-right: 0px;
+  --tg-safe-area-inset-bottom: 0px;
+  --tg-safe-area-inset-left: 0px;
+  --tg-content-safe-area-inset-top: 0px;
+  --tg-content-safe-area-inset-bottom: 0px;
+  --tma-safe-top: calc(env(safe-area-inset-top) + var(--tg-content-safe-area-inset-top, 0px));
+  --tma-safe-right: max(env(safe-area-inset-right), var(--tg-safe-area-inset-right, 0px));
+  --tma-safe-bottom: max(
+    env(safe-area-inset-bottom),
+    var(--tg-content-safe-area-inset-bottom, 0px),
+    var(--tg-safe-area-inset-bottom, 0px)
+  );
+  --tma-safe-left: max(env(safe-area-inset-left), var(--tg-safe-area-inset-left, 0px));
+  --tma-viewport-height: 100dvh;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+.tma-screen {
+  min-height: var(--tma-viewport-height);
+  height: var(--tma-viewport-height);
+}
+
+button,
+a,
+input,
+textarea {
+  letter-spacing: 0;
+}
+
+@keyframes creating-friend-shimmer {
+  from {
+    background-position: 150% 50%;
+  }
+  to {
+    background-position: -150% 50%;
+  }
+}
+
+@keyframes pet-idle-stretch-y {
+  0%,
+  100% {
+    transform: scale3d(1, 1, 1);
+  }
+
+  50% {
+    transform: scale3d(1, var(--pet-idle-max-scale, 1.2), 1);
+  }
+}
+
+@keyframes pet-idle-rotate {
+  0%,
+  100% {
+    transform: rotate(calc(var(--pet-idle-max-rotation, 10deg) * -1));
+  }
+
+  50% {
+    transform: rotate(var(--pet-idle-max-rotation, 10deg));
+  }
+}
+
+.creating-friend-shimmer {
+  color: transparent;
+  background-image: linear-gradient(
+    110deg,
+    rgba(0, 0, 0, 0.24) 0%,
+    rgba(0, 0, 0, 0.24) 34%,
+    rgba(0, 0, 0, 0.68) 48%,
+    rgba(0, 0, 0, 0.24) 62%,
+    rgba(0, 0, 0, 0.24) 100%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: creating-friend-shimmer 1.35s ease-in-out infinite;
+  will-change: background-position;
+}
+
+.pet-idle-y-animation {
+  animation: pet-idle-stretch-y var(--pet-idle-duration, 2.4s) ease-in-out infinite;
+  will-change: transform;
+}
+
+.pet-idle-rotation {
+  animation: pet-idle-rotate var(--pet-idle-rotation-duration, 3.2s) ease-in-out infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .creating-friend-shimmer {
+    color: rgba(0, 0, 0, 0.3);
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+    animation: none;
+    will-change: auto;
+  }
+
+  .pet-idle-y-animation {
+    animation: none;
+    will-change: auto;
+  }
+
+  .pet-idle-rotation {
+    animation: none;
+    will-change: auto;
+  }
+}
