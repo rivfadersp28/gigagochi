@@ -7,7 +7,7 @@ import type {
   GeneratePetResponse,
   LocalChatMessage,
   LocalChatResponse,
-  LocalPetStateV1,
+  LocalPetState,
   MessagesResponse,
   Pet,
 } from "./types";
@@ -155,7 +155,7 @@ export async function generatePetAssets(description: string): Promise<GeneratePe
 
 export async function sendLocalChatMessage(
   message: string,
-  pet: LocalPetStateV1,
+  pet: LocalPetState,
   history: LocalChatMessage[],
 ): Promise<LocalChatResponse> {
   return request<LocalChatResponse>("/api/chat", {
@@ -170,6 +170,7 @@ export async function sendLocalChatMessage(
         stage: pet.stage,
         mood: pet.mood,
         stats: pet.stats,
+        memory: pet.memory,
         loreMemories: pet.loreMemories ?? [],
       },
       history: history.slice(-12).map((item) => ({

@@ -8,6 +8,12 @@ from fastapi.testclient import TestClient
 from app.dependencies import get_telegram_user
 from app.main import app
 from app.schemas import LocalChatResponse
+from app.services.pet_memory.models import (
+    DevelopmentPatch,
+    MemoryCandidate,
+    RelationshipPatch,
+)
+from app.services.pet_reply_engine.models import PetReplyResult
 from app.services.rate_limit_service import rate_limiter
 from app.services.telegram_auth_service import TelegramUserContext
 
@@ -181,6 +187,91 @@ def test_chat_accepts_local_pet_state(monkeypatch) -> None:
         "loreMemoriesToSave": [],
     }
     assert captured["lore"] == {"home": {"favorite_spot": "мягкая звездная подушка"}}
+
+    app.dependency_overrides.clear()
+
+
+def test_chat_accepts_memory_and_returns_memory_patch(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+    )
+
+    def fake_generate(_reply_input):
+        return PetReplyResult(
+            reply="Кап будит меня утром тихим звоном. хочешь, расскажу где мы прячемся?",
+            mood_hint="happy",
+            memory_candidates=(
+                MemoryCandidate(
+                    type="friend_fact",
+                    text="У питомца есть друг Кап, маленькая капля росы.",
+                    importance=0.8,
+                    confidence=0.8,
+                ),
+            ),
+            relationship_patch=RelationshipPatch(trustDelta=1, attachmentDelta=1),
+            development_patch=DevelopmentPatch(curiosityDelta=1, confidenceDelta=1),
+        )
+
+    monkeypatch.setattr("app.services.chat_service.generate_pet_reply", fake_generate)
+    client = tma_client()
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "message": "кто твои друзья?",
+            "pet": {
+                "name": "Листик",
+                "description": "серый челик с листом вместо лица",
+                "characterBible": {"species": "leaf mascot"},
+                "stage": "teen",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 70,
+                    "energy": 60,
+                    "cleanliness": 90,
+                },
+                "memory": {
+                    "schemaVersion": 1,
+                    "canon": [],
+                    "relationship": {
+                        "trust": 20,
+                        "attachment": 20,
+                        "familiarity": 0,
+                        "sharedEvents": [],
+                        "userFacts": [],
+                        "boundaries": [],
+                    },
+                    "threads": [],
+                    "reflections": [],
+                    "activeGoals": [],
+                    "development": {
+                        "trust": 20,
+                        "attachment": 20,
+                        "curiosity": 45,
+                        "confidence": 30,
+                        "loneliness": 10,
+                        "playfulness": 50,
+                    },
+                    "events": [],
+                    "rejectedCandidates": [],
+                },
+            },
+            "history": [{"role": "user", "text": "Привет"}],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reply"].startswith("Кап будит")
+    assert payload["moodHint"] == "happy"
+    assert payload["memoryPatch"]["canonUpserts"][0]["type"] == "friend_fact"
+    assert payload["memoryPatch"]["relationshipPatch"]["trust"] == 21
+    assert payload["memoryPatch"]["developmentPatch"]["curiosity"] == 46
+    assert payload["loreMemoriesToSave"] == [
+        "ЛОР: У питомца есть друг Кап, маленькая капля росы."
+    ]
 
     app.dependency_overrides.clear()
 

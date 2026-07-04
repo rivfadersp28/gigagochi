@@ -60,7 +60,7 @@ def generate_pet(payload: GeneratePetRequest, user: TelegramUser) -> GeneratePet
         ) from exc
 
 
-@router.post("/chat", response_model=LocalChatResponse)
+@router.post("/chat", response_model=LocalChatResponse, response_model_exclude_none=True)
 def chat(payload: LocalChatRequest, user: TelegramUser) -> LocalChatResponse:
     check_rate_limit("chat", user)
     return chat_with_local_pet(payload)

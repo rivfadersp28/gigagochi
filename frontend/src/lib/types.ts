@@ -82,6 +82,192 @@ export type LocalPetAssetSet = {
   spriteSheetUrl?: string;
 };
 
+export type CanonMemoryFactType =
+  | "world_fact"
+  | "home_fact"
+  | "friend_fact"
+  | "family_fact"
+  | "origin_fact"
+  | "preference_fact"
+  | "fear_fact"
+  | "habit_fact"
+  | "voice_fact"
+  | "milestone";
+
+export type CanonMemoryFact = {
+  id: string;
+  type: CanonMemoryFactType;
+  text: string;
+  source: "model" | "user" | "system";
+  confidence: number;
+  importance: number;
+  useCount: number;
+  decayScore: number;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string;
+  lastReinforcedAt?: string;
+  relatedThreadId?: string;
+  pinned?: boolean;
+};
+
+export type RelationshipEvent = {
+  id: string;
+  text: string;
+  importance: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UserFact = {
+  id: string;
+  text: string;
+  confidence: number;
+  importance: number;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string;
+};
+
+export type RelationshipMemory = {
+  userName?: string;
+  preferredAddress?: string;
+  trust: number;
+  attachment: number;
+  familiarity: number;
+  sharedEvents: RelationshipEvent[];
+  userFacts: UserFact[];
+  boundaries: string[];
+  lastWarmMomentAt?: string;
+};
+
+export type ConversationThread = {
+  id: string;
+  topic: string;
+  summary: string;
+  status: "open" | "paused" | "resolved";
+  priority: number;
+  createdAt: string;
+  updatedAt: string;
+  lastMentionedAt?: string;
+  suggestedFollowUp?: string;
+  lastQuestionAskedAt?: string;
+};
+
+export type ReflectionMemory = {
+  id: string;
+  text: string;
+  scope: "self" | "user" | "relationship" | "world";
+  sourceEventIds: string[];
+  confidence: number;
+  importance: number;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string;
+};
+
+export type ActiveGoal = {
+  id: string;
+  kind:
+    | "learn_about_user"
+    | "share_lore"
+    | "seek_care"
+    | "return_to_thread"
+    | "play"
+    | "comfort_user";
+  text: string;
+  priority: number;
+  status: "active" | "paused" | "completed" | "expired";
+  createdAt: string;
+  updatedAt: string;
+  expiresAt?: string;
+  relatedThreadId?: string;
+};
+
+export type DevelopmentState = {
+  trust: number;
+  attachment: number;
+  curiosity: number;
+  confidence: number;
+  loneliness: number;
+  playfulness: number;
+  lastDevelopmentReason?: string;
+};
+
+export type PetEvent = {
+  id: string;
+  kind:
+    | "user_message"
+    | "pet_reply"
+    | "memory_accepted"
+    | "relationship"
+    | "development"
+    | "thread"
+    | "goal"
+    | "care"
+    | "reflection";
+  text: string;
+  importance: number;
+  createdAt: string;
+  relatedMemoryId?: string;
+};
+
+export type RejectedMemoryCandidate = {
+  id: string;
+  type: CanonMemoryFactType | "user_fact" | "relationship_event";
+  text: string;
+  reason: string;
+  confidence: number;
+  importance: number;
+  createdAt: string;
+};
+
+export type PetMemoryStateV1 = {
+  schemaVersion: 1;
+  canon: CanonMemoryFact[];
+  relationship: RelationshipMemory;
+  threads: ConversationThread[];
+  reflections: ReflectionMemory[];
+  activeGoals: ActiveGoal[];
+  development: DevelopmentState;
+  events: PetEvent[];
+  rejectedCandidates: RejectedMemoryCandidate[];
+};
+
+export type RelationshipMemoryPatch = {
+  userName?: string;
+  clearUserName?: boolean;
+  preferredAddress?: string;
+  clearPreferredAddress?: boolean;
+  trust?: number;
+  attachment?: number;
+  familiarity?: number;
+  sharedEventUpserts?: RelationshipEvent[];
+  sharedEventDeletes?: string[];
+  userFactUpserts?: UserFact[];
+  userFactDeletes?: string[];
+  boundaryUpserts?: string[];
+  boundaryDeletes?: string[];
+  lastWarmMomentAt?: string;
+};
+
+export type AppliedDevelopmentPatch = Partial<DevelopmentState>;
+
+export type PetMemoryPatch = {
+  canonUpserts?: CanonMemoryFact[];
+  canonDeletes?: string[];
+  relationshipPatch?: RelationshipMemoryPatch;
+  threadUpserts?: ConversationThread[];
+  threadDeletes?: string[];
+  reflectionUpserts?: ReflectionMemory[];
+  reflectionDeletes?: string[];
+  activeGoalUpserts?: ActiveGoal[];
+  activeGoalDeletes?: string[];
+  developmentPatch?: AppliedDevelopmentPatch;
+  eventAppends?: PetEvent[];
+  rejectedCandidateAppends?: RejectedMemoryCandidate[];
+};
+
 export type LocalPetStateV1 = {
   version: 1;
   petId: string;
@@ -101,6 +287,29 @@ export type LocalPetStateV1 = {
   assetSet?: LocalPetAssetSet;
   loreMemories?: string[];
 };
+
+export type LocalPetStateV2 = {
+  version: 2;
+  petId: string;
+  name?: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+  lastInteractionAt: string;
+  stage: PetLifeStage;
+  mood: PetMood;
+  stats: {
+    hunger: number;
+    happiness: number;
+    energy: number;
+    cleanliness: number;
+  };
+  assetSet?: LocalPetAssetSet;
+  memory: PetMemoryStateV1;
+  loreMemories?: string[];
+};
+
+export type LocalPetState = LocalPetStateV2;
 
 export type LocalChatMessage = {
   id: string;
@@ -126,6 +335,13 @@ export type LocalChatResponse = {
   reply: string;
   moodHint?: PetMood;
   loreMemoriesToSave?: string[];
+  memoryPatch?: PetMemoryPatch;
+  debug?: {
+    usedFallback?: boolean;
+    validationFlags?: string[];
+    rejectedMemoryCount?: number;
+    proactivityFlags?: string[];
+  };
 };
 
 export type AdminGenerateOneRequest = {

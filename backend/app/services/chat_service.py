@@ -23,6 +23,15 @@ from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_openai_client,
 )
+from app.services.pet_memory import (
+    build_memory_context,
+    handle_memory_control_message,
+    is_no_memory_write_message,
+    normalize_memory,
+    resolve_memory_update,
+)
+from app.services.pet_memory.models import PetMemoryPatch
+from app.services.pet_memory.normalizer import normalized_key
 from app.services.pet_reply_engine import (
     PetRecentMessage,
     PetReplyInput,
@@ -35,6 +44,7 @@ from app.services.pet_reply_engine import (
 from app.services.pet_reply_engine.fallbacks import fallback_reply
 from app.services.pet_reply_engine.lore import extract_lore
 from app.services.pet_reply_engine.models import PetAgeStage, PetMood
+from app.services.pet_reply_engine.proactivity_gate import apply_proactivity_gate
 from app.services.pet_reply_engine.reply_validator import validate_reply
 from app.services.pet_service import get_pet_or_404, image_url_for
 
@@ -53,7 +63,11 @@ def parse_chat_payload(raw_json: str) -> tuple[str, list[dict]]:
     return reply, memories
 
 
-def build_pet_reply_input(payload: LocalChatRequest) -> PetReplyInput:
+def build_pet_reply_input(
+    payload: LocalChatRequest,
+    *,
+    memory_context: object | None = None,
+) -> PetReplyInput:
     pet = payload.pet
     character_bible = pet.characterBible
     visual_identity = build_visual_identity(pet.description, character_bible)
@@ -81,15 +95,114 @@ def build_pet_reply_input(payload: LocalChatRequest) -> PetReplyInput:
             PetRecentMessage(role=item.role, text=item.text) for item in payload.history[-12:]
         ),
         lore_memories=lore_memories[-12:],
+        memory_context=memory_context,
     )
 
 
+def _is_empty_memory_patch(patch: PetMemoryPatch | None) -> bool:
+    if patch is None:
+        return True
+    return not any(
+        (
+            patch.canonUpserts,
+            patch.canonDeletes,
+            patch.relationshipPatch,
+            patch.threadUpserts,
+            patch.threadDeletes,
+            patch.reflectionUpserts,
+            patch.reflectionDeletes,
+            patch.activeGoalUpserts,
+            patch.activeGoalDeletes,
+            patch.developmentPatch,
+            patch.eventAppends,
+            patch.rejectedCandidateAppends,
+        )
+    )
+
+
+def _legacy_lore_response(
+    result_lore_memories: tuple[str, ...],
+    patch: PetMemoryPatch | None,
+    model_candidate_keys: set[str],
+) -> list[str]:
+    values = list(result_lore_memories[:10])
+    seen = {normalized_key(item) for item in values}
+    if patch:
+        for fact in patch.canonUpserts:
+            key = normalized_key(fact.text)
+            if key not in model_candidate_keys or key in seen:
+                continue
+            seen.add(key)
+            values.append(f"ЛОР: {fact.text}")
+            if len(values) >= 10:
+                break
+    return values
+
+
 def chat_with_local_pet(payload: LocalChatRequest) -> LocalChatResponse:
-    result = generate_pet_reply(build_pet_reply_input(payload))
-    return LocalChatResponse(
+    pet = payload.pet
+    memory = normalize_memory(pet.memory, lore_memories=pet.loreMemories)
+    control = handle_memory_control_message(payload.message, memory)
+    if control:
+        patch = None if _is_empty_memory_patch(control.patch) else control.patch
+        return LocalChatResponse(
+            reply=control.reply,
+            moodHint=pet.mood,
+            loreMemoriesToSave=[],
+            memoryPatch=patch,
+        )
+
+    memory_context = build_memory_context(memory, payload.message)
+    reply_input = build_pet_reply_input(payload, memory_context=memory_context)
+    result = generate_pet_reply(reply_input)
+    if result.used_fallback:
+        return LocalChatResponse(
+            reply=result.reply,
+            moodHint=result.mood_hint,
+            loreMemoriesToSave=[],
+        )
+
+    proactivity = apply_proactivity_gate(
         reply=result.reply,
+        proactive_intent=result.proactive_intent,
+        recent_messages=reply_input.recent_messages,
+        memory=memory,
+        user_text=payload.message,
+        age_stage=reply_input.pet.age_stage,
+        mood=reply_input.pet.mood,
+        stats=reply_input.pet.stats,
+    )
+    no_memory_write = is_no_memory_write_message(payload.message)
+    memory_patch = resolve_memory_update(
+        memory,
+        character_bible=pet.characterBible,
+        memory_context=memory_context,
+        user_text=payload.message,
+        pet_reply=proactivity.reply,
+        memory_candidates=list(result.memory_candidates),
+        legacy_lore_memories=result.lore_memories_to_save,
+        relationship_patch=result.relationship_patch,
+        development_patch=result.development_patch,
+        thread_patch=result.thread_patch,
+        goal_patch=result.goal_patch,
+        no_memory_write=no_memory_write,
+        proactivity_allowed=proactivity.allowed,
+    )
+    model_candidate_keys = {
+        normalized_key(candidate.text)
+        for candidate in result.memory_candidates
+        if getattr(candidate, "type", "") not in ("user_fact", "relationship_event")
+    }
+    lore_memories = _legacy_lore_response(
+        result.lore_memories_to_save,
+        memory_patch,
+        model_candidate_keys,
+    )
+    return LocalChatResponse(
+        reply=proactivity.reply,
         moodHint=result.mood_hint,
-        loreMemoriesToSave=list(result.lore_memories_to_save[:10]),
+        loreMemoriesToSave=lore_memories,
+        memoryPatch=None if _is_empty_memory_patch(memory_patch) else memory_patch,
     )
 
 

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import base64
+import json
 from types import SimpleNamespace
 
 from PIL import Image, ImageDraw
 
-from app.prompts.pet_image_prompts import build_character_bible_prompt
+from app.prompts.pet_image_prompts import build_character_bible_prompt, create_lore_seed
 from app.services.image_service import (
     CHARACTER_BIBLE_SCHEMA,
+    character_bible_quality_issues,
+    create_character_bible,
     extract_sprite_cells,
     generate_sprite_sheet_bytes,
     generation_error_code,
@@ -170,9 +173,7 @@ def test_character_bible_schema_requires_lore() -> None:
     story_seeds_schema = lore_schema["properties"]["story_seeds"]
 
     assert "story" in world_schema["required"]
-    assert "Background foundation paragraph" in world_schema["properties"]["story"][
-        "description"
-    ]
+    assert "Background foundation paragraph" in world_schema["properties"]["story"]["description"]
     assert "not slogans" in world_schema["properties"]["rules"]["description"]
     assert "daily_life" not in world_schema["properties"]
     assert "story" in home_schema["required"]
@@ -180,20 +181,22 @@ def test_character_bible_schema_requires_lore() -> None:
     assert "daily_routine" not in home_schema["properties"]
     assert "emotional_meaning" not in home_schema["properties"]
     assert "story" in origin_schema["required"]
-    assert "Broad formative pressure" in origin_schema["properties"]["formative_event"][
-        "description"
-    ]
+    assert (
+        "Broad formative pressure" in origin_schema["properties"]["formative_event"]["description"]
+    )
     assert "turning_point" not in origin_schema["properties"]
     assert relationships_schema["additionalProperties"] is False
     assert "story" in relationships_schema["required"]
-    assert "Relationship network foundation" in relationships_schema["properties"]["story"][
-        "description"
-    ]
+    assert (
+        "Relationship network foundation"
+        in relationships_schema["properties"]["story"]["description"]
+    )
     friend_schema = relationships_schema["properties"]["friends"]["items"]
     assert "shared_history" not in friend_schema["properties"]
-    assert "Recurring shared dynamic" in friend_schema["properties"][
-        "relationship_dynamic"
-    ]["description"]
+    assert (
+        "Recurring shared dynamic"
+        in friend_schema["properties"]["relationship_dynamic"]["description"]
+    )
     assert {"core_want", "inner_conflict"}.issubset(inner_life_schema["required"])
     assert "background tension" in inner_life_schema["properties"]["likes"]["description"]
     assert "short requests" in inner_life_schema["properties"]["likes"]["description"]
@@ -220,12 +223,141 @@ def test_character_bible_prompt_requests_species_specific_lore() -> None:
     assert "Initial lore is a foundation for future improvisation" in prompt
     assert "Do not write event-log lore" in prompt
     assert "story_seeds must contain 4-6 open hooks" in prompt
-    assert "Ростковом квартале большого города растений" in prompt
-    assert "Мох\n  слушает шаги" in prompt
+    assert "Do not default to the same" in prompt
+    assert "avoid greenhouse, shelf, moss, dew, warm lamp" in prompt
+    assert "storybook logic" in prompt
+    assert "steam itself is not loud" in prompt
     assert "Do not make objects perform human-like actions" in prompt
     assert 'BAD world rule: "Лист показывает правду настроения."' in prompt
+    assert 'BAD physical logic: "Я выпускаю мягкий пар' in prompt
+    assert "клапан на спине тихо шипит" in prompt
     assert "because test" in prompt
     assert "короткие просьбы" in prompt
     assert 'BAD likes: ["теплый утренний туман", "синие лейки", "короткие просьбы"]' in prompt
     assert "story_seeds" in prompt
     assert "larger concrete setting" in prompt
+    assert "GOOD world story" in prompt
+    assert "бюро забытых вещей" in prompt
+
+
+def test_character_bible_prompt_accepts_private_lore_seed() -> None:
+    lore_seed = {
+        "setting_tone": "ящик путешественника с вещами из разных мест",
+        "social_shape": "есть один потенциальный друг и строгий наставник",
+        "background_tension": "питомец хочет доказать самостоятельность",
+        "future_reveal": "позже можно раскрыть прозвище друга",
+    }
+
+    prompt = build_character_bible_prompt(
+        "сонное облако с маленьким ключом",
+        lore_seed=lore_seed,
+    )
+    plain_prompt = build_character_bible_prompt("сонное облако с маленьким ключом")
+
+    assert "LORE_VARIATION_SEED" in prompt
+    assert "ящик путешественника" in prompt
+    assert "shape the setting, social roles, background tension" in prompt
+    assert "LORE_VARIATION_SEED" not in plain_prompt
+
+
+def test_create_lore_seed_uses_curated_dimensions() -> None:
+    class FirstChoice:
+        def choice(self, values):
+            return values[0]
+
+    seed = create_lore_seed(FirstChoice())
+
+    assert set(seed) == {
+        "setting_tone",
+        "social_shape",
+        "background_tension",
+        "future_reveal",
+    }
+    assert seed["setting_tone"] == "маленькое ремесленное место"
+
+
+def test_character_bible_quality_flags_overused_defaults_and_bad_physics() -> None:
+    character_bible = {
+        "species": "паровой дракончик",
+        "lore": {
+            "world": {
+                "story": (
+                    "Он живет на теплой полке у мха и выпускает мягкий пар, "
+                    "стараясь не делать его слишком громким."
+                )
+            }
+        },
+    }
+
+    issues = character_bible_quality_issues("маленький паровой дракончик", character_bible)
+    plant_issues = character_bible_quality_issues("листик с лицом", character_bible)
+
+    assert "non_plant_pet_uses_greenhouse_shelf_moss_dew_or_warm_lamp_defaults" in issues
+    assert "incoherent_physical_or_sensory_logic" in issues
+    assert "non_plant_pet_uses_greenhouse_shelf_moss_dew_or_warm_lamp_defaults" not in plant_issues
+    assert "incoherent_physical_or_sensory_logic" in plant_issues
+
+
+def test_create_character_bible_repairs_quality_issues_once(monkeypatch) -> None:
+    bad_bible = {
+        "species": "паровой дракончик",
+        "lore": {
+            "world": {
+                "story": (
+                    "Он живет на теплой полке у мха и выпускает мягкий пар, "
+                    "стараясь не делать его слишком громким."
+                )
+            }
+        },
+    }
+    repaired_bible = {
+        "species": "паровой дракончик",
+        "lore": {
+            "world": {
+                "story": (
+                    "Он живет в маленькой котельной при ночной булочной. "
+                    "Когда волнуется, клапан на спине тихо шипит."
+                )
+            }
+        },
+    }
+    calls: list[list[dict[str, str]]] = []
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs["messages"])
+            payload = bad_bible if len(calls) == 1 else repaired_bible
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload))),
+                ]
+            )
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            openai_chat_model="test-model",
+            openai_chat_timeout_seconds=1,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.get_openai_client",
+        lambda: SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+    )
+
+    result = create_character_bible(
+        "маленький паровой дракончик",
+        lore_seed={
+            "setting_tone": "ночная пекарня с дежурными полками",
+            "social_shape": "есть один потенциальный друг и строгий наставник",
+            "background_tension": "питомец хочет быть полезным, но боится ошибиться",
+            "future_reveal": "позже можно раскрыть местную традицию",
+        },
+    )
+
+    assert result == repaired_bible
+    assert len(calls) == 2
+    assert "LORE_VARIATION_SEED" in calls[0][1]["content"]
+    assert "ночная пекарня" in calls[0][1]["content"]
+    assert "Repair this character bible" in calls[1][1]["content"]
+    assert "LORE_VARIATION_SEED_USED" in calls[1][1]["content"]

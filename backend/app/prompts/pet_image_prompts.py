@@ -1,10 +1,48 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 from typing import Any
 
 PROMPT_MAX_LENGTH = 300
+
+LORE_SEED_OPTIONS: dict[str, tuple[str, ...]] = {
+    "setting_tone": (
+        "маленькое ремесленное место",
+        "бюро находок под шумной лестницей",
+        "тихая станция на краю маршрута",
+        "кладовая с подписанными ящиками",
+        "подземная школа для маленьких существ",
+        "крыша с погодными постами",
+        "ночная пекарня с дежурными полками",
+        "ящик путешественника с вещами из разных мест",
+        "тихий причал с маленькими делами",
+        "кристальная комната для ремонта трещинок",
+    ),
+    "social_shape": (
+        "есть один потенциальный друг и строгий наставник",
+        "вокруг шумные соседи, которые помогают и мешают",
+        "есть старший родственник и младший приятель",
+        "рядом соперник и заботливый хранитель",
+        "питомец входит в маленькую команду помощников",
+    ),
+    "background_tension": (
+        "питомец хочет быть полезным, но боится ошибиться",
+        "питомец хочет доказать самостоятельность",
+        "питомец прячет редкий звук, знак или предмет",
+        "питомец не любит резкие перемены",
+        "питомец ищет свое место среди более опытных соседей",
+    ),
+    "future_reveal": (
+        "позже можно раскрыть прозвище друга",
+        "позже можно раскрыть местную традицию",
+        "позже можно раскрыть любимый предмет",
+        "позже можно раскрыть старый спор",
+        "позже можно раскрыть скрытый уголок дома",
+        "позже можно раскрыть точную роль родственника",
+    ),
+}
 
 STYLE_FRAME = """
 Create a cute stylized 3D mascot character for a virtual pet mobile application.
@@ -136,8 +174,33 @@ def rewrite_known_character_references(user_description: str) -> str:
     return safe_description
 
 
-def build_character_bible_prompt(user_description: str) -> str:
+def create_lore_seed(rng: random.Random | None = None) -> dict[str, str]:
+    chooser = rng or random.SystemRandom()
+    return {key: chooser.choice(values) for key, values in LORE_SEED_OPTIONS.items()}
+
+
+def _lore_seed_block(lore_seed: dict[str, str] | None) -> str:
+    if not lore_seed:
+        return ""
+    ordered_keys = ("setting_tone", "social_shape", "background_tension", "future_reveal")
+    lines = [f"- {key}: {lore_seed[key]}" for key in ordered_keys if lore_seed.get(key)]
+    if not lines:
+        return ""
+    return """
+LORE_VARIATION_SEED:
+Use this private seed to diversify the generated lore. It is not user-visible text and should
+shape the setting, social roles, background tension, and open hooks without overriding the user's
+character idea. Do not copy it verbatim if a more specific version fits the creature better.
+{lines}
+""".strip().format(lines="\n".join(lines))
+
+
+def build_character_bible_prompt(
+    user_description: str,
+    lore_seed: dict[str, str] | None = None,
+) -> str:
     safe_description = rewrite_known_character_references(user_description.strip())
+    lore_seed_block = _lore_seed_block(lore_seed)
 
     return f"""
 Create a scaffold-first character bible for an AI Tamagotchi pet.
@@ -150,6 +213,8 @@ STYLE_FRAME:
 
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
+
+{lore_seed_block}
 
 Return JSON only with these fields:
 - species
@@ -193,10 +258,28 @@ Rules:
   dragon, make the lore dragon-like; if it is plant-like, make the lore plant-like; if it is
   electric, watery, cosmic, mineral, food-like, object-like, or abstract, keep the lore tied to
   that premise.
+- Make each pet's lore feel freshly authored for this exact creature. Do not default to the same
+  cozy plant vocabulary across unrelated pets. Unless the user's description is explicitly
+  plant/garden/window/shelf-based, avoid greenhouse, shelf, moss, dew, warm lamp, seed market,
+  tiny garden, and similar plant-corner defaults.
+- Choose one concrete "storybook logic" for this pet and keep it consistent. The logic may be
+  practical, magical, comic, or fairy-tale-like, but it must have clear cause and effect that a
+  child could understand. Good logic: a cloud pet collects lost umbrella buttons because storms
+  leave them behind. Bad logic: steam tries not to be too loud; steam itself is not loud, though
+  a kettle valve may hiss softly.
+- Prefer specific domains that fit the premise: a dragon can belong to a small furnace school,
+  ember nursery, cave bakery, or roof-guard guild; an electric pet to a socket arcade, battery
+  workshop, tram stop, or storm attic; a food-like pet to a pantry route, picnic basket, or bakery
+  night shift; a mineral pet to a crystal repair room, quarry library, or moonlit cave; an object
+  pet to a lost-and-found desk, drawer town, tiny workshop, or traveling case. These are examples
+  of range, not templates to copy.
+- If the user's description is broad, pick an unexpected but concrete social setting. Avoid
+  reusing any noun from the examples unless it is directly relevant to the user's creature.
 - The world can be a small visible part of a larger concrete setting: a plant city district,
-  greenhouse neighborhood, shelf market, cave school, cloud block, aquarium station, mineral
-  workshop, or similar social place. Keep the pet's playable home close and cozy, but imply that
-  real places, neighbors, family, and routines exist around it.
+  cave school, cloud block, aquarium station, mineral workshop, drawer town, bakery night shift,
+  tram-stop nest, lost-and-found desk, rooftop weather post, or similar social place. Keep the
+  pet's playable home close and emotionally safe, but imply that real places, neighbors, family,
+  and routines exist around it.
 - Make world, home, origin, relationships, and inner_life feel like one connected background
   bible, not unrelated facts and not a log of three random incidents. home must belong to the
   world, origin must explain the pet's place in it, relationships must grow from that place, and
@@ -212,13 +295,14 @@ Rules:
 - Do not write event-log lore. Avoid patterns like "Жарушка gave me a stone after my first
   scare" or "Мохруша once saved me from a draft" unless that single fact is essential to the
   whole premise. These feel random to a new user.
-- Prefer role-first relationships at generation time. Use clear non-human roles such as older
-  moss neighbor, dew-class friend, balcony rival, warm lamp keeper, quiet shelf elder, or
-  caretaker cloud. Use few proper names. A friend.name value may be a role title like
-  "сосед-мох" instead of a fixed personal name.
+- Prefer role-first relationships at generation time. Use clear non-human roles tied to the
+  selected setting, such as hatchery keeper, button archivist, spare-battery cousin, roof-bell
+  rival, recipe-card auntie, old compass teacher, tide-pool friend, or caretaker cloud. Use few
+  proper names. A friend.name value may be a role title like "старший ключник" instead of a fixed
+  personal name.
 - origin.formative_event should be a formative pattern or pressure from early life, not a
-  completed micro-incident. Example: "боится резких сквозняков, потому что ростки на его полке
-  часто переставляли без предупреждения".
+  completed micro-incident. Example: "боится резких звонков, потому что в мастерской часто
+  проверяли старые будильники без предупреждения".
 - relationships.story should describe the relationship network and tensions: who tends to gather
   around the pet, who usually helps, who teases, who argues, what kinds of details are still
   unknown and can be revealed in chat.
@@ -227,8 +311,17 @@ Rules:
 - story_seeds must contain 4-6 open hooks for future chat invention. They should name what may
   be revealed later without deciding it now: a nickname friends use, an older relative's exact
   role, a local tradition, a first argument, a hidden place, or why an object matters.
+- If relationships.friends contains only role titles at generation time, leave enough space for
+  chat to invent one small exact friend name later. Do not decide every friend name upfront.
+- If a future chat invents a small stable detail from story_seeds, it may become an additive
+  canon fact. The initial lore should make those additions easy without requiring the world,
+  home, species, or origin to change.
 - Lists are allowed only when each item is concrete and meaningful. Do not write vague slogans,
   symbolic abstractions, or lines that sound poetic but explain nothing.
+- Every cause must make literal or storybook sense. Do not join incompatible senses just because
+  it sounds cute: "громкий пар", "мягкий шум пахнет", "тень спорит вкусом", or "цвет устает от
+  разговора" are bad unless the lore clearly explains a real mechanism. Prefer concrete phrasing:
+  "клапан тихо шипит", "пар щекочет нос", "цвет тускнеет, когда батарейка садится".
 - Every inner_life list item must pass the "because test": the pet could naturally say
   "I like/fear/do this because of my home, role, routine, or background tension." If no
   background supports the item, do not include it.
@@ -243,22 +336,26 @@ Rules:
 - GOOD world rule: "Когда питомец смущается, край листа загибается к телу, поэтому друзья сразу
   понимают, что ему нужно говорить тише."
 - BAD likes: ["теплый утренний туман", "синие лейки", "короткие просьбы"].
-- GOOD likes: ["нижняя моховая полка, где лист не пересыхает", "тихие утренние голоса соседей"].
-- BAD world story: "Маленькая виртуальная тепличка на подоконнике, где все предметы живут тихими
-  привычками, лампа горит, мох слушает шаги, роса собирается после спокойных разговоров."
-- GOOD world story: "В Ростковом квартале большого города растений теплица номер четыре стоит
-  рядом с рынком семян и полкой для маленьких ростков. Здесь у каждого питомца есть соседская
-  роль, тихий домашний угол и несколько историй, которые он раскрывает только после вопросов."
-- Do not make objects perform human-like actions unless they are explicitly a character. "Мох
-  слушает шаги" is bad. "старший сосед-мох следит, чтобы полка не пересыхала" is good.
+- GOOD likes: ["ручка старого чемодана, за которую удобно держаться в дороге", "звук сортировки
+  пуговиц в бюро находок"].
+- BAD world story: "Маленький уютный уголок, где все предметы живут тихими привычками, теплый
+  свет слушает шаги, а воздух становится добрее после спокойных разговоров."
+- GOOD world story: "В бюро забытых вещей под вокзальной лестницей каждый найденный предмет
+  получает временную ячейку, бирку и маленькое дело на день. Здесь спорят зонты, ключи ждут
+  хозяев, а питомец учится не теряться среди чужих историй."
+- BAD physical logic: "Я выпускаю мягкий пар и стараюсь не делать его слишком громким."
+- GOOD physical logic: "Когда я волнуюсь, клапан на спине тихо шипит, поэтому я прикрываю его
+  лапкой, чтобы никого не напугать."
+- Do not make objects perform human-like actions unless they are explicitly a character. "Свет
+  слушает шаги" is bad. "старый звонок подает короткий сигнал, когда кто-то входит" is good.
 - Make lore details reusable in short chat replies: home, favorite spot, objects, caretakers,
   relationship roles, likes, fears, habits, comfort actions, dreams, flaws, speech hooks, and
   story_seeds.
 - Avoid epic kingdoms, wars, trauma, death, horror, politics, religion, sexual content, real
   brands, real franchises, and human jobs.
 - Do not make the pet human or give it a realistic human biography.
-- Use caretakers broadly for non-human origins, such as an older dragon, warm lamp, garden bell,
-  cloud auntie, crystal keeper, or soft watcher.
+- Use caretakers broadly for non-human origins, such as an older dragon, harbor bell, station
+  clock, cloud auntie, crystal keeper, or soft watcher.
 - Keep the canon stable and internally consistent. It must not contradict the visual support
   fields or do_not_change anchors.
 """.strip()

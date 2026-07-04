@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   applyOfflineProgress,
+  applyMemoryPatch,
   calculatePetMood,
   calculatePetStage,
   clearLocalChatHistory,
@@ -14,29 +15,33 @@ import {
   withPetInteraction,
   writeLocalPetState,
 } from "./localPetStorage";
-import type { LocalPetAssetSet, LocalPetStateV1, PetMood } from "./types";
+import type { LocalPetAssetSet, LocalPetState, PetMemoryPatch, PetMood } from "./types";
 
 type LocalPetStateStatus = "loading" | "ready" | "empty" | "error";
 
 type UseLocalPetStateResult = {
-  pet: LocalPetStateV1 | null;
+  pet: LocalPetState | null;
   status: LocalPetStateStatus;
   error: string | null;
-  create: (description: string, assetSet?: LocalPetAssetSet) => LocalPetStateV1;
-  feed: () => LocalPetStateV1 | null;
-  play: () => LocalPetStateV1 | null;
+  create: (description: string, assetSet?: LocalPetAssetSet) => LocalPetState;
+  feed: () => LocalPetState | null;
+  play: () => LocalPetState | null;
   reset: () => void;
-  applyGeneratedAssets: (assetSet: LocalPetAssetSet) => LocalPetStateV1 | null;
-  applyMoodHint: (moodHint?: PetMood, loreMemoriesToSave?: string[]) => LocalPetStateV1 | null;
+  applyGeneratedAssets: (assetSet: LocalPetAssetSet) => LocalPetState | null;
+  applyMoodHint: (
+    moodHint?: PetMood,
+    loreMemoriesToSave?: string[],
+    memoryPatch?: PetMemoryPatch,
+  ) => LocalPetState | null;
 };
 
-function saveAndReturn(state: LocalPetStateV1) {
+function saveAndReturn(state: LocalPetState) {
   writeLocalPetState(state);
   return state;
 }
 
 export function useLocalPetState(): UseLocalPetStateResult {
-  const [pet, setPet] = useState<LocalPetStateV1 | null>(null);
+  const [pet, setPet] = useState<LocalPetState | null>(null);
   const [status, setStatus] = useState<LocalPetStateStatus>("loading");
   const [error, setError] = useState<string | null>(null);
 
@@ -130,7 +135,11 @@ export function useLocalPetState(): UseLocalPetStateResult {
     return nextPet;
   }, [pet]);
 
-  const applyMoodHint = useCallback((moodHint?: PetMood, loreMemoriesToSave?: string[]) => {
+  const applyMoodHint = useCallback((
+    moodHint?: PetMood,
+    loreMemoriesToSave?: string[],
+    memoryPatch?: PetMemoryPatch,
+  ) => {
     if (!pet) {
       return null;
     }
@@ -147,6 +156,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
       stage: calculatePetStage(pet.createdAt, now),
       mood: moodHint ?? calculatePetMood(stats),
       stats,
+      memory: applyMemoryPatch(pet.memory, memoryPatch),
       loreMemories: mergeLoreMemories(pet.loreMemories, loreMemoriesToSave),
     });
     setPet(nextPet);

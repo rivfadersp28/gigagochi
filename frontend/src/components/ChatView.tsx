@@ -90,7 +90,7 @@ export function ChatView({ petId }: ChatViewProps) {
         createdAt: new Date().toISOString(),
       };
       setMessages(appendLocalChatMessages([assistantMessage]).messages);
-      localPet.applyMoodHint(response.moodHint, response.loreMemoriesToSave);
+      localPet.applyMoodHint(response.moodHint, response.loreMemoriesToSave, response.memoryPatch);
     } catch (caught) {
       if (caught instanceof ApiError) {
         setError(caught.message);

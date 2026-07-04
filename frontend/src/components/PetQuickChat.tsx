@@ -8,10 +8,10 @@ import { ApiError, sendLocalChatMessage } from "@/lib/api";
 import { appendLocalChatMessages, createLocalId, latestChatMessages } from "@/lib/localPetStorage";
 import { primePetSpeechAudio } from "@/lib/petSpeechAudio";
 import { hapticNotification } from "@/lib/telegram";
-import type { LocalChatResponse, LocalPetStateV1 } from "@/lib/types";
+import type { LocalChatResponse, LocalPetState } from "@/lib/types";
 
 type PetQuickChatProps = {
-  pet: LocalPetStateV1;
+  pet: LocalPetState;
   onChatResponse: (response: LocalChatResponse) => void;
 };
 

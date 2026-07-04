@@ -6,8 +6,10 @@ from typing import Any
 
 from app.config import get_settings
 from app.services.openai_service import chat_reasoning_effort_kwargs, get_openai_client
+from app.services.pet_memory.models import PetReplyModelOutputV2
+from app.services.pet_memory.normalizer import normalize_text
 from app.services.pet_reply_engine.fallbacks import fallback_reply
-from app.services.pet_reply_engine.models import PetMood, PetReplyInput, PetReplyResult
+from app.services.pet_reply_engine.models import PetReplyInput, PetReplyResult
 from app.services.pet_reply_engine.prompt_builder import build_pet_reply_messages
 from app.services.pet_reply_engine.reply_validator import validate_reply
 
@@ -16,7 +18,16 @@ logger = logging.getLogger(__name__)
 PET_REPLY_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["reply", "moodHint", "loreMemoriesToSave"],
+    "required": [
+        "reply",
+        "moodHint",
+        "proactiveIntent",
+        "memoryCandidates",
+        "relationshipPatch",
+        "developmentPatch",
+        "threadPatch",
+        "goalPatch",
+    ],
     "properties": {
         "reply": {
             "type": "string",
@@ -27,14 +38,285 @@ PET_REPLY_RESPONSE_SCHEMA: dict[str, Any] = {
             "enum": ["idle", "happy", "hungry", "sad", None],
             "description": "Optional visual mood hint for the frontend.",
         },
-        "loreMemoriesToSave": {
+        "proactiveIntent": {
+            "anyOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["kind", "text", "priority"],
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": [
+                                "ask_user",
+                                "continue_lore",
+                                "return_to_thread",
+                                "request_care",
+                                "share_observation",
+                                "none",
+                            ],
+                        },
+                        "text": {"type": ["string", "null"]},
+                        "priority": {"type": "number", "minimum": 0, "maximum": 1},
+                    },
+                },
+                {"type": "null"},
+            ]
+        },
+        "memoryCandidates": {
             "type": "array",
-            "items": {"type": "string"},
+            "maxItems": 3,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["type", "text", "importance", "confidence", "sourceSpan"],
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "world_fact",
+                            "home_fact",
+                            "friend_fact",
+                            "family_fact",
+                            "origin_fact",
+                            "preference_fact",
+                            "fear_fact",
+                            "habit_fact",
+                            "voice_fact",
+                            "milestone",
+                            "user_fact",
+                            "relationship_event",
+                        ],
+                    },
+                    "text": {"type": "string"},
+                    "importance": {"type": "number", "minimum": 0, "maximum": 1},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "sourceSpan": {"type": ["string", "null"]},
+                },
+            },
             "description": (
-                "New pet-world canon facts invented in this reply and worth remembering. "
-                "Use Russian strings starting with 'ЛОР: '. Return [] if nothing new was "
-                "established."
+                "0-3 compact memory proposals. The backend resolver decides what is saved."
             ),
+        },
+        "relationshipPatch": {
+            "anyOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "userName",
+                        "preferredAddress",
+                        "trustDelta",
+                        "attachmentDelta",
+                        "familiarityDelta",
+                        "sharedEvent",
+                        "userFact",
+                    ],
+                    "properties": {
+                        "userName": {"type": ["string", "null"]},
+                        "preferredAddress": {"type": ["string", "null"]},
+                        "trustDelta": {"type": ["integer", "null"], "minimum": -5, "maximum": 5},
+                        "attachmentDelta": {
+                            "type": ["integer", "null"],
+                            "minimum": -5,
+                            "maximum": 5,
+                        },
+                        "familiarityDelta": {
+                            "type": ["integer", "null"],
+                            "minimum": -5,
+                            "maximum": 5,
+                        },
+                        "sharedEvent": {"type": ["string", "null"]},
+                        "userFact": {"type": ["string", "null"]},
+                    },
+                },
+                {"type": "null"},
+            ]
+        },
+        "developmentPatch": {
+            "anyOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "trustDelta",
+                        "attachmentDelta",
+                        "curiosityDelta",
+                        "confidenceDelta",
+                        "lonelinessDelta",
+                        "playfulnessDelta",
+                        "reason",
+                    ],
+                    "properties": {
+                        "trustDelta": {"type": ["integer", "null"], "minimum": -5, "maximum": 5},
+                        "attachmentDelta": {
+                            "type": ["integer", "null"],
+                            "minimum": -5,
+                            "maximum": 5,
+                        },
+                        "curiosityDelta": {
+                            "type": ["integer", "null"],
+                            "minimum": -5,
+                            "maximum": 5,
+                        },
+                        "confidenceDelta": {
+                            "type": ["integer", "null"],
+                            "minimum": -5,
+                            "maximum": 5,
+                        },
+                        "lonelinessDelta": {
+                            "type": ["integer", "null"],
+                            "minimum": -5,
+                            "maximum": 5,
+                        },
+                        "playfulnessDelta": {
+                            "type": ["integer", "null"],
+                            "minimum": -5,
+                            "maximum": 5,
+                        },
+                        "reason": {"type": ["string", "null"]},
+                    },
+                },
+                {"type": "null"},
+            ]
+        },
+        "threadPatch": {
+            "anyOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["open", "update"],
+                    "properties": {
+                        "open": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "required": [
+                                        "topic",
+                                        "summary",
+                                        "suggestedFollowUp",
+                                        "priority",
+                                    ],
+                                    "properties": {
+                                        "topic": {"type": "string"},
+                                        "summary": {"type": "string"},
+                                        "suggestedFollowUp": {"type": ["string", "null"]},
+                                        "priority": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                            "maximum": 1,
+                                        },
+                                    },
+                                },
+                                {"type": "null"},
+                            ]
+                        },
+                        "update": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "required": [
+                                        "threadId",
+                                        "summary",
+                                        "suggestedFollowUp",
+                                        "status",
+                                    ],
+                                    "properties": {
+                                        "threadId": {"type": "string"},
+                                        "summary": {"type": ["string", "null"]},
+                                        "suggestedFollowUp": {"type": ["string", "null"]},
+                                        "status": {
+                                            "type": ["string", "null"],
+                                            "enum": ["open", "paused", "resolved", None],
+                                        },
+                                    },
+                                },
+                                {"type": "null"},
+                            ]
+                        },
+                    },
+                },
+                {"type": "null"},
+            ]
+        },
+        "goalPatch": {
+            "anyOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["open", "update"],
+                    "properties": {
+                        "open": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "required": [
+                                        "kind",
+                                        "text",
+                                        "priority",
+                                        "expiresAt",
+                                        "relatedThreadId",
+                                    ],
+                                    "properties": {
+                                        "kind": {
+                                            "type": "string",
+                                            "enum": [
+                                                "learn_about_user",
+                                                "share_lore",
+                                                "seek_care",
+                                                "return_to_thread",
+                                                "play",
+                                                "comfort_user",
+                                            ],
+                                        },
+                                        "text": {"type": "string"},
+                                        "priority": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                            "maximum": 1,
+                                        },
+                                        "expiresAt": {"type": ["string", "null"]},
+                                        "relatedThreadId": {"type": ["string", "null"]},
+                                    },
+                                },
+                                {"type": "null"},
+                            ]
+                        },
+                        "update": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "required": ["goalId", "status", "priority"],
+                                    "properties": {
+                                        "goalId": {"type": "string"},
+                                        "status": {
+                                            "type": ["string", "null"],
+                                            "enum": [
+                                                "active",
+                                                "paused",
+                                                "completed",
+                                                "expired",
+                                                None,
+                                            ],
+                                        },
+                                        "priority": {
+                                            "type": ["number", "null"],
+                                            "minimum": 0,
+                                            "maximum": 1,
+                                        },
+                                    },
+                                },
+                                {"type": "null"},
+                            ]
+                        },
+                    },
+                },
+                {"type": "null"},
+            ]
         },
     },
 }
@@ -53,27 +335,41 @@ def _fallback_result(
     )
 
 
-def parse_pet_reply_payload(raw_json: str) -> tuple[str, PetMood | None, tuple[str, ...]]:
-    payload = json.loads(raw_json)
-    reply = str(payload.get("reply", "")).strip()
-    mood_hint = payload.get("moodHint")
-    if mood_hint not in ("idle", "happy", "hungry", "sad", None):
-        mood_hint = None
+def _legacy_lore_memories(payload: dict[str, Any]) -> tuple[str, ...]:
     raw_memories = payload.get("loreMemoriesToSave", [])
     if not isinstance(raw_memories, list):
-        raw_memories = []
+        return ()
     normalized_memories: list[str] = []
     for item in raw_memories:
         if not isinstance(item, str):
             continue
-        text = item.strip()
+        text = normalize_text(item)
         if not text:
             continue
         if not text.startswith(("ЛОР:", "LORE:")):
             text = f"ЛОР: {text}"
         normalized_memories.append(text[:500])
-    lore_memories = tuple(normalized_memories)
-    return reply, mood_hint, lore_memories
+    return tuple(normalized_memories)
+
+
+def parse_pet_reply_payload(raw_json: str) -> tuple[PetReplyModelOutputV2, tuple[str, ...]]:
+    payload = json.loads(raw_json)
+    if not isinstance(payload, dict):
+        raise ValueError("Pet reply payload must be an object")
+    lore_memories = _legacy_lore_memories(payload)
+    normalized_payload = {
+        "reply": str(payload.get("reply", "")).strip(),
+        "moodHint": payload.get("moodHint"),
+        "proactiveIntent": payload.get("proactiveIntent"),
+        "memoryCandidates": payload.get("memoryCandidates", []),
+        "relationshipPatch": payload.get("relationshipPatch"),
+        "developmentPatch": payload.get("developmentPatch"),
+        "threadPatch": payload.get("threadPatch"),
+        "goalPatch": payload.get("goalPatch"),
+    }
+    if normalized_payload["moodHint"] not in ("idle", "happy", "hungry", "sad", None):
+        normalized_payload["moodHint"] = None
+    return PetReplyModelOutputV2.model_validate(normalized_payload), lore_memories
 
 
 def generate_pet_reply(
@@ -103,7 +399,7 @@ def generate_pet_reply(
             timeout=timeout,
             **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
         )
-        reply, mood_hint, lore_memories = parse_pet_reply_payload(
+        model_output, lore_memories = parse_pet_reply_payload(
             completion.choices[0].message.content or "{}"
         )
     except Exception as exc:
@@ -115,7 +411,7 @@ def generate_pet_reply(
         return _fallback_result(reply_input, (f"generation_error:{exc.__class__.__name__}",))
 
     validation = validate_reply(
-        reply,
+        model_output.reply,
         reply_input.pet.age_stage,
         reply_input.pet.name,
         reply_input.pet.mood,
@@ -127,8 +423,14 @@ def generate_pet_reply(
 
     return PetReplyResult(
         reply=validation.normalized_reply,
-        mood_hint=mood_hint,
+        mood_hint=model_output.moodHint,
         used_fallback=False,
         validation_flags=validation.flags,
         lore_memories_to_save=lore_memories,
+        proactive_intent=model_output.proactiveIntent,
+        memory_candidates=tuple(model_output.memoryCandidates),
+        relationship_patch=model_output.relationshipPatch,
+        development_patch=model_output.developmentPatch,
+        thread_patch=model_output.threadPatch,
+        goal_patch=model_output.goalPatch,
     )

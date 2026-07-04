@@ -93,6 +93,7 @@ class PetReplyInput:
     user_text: str | None = None
     recent_messages: tuple[PetRecentMessage, ...] = ()
     lore_memories: tuple[str, ...] = ()
+    memory_context: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -130,3 +131,9 @@ class PetReplyResult:
     used_fallback: bool = False
     validation_flags: tuple[str, ...] = ()
     lore_memories_to_save: tuple[str, ...] = ()
+    proactive_intent: Any | None = None
+    memory_candidates: tuple[Any, ...] = ()
+    relationship_patch: Any | None = None
+    development_patch: Any | None = None
+    thread_patch: Any | None = None
+    goal_patch: Any | None = None

@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.services.pet_memory.models import LocalChatDebug, PetMemoryPatch, PetMemoryStateV1
+
 PetStageValue = Literal["baby", "teen", "adult"]
 PetStateValue = Literal["idle", "happy", "sad", "hungry"]
 AdminGenerateMode = Literal["profile_only", "full_assets"]
@@ -185,6 +187,7 @@ class LocalPetChatContext(BaseModel):
     mood: PetStateValue
     stats: LocalPetStats
     characterBible: dict[str, Any] | None = None
+    memory: PetMemoryStateV1 | None = None
     loreMemories: list[str] = Field(default_factory=list, max_length=30)
 
 
@@ -203,3 +206,5 @@ class LocalChatResponse(BaseModel):
     reply: str = Field(max_length=1500)
     moodHint: PetStateValue | None = None
     loreMemoriesToSave: list[str] = Field(default_factory=list, max_length=10)
+    memoryPatch: PetMemoryPatch | None = None
+    debug: LocalChatDebug | None = None

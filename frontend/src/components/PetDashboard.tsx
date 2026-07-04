@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { playPetSpeechAudioSequence } from "@/lib/petSpeechAudio";
 import { hapticImpact } from "@/lib/telegram";
-import type { LocalChatResponse, LocalPetStateV1, PetLifeStage, PetMood } from "@/lib/types";
+import type { LocalChatResponse, LocalPetState, PetLifeStage, PetMood } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 
 import { PetQuickChat } from "./PetQuickChat";
@@ -137,7 +137,7 @@ function shouldReduceMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function generatedSpriteUrl(pet: LocalPetStateV1, stage: PetStage, state: PetState) {
+function generatedSpriteUrl(pet: LocalPetState, stage: PetStage, state: PetState) {
   return pet.assetSet?.images[stage]?.[state] || null;
 }
 
@@ -462,7 +462,7 @@ function PetCharacterMessage({
 
 type IdleAnimationControlsProps = {
   isOpen: boolean;
-  pet: LocalPetStateV1;
+  pet: LocalPetState;
   selectedStage: PetStage;
   selectedState: PetState;
   settings: IdleAnimationSettings;
@@ -726,7 +726,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       playSpeechAudio: true,
     }));
 
-    localPet.applyMoodHint(response.moodHint, response.loreMemoriesToSave);
+    localPet.applyMoodHint(response.moodHint, response.loreMemoriesToSave, response.memoryPatch);
     hapticImpact("light");
   }
 
@@ -755,7 +755,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const animationSettings = { ...defaultIdleAnimationSettings, ...idleAnimationSettings };
   const displayedStage = selectedSprite?.stage ?? pet.stage;
   const displayedState = selectedSprite?.state ?? pet.mood;
-  const previewPet: LocalPetStateV1 = selectedSprite
+  const previewPet: LocalPetState = selectedSprite
     ? { ...pet, stage: displayedStage, mood: displayedState }
     : pet;
   const visiblePetImage = generatedSpriteUrl(pet, displayedStage, displayedState) ?? "/figma/pet.png";

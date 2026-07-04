@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import uuid
 from collections import deque
 from datetime import UTC, datetime
@@ -27,6 +28,7 @@ from app.models import Pet
 from app.prompts.pet_image_prompts import (
     build_character_bible_prompt,
     build_pet_sprite_sheet_prompt,
+    create_lore_seed,
 )
 from app.services.birth_message_service import ensure_birth_message
 from app.services.game_service import calculate_stage
@@ -34,6 +36,24 @@ from app.services.openai_service import MissingOpenAIAPIKey, get_openai_client
 from app.services.pet_service import upsert_pet_image
 
 logger = logging.getLogger(__name__)
+
+PLANT_DESCRIPTION_PATTERN = re.compile(
+    r"(?:лист|растен|цвет|гриб|мох|сад|теплиц|оранжер|росток|кактус|трава|дерев)",
+    re.IGNORECASE,
+)
+OVERUSED_PLANT_DEFAULT_PATTERN = re.compile(
+    r"(?:мох|мохов|теплиц|оранжер|подоконник|роса|росин|тепл\w*\s+ламп|"
+    r"ламп\w*\s+гре|полк\w*)",
+    re.IGNORECASE,
+)
+INCOHERENT_LORE_PATTERN = re.compile(
+    r"(?:пар\w*(?:\W+\w+){0,8}\W+громк\w*|громк\w*(?:\W+\w+){0,8}\W+пар\w*|"
+    r"пар\w*(?:\W+\w+){0,8}\W+шумн\w*|"
+    r"свет\w*(?:\W+\w+){0,8}\W+слуша\w*|"
+    r"тень\w*(?:\W+\w+){0,8}\W+вкус\w*|"
+    r"цвет\w*(?:\W+\w+){0,8}\W+уста\w*)",
+    re.IGNORECASE,
+)
 
 CHARACTER_BIBLE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -363,6 +383,96 @@ CHARACTER_BIBLE_SCHEMA: dict[str, Any] = {
     },
 }
 
+
+def _collect_character_bible_text(value: Any) -> str:
+    parts: list[str] = []
+
+    def collect(item: Any) -> None:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, list):
+            for child in item:
+                collect(child)
+        elif isinstance(item, dict):
+            for child in item.values():
+                collect(child)
+
+    collect(value)
+    return " ".join(parts)
+
+
+def character_bible_quality_issues(
+    description: str,
+    character_bible: dict[str, Any],
+) -> tuple[str, ...]:
+    text = _collect_character_bible_text(character_bible)
+    issues: list[str] = []
+    if not PLANT_DESCRIPTION_PATTERN.search(description) and OVERUSED_PLANT_DEFAULT_PATTERN.search(
+        text
+    ):
+        issues.append("non_plant_pet_uses_greenhouse_shelf_moss_dew_or_warm_lamp_defaults")
+    if INCOHERENT_LORE_PATTERN.search(text):
+        issues.append("incoherent_physical_or_sensory_logic")
+    return tuple(issues)
+
+
+def _character_bible_completion(
+    client: Any,
+    settings: Any,
+    messages: list[dict[str, str]],
+) -> dict[str, Any]:
+    completion = client.chat.completions.create(
+        model=settings.openai_chat_model,
+        messages=messages,
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "character_bible",
+                "schema": CHARACTER_BIBLE_SCHEMA,
+                "strict": True,
+            },
+        },
+        timeout=settings.openai_chat_timeout_seconds,
+    )
+    content = completion.choices[0].message.content or "{}"
+    return json.loads(content)
+
+
+def _repair_character_bible_prompt(
+    description: str,
+    character_bible: dict[str, Any],
+    issues: tuple[str, ...],
+    lore_seed: dict[str, str] | None = None,
+) -> str:
+    lore_seed_text = (
+        "\nLORE_VARIATION_SEED_USED:\n" + json.dumps(lore_seed, ensure_ascii=False, indent=2)
+        if lore_seed
+        else ""
+    )
+    return f"""
+Repair this character bible. Return the full corrected JSON only.
+
+USER_CHARACTER_DESCRIPTION:
+{description}
+{lore_seed_text}
+
+QUALITY_ISSUES:
+{", ".join(issues)}
+
+Repair rules:
+- Preserve the same visual identity and all required schema fields.
+- If the pet is not plant/garden/window/shelf-based, remove greenhouse, shelf, moss, dew,
+  warm-lamp, seed, and tiny-garden defaults from lore.
+- Replace generic cozy-corner lore with a concrete setting that follows the pet's own premise.
+- Fix physical nonsense. Steam can hiss, warm, curl, fog, or tickle; steam itself is not loud.
+  If something makes sound, name the valve, kettle, vent, bell, shell, gear, or creature doing it.
+- Keep world, home, origin, relationships, and inner_life connected by clear cause and effect.
+
+CURRENT_CHARACTER_BIBLE:
+{json.dumps(character_bible, ensure_ascii=False, indent=2)}
+""".strip()
+
+
 STAGE_ROWS = ("baby", "teen", "adult")
 STATE_COLUMNS = ("idle", "happy", "sad", "hungry")
 SPRITE_FOREGROUND_DISTANCE = 28
@@ -558,33 +668,56 @@ def extract_sprite_cells(image: Image.Image) -> dict[tuple[str, str], Image.Imag
     return cell_images
 
 
-def create_character_bible(user_description: str) -> dict[str, Any]:
+def create_character_bible(
+    user_description: str,
+    lore_seed: dict[str, str] | None = None,
+) -> dict[str, Any]:
     settings = get_settings()
     client = get_openai_client()
-    completion = client.chat.completions.create(
-        model=settings.openai_chat_model,
-        messages=[
+    effective_lore_seed = lore_seed or create_lore_seed()
+    system_message = {
+        "role": "system",
+        "content": (
+            "Create scaffold-first JSON character bibles with varied, coherent "
+            "storybook canon that can be revealed gradually in chat."
+        ),
+    }
+    character_bible = _character_bible_completion(
+        client,
+        settings,
+        [
+            system_message,
             {
-                "role": "system",
-                "content": (
-                    "Create scaffold-first JSON character bibles with coherent cozy lore "
-                    "that can be revealed gradually in chat."
+                "role": "user",
+                "content": build_character_bible_prompt(
+                    user_description,
+                    lore_seed=effective_lore_seed,
                 ),
             },
-            {"role": "user", "content": build_character_bible_prompt(user_description)},
         ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "character_bible",
-                "schema": CHARACTER_BIBLE_SCHEMA,
-                "strict": True,
-            },
-        },
-        timeout=settings.openai_chat_timeout_seconds,
     )
-    content = completion.choices[0].message.content or "{}"
-    return json.loads(content)
+    issues = character_bible_quality_issues(user_description, character_bible)
+    if not issues:
+        return character_bible
+
+    logger.info("Repairing character bible for quality issues: %s", issues)
+    repaired = _character_bible_completion(
+        client,
+        settings,
+        [
+            system_message,
+            {
+                "role": "user",
+                "content": _repair_character_bible_prompt(
+                    user_description,
+                    character_bible,
+                    issues,
+                    effective_lore_seed,
+                ),
+            },
+        ],
+    )
+    return repaired
 
 
 def build_image_generate_kwargs(settings: Any, prompt: str) -> dict[str, Any]:
