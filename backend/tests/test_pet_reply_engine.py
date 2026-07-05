@@ -20,6 +20,7 @@ from app.services.pet_reply_engine.fallbacks import (
     select_fallback_reply,
 )
 from app.services.pet_reply_engine.intent import (
+    detect_reply_intent,
     is_home_question,
     is_lore_question,
     is_name_question,
@@ -52,6 +53,39 @@ def make_reply_input(
             "улыбки и прячет край, когда волнуется. С пользователем лист раскрывается "
             "шире, будто ловит теплый свет."
         ),
+        "dialogue_style": {
+            "voice_rules": [
+                "говорит мягко и коротко, будто проверяет, не слишком ли громко шелестит",
+                "эмоции показывает через край листа и маленький шорох",
+            ],
+            "emotional_reactions": [
+                "на заботу отвечает благодарным шорохом",
+                "при тревоге честно говорит, что листик дрожит",
+            ],
+            "initiative_style": "мягко предлагает одно маленькое действие рядом с домом.",
+            "sample_replies": [
+                "шур... я тут. листик почти не дрожит)",
+                "давай посмотрим на теплую полку? там спокойнее.",
+                "мне страшно в темном углу, но с тобой я высуну лист.",
+            ],
+            "avoid_patterns": [
+                "не звучать как ассистент",
+                "не говорить пустое я рядом без телесной детали",
+            ],
+        },
+        "opening_scenes": [
+            "шур... я выглянул из мха и держу листик двумя лапками. как тебя звать?",
+        ],
+        "lorebook_entries": [
+            {
+                "keys": ["Кап", "друг", "роса"],
+                "content": "Кап - капля росы, которая подбадривает питомца утром.",
+            },
+            {
+                "keys": ["темный угол", "страх"],
+                "content": "Темные углы пугают питомца, потому что лист там не ловит теплый свет.",
+            },
+        ],
         "main_colors": ["grey", "green"],
         "signature_features": ["green leaf face", "round grey body"],
         "materials": ["soft toy skin", "leaf texture"],
@@ -201,18 +235,31 @@ def test_text_style_changes_limits_by_age() -> None:
     assert style_for_age("adult", "low").sentence_limit == 1
 
 
-def test_prompt_builder_keeps_visual_identity_personality_and_bans_assistant_voice() -> None:
+def test_prompt_builder_keeps_character_core_without_visual_body_cues() -> None:
     messages = build_pet_reply_messages(make_reply_input(age_stage="teen", mood="happy"))
     prompt = messages[0]["content"]
 
     assert "leaf-faced soft mascot" in prompt
-    assert "green leaf face" in prompt
+    assert "green leaf face" not in prompt
+    assert "телесные слова" not in prompt
+    assert "звуки для" not in prompt
+    assert "метафоры для редкого использования" not in prompt
     assert "Лор питомца" in prompt
     assert "Тихая оранжерея" in prompt
     assert "теплая полка у окна" in prompt
     assert "главное желание" in prompt
     assert "история отношений" in prompt
     assert "не пересказывай весь лор" in prompt
+    assert "Референс голоса" in prompt
+    assert "Character Profile V2 stable core" in prompt
+    assert "Диалоговые ходы персонажа" in prompt
+    assert "Reference cards, use structure only and do not copy examples" in prompt
+    assert "detected_intent: status" in prompt
+    assert "sample_replies_do_not_copy" in prompt
+    assert "шур... я тут. листик почти не дрожит)" in prompt
+    assert "Ситуативный character book" in prompt
+    assert "Кап, друг, роса" in prompt
+    assert "используй его как поведенческий стиль, но не копируй" in prompt
     assert "темперамент: shy" in prompt
     assert "Ты не ассистент" in prompt
     assert "не начинай реплику с имени питомца" in prompt
@@ -220,7 +267,7 @@ def test_prompt_builder_keeps_visual_identity_personality_and_bans_assistant_voi
     assert "reply всегда строго на русском" in prompt
     assert "переведи смысл в простой русский" in prompt
     assert "так я быстрее оживаю" in prompt
-    assert "как ты выглядишь" in prompt
+    assert "как ты выглядишь" not in prompt
     assert "внутри этой игры" in prompt
     assert "Baby voice" not in prompt
     assert "mood" in prompt
@@ -290,6 +337,22 @@ def test_home_intent_detects_bare_home_followup() -> None:
     assert is_lore_question("расскажи подробнее про дом")
 
 
+def test_reply_intent_router_covers_character_dialogue_moves() -> None:
+    assert detect_reply_intent("что ты любишь?") == "answer_preference"
+    assert detect_reply_intent("почему?") == "why"
+    assert detect_reply_intent("не задавай мне вопросов") == "boundary"
+    assert detect_reply_intent("что ты запомнил обо мне?") == "memory_control"
+    assert detect_reply_intent("обнимаю тебя") == "care"
+    assert detect_reply_intent("придумай, что мы сделаем вечером") == "playful_offer"
+    assert (
+        detect_reply_intent(
+            "подробнее",
+            (PetRecentMessage(role="pet", text="я живу в бюро находок."),),
+        )
+        == "continue_thread"
+    )
+
+
 def test_prompt_builder_expands_teen_lore_answer_limit_and_requires_context() -> None:
     messages = build_pet_reply_messages(
         replace(
@@ -329,8 +392,9 @@ def test_prompt_builder_includes_lore_memory_rules() -> None:
 
     assert "Закрепленная память лора" in prompt
     assert "ЛОР: друзья зовут меня Листикор" in prompt
-    assert "loreMemoriesToSave" in prompt
-    assert 'префиксом "ЛОР: "' in prompt
+    assert "memoryCandidates" in prompt
+    assert "loreMemoriesToSave" not in prompt
+    assert 'префиксом "ЛОР: "' not in prompt
 
 
 def test_prompt_builder_handles_legacy_profile_without_lore() -> None:
@@ -354,16 +418,18 @@ def test_prompt_builder_handles_legacy_profile_without_lore() -> None:
     assert "если лора нет, не заявляй конкретных фактов о доме или семье" in prompt
 
 
-def test_prompt_builder_adds_baby_voice_rules_from_visual_cues() -> None:
+def test_prompt_builder_does_not_add_baby_voice_or_visual_cues() -> None:
     messages = build_pet_reply_messages(make_reply_input(age_stage="baby"))
     prompt = messages[0]["content"]
 
-    assert "Baby voice" in prompt
-    assert "звуки для частого малышового использования" in prompt
-    assert "чат-скобочку" in prompt
-    assert "я безымянен" in prompt
-    assert "шур-шур" in prompt
-    assert "листик" in prompt
+    assert "Baby voice" not in prompt
+    assert "звуки для частого малышового использования" not in prompt
+    assert "чат-скобочку" not in prompt
+    assert "я безымянен" not in prompt
+    assert "только звуки из образа" not in prompt
+    assert "шур-шур" not in prompt
+    assert "телесные слова" not in prompt
+    assert "метафоры для редкого использования" not in prompt
 
 
 @pytest.mark.parametrize(

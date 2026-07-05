@@ -16,7 +16,15 @@ MemoryFactType = Literal[
     "voice_fact",
     "milestone",
 ]
-MemoryCandidateType = MemoryFactType | Literal["user_fact", "relationship_event"]
+MemoryCandidateType = MemoryFactType | Literal[
+    "user_fact",
+    "relationship_event",
+    "pet_canon_fact",
+    "pet_emotional_fact",
+    "open_thread",
+    "preference",
+    "boundary",
+]
 MemorySource = Literal["model", "user", "system"]
 ThreadStatus = Literal["open", "paused", "resolved"]
 ReflectionScope = Literal["self", "user", "relationship", "world"]
@@ -308,3 +316,7 @@ class LocalChatDebug(MemoryBaseModel):
     validationFlags: list[str] = Field(default_factory=list)
     rejectedMemoryCount: int | None = None
     proactivityFlags: list[str] = Field(default_factory=list)
+    detectedIntent: str | None = None
+    selectedReferenceCardIds: list[str] = Field(default_factory=list)
+    includedLayers: list[str] = Field(default_factory=list)
+    excludedLayers: list[str] = Field(default_factory=list)

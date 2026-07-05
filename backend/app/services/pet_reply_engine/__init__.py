@@ -1,6 +1,7 @@
 from app.services.pet_reply_engine.character import build_default_personality
 from app.services.pet_reply_engine.models import (
     PetPersonality,
+    PetPromptContext,
     PetRecentMessage,
     PetReplyInput,
     PetReplyPet,
@@ -13,6 +14,7 @@ from app.services.pet_reply_engine.visual_identity import build_visual_identity
 
 __all__ = [
     "PetPersonality",
+    "PetPromptContext",
     "PetRecentMessage",
     "PetReplyInput",
     "PetReplyPet",

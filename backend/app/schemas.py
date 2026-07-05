@@ -11,6 +11,18 @@ from app.services.pet_memory.models import LocalChatDebug, PetMemoryPatch, PetMe
 PetStageValue = Literal["baby", "teen", "adult"]
 PetStateValue = Literal["idle", "happy", "sad", "hungry"]
 AdminGenerateMode = Literal["profile_only", "full_assets"]
+CalibrationTaskType = Literal[
+    "lore_pairwise",
+    "dialogue_pairwise",
+    "full_character_pairwise",
+]
+CalibrationPromptVariant = Literal[
+    "current",
+    "tiny_story_cards",
+    "game_dialogue_cards",
+    "mixed_cards",
+]
+CalibrationVoteOutcome = Literal["winner", "tie", "reject_all", "skip"]
 
 
 class AnonymousUserResponse(BaseModel):
@@ -74,10 +86,26 @@ class MessagesResponse(BaseModel):
     messages: list[MessageResponse]
 
 
+class PromptLayers(BaseModel):
+    ageStyle: bool = True
+    moodStyle: bool = True
+    statNeeds: bool = True
+    characterCore: bool = True
+    importedSeedchat: bool = True
+    lore: bool = True
+    characterBook: bool = True
+    memory: bool = True
+    referenceCards: bool = True
+    dialogueMoves: bool = True
+    proactivity: bool = True
+    postHistoryInstructions: bool = True
+
+
 class ChatRequest(BaseModel):
     message: str
     selected_stage: PetStageValue | None = None
     selected_state: PetStateValue | None = None
+    promptLayers: PromptLayers = Field(default_factory=PromptLayers)
 
 
 class ChatResponse(BaseModel):
@@ -128,6 +156,7 @@ class AdminBenchmarkTurnResponse(BaseModel):
     qualityScore: int | None = None
     qualityPassed: bool | None = None
     qualityFlags: list[str] = Field(default_factory=list)
+    qualityAxes: dict[str, int] = Field(default_factory=dict)
 
 
 class AdminSelfIntroBenchmarkResponse(AdminBenchmarkTurnResponse):
@@ -173,6 +202,91 @@ class AdminGenerateError(BaseModel):
     durationMs: int
 
 
+class CalibrationLabStatusResponse(BaseModel):
+    status: Literal["ready"]
+    storage: Literal["jsonl"]
+    taskCount: int
+    voteCount: int
+
+
+class CalibrationRunCreateRequest(BaseModel):
+    taskType: CalibrationTaskType
+    descriptions: list[str] = Field(min_length=1, max_length=50)
+    count: int = Field(ge=1, le=50)
+    candidatesPerTask: int = Field(ge=2, le=3)
+    promptVariants: list[CalibrationPromptVariant] = Field(min_length=1, max_length=4)
+    includeDebug: bool = False
+    autoFilterBadCandidates: bool = False
+
+
+class CalibrationRunCreateResponse(BaseModel):
+    runId: str
+    createdAt: str
+    taskIds: list[str]
+
+
+class CalibrationBenchmarkTurn(BaseModel):
+    question: str
+    reply: str
+    moodHint: PetStateValue | None = None
+    usedFallback: bool
+    validationFlags: list[str] = Field(default_factory=list)
+    qualityScore: int | None = None
+    qualityPassed: bool | None = None
+    qualityFlags: list[str] = Field(default_factory=list)
+    qualityAxes: dict[str, int] = Field(default_factory=dict)
+
+
+class CalibrationCandidate(BaseModel):
+    candidateId: str
+    promptVariant: CalibrationPromptVariant
+    model: str
+    seed: str
+    characterBible: dict[str, Any] | None = None
+    turns: list[CalibrationBenchmarkTurn] = Field(default_factory=list)
+    autoScore: int
+    qualityFlags: list[str] = Field(default_factory=list)
+    debug: dict[str, Any] = Field(default_factory=dict)
+
+
+class CalibrationTaskResponse(BaseModel):
+    schemaVersion: Literal[1]
+    taskId: str
+    runId: str
+    createdAt: str
+    taskType: CalibrationTaskType
+    description: str
+    benchmarkQuestions: list[str]
+    candidateIds: list[str]
+    candidates: list[CalibrationCandidate]
+
+
+class CalibrationVoteCreateRequest(BaseModel):
+    taskId: str
+    winnerCandidateId: str | None = None
+    outcome: CalibrationVoteOutcome
+    positiveTags: list[str] = Field(default_factory=list, max_length=20)
+    negativeTags: list[str] = Field(default_factory=list, max_length=20)
+    note: str = Field(default="", max_length=2000)
+    latencyMs: int = Field(default=0, ge=0)
+    reviewerId: str = Field(default="local", max_length=80)
+
+
+class CalibrationVoteResponse(BaseModel):
+    schemaVersion: Literal[1]
+    voteId: str
+    taskId: str
+    runId: str
+    createdAt: str
+    reviewerId: str
+    outcome: CalibrationVoteOutcome
+    winnerCandidateId: str | None = None
+    positiveTags: list[str] = Field(default_factory=list)
+    negativeTags: list[str] = Field(default_factory=list)
+    note: str = ""
+    latencyMs: int
+
+
 class LocalPetStats(BaseModel):
     hunger: int = Field(ge=0, le=100)
     happiness: int = Field(ge=0, le=100)
@@ -200,6 +314,8 @@ class LocalChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=1000)
     pet: LocalPetChatContext
     history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
+    includeDebug: bool = False
+    promptLayers: PromptLayers = Field(default_factory=PromptLayers)
 
 
 class LocalChatResponse(BaseModel):

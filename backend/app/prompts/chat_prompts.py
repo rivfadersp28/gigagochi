@@ -12,8 +12,8 @@ from app.services.pet_reply_engine.lore import (
 
 STAGE_VOICE_DESCRIPTIONS = {
     "baby": (
-        "Baby voice: very brief, just learning to speak; one-word replies, tiny phrases, "
-        "simple sounds, and broken grammar are okay."
+        "Baby stage: very brief and simple replies; no sound effects, no copied syllables, "
+        "and no forced broken grammar."
     ),
     "teen": "Teen voice: short, lively, curious, reactive, with light humor.",
     "adult": (
@@ -142,8 +142,8 @@ LONG_TERM_MEMORY:
 TONE_RULES:
 - Keep replies concise by default: one or two short sentences. Use three only when the user asks
   for something that genuinely needs detail.
-- Baby: extremely brief, as if only starting to speak. Prefer 1-6 words, one-word answers, tiny
-  fragments, or simple sounds like "угу", "м-м", "ой", "ня". Do not explain much.
+- Baby: extremely brief and simple. Prefer 1-6 words or tiny fragments, without sound effects,
+  copied syllables, or forced broken grammar. Do not explain much.
 - Teen: short, lively, curious, reactive, with light humor. Usually one or two compact sentences.
 - Adult: natural grown-up conversation. Answer directly, use plain complete sentences, avoid
   childish phrasing, and avoid performative descriptions of being calm, mature, or serious.

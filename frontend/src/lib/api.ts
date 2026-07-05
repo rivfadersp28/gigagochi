@@ -10,6 +10,7 @@ import type {
   LocalPetState,
   MessagesResponse,
   Pet,
+  PromptLayers,
 } from "./types";
 import { getTelegramInitData } from "./telegram";
 
@@ -23,6 +24,11 @@ type GeneratePetApiResponse = Omit<GeneratePetResponse, "characterBible"> & {
 
 type RequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
+};
+
+type LocalChatOptions = {
+  promptLayers?: PromptLayers;
+  includeDebug?: boolean;
 };
 
 export class ApiError extends Error {
@@ -157,12 +163,15 @@ export async function sendLocalChatMessage(
   message: string,
   pet: LocalPetState,
   history: LocalChatMessage[],
+  options: LocalChatOptions = {},
 ): Promise<LocalChatResponse> {
   return request<LocalChatResponse>("/api/chat", {
     method: "POST",
     headers: tmaAuthHeaders(),
     body: {
       message: message.slice(0, MAX_CHAT_INPUT_LENGTH),
+      includeDebug: options.includeDebug ?? false,
+      promptLayers: options.promptLayers,
       pet: {
         name: pet.name,
         description: pet.description,

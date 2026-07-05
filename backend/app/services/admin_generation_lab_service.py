@@ -8,6 +8,7 @@ from app.prompts.pet_image_prompts import (
     build_character_bible_prompt,
     build_pet_sprite_sheet_prompt,
 )
+from app.services.character_cards import normalize_character_profile_v2
 from app.services.image_service import create_character_bible, generate_pet_asset_set
 from app.services.pet_reply_engine import (
     PetRecentMessage,
@@ -30,7 +31,44 @@ CONVERSATION_BENCHMARK_QUESTIONS = (
     "почему?",
     "расскажи подробнее про дом",
     "кто твой друг?",
+    "что ты сейчас чувствуешь?",
+    "а что ты запомнил обо мне?",
+    "не задавай мне вопросы",
+    "мне грустно",
+    "придумай, что мы сделаем вечером",
+    "почему ты так решил?",
+    "что у тебя за привычка?",
 )
+
+
+def external_source_trace_prompt_block(character_bible: dict[str, Any] | None) -> str | None:
+    if not character_bible:
+        return None
+    extensions = character_bible.get("extensions")
+    if not isinstance(extensions, dict):
+        return None
+    fragments = extensions.get("external_source_fragments_used")
+    if not isinstance(fragments, list):
+        return None
+
+    lines: list[str] = []
+    for index, fragment in enumerate(fragments, start=1):
+        if not isinstance(fragment, dict):
+            continue
+        text = fragment.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        source_family = fragment.get("source_family")
+        source_url = fragment.get("source_url")
+        kind = fragment.get("kind")
+        locale = fragment.get("locale")
+        lines.append(
+            "- "
+            f"source_{index} "
+            f"[{source_family or 'external'}; {source_url or 'unknown'}; "
+            f"{kind or 'fragment'}; {locale or 'unknown'}]: {text.strip()}"
+        )
+    return "\n".join(lines) if lines else None
 
 
 def build_admin_benchmark_input(
@@ -56,6 +94,10 @@ def build_admin_benchmark_input(
             visual_identity=build_visual_identity(description, character_bible),
             personality=build_default_personality(description, character_bible),
             lore=extract_lore(character_bible),
+            character_profile_v2=normalize_character_profile_v2(
+                character_bible,
+                raw_description=description,
+            ),
         ),
         recent_messages=recent_messages,
     )
@@ -97,6 +139,7 @@ def _benchmark_turn_payload(
         "qualityScore": quality["score"],
         "qualityPassed": quality["passed"],
         "qualityFlags": quality["flags"],
+        "qualityAxes": quality["axes"],
     }
 
 
@@ -182,7 +225,10 @@ def build_admin_debug(
             }
         )
     if include_debug_prompts:
-        debug["characterBiblePrompt"] = build_character_bible_prompt(description)
+        debug["characterBiblePrompt"] = build_character_bible_prompt(
+            description,
+            external_source_fragments=external_source_trace_prompt_block(character_bible),
+        )
         if include_image_config and character_bible is not None:
             debug["spriteSheetPrompt"] = build_pet_sprite_sheet_prompt(
                 description,

@@ -9,8 +9,11 @@ from app.services.openai_service import chat_reasoning_effort_kwargs, get_openai
 from app.services.pet_memory.models import PetReplyModelOutputV2
 from app.services.pet_memory.normalizer import normalize_text
 from app.services.pet_reply_engine.fallbacks import fallback_reply
-from app.services.pet_reply_engine.models import PetReplyInput, PetReplyResult
-from app.services.pet_reply_engine.prompt_builder import build_pet_reply_messages
+from app.services.pet_reply_engine.models import PetPromptContext, PetReplyInput, PetReplyResult
+from app.services.pet_reply_engine.prompt_builder import (
+    build_pet_prompt_context,
+    build_pet_reply_messages,
+)
 from app.services.pet_reply_engine.reply_validator import validate_reply
 
 logger = logging.getLogger(__name__)
@@ -86,6 +89,11 @@ PET_REPLY_RESPONSE_SCHEMA: dict[str, Any] = {
                             "milestone",
                             "user_fact",
                             "relationship_event",
+                            "pet_canon_fact",
+                            "pet_emotional_fact",
+                            "open_thread",
+                            "preference",
+                            "boundary",
                         ],
                     },
                     "text": {"type": "string"},
@@ -325,13 +333,20 @@ PET_REPLY_RESPONSE_SCHEMA: dict[str, Any] = {
 def _fallback_result(
     reply_input: PetReplyInput,
     flags: tuple[str, ...],
+    prompt_context: PetPromptContext | None = None,
 ) -> PetReplyResult:
+    prompt_context = prompt_context or build_pet_prompt_context(reply_input)
+    fallback_text = fallback_reply(reply_input)
     return PetReplyResult(
-        reply=fallback_reply(reply_input),
-        mood_hint=reply_input.pet.mood,
+        reply=fallback_text,
+        mood_hint=reply_input.pet.mood if reply_input.prompt_layers.mood_style else None,
         used_fallback=True,
         validation_flags=flags,
         lore_memories_to_save=(),
+        detected_intent=prompt_context.detected_intent,
+        reference_card_ids=tuple(card.id for card in prompt_context.reference_cards),
+        included_layers=prompt_context.included_layers,
+        excluded_layers=prompt_context.excluded_layers,
     )
 
 
@@ -382,12 +397,13 @@ def generate_pet_reply(
     settings = get_settings()
     model = model or settings.openai_chat_model
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
+    prompt_context = build_pet_prompt_context(reply_input)
 
     try:
         openai_client = client or get_openai_client()
         completion = openai_client.chat.completions.create(
             model=model,
-            messages=build_pet_reply_messages(reply_input),
+            messages=build_pet_reply_messages(reply_input, prompt_context=prompt_context),
             response_format={
                 "type": "json_schema",
                 "json_schema": {
@@ -408,29 +424,47 @@ def generate_pet_reply(
             exc.__class__.__name__,
             exc,
         )
-        return _fallback_result(reply_input, (f"generation_error:{exc.__class__.__name__}",))
+        return _fallback_result(
+            reply_input,
+            (f"generation_error:{exc.__class__.__name__}",),
+            prompt_context,
+        )
 
     validation = validate_reply(
         model_output.reply,
-        reply_input.pet.age_stage,
+        reply_input.pet.age_stage if reply_input.prompt_layers.age_style else "teen",
         reply_input.pet.name,
-        reply_input.pet.mood,
+        reply_input.pet.mood
+        if reply_input.prompt_layers.mood_style or reply_input.prompt_layers.stat_needs
+        else None,
         reply_input.user_text,
     )
     if not validation.is_valid:
         logger.info("Pet reply validation fallback flags=%s", validation.flags)
-        return _fallback_result(reply_input, validation.flags)
+        return _fallback_result(reply_input, validation.flags, prompt_context)
 
     return PetReplyResult(
         reply=validation.normalized_reply,
-        mood_hint=model_output.moodHint,
+        mood_hint=model_output.moodHint if reply_input.prompt_layers.mood_style else None,
         used_fallback=False,
         validation_flags=validation.flags,
         lore_memories_to_save=lore_memories,
-        proactive_intent=model_output.proactiveIntent,
-        memory_candidates=tuple(model_output.memoryCandidates),
-        relationship_patch=model_output.relationshipPatch,
-        development_patch=model_output.developmentPatch,
-        thread_patch=model_output.threadPatch,
-        goal_patch=model_output.goalPatch,
+        proactive_intent=(
+            model_output.proactiveIntent if reply_input.prompt_layers.proactivity else None
+        ),
+        memory_candidates=(
+            tuple(model_output.memoryCandidates) if reply_input.prompt_layers.memory else ()
+        ),
+        relationship_patch=(
+            model_output.relationshipPatch if reply_input.prompt_layers.memory else None
+        ),
+        development_patch=(
+            model_output.developmentPatch if reply_input.prompt_layers.memory else None
+        ),
+        thread_patch=model_output.threadPatch if reply_input.prompt_layers.memory else None,
+        goal_patch=model_output.goalPatch if reply_input.prompt_layers.memory else None,
+        detected_intent=prompt_context.detected_intent,
+        reference_card_ids=tuple(card.id for card in prompt_context.reference_cards),
+        included_layers=prompt_context.included_layers,
+        excluded_layers=prompt_context.excluded_layers,
     )

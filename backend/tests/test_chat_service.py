@@ -128,3 +128,46 @@ def test_local_chat_response_returns_lore_memories(monkeypatch) -> None:
 
     assert response.reply == "друзья зовут меня Листикор."
     assert response.loreMemoriesToSave == ["ЛОР: друзья зовут питомца Листикор."]
+    assert response.debug is None
+
+
+def test_local_chat_debug_is_opt_in(monkeypatch) -> None:
+    def fake_generate(_reply_input):
+        return PetReplyResult(
+            reply="я у нижней полки.",
+            mood_hint="idle",
+            detected_intent="answer_lore",
+            reference_card_ids=("dialogue_answer_lore_ru_012",),
+            included_layers=("characterCore",),
+            excluded_layers=("memory", "proactivity"),
+        )
+
+    monkeypatch.setattr("app.services.chat_service.generate_pet_reply", fake_generate)
+
+    response = chat_with_local_pet(
+        LocalChatRequest.model_validate(
+            {
+                "message": "где ты живешь?",
+                "includeDebug": True,
+                "pet": {
+                    "description": "челик с листом вместо лица",
+                    "stage": "teen",
+                    "mood": "idle",
+                    "stats": {
+                        "hunger": 80,
+                        "happiness": 80,
+                        "energy": 80,
+                        "cleanliness": 80,
+                    },
+                    "characterBible": {"lore": {"home": {"story": "нижняя полка"}}},
+                },
+                "history": [],
+            }
+        )
+    )
+
+    assert response.debug is not None
+    assert response.debug.detectedIntent == "answer_lore"
+    assert response.debug.selectedReferenceCardIds == ["dialogue_answer_lore_ru_012"]
+    assert response.debug.includedLayers == ["characterCore"]
+    assert response.debug.excludedLayers == ["memory", "proactivity"]

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
-from app.routers import admin_generation_lab, chat, pets, tma, users
+from app.routers import admin_calibration_lab, admin_generation_lab, chat, pets, tma, users
 
 settings = get_settings()
 
@@ -31,6 +31,7 @@ app.include_router(pets.router)
 app.include_router(chat.router)
 app.include_router(tma.router)
 app.include_router(admin_generation_lab.router)
+app.include_router(admin_calibration_lab.router)
 
 
 @app.get("/health")

@@ -8,10 +8,12 @@ import { ApiError, sendLocalChatMessage } from "@/lib/api";
 import { appendLocalChatMessages, createLocalId, latestChatMessages } from "@/lib/localPetStorage";
 import { primePetSpeechAudio } from "@/lib/petSpeechAudio";
 import { hapticNotification } from "@/lib/telegram";
-import type { LocalChatResponse, LocalPetState } from "@/lib/types";
+import type { LocalChatResponse, LocalPetState, PromptLayers } from "@/lib/types";
 
 type PetQuickChatProps = {
   pet: LocalPetState;
+  promptLayers: PromptLayers;
+  includePromptDebug: boolean;
   onChatResponse: (response: LocalChatResponse) => void;
 };
 
@@ -21,6 +23,8 @@ function errorMessage(caught: unknown, fallback: string): string {
 
 export function PetQuickChat({
   pet,
+  promptLayers,
+  includePromptDebug,
   onChatResponse,
 }: PetQuickChatProps) {
   const [input, setInput] = useState("");
@@ -49,7 +53,10 @@ export function PetQuickChat({
       };
       const history = latestChatMessages(12);
       appendLocalChatMessages([userMessage]);
-      const response = await sendLocalChatMessage(message, pet, history);
+      const response = await sendLocalChatMessage(message, pet, history, {
+        promptLayers,
+        includeDebug: includePromptDebug,
+      });
       appendLocalChatMessages([
         {
           id: createLocalId("message"),

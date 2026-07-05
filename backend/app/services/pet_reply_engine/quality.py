@@ -32,6 +32,22 @@ CAUSE_WORD_PATTERN = re.compile(
     r"\b(?:потому\s+что|после|когда|из-за|поэтому|там|однажды|с\s+тех\s+пор)\b",
     re.IGNORECASE,
 )
+ASSISTANT_LEAK_PATTERN = re.compile(
+    r"(?:\b(?:ии|ai)\b|ассистент|языковая\s+модель|как\s+бот|как\s+модель|"
+    r"пользовател|система|prompt|промпт|api|чем\s+могу\s+помочь|как\s+я\s+могу\s+помочь)",
+    re.IGNORECASE,
+)
+GENERIC_COMFORT_PATTERN = re.compile(
+    r"(?:я\s+всегда\s+(?:рядом|с\s+тобой)|я\s+рядом,\s*если\s+что|"
+    r"я\s+тут,\s*если\s+что|вс[её]\s+будет\s+хорошо|ты\s+не\s+один)",
+    re.IGNORECASE,
+)
+EMPTY_MYSTICISM_PATTERN = re.compile(
+    r"(?:искорк|сияни|внутри\s+меня\s+(?:светлее|теплее)|моя\s+душ[аеи])",
+    re.IGNORECASE,
+)
+CYRILLIC_PATTERN = re.compile(r"[А-Яа-яЁё]")
+LATIN_WORD_PATTERN = re.compile(r"\b[A-Za-z]{4,}\b")
 
 QUALITY_PASSING_SCORE = 70
 
@@ -80,6 +96,82 @@ def _has_lore_overlap(reply: str, lore: dict[str, Any] | None) -> bool:
     return bool(keywords & reply_words)
 
 
+def _axis_scores(
+    *,
+    question: str | None,
+    reply: str,
+    lore: dict[str, Any] | None,
+    flags: list[str],
+    validation_flags: tuple[str, ...],
+) -> dict[str, int]:
+    lore_question = is_lore_question(question)
+    preference_question = is_preference_question(question)
+    directness = 100
+    if "generic_reply" in flags or "empty_reply" in flags:
+        directness -= 45
+    if lore_question and "too_short_for_lore" in flags:
+        directness -= 25
+    if preference_question and "list_like_preference_without_cause" in flags:
+        directness -= 25
+    if "unsupported_preference" in flags:
+        directness -= 30
+    if lore_question and "no_lore_anchor" in flags:
+        directness -= 20
+
+    naturalness_ru = 100
+    if not CYRILLIC_PATTERN.search(reply):
+        naturalness_ru -= 50
+    if len(LATIN_WORD_PATTERN.findall(reply)) >= 2:
+        naturalness_ru -= 25
+    if any(flag in validation_flags for flag in ("markdown_or_list", "structured_text")):
+        naturalness_ru -= 25
+
+    voice_consistency = 85
+    if "generic_reply" in flags or "no_generic_comfort" in flags:
+        voice_consistency -= 30
+    if "no_assistant_leak" in flags:
+        voice_consistency -= 45
+    if EMPTY_MYSTICISM_PATTERN.search(reply):
+        voice_consistency -= 20
+
+    lore_grounding = 100
+    if lore_question and "no_lore_anchor" in flags:
+        lore_grounding -= 45
+    if lore_question and not lore:
+        lore_grounding -= 20
+
+    emotional_continuity = 90
+    if any(flag.endswith("mood_mismatch") or flag == "validator:mood_mismatch" for flag in flags):
+        emotional_continuity -= 45
+    if "no_generic_comfort" in flags:
+        emotional_continuity -= 15
+
+    initiative_quality = 90
+    if reply.count("?") > 1:
+        initiative_quality -= 35
+    if "boundary" in (question or "").casefold() and "?" in reply:
+        initiative_quality -= 25
+
+    memory_use = 90
+    if any(word in reply.casefold() for word in ("memorycandidate", "память канона", "reflection")):
+        memory_use -= 45
+
+    no_assistant_leak = 0 if "no_assistant_leak" in flags else 100
+    no_generic_comfort = 0 if "no_generic_comfort" in flags else 100
+
+    return {
+        "directness": max(0, directness),
+        "naturalness_ru": max(0, naturalness_ru),
+        "voice_consistency": max(0, voice_consistency),
+        "lore_grounding": max(0, lore_grounding),
+        "emotional_continuity": max(0, emotional_continuity),
+        "initiative_quality": max(0, initiative_quality),
+        "memory_use": max(0, memory_use),
+        "no_assistant_leak": no_assistant_leak,
+        "no_generic_comfort": no_generic_comfort,
+    }
+
+
 def quality_report_for_reply(
     *,
     question: str | None,
@@ -99,6 +191,12 @@ def quality_report_for_reply(
 
     if GENERIC_REPLY_PATTERN.search(text):
         flags.append("generic_reply")
+    if ASSISTANT_LEAK_PATTERN.search(text):
+        flags.append("no_assistant_leak")
+    if GENERIC_COMFORT_PATTERN.search(text):
+        flags.append("no_generic_comfort")
+    if EMPTY_MYSTICISM_PATTERN.search(text):
+        flags.append("empty_mysticism")
     if UNSUPPORTED_PREFERENCE_PATTERN.search(text):
         flags.append("unsupported_preference")
     if is_preference_question(question) and LISTY_PREFERENCE_PATTERN.search(text):
@@ -122,13 +220,25 @@ def quality_report_for_reply(
         "too_short_for_lore": 20,
         "no_lore_anchor": 30,
         "fragment_answer": 15,
+        "no_assistant_leak": 80,
+        "no_generic_comfort": 35,
+        "empty_mysticism": 35,
     }
     for flag in flags:
         score -= deductions.get(flag, 10 if flag.startswith("validator:") else 0)
     score = max(0, score)
 
+    axes = _axis_scores(
+        question=question,
+        reply=text,
+        lore=lore,
+        flags=flags,
+        validation_flags=validation_flags,
+    )
+
     return {
         "score": score,
         "passed": score >= QUALITY_PASSING_SCORE,
         "flags": flags,
+        "axes": axes,
     }

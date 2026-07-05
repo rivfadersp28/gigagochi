@@ -520,9 +520,10 @@ def _resolve_canon_candidate(
         patch.rejectedCandidateAppends.append(_reject(candidate, reason, now))
         return
     key = normalized_key(clean)
+    fact_type = _canon_fact_type_for_candidate(candidate)
     relationship_entity_key = (
         _relationship_entity_key(clean)
-        if candidate.type in ("friend_fact", "family_fact")
+        if fact_type in ("friend_fact", "family_fact")
         else None
     )
     for fact in memory.canon:
@@ -544,7 +545,7 @@ def _resolve_canon_candidate(
             return
         if (
             relationship_entity_key
-            and fact.type == candidate.type
+            and fact.type == fact_type
             and _relationship_entity_key(fact.text) == relationship_entity_key
         ):
             updated_text = clean if len(clean) > len(fact.text) else fact.text
@@ -573,7 +574,7 @@ def _resolve_canon_candidate(
             return
     fact = CanonMemoryFact(
         id=make_memory_id("canon"),
-        type=candidate.type,
+        type=fact_type,
         text=clean,
         source="model",
         confidence=clamp_float(candidate.confidence),
@@ -587,6 +588,56 @@ def _resolve_canon_candidate(
     _append_event(
         patch, "memory_accepted", f"Появился новый факт: {clean}", now, fact.importance, fact.id
     )
+
+
+def _canon_fact_type_for_candidate(candidate: MemoryCandidate) -> str:
+    mapping = {
+        "pet_canon_fact": "world_fact",
+        "pet_emotional_fact": "voice_fact",
+        "preference": "preference_fact",
+    }
+    return mapping.get(candidate.type, candidate.type)
+
+
+def _resolve_thread_candidate(
+    memory: PetMemoryStateV1,
+    patch: PetMemoryPatch,
+    candidate: MemoryCandidate,
+    now: str,
+) -> None:
+    clean = normalize_text(candidate.text)
+    if not clean:
+        return
+    clean_words = set(re.findall(r"[A-Za-zА-Яа-яЁё0-9]{4,}", clean.casefold()))
+    for thread in memory.threads:
+        thread_words = set(
+            re.findall(r"[A-Za-zА-Яа-яЁё0-9]{4,}", f"{thread.topic} {thread.summary}".casefold())
+        )
+        if thread.status == "open" and clean_words and len(clean_words & thread_words) >= 2:
+            patch.threadUpserts.append(
+                thread.model_copy(
+                    update={
+                        "summary": clean,
+                        "priority": max(thread.priority, clamp_float(candidate.importance)),
+                        "updatedAt": now,
+                        "lastMentionedAt": now,
+                    }
+                )
+            )
+            _append_event(patch, "thread", f"Обновлена тема: {clean}", now, 0.45, thread.id)
+            return
+    thread = ConversationThread(
+        id=make_memory_id("thread"),
+        topic=clean[:120],
+        summary=clean,
+        status="open",
+        priority=clamp_float(candidate.importance),
+        createdAt=now,
+        updatedAt=now,
+        lastMentionedAt=now,
+    )
+    patch.threadUpserts.append(thread)
+    _append_event(patch, "thread", f"Открыта тема: {clean}", now, thread.priority, thread.id)
 
 
 def _resolve_candidates(
@@ -617,6 +668,23 @@ def _resolve_candidates(
                 patch.rejectedCandidateAppends.append(_reject(candidate, reason, now))
                 continue
             _upsert_relationship_event(patch, candidate.text, now, importance=candidate.importance)
+            continue
+        if candidate.type == "boundary":
+            reason = _is_sensitive_or_technical(candidate.text)
+            if reason:
+                patch.rejectedCandidateAppends.append(_reject(candidate, reason, now))
+                continue
+            relationship_patch = patch.relationshipPatch or RelationshipMemoryPatch()
+            if candidate.text not in relationship_patch.boundaryUpserts:
+                relationship_patch.boundaryUpserts.append(normalize_text(candidate.text, 160))
+            patch.relationshipPatch = relationship_patch
+            continue
+        if candidate.type == "open_thread":
+            reason = _is_sensitive_or_technical(candidate.text)
+            if reason:
+                patch.rejectedCandidateAppends.append(_reject(candidate, reason, now))
+                continue
+            _resolve_thread_candidate(memory, patch, candidate, now)
             continue
         _resolve_canon_candidate(memory, patch, candidate, character_bible, now)
 

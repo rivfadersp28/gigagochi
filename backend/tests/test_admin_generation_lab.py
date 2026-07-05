@@ -278,8 +278,9 @@ def test_admin_conversation_benchmark_runs_multiple_turns_with_history(monkeypat
 
     assert response.status_code == 200
     turns = response.json()["benchmark"]["turns"]
-    assert len(turns) == 5
+    assert len(turns) == 12
     assert turns[1]["question"] == "что ты любишь?"
+    assert turns[-1]["question"] == "что у тебя за привычка?"
     assert calls[2][0] == "почему?"
     assert ("user", "что ты любишь?") in calls[2][1]
     assert ("pet", "ответ: что ты любишь?") in calls[2][1]

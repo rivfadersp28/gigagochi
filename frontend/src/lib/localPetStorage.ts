@@ -13,12 +13,14 @@ import type {
   PetMemoryStateV1,
   PetLifeStage,
   PetMood,
+  PromptLayers,
   ReflectionMemory,
   RejectedMemoryCandidate,
   RelationshipEvent,
   RelationshipMemory,
   UserFact,
 } from "./types";
+import { defaultPromptLayers, normalizePromptLayers } from "./promptLayers";
 
 export const PET_STATE_STORAGE_KEY = "tamagochi:v1:pet-state";
 export const CHAT_HISTORY_STORAGE_KEY = "tamagochi:v1:chat-history";
@@ -43,11 +45,52 @@ const STAGES: PetLifeStage[] = ["baby", "teen", "adult"];
 
 type PetStats = LocalPetState["stats"];
 
+export type LocalPetSettings = {
+  promptLayers: PromptLayers;
+  includePromptDebug: boolean;
+};
+
 function storage() {
   if (typeof window === "undefined") {
     return null;
   }
   return window.localStorage;
+}
+
+function defaultLocalPetSettings(): LocalPetSettings {
+  return {
+    promptLayers: defaultPromptLayers,
+    includePromptDebug: false,
+  };
+}
+
+function normalizeLocalPetSettings(value: unknown): LocalPetSettings {
+  if (!isRecord(value)) {
+    return defaultLocalPetSettings();
+  }
+
+  return {
+    promptLayers: normalizePromptLayers(value.promptLayers),
+    includePromptDebug: value.includePromptDebug === true,
+  };
+}
+
+export function readLocalPetSettings(): LocalPetSettings {
+  const store = storage();
+  if (!store) {
+    return defaultLocalPetSettings();
+  }
+
+  try {
+    const rawValue = store.getItem(SETTINGS_STORAGE_KEY);
+    return rawValue ? normalizeLocalPetSettings(JSON.parse(rawValue)) : defaultLocalPetSettings();
+  } catch {
+    return defaultLocalPetSettings();
+  }
+}
+
+export function writeLocalPetSettings(settings: LocalPetSettings) {
+  storage()?.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(normalizeLocalPetSettings(settings)));
 }
 
 export function clampStat(value: unknown): number {

@@ -31,4 +31,5 @@ def post_chat(
         payload.message,
         selected_stage=payload.selected_stage,
         selected_state=payload.selected_state,
+        prompt_layers=payload.promptLayers,
     )

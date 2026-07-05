@@ -11,6 +11,7 @@ import {
   createLocalId,
   latestChatMessages,
   readLocalChatHistory,
+  readLocalPetSettings,
 } from "@/lib/localPetStorage";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
 import type { LocalChatMessage } from "@/lib/types";
@@ -82,7 +83,11 @@ export function ChatView({ petId }: ChatViewProps) {
     setMessages(appendLocalChatMessages([localUserMessage]).messages);
 
     try {
-      const response = await sendLocalChatMessage(message, pet, historyBeforeMessage);
+      const settings = readLocalPetSettings();
+      const response = await sendLocalChatMessage(message, pet, historyBeforeMessage, {
+        promptLayers: settings.promptLayers,
+        includeDebug: settings.includePromptDebug,
+      });
       const assistantMessage: LocalChatMessage = {
         id: createLocalId("message"),
         role: "pet",

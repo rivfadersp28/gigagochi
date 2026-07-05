@@ -21,6 +21,21 @@ HungerBand = Literal["low", "medium", "high"]
 SocialStyle = Literal["clingy", "warm", "independent", "mischievous"]
 Temperament = Literal["soft", "playful", "shy", "bold", "curious", "calm"]
 
+PROMPT_LAYER_FIELDS: tuple[tuple[str, str], ...] = (
+    ("ageStyle", "age_style"),
+    ("moodStyle", "mood_style"),
+    ("statNeeds", "stat_needs"),
+    ("characterCore", "character_core"),
+    ("importedSeedchat", "imported_seedchat"),
+    ("lore", "lore"),
+    ("characterBook", "character_book"),
+    ("memory", "memory"),
+    ("referenceCards", "reference_cards"),
+    ("dialogueMoves", "dialogue_moves"),
+    ("proactivity", "proactivity"),
+    ("postHistoryInstructions", "post_history_instructions"),
+)
+
 
 @dataclass(frozen=True)
 class PetStats:
@@ -67,6 +82,14 @@ class PetPersonality:
     favorite_words: tuple[str, ...] = ()
     forbidden_words: tuple[str, ...] = ()
     quirks: tuple[str, ...] = ()
+    speech_rules: tuple[str, ...] = ()
+    emotional_reactions: tuple[str, ...] = ()
+    initiative_style: str | None = None
+    sample_replies: tuple[str, ...] = ()
+    avoid_patterns: tuple[str, ...] = ()
+    opening_scenes: tuple[str, ...] = ()
+    lorebook_entries: tuple[str, ...] = ()
+    dialogue_moves: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -78,12 +101,43 @@ class PetReplyPet:
     personality: PetPersonality
     lore: dict[str, Any] | None = None
     name: str | None = None
+    character_profile_v2: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
 class PetRecentMessage:
     role: MessageRole
     text: str
+
+
+@dataclass(frozen=True)
+class PetPromptLayers:
+    age_style: bool = True
+    mood_style: bool = True
+    stat_needs: bool = True
+    character_core: bool = True
+    imported_seedchat: bool = True
+    lore: bool = True
+    character_book: bool = True
+    memory: bool = True
+    reference_cards: bool = True
+    dialogue_moves: bool = True
+    proactivity: bool = True
+    post_history_instructions: bool = True
+
+    def included_layer_names(self) -> tuple[str, ...]:
+        return tuple(
+            public_name
+            for public_name, field_name in PROMPT_LAYER_FIELDS
+            if getattr(self, field_name)
+        )
+
+    def excluded_layer_names(self) -> tuple[str, ...]:
+        return tuple(
+            public_name
+            for public_name, field_name in PROMPT_LAYER_FIELDS
+            if not getattr(self, field_name)
+        )
 
 
 @dataclass(frozen=True)
@@ -94,6 +148,15 @@ class PetReplyInput:
     recent_messages: tuple[PetRecentMessage, ...] = ()
     lore_memories: tuple[str, ...] = ()
     memory_context: Any | None = None
+    prompt_layers: PetPromptLayers = field(default_factory=PetPromptLayers)
+
+
+@dataclass(frozen=True)
+class PetPromptContext:
+    detected_intent: str
+    reference_cards: tuple[Any, ...] = ()
+    included_layers: tuple[str, ...] = ()
+    excluded_layers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -137,3 +200,8 @@ class PetReplyResult:
     development_patch: Any | None = None
     thread_patch: Any | None = None
     goal_patch: Any | None = None
+    detected_intent: str | None = None
+    reference_card_ids: tuple[str, ...] = ()
+    quality_axes: dict[str, int] | None = None
+    included_layers: tuple[str, ...] = ()
+    excluded_layers: tuple[str, ...] = ()

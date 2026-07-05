@@ -138,9 +138,10 @@ def test_chat_prompt_makes_baby_replies_terse() -> None:
 
     prompt = build_pet_chat_system_prompt(pet, [])
 
-    assert "Baby voice: very brief, just learning to speak" in prompt
+    assert "Baby stage: very brief and simple replies" in prompt
     assert "Prefer 1-6 words" in prompt
-    assert "simple sounds like" in prompt
+    assert "simple sounds like" not in prompt
+    assert "Baby voice" not in prompt
     assert "Do not explain much" in prompt
 
 

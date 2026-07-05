@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.services.character_cards import normalize_character_profile_v2
+
 LoreDict = dict[str, Any]
 
 
@@ -66,7 +68,62 @@ def extract_lore(character_bible: dict[str, Any] | None) -> LoreDict | None:
     if not isinstance(character_bible, dict):
         return None
     lore = character_bible.get("lore")
-    return lore if isinstance(lore, dict) else None
+    if isinstance(lore, dict):
+        return lore
+    profile = normalize_character_profile_v2(character_bible)
+    world = _object(profile.get("world"))
+    inner_state = _object(profile.get("inner_state"))
+    voice = _object(profile.get("voice"))
+    if not any(world.values()) and not any(inner_state.values()):
+        return None
+    return {
+        "world": {
+            "name": _string(world.get("habitat")) or _string(world.get("home")) or "",
+            "environment": _string(world.get("habitat")) or "",
+            "story": _string(world.get("habitat")) or "",
+            "rules": [],
+            "sensory_details": [],
+        },
+        "home": {
+            "place": _string(world.get("home")) or "",
+            "room": "",
+            "favorite_spot": _string(world.get("home")) or "",
+            "story": _string(world.get("home")) or "",
+            "objects": _strings(world.get("objects"), limit=8),
+        },
+        "origin": {
+            "birthplace": "",
+            "caretakers": [],
+            "formative_event": "",
+            "story": "",
+        },
+        "relationships": {
+            "family": [],
+            "friends": [],
+            "attitude_to_user": "",
+            "story": _join(_strings(world.get("relationships"), limit=4), limit=4) or "",
+        },
+        "inner_life": {
+            "core_want": _string(inner_state.get("core_want")) or "",
+            "inner_conflict": _string(inner_state.get("inner_conflict")) or "",
+            "likes": [],
+            "dislikes": [],
+            "fears": _strings(inner_state.get("fears"), limit=6),
+            "dreams": [],
+            "habits": _strings(inner_state.get("comfort_actions"), limit=6),
+            "comfort_actions": _strings(inner_state.get("comfort_actions"), limit=6),
+            "flaws": [],
+        },
+        "voice": {
+            "speech_pattern": _string(voice.get("sentence_rhythm")) or "",
+            "favorite_phrases": _strings(voice.get("catchphrases"), limit=6),
+            "topic_hooks": [],
+            "secret_details": [],
+            "avoid_saying": _strings(voice.get("avoid_patterns"), limit=6),
+        },
+        "growth_arc": {},
+        "story_seeds": _strings(world.get("story_seeds"), limit=8),
+    }
 
 
 def lore_text_for_legacy_profile(

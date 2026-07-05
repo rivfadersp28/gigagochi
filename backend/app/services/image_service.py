@@ -31,6 +31,12 @@ from app.prompts.pet_image_prompts import (
     create_lore_seed,
 )
 from app.services.birth_message_service import ensure_birth_message
+from app.services.character_cards import upgrade_character_bible_v2
+from app.services.external_character_sources import (
+    ExternalSourceFragment,
+    external_fragments_prompt_block,
+    select_external_character_fragments,
+)
 from app.services.game_service import calculate_stage
 from app.services.openai_service import MissingOpenAIAPIKey, get_openai_client
 from app.services.pet_service import upsert_pet_image
@@ -54,14 +60,32 @@ INCOHERENT_LORE_PATTERN = re.compile(
     r"цвет\w*(?:\W+\w+){0,8}\W+уста\w*)",
     re.IGNORECASE,
 )
+WEAK_LIFE_LESSON_PATTERN = re.compile(
+    r"(?:коротк\w*\s+просьб|добры\w*\s+слов|урок\w*\s+жизн|"
+    r"важно\s+быть|правил\w*\s+жизн|норм[аы]\b|морал\w*|"
+    r"учит\w*\s+(?:меня|его|её|нас)|быть\s+собой)",
+    re.IGNORECASE,
+)
 
 CHARACTER_BIBLE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": [
+        "schema_version",
+        "identity",
+        "voice",
+        "inner_state",
+        "world",
+        "dialogue_moves",
+        "openings",
+        "provenance",
+        "extensions",
         "species",
         "personality",
         "signature",
+        "dialogue_style",
+        "opening_scenes",
+        "lorebook_entries",
         "main_colors",
         "signature_features",
         "materials",
@@ -73,6 +97,158 @@ CHARACTER_BIBLE_SCHEMA: dict[str, Any] = {
         "lore",
     ],
     "properties": {
+        "schema_version": {"type": "integer", "enum": [2]},
+        "identity": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["name", "nickname", "species", "role", "one_liner"],
+            "properties": {
+                "name": {"type": "string"},
+                "nickname": {"type": "string"},
+                "species": {"type": "string"},
+                "role": {"type": "string"},
+                "one_liner": {"type": "string"},
+            },
+        },
+        "voice": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "voice_rules",
+                "speech_rules",
+                "sentence_rhythm",
+                "addressing_user",
+                "humor_style",
+                "uncertainty_style",
+                "catchphrases",
+                "sample_replies",
+                "avoid_patterns",
+            ],
+            "properties": {
+                "voice_rules": {"type": "array", "items": {"type": "string"}},
+                "speech_rules": {"type": "array", "items": {"type": "string"}},
+                "sentence_rhythm": {"type": "string"},
+                "addressing_user": {"type": "string"},
+                "humor_style": {"type": "string"},
+                "uncertainty_style": {"type": "string"},
+                "catchphrases": {"type": "array", "items": {"type": "string"}},
+                "sample_replies": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "8-12 short Russian chat replies across distinct intents.",
+                },
+                "avoid_patterns": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+        "inner_state": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["core_want", "inner_conflict", "fears", "comfort_actions", "drives"],
+            "properties": {
+                "core_want": {"type": "string"},
+                "inner_conflict": {"type": "string"},
+                "fears": {"type": "array", "items": {"type": "string"}},
+                "comfort_actions": {"type": "array", "items": {"type": "string"}},
+                "drives": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "attachment",
+                        "curiosity",
+                        "confidence",
+                        "energy",
+                        "stress",
+                        "loneliness",
+                        "playfulness",
+                    ],
+                    "properties": {
+                        "attachment": {"type": "integer", "minimum": 0, "maximum": 100},
+                        "curiosity": {"type": "integer", "minimum": 0, "maximum": 100},
+                        "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+                        "energy": {"type": "integer", "minimum": 0, "maximum": 100},
+                        "stress": {"type": "integer", "minimum": 0, "maximum": 100},
+                        "loneliness": {"type": "integer", "minimum": 0, "maximum": 100},
+                        "playfulness": {"type": "integer", "minimum": 0, "maximum": 100},
+                    },
+                },
+            },
+        },
+        "world": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "home",
+                "habitat",
+                "objects",
+                "routines",
+                "relationships",
+                "story_seeds",
+                "lorebook_entries",
+            ],
+            "properties": {
+                "home": {"type": "string"},
+                "habitat": {"type": "string"},
+                "objects": {"type": "array", "items": {"type": "string"}},
+                "routines": {"type": "array", "items": {"type": "string"}},
+                "relationships": {"type": "array", "items": {"type": "string"}},
+                "story_seeds": {"type": "array", "items": {"type": "string"}},
+                "lorebook_entries": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["keys", "content", "priority", "constant", "selective"],
+                        "properties": {
+                            "keys": {"type": "array", "items": {"type": "string"}},
+                            "content": {"type": "string"},
+                            "priority": {"type": "integer"},
+                            "constant": {"type": "boolean"},
+                            "selective": {"type": "boolean"},
+                        },
+                    },
+                },
+            },
+        },
+        "dialogue_moves": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["intent", "pattern", "good_example", "bad_example"],
+                "properties": {
+                    "intent": {"type": "string"},
+                    "pattern": {"type": "string"},
+                    "good_example": {"type": "string"},
+                    "bad_example": {"type": "string"},
+                },
+            },
+            "description": "3-5 intent-specific response structures for prompt building.",
+        },
+        "openings": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["first_message", "alternate_greetings", "opening_scenes"],
+            "properties": {
+                "first_message": {"type": "string"},
+                "alternate_greetings": {"type": "array", "items": {"type": "string"}},
+                "opening_scenes": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+        "provenance": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["source", "source_urls", "license_notes"],
+            "properties": {
+                "source": {"type": "string"},
+                "source_urls": {"type": "array", "items": {"type": "string"}},
+                "license_notes": {"type": "string"},
+            },
+        },
+        "extensions": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {},
+        },
         "species": {"type": "string"},
         "personality": {
             "type": "string",
@@ -86,6 +262,91 @@ CHARACTER_BIBLE_SCHEMA: dict[str, Any] = {
             "description": (
                 "A compact Russian paragraph explaining the memorable core feature through "
                 "specific everyday actions and relationship behavior."
+            ),
+        },
+        "dialogue_style": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "voice_rules",
+                "emotional_reactions",
+                "initiative_style",
+                "sample_replies",
+                "avoid_patterns",
+            ],
+            "properties": {
+                "voice_rules": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Concrete Russian rules for rhythm, word choice, humor, warmth, and "
+                        "how the pet's body or premise affects speech."
+                    ),
+                },
+                "emotional_reactions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "How the pet responds to care, praise, stress, loneliness, curiosity, "
+                        "and uncertainty. Each item should be observable in chat."
+                    ),
+                },
+                "initiative_style": {
+                    "type": "string",
+                    "description": (
+                        "How the pet proactively continues conversation without interviewing "
+                        "the user or becoming pushy."
+                    ),
+                },
+                "sample_replies": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "4-6 short Russian chat replies demonstrating the pet's voice across "
+                        "self-introduction, care, lore, stress, and playful initiative."
+                    ),
+                },
+                "avoid_patterns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Phrases, tones, or behaviors that would flatten the persona or make it "
+                        "sound generic, assistant-like, overly poetic, or out of character."
+                    ),
+                },
+            },
+        },
+        "opening_scenes": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "2-3 first-message style Russian scenes. Each scene is concise, concrete, "
+                "from the pet's perspective, and invites the user into interaction."
+            ),
+        },
+        "lorebook_entries": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["keys", "content"],
+                "properties": {
+                    "keys": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Trigger words or phrases for a situational lore fact.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "Compact Russian fact to use only when related to the user's topic."
+                        ),
+                    },
+                },
+            },
+            "description": (
+                "4-8 character-card-style lorebook entries for situational facts about places, "
+                "roles, objects, customs, fears, relationships, or background hooks."
             ),
         },
         "main_colors": {"type": "array", "items": {"type": "string"}},
@@ -413,6 +674,8 @@ def character_bible_quality_issues(
         issues.append("non_plant_pet_uses_greenhouse_shelf_moss_dew_or_warm_lamp_defaults")
     if INCOHERENT_LORE_PATTERN.search(text):
         issues.append("incoherent_physical_or_sensory_logic")
+    if WEAK_LIFE_LESSON_PATTERN.search(text):
+        issues.append("generic_life_lesson_or_user_behavior_preference")
     return tuple(issues)
 
 
@@ -443,6 +706,7 @@ def _repair_character_bible_prompt(
     character_bible: dict[str, Any],
     issues: tuple[str, ...],
     lore_seed: dict[str, str] | None = None,
+    external_source_fragments: str | None = None,
 ) -> str:
     lore_seed_text = (
         "\nLORE_VARIATION_SEED_USED:\n" + json.dumps(lore_seed, ensure_ascii=False, indent=2)
@@ -456,11 +720,23 @@ USER_CHARACTER_DESCRIPTION:
 {description}
 {lore_seed_text}
 
+EXTERNAL_SOURCE_FRAGMENT_MIX_USED:
+{external_source_fragments or "нет локального внешнего корпуса"}
+
 QUALITY_ISSUES:
 {", ".join(issues)}
 
 Repair rules:
 - Preserve the same visual identity and all required schema fields.
+- Preserve Character Profile V2 fields: identity, voice, inner_state, world, dialogue_moves,
+  openings, provenance, extensions, and schema_version=2.
+- Keep 8-12 voice.sample_replies, 5-8 lorebook entries, and 3-5 dialogue_moves.
+- Preserve visible influence of EXTERNAL_SOURCE_FRAGMENT_MIX_USED: keep concrete odd places,
+  objects, contradictions, dislikes, habits, and reply rhythm. Do not replace them with lessons,
+  norms, generic kindness, or preferences about how the user should speak.
+- Remove fake-life phrases like "короткие просьбы", "добрые слова", "урок", "норма",
+  "важно быть", or "быть собой". Replace them with concrete pet-owned objects, places,
+  habits, dislikes, and contradictions from the external fragments.
 - If the pet is not plant/garden/window/shelf-based, remove greenhouse, shelf, moss, dew,
   warm-lamp, seed, and tiny-garden defaults from lore.
 - Replace generic cozy-corner lore with a concrete setting that follows the pet's own premise.
@@ -668,6 +944,27 @@ def extract_sprite_cells(image: Image.Image) -> dict[tuple[str, str], Image.Imag
     return cell_images
 
 
+def _attach_external_source_trace(
+    character_bible: dict[str, Any],
+    fragments: tuple[ExternalSourceFragment, ...],
+) -> dict[str, Any]:
+    extensions = character_bible.get("extensions")
+    if not isinstance(extensions, dict):
+        extensions = {}
+    extensions["external_source_fragments_used"] = [
+        {
+            "id": fragment.id,
+            "source_family": fragment.source_family,
+            "source_url": fragment.source_url,
+            "kind": fragment.kind,
+            "locale": fragment.locale,
+            "text": fragment.text,
+        }
+        for fragment in fragments[:12]
+    ]
+    return {**character_bible, "extensions": extensions}
+
+
 def create_character_bible(
     user_description: str,
     lore_seed: dict[str, str] | None = None,
@@ -675,11 +972,17 @@ def create_character_bible(
     settings = get_settings()
     client = get_openai_client()
     effective_lore_seed = lore_seed or create_lore_seed()
+    external_fragments = select_external_character_fragments(
+        user_description=user_description,
+        count=12,
+    )
+    external_fragment_block = external_fragments_prompt_block(external_fragments)
     system_message = {
         "role": "system",
         "content": (
             "Create scaffold-first JSON character bibles with varied, coherent "
-            "storybook canon that can be revealed gradually in chat."
+            "storybook canon that can be revealed gradually in chat. Blend concrete "
+            "external source fragments into every new profile."
         ),
     }
     character_bible = _character_bible_completion(
@@ -692,10 +995,16 @@ def create_character_bible(
                 "content": build_character_bible_prompt(
                     user_description,
                     lore_seed=effective_lore_seed,
+                    external_source_fragments=external_fragment_block,
                 ),
             },
         ],
     )
+    character_bible = upgrade_character_bible_v2(
+        character_bible,
+        raw_description=user_description,
+    )
+    character_bible = _attach_external_source_trace(character_bible, external_fragments)
     issues = character_bible_quality_issues(user_description, character_bible)
     if not issues:
         return character_bible
@@ -713,11 +1022,13 @@ def create_character_bible(
                     character_bible,
                     issues,
                     effective_lore_seed,
+                    external_fragment_block,
                 ),
             },
         ],
     )
-    return repaired
+    repaired = upgrade_character_bible_v2(repaired, raw_description=user_description)
+    return _attach_external_source_trace(repaired, external_fragments)
 
 
 def build_image_generate_kwargs(settings: Any, prompt: str) -> dict[str, Any]:

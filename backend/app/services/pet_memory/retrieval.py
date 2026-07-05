@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from math import log
 
 from app.services.pet_memory.models import CanonMemoryFact, PetMemoryStateV1
 from app.services.pet_reply_engine.intent import is_home_question, is_lore_question
 
 WORD_PATTERN = re.compile(r"[A-Za-zА-Яа-яЁё0-9]{4,}")
+ENTITY_PATTERN = re.compile(r"\b(?:[А-ЯЁ][а-яё]{2,}|[A-Z][A-Za-z]{2,})\b")
 
 
 @dataclass(frozen=True)
@@ -18,10 +20,15 @@ class MemoryContext:
     active_goal_lines: tuple[str, ...] = ()
     development_lines: tuple[str, ...] = ()
     canon_fact_ids: tuple[str, ...] = ()
+    entity_lines: tuple[str, ...] = ()
 
 
 def _words(text: str | None) -> set[str]:
     return {word.casefold() for word in WORD_PATTERN.findall(text or "")}
+
+
+def _entities(text: str | None) -> set[str]:
+    return {word.casefold() for word in ENTITY_PATTERN.findall(text or "")}
 
 
 def _band(value: int) -> str:
@@ -69,15 +76,47 @@ def _canonical_type_score(fact: CanonMemoryFact, user_text: str | None) -> float
         score += 0.4
     overlap = _words(fact.text) & _words(text)
     score += min(len(overlap), 4) * 0.08
+    entity_overlap = _entities(fact.text) & _entities(text)
+    score += min(len(entity_overlap), 3) * 0.18
     return score
+
+
+def _bm25_scores(facts: list[CanonMemoryFact], user_text: str | None) -> dict[str, float]:
+    query = _words(user_text)
+    if not query or not facts:
+        return {}
+    documents = {fact.id: _words(fact.text) for fact in facts}
+    avg_len = sum(len(words) for words in documents.values()) / max(len(documents), 1)
+    avg_len = max(avg_len, 1)
+    df: dict[str, int] = {}
+    for words in documents.values():
+        for word in words:
+            df[word] = df.get(word, 0) + 1
+    scores: dict[str, float] = {}
+    k1 = 1.2
+    b = 0.75
+    for fact in facts:
+        words = list(documents[fact.id])
+        if not words:
+            continue
+        score = 0.0
+        for token in query:
+            tf = 1 if token in documents[fact.id] else 0
+            if not tf:
+                continue
+            idf = log(1 + (len(facts) - df.get(token, 0) + 0.5) / (df.get(token, 0) + 0.5))
+            score += idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * len(words) / avg_len))
+        scores[fact.id] = score
+    return scores
 
 
 def _canon_lines(
     memory: PetMemoryStateV1, user_text: str | None
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    bm25 = _bm25_scores(memory.canon, user_text)
     scored = sorted(
         memory.canon,
-        key=lambda fact: _canonical_type_score(fact, user_text),
+        key=lambda fact: _canonical_type_score(fact, user_text) + bm25.get(fact.id, 0),
         reverse=True,
     )
     selected = scored[:8]
@@ -162,6 +201,7 @@ def _development_lines(memory: PetMemoryStateV1) -> tuple[str, ...]:
 
 def build_memory_context(memory: PetMemoryStateV1, user_text: str | None) -> MemoryContext:
     canon_lines, canon_fact_ids = _canon_lines(memory, user_text)
+    entities = sorted(_entities(user_text))[:8]
     return MemoryContext(
         canon_lines=canon_lines,
         relationship_lines=_relationship_lines(memory, user_text),
@@ -170,4 +210,5 @@ def build_memory_context(memory: PetMemoryStateV1, user_text: str | None) -> Mem
         active_goal_lines=_active_goal_lines(memory),
         development_lines=_development_lines(memory),
         canon_fact_ids=canon_fact_ids,
+        entity_lines=tuple(entities),
     )

@@ -7,9 +7,17 @@ import { useRouter } from "next/navigation";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
+import { readLocalPetSettings, writeLocalPetSettings } from "@/lib/localPetStorage";
 import { playPetSpeechAudioSequence } from "@/lib/petSpeechAudio";
+import { cleanPromptLayers, defaultPromptLayers, promptLayerOptions } from "@/lib/promptLayers";
 import { hapticImpact } from "@/lib/telegram";
-import type { LocalChatResponse, LocalPetState, PetLifeStage, PetMood } from "@/lib/types";
+import type {
+  LocalChatResponse,
+  LocalPetState,
+  PetLifeStage,
+  PetMood,
+  PromptLayers,
+} from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 
 import { PetQuickChat } from "./PetQuickChat";
@@ -466,7 +474,11 @@ type IdleAnimationControlsProps = {
   selectedStage: PetStage;
   selectedState: PetState;
   settings: IdleAnimationSettings;
+  promptLayers: PromptLayers;
+  includePromptDebug: boolean;
   onChange: (nextSettings: IdleAnimationSettings) => void;
+  onChangePromptLayers: (nextLayers: PromptLayers) => void;
+  onChangeIncludePromptDebug: (enabled: boolean) => void;
   onSelectStage: (stage: PetStage) => void;
   onSelectState: (state: PetState) => void;
   onResetSprite: () => void;
@@ -479,7 +491,11 @@ function IdleAnimationControls({
   selectedStage,
   selectedState,
   settings,
+  promptLayers,
+  includePromptDebug,
   onChange,
+  onChangePromptLayers,
+  onChangeIncludePromptDebug,
   onSelectStage,
   onSelectState,
   onResetSprite,
@@ -568,6 +584,11 @@ function IdleAnimationControls({
     displayValue: string;
   }>;
 
+  const enabledLayerCount = promptLayerOptions.filter((option) => promptLayers[option.key]).length;
+  const updatePromptLayer = (key: keyof PromptLayers, enabled: boolean) => {
+    onChangePromptLayers({ ...promptLayers, [key]: enabled });
+  };
+
   return (
     <>
       <button
@@ -654,6 +675,60 @@ function IdleAnimationControls({
             </div>
           </div>
 
+          <div className="mb-5 grid gap-3 border-b border-black/10 pb-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[14px] font-medium leading-none">Prompt</div>
+                <div className="mt-1 text-[11px] leading-none text-black/40">
+                  {enabledLayerCount}/{promptLayerOptions.length} слоев
+                </div>
+              </div>
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => onChangePromptLayers(cleanPromptLayers)}
+                  className="h-[26px] rounded-[8px] border border-black/10 px-2 text-[11px] leading-none text-black/60 transition-colors hover:bg-black/5 focus:outline-none focus:ring-2 focus:ring-black/10"
+                >
+                  Чистый
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChangePromptLayers(defaultPromptLayers)}
+                  className="h-[26px] rounded-[8px] border border-black/10 px-2 text-[11px] leading-none text-black/60 transition-colors hover:bg-black/5 focus:outline-none focus:ring-2 focus:ring-black/10"
+                >
+                  Все
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1">
+              {promptLayerOptions.map((option) => (
+                <label
+                  key={option.key}
+                  className="flex min-h-[30px] items-center gap-2 rounded-[8px] bg-black/[0.035] px-2 text-[11px] leading-[13px] text-black/65"
+                >
+                  <input
+                    type="checkbox"
+                    checked={promptLayers[option.key]}
+                    onChange={(event) => updatePromptLayer(option.key, event.currentTarget.checked)}
+                    className="size-3 accent-black"
+                  />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            </div>
+
+            <label className="flex min-h-[30px] items-center gap-2 rounded-[8px] bg-black/[0.035] px-2 text-[11px] leading-[13px] text-black/65">
+              <input
+                type="checkbox"
+                checked={includePromptDebug}
+                onChange={(event) => onChangeIncludePromptDebug(event.currentTarget.checked)}
+                className="size-3 accent-black"
+              />
+              <span>Debug слоев в ответе</span>
+            </label>
+          </div>
+
           <div className="mb-4 text-[14px] font-medium leading-none">Animation</div>
           <div className="flex flex-col gap-4">
             {sliders.map((slider) => (
@@ -691,8 +766,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [idleAnimationSettings, setIdleAnimationSettings] = useState<IdleAnimationSettings>(
     defaultIdleAnimationSettings,
   );
+  const [promptSettings, setPromptSettings] = useState(() => readLocalPetSettings());
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
   const pet = localPet.pet;
+  const promptLayers = promptSettings.promptLayers;
+  const includePromptDebug = promptSettings.includePromptDebug;
 
   useEffect(() => {
     if (localPet.status === "loading") {
@@ -717,6 +795,24 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   function handlePlay() {
     localPet.play();
     hapticImpact("light");
+  }
+
+  function handlePromptLayersChange(nextLayers: PromptLayers) {
+    const nextSettings = {
+      promptLayers: nextLayers,
+      includePromptDebug,
+    };
+    setPromptSettings(nextSettings);
+    writeLocalPetSettings(nextSettings);
+  }
+
+  function handlePromptDebugChange(enabled: boolean) {
+    const nextSettings = {
+      promptLayers,
+      includePromptDebug: enabled,
+    };
+    setPromptSettings(nextSettings);
+    writeLocalPetSettings(nextSettings);
   }
 
   function handleChatResponse(response: LocalChatResponse) {
@@ -790,7 +886,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           selectedStage={displayedStage}
           selectedState={displayedState}
           settings={animationSettings}
+          promptLayers={promptLayers}
+          includePromptDebug={includePromptDebug}
           onChange={setIdleAnimationSettings}
+          onChangePromptLayers={handlePromptLayersChange}
+          onChangeIncludePromptDebug={handlePromptDebugChange}
           onSelectStage={(stage) =>
             setSelectedSprite((current) => ({
               stage,
@@ -851,7 +951,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             ) : (
               <div className="w-full max-w-[405px]" style={petMessageStackStyle} aria-hidden="true" />
             )}
-            <PetQuickChat pet={previewPet} onChatResponse={handleChatResponse} />
+            <PetQuickChat
+              pet={previewPet}
+              promptLayers={promptLayers}
+              includePromptDebug={includePromptDebug}
+              onChatResponse={handleChatResponse}
+            />
           </div>
 
           <div className="flex items-center gap-[20px] sm:gap-[28px]">

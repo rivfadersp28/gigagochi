@@ -59,6 +59,22 @@ export type MessagesResponse = {
 export type ChatVisualContext = {
   selected_stage?: PetStage;
   selected_state?: PetState;
+  promptLayers?: PromptLayers;
+};
+
+export type PromptLayers = {
+  ageStyle: boolean;
+  moodStyle: boolean;
+  statNeeds: boolean;
+  characterCore: boolean;
+  importedSeedchat: boolean;
+  lore: boolean;
+  characterBook: boolean;
+  memory: boolean;
+  referenceCards: boolean;
+  dialogueMoves: boolean;
+  proactivity: boolean;
+  postHistoryInstructions: boolean;
 };
 
 export type ChatResponse = {
@@ -341,6 +357,10 @@ export type LocalChatResponse = {
     validationFlags?: string[];
     rejectedMemoryCount?: number;
     proactivityFlags?: string[];
+    detectedIntent?: string;
+    selectedReferenceCardIds?: string[];
+    includedLayers?: string[];
+    excludedLayers?: string[];
   };
 };
 
@@ -409,4 +429,101 @@ export type AdminGenerateError = {
 
 export type AdminGenerationLabStatus = {
   status: string;
+};
+
+export type CalibrationTaskType =
+  | "lore_pairwise"
+  | "dialogue_pairwise"
+  | "full_character_pairwise";
+
+export type CalibrationPromptVariant =
+  | "current"
+  | "tiny_story_cards"
+  | "game_dialogue_cards"
+  | "mixed_cards";
+
+export type CalibrationVoteOutcome = "winner" | "tie" | "reject_all" | "skip";
+
+export type CalibrationLabStatus = {
+  status: "ready";
+  storage: "jsonl";
+  taskCount: number;
+  voteCount: number;
+};
+
+export type CalibrationRunCreateRequest = {
+  taskType: CalibrationTaskType;
+  descriptions: string[];
+  count: number;
+  candidatesPerTask: 2 | 3;
+  promptVariants: CalibrationPromptVariant[];
+  includeDebug: boolean;
+  autoFilterBadCandidates: boolean;
+};
+
+export type CalibrationRunCreateResponse = {
+  runId: string;
+  createdAt: string;
+  taskIds: string[];
+};
+
+export type CalibrationBenchmarkTurn = {
+  question: string;
+  reply: string;
+  moodHint?: PetMood | null;
+  usedFallback: boolean;
+  validationFlags: string[];
+  qualityScore?: number | null;
+  qualityPassed?: boolean | null;
+  qualityFlags: string[];
+};
+
+export type CalibrationCandidate = {
+  candidateId: string;
+  promptVariant: CalibrationPromptVariant;
+  model: string;
+  seed: string;
+  characterBible?: Record<string, unknown> | null;
+  turns: CalibrationBenchmarkTurn[];
+  autoScore: number;
+  qualityFlags: string[];
+  debug: Record<string, unknown>;
+};
+
+export type CalibrationTask = {
+  schemaVersion: 1;
+  taskId: string;
+  runId: string;
+  createdAt: string;
+  taskType: CalibrationTaskType;
+  description: string;
+  benchmarkQuestions: string[];
+  candidateIds: string[];
+  candidates: CalibrationCandidate[];
+};
+
+export type CalibrationVoteCreateRequest = {
+  taskId: string;
+  winnerCandidateId?: string | null;
+  outcome: CalibrationVoteOutcome;
+  positiveTags: string[];
+  negativeTags: string[];
+  note: string;
+  latencyMs: number;
+  reviewerId?: string;
+};
+
+export type CalibrationVote = {
+  schemaVersion: 1;
+  voteId: string;
+  taskId: string;
+  runId: string;
+  createdAt: string;
+  reviewerId: string;
+  outcome: CalibrationVoteOutcome;
+  winnerCandidateId?: string | null;
+  positiveTags: string[];
+  negativeTags: string[];
+  note: string;
+  latencyMs: number;
 };

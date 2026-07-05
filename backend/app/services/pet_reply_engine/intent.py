@@ -1,6 +1,23 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
+
+from app.services.pet_reply_engine.models import PetRecentMessage
+
+PetReplyIntent = Literal[
+    "care",
+    "answer_lore",
+    "answer_preference",
+    "why",
+    "appearance",
+    "status",
+    "continue_thread",
+    "playful_offer",
+    "boundary",
+    "memory_control",
+    "smalltalk",
+]
 
 _APPEARANCE_QUESTION_PATTERN = re.compile(
     r"(как\s+(?:ты\s+)?выгляд|как\s+выглядишь|"
@@ -70,6 +87,33 @@ _REASON_QUESTION_PATTERN = re.compile(
     r"^\s*(?:а\s+)?(?:почему|зачем|отчего|why)\??\s*$",
     re.IGNORECASE,
 )
+_BOUNDARY_PATTERN = re.compile(
+    r"(не\s+(?:задавай|спрашивай)\s+(?:мне\s+)?вопрос|без\s+вопросов|"
+    r"не\s+пиши\s+вопрос|перестань\s+спрашивать|don't\s+ask|no\s+questions)",
+    re.IGNORECASE,
+)
+_MEMORY_CONTROL_PATTERN = re.compile(
+    r"(что\s+(?:ты\s+)?(?:помнишь|запомнил)|что\s+ты\s+знаешь\s+обо\s+мне|"
+    r"запомни|забудь|не\s+запоминай|не\s+помни|удали\s+из\s+памяти|"
+    r"remember|forget|memory)",
+    re.IGNORECASE,
+)
+_CARE_PATTERN = re.compile(
+    r"(обним|глаж|поглаж|держи|покорм|накорм|почеш|укрою|я\s+с\s+тобой|"
+    r"не\s+бойся|спокойно|иди\s+сюда|hug|pet\s+you|feed\s+you)",
+    re.IGNORECASE,
+)
+_PLAYFUL_OFFER_PATTERN = re.compile(
+    r"(давай\s+(?:играть|поиграем|придумаем|сделаем)|во\s+что\s+сыграем|"
+    r"что\s+(?:мы\s+)?сделаем|придумай.*(?:вечером|игру|дело)|"
+    r"play|game|what\s+should\s+we\s+do)",
+    re.IGNORECASE,
+)
+_CONTINUE_THREAD_PATTERN = re.compile(
+    r"^\s*(?:а\s+)?(?:дальше|продолжай|продолжим|подробнее|побольше|"
+    r"ещ[её]|расскажи\s+ещ[её]|и\s+что\s+потом|more|continue)\??\s*$",
+    re.IGNORECASE,
+)
 
 
 def is_appearance_question(text: str | None) -> bool:
@@ -126,3 +170,38 @@ def is_name_question(text: str | None) -> bool:
 
 def is_reason_question(text: str | None) -> bool:
     return bool(text and _REASON_QUESTION_PATTERN.search(text))
+
+
+def _has_recent_context(recent_messages: tuple[PetRecentMessage, ...] | None) -> bool:
+    return bool(recent_messages and any(item.text.strip() for item in recent_messages[-3:]))
+
+
+def detect_reply_intent(
+    text: str | None,
+    recent_messages: tuple[PetRecentMessage, ...] | None = None,
+) -> PetReplyIntent:
+    if not text:
+        return "smalltalk"
+    if _MEMORY_CONTROL_PATTERN.search(text):
+        return "memory_control"
+    if _BOUNDARY_PATTERN.search(text):
+        return "boundary"
+    if is_appearance_question(text):
+        return "appearance"
+    if is_status_question(text):
+        return "status"
+    if is_reason_question(text):
+        return "why"
+    if _CONTINUE_THREAD_PATTERN.search(text) and _has_recent_context(recent_messages):
+        return "continue_thread"
+    if is_preference_question(text):
+        return "answer_preference"
+    if is_lore_question(text):
+        return "answer_lore"
+    if _CARE_PATTERN.search(text):
+        return "care"
+    if _PLAYFUL_OFFER_PATTERN.search(text):
+        return "playful_offer"
+    if _CONTINUE_THREAD_PATTERN.search(text):
+        return "continue_thread"
+    return "smalltalk"
