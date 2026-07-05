@@ -3,6 +3,7 @@ import type {
   CanonMemoryFact,
   ConversationThread,
   DevelopmentState,
+  GeneratedFactCandidate,
   LocalChatHistoryV1,
   LocalChatMessage,
   LocalPetAssetSet,
@@ -15,6 +16,7 @@ import type {
   PetMood,
   PromptLayers,
   ReflectionMemory,
+  ReplyMode,
   RejectedMemoryCandidate,
   RelationshipEvent,
   RelationshipMemory,
@@ -27,8 +29,10 @@ export const CHAT_HISTORY_STORAGE_KEY = "tamagochi:v1:chat-history";
 export const SETTINGS_STORAGE_KEY = "tamagochi:v1:settings";
 
 const MAX_CHAT_MESSAGES = 50;
+const MAX_CHAT_MESSAGE_TEXT = 8000;
 const MAX_LORE_MEMORIES = 30;
 const MAX_CANON_FACTS = 60;
+const MAX_GENERATED_FACTS = 50;
 const MAX_RELATIONSHIP_EVENTS = 30;
 const MAX_USER_FACTS = 30;
 const MAX_THREADS = 12;
@@ -42,12 +46,14 @@ const MIN_STAT = 0;
 const MAX_STAT = 100;
 const MOODS: PetMood[] = ["idle", "happy", "hungry", "sad"];
 const STAGES: PetLifeStage[] = ["baby", "teen", "adult"];
+const LITE_FACT_SPHERES = ["character", "appearance", "world", "relationship"] as const;
 
 type PetStats = LocalPetState["stats"];
 
 export type LocalPetSettings = {
   promptLayers: PromptLayers;
   includePromptDebug: boolean;
+  replyMode: ReplyMode;
 };
 
 function storage() {
@@ -61,7 +67,12 @@ function defaultLocalPetSettings(): LocalPetSettings {
   return {
     promptLayers: defaultPromptLayers,
     includePromptDebug: false,
+    replyMode: "full",
   };
+}
+
+function normalizeReplyMode(value: unknown): ReplyMode {
+  return value === "lite" ? "lite" : "full";
 }
 
 function normalizeLocalPetSettings(value: unknown): LocalPetSettings {
@@ -72,6 +83,7 @@ function normalizeLocalPetSettings(value: unknown): LocalPetSettings {
   return {
     promptLayers: normalizePromptLayers(value.promptLayers),
     includePromptDebug: value.includePromptDebug === true,
+    replyMode: normalizeReplyMode(value.replyMode),
   };
 }
 
@@ -213,6 +225,140 @@ export function mergeLoreMemories(
   return normalizeLoreMemories([...(current ?? []), ...(next ?? [])]);
 }
 
+function normalizeLiteFact(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const text = normalizeText(value.text, 8000);
+  if (!text) {
+    return null;
+  }
+  return {
+    ...value,
+    kind: typeof value.kind === "string" && value.kind.trim() ? value.kind.trim() : "lore_fact",
+    text,
+    createdAt: isIsoDate(value.createdAt) ? value.createdAt : new Date().toISOString(),
+  };
+}
+
+function normalizeLiteFacts(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(normalizeLiteFact)
+    .filter((fact): fact is Record<string, unknown> => Boolean(fact));
+}
+
+function liteFactKey(fact: Record<string, unknown>): string {
+  return `${String(fact.sphere ?? "")}:${String(fact.kind ?? "lore_fact")}:${normalizeText(fact.text).toLocaleLowerCase()}`;
+}
+
+function liteFactsFromSpheres(value: unknown): Record<string, unknown>[] {
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  return LITE_FACT_SPHERES.flatMap((sphere) => {
+    const sphereValue = value[sphere];
+    if (!isRecord(sphereValue)) {
+      return [];
+    }
+    return normalizeLiteFacts(sphereValue.facts).map((fact) => ({
+      ...fact,
+      sphere: typeof fact.sphere === "string" && fact.sphere.trim() ? fact.sphere : sphere,
+    }));
+  });
+}
+
+function dedupeLiteFacts(facts: Record<string, unknown>[]): Record<string, unknown>[] {
+  const mergedFacts: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+
+  for (const fact of facts) {
+    const key = liteFactKey(fact);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    mergedFacts.push(fact);
+  }
+
+  return mergedFacts;
+}
+
+function mergeLiteSpheres(
+  currentSpheres: unknown,
+  patchSpheres: unknown,
+  mergedFacts: Record<string, unknown>[],
+): Record<string, unknown> | undefined {
+  const current = isRecord(currentSpheres) ? currentSpheres : {};
+  const patch = isRecord(patchSpheres) ? patchSpheres : {};
+  const result: Record<string, unknown> = {};
+
+  for (const sphere of LITE_FACT_SPHERES) {
+    const currentSphere = isRecord(current[sphere]) ? current[sphere] : {};
+    const patchSphere = isRecord(patch[sphere]) ? patch[sphere] : {};
+    const facts = dedupeLiteFacts([
+      ...normalizeLiteFacts(currentSphere.facts),
+      ...normalizeLiteFacts(patchSphere.facts),
+      ...mergedFacts.filter((fact) => fact.sphere === sphere),
+    ]);
+
+    if (facts.length || Object.keys(currentSphere).length || Object.keys(patchSphere).length) {
+      result[sphere] = {
+        ...currentSphere,
+        ...patchSphere,
+        facts,
+      };
+    }
+  }
+
+  return Object.keys(result).length ? result : undefined;
+}
+
+export function applyLiteOverlayPatch(
+  state: LocalPetState,
+  patch: Record<string, unknown> | undefined,
+): LocalPetState {
+  if (!patch || !state.assetSet?.characterBible) {
+    return state;
+  }
+
+  const characterBible = state.assetSet.characterBible;
+  const currentExtensions = isRecord(characterBible.extensions) ? characterBible.extensions : {};
+  const currentOverlay = isRecord(currentExtensions.lite_overlay)
+    ? currentExtensions.lite_overlay
+    : {};
+  const mergedFacts = dedupeLiteFacts([
+    ...normalizeLiteFacts(currentOverlay.facts),
+    ...liteFactsFromSpheres(currentOverlay.spheres),
+    ...normalizeLiteFacts(patch.facts),
+    ...liteFactsFromSpheres(patch.spheres),
+  ]);
+  const mergedSpheres = mergeLiteSpheres(currentOverlay.spheres, patch.spheres, mergedFacts);
+
+  return {
+    ...state,
+    assetSet: {
+      ...state.assetSet,
+      characterBible: {
+        ...characterBible,
+        extensions: {
+          ...currentExtensions,
+          lite_overlay: {
+            ...currentOverlay,
+            ...patch,
+            facts: mergedFacts,
+            ...(mergedSpheres ? { spheres: mergedSpheres } : {}),
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      },
+    },
+  };
+}
+
 const CANON_FACT_TYPES: CanonMemoryFact["type"][] = [
   "world_fact",
   "home_fact",
@@ -281,6 +427,105 @@ function dedupeCanonFacts(items: CanonMemoryFact[]): CanonMemoryFact[] {
       return bPinned - aPinned || b.importance - a.importance || b.updatedAt.localeCompare(a.updatedAt);
     })
     .slice(0, MAX_CANON_FACTS);
+}
+
+const GENERATED_FACT_SCOPES: GeneratedFactCandidate["scope"][] = [
+  "world",
+  "home",
+  "friend",
+  "family",
+  "origin",
+  "preference",
+  "fear",
+  "habit",
+  "voice",
+  "relationship",
+  "thread",
+];
+
+const GENERATED_FACT_STATUSES: GeneratedFactCandidate["status"][] = [
+  "draft",
+  "accepted_soft",
+  "needs_user_confirmation",
+  "rejected",
+  "canon",
+];
+
+function normalizeGeneratedFact(value: unknown, now: string): GeneratedFactCandidate | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const text = normalizeText(value.text);
+  if (!text) {
+    return null;
+  }
+  const scope =
+    typeof value.scope === "string" &&
+    GENERATED_FACT_SCOPES.includes(value.scope as GeneratedFactCandidate["scope"])
+      ? (value.scope as GeneratedFactCandidate["scope"])
+      : "world";
+  const status =
+    typeof value.status === "string" &&
+    GENERATED_FACT_STATUSES.includes(value.status as GeneratedFactCandidate["status"])
+      ? (value.status as GeneratedFactCandidate["status"])
+      : "draft";
+  return {
+    id: typeof value.id === "string" && value.id ? value.id : createLocalId("genfact"),
+    scope,
+    text,
+    source: value.source === "user" || value.source === "system" ? value.source : "model",
+    sourceSpan: normalizeText(value.sourceSpan, 240) || undefined,
+    confidence: clampUnit(value.confidence, 0.55),
+    importance: clampUnit(value.importance, 0.45),
+    status,
+    promotionPolicy: normalizeText(value.promotionPolicy, 80) || "needs_reinforcement",
+    conflictReasons: Array.isArray(value.conflictReasons)
+      ? value.conflictReasons.map((item) => normalizeText(item, 120)).filter(Boolean).slice(0, 6)
+      : [],
+    reinforcementCount: Math.max(
+      1,
+      Math.round(typeof value.reinforcementCount === "number" ? value.reinforcementCount : 1),
+    ),
+    relatedCanonFactId:
+      typeof value.relatedCanonFactId === "string" ? value.relatedCanonFactId : undefined,
+    createdAt: fallbackDate(value.createdAt, now),
+    updatedAt: fallbackDate(value.updatedAt, now),
+  };
+}
+
+function dedupeGeneratedFacts(items: GeneratedFactCandidate[]): GeneratedFactCandidate[] {
+  const byText = new Map<string, GeneratedFactCandidate>();
+  const statusRank: Record<GeneratedFactCandidate["status"], number> = {
+    rejected: 0,
+    draft: 1,
+    needs_user_confirmation: 2,
+    accepted_soft: 3,
+    canon: 4,
+  };
+  for (const item of items) {
+    const key = `${item.scope}:${normalizedKey(item.text)}`;
+    const existing = byText.get(key);
+    if (!existing) {
+      byText.set(key, item);
+      continue;
+    }
+    const preferred = statusRank[item.status] > statusRank[existing.status] ? item : existing;
+    byText.set(key, {
+      ...preferred,
+      confidence: Math.max(existing.confidence, item.confidence),
+      importance: Math.max(existing.importance, item.importance),
+      reinforcementCount: Math.max(existing.reinforcementCount, item.reinforcementCount),
+      conflictReasons: Array.from(new Set([...existing.conflictReasons, ...item.conflictReasons])).slice(0, 6),
+      updatedAt: existing.updatedAt > item.updatedAt ? existing.updatedAt : item.updatedAt,
+    });
+  }
+  return Array.from(byText.values())
+    .sort((a, b) => {
+      const aAccepted = a.status === "accepted_soft" || a.status === "needs_user_confirmation" ? 1 : 0;
+      const bAccepted = b.status === "accepted_soft" || b.status === "needs_user_confirmation" ? 1 : 0;
+      return bAccepted - aAccepted || b.importance - a.importance || b.updatedAt.localeCompare(a.updatedAt);
+    })
+    .slice(0, MAX_GENERATED_FACTS);
 }
 
 function normalizeUserFact(value: unknown, now: string): UserFact | null {
@@ -575,6 +820,7 @@ export function createEmptyMemoryState(): PetMemoryStateV1 {
   return {
     schemaVersion: 1,
     canon: [],
+    generatedFacts: [],
     relationship: {
       trust: 20,
       attachment: 20,
@@ -608,9 +854,15 @@ export function normalizeMemoryState(
   const canon = Array.isArray(record.canon)
     ? (record.canon.map((item) => normalizeCanonFact(item, now)).filter(Boolean) as CanonMemoryFact[])
     : [];
+  const generatedFacts = Array.isArray(record.generatedFacts)
+    ? (record.generatedFacts
+        .map((item) => normalizeGeneratedFact(item, now))
+        .filter(Boolean) as GeneratedFactCandidate[])
+    : [];
   const memory: PetMemoryStateV1 = {
     schemaVersion: 1,
     canon: dedupeCanonFacts([...canon, ...canonFromLoreMemories(legacyLoreMemories, now)]),
+    generatedFacts: dedupeGeneratedFacts(generatedFacts),
     relationship: normalizeRelationshipMemory(record.relationship, now),
     threads: normalizeThreads(record.threads, now),
     reflections: Array.isArray(record.reflections)
@@ -695,6 +947,10 @@ export function applyMemoryPatch(
   const nextMemory: PetMemoryStateV1 = {
     schemaVersion: 1,
     canon: upsertById(deleteById(memory.canon, patch.canonDeletes), patch.canonUpserts),
+    generatedFacts: upsertById(
+      deleteById(memory.generatedFacts, patch.generatedFactDeletes),
+      patch.generatedFactUpserts,
+    ),
     relationship: applyRelationshipPatch(memory.relationship, patch.relationshipPatch),
     threads: upsertById(deleteById(memory.threads, patch.threadDeletes), patch.threadUpserts),
     reflections: upsertById(
@@ -926,7 +1182,7 @@ function normalizeChatHistory(value: unknown): LocalChatHistoryV1 {
         return {
           id: message.id,
           role: message.role,
-          text: message.text.slice(0, 1500),
+          text: message.text.slice(0, MAX_CHAT_MESSAGE_TEXT),
           createdAt: isIsoDate(message.createdAt) ? message.createdAt : new Date().toISOString(),
         };
       })

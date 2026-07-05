@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   applyOfflineProgress,
+  applyLiteOverlayPatch as applyStoredLiteOverlayPatch,
   applyMemoryPatch,
   calculatePetMood,
   calculatePetStage,
@@ -32,7 +33,9 @@ type UseLocalPetStateResult = {
     moodHint?: PetMood,
     loreMemoriesToSave?: string[],
     memoryPatch?: PetMemoryPatch,
+    liteOverlayPatch?: Record<string, unknown>,
   ) => LocalPetState | null;
+  applyLiteOverlayPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
 };
 
 function saveAndReturn(state: LocalPetState) {
@@ -139,6 +142,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
     moodHint?: PetMood,
     loreMemoriesToSave?: string[],
     memoryPatch?: PetMemoryPatch,
+    liteOverlayPatch?: Record<string, unknown>,
   ) => {
     if (!pet) {
       return null;
@@ -149,7 +153,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
       ...pet.stats,
       happiness: Math.min(100, pet.stats.happiness + 5),
     };
-    const nextPet = saveAndReturn({
+    const nextState = {
       ...pet,
       updatedAt: now.toISOString(),
       lastInteractionAt: now.toISOString(),
@@ -158,10 +162,28 @@ export function useLocalPetState(): UseLocalPetStateResult {
       stats,
       memory: applyMemoryPatch(pet.memory, memoryPatch),
       loreMemories: mergeLoreMemories(pet.loreMemories, loreMemoriesToSave),
-    });
+    };
+    const nextPet = saveAndReturn(
+      liteOverlayPatch ? applyStoredLiteOverlayPatch(nextState, liteOverlayPatch) : nextState,
+    );
     setPet(nextPet);
     return nextPet;
   }, [pet]);
+
+  const applyLiteOverlayPatch = useCallback((patch?: Record<string, unknown>) => {
+    if (!patch) {
+      return null;
+    }
+
+    const currentPet = readLocalPetState();
+    if (!currentPet) {
+      return null;
+    }
+
+    const nextPet = saveAndReturn(applyStoredLiteOverlayPatch(currentPet, patch));
+    setPet(nextPet);
+    return nextPet;
+  }, []);
 
   return {
     pet,
@@ -173,5 +195,6 @@ export function useLocalPetState(): UseLocalPetStateResult {
     reset,
     applyGeneratedAssets,
     applyMoodHint,
+    applyLiteOverlayPatch,
   };
 }

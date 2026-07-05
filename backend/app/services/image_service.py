@@ -7,6 +7,7 @@ import re
 import uuid
 from collections import deque
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -27,10 +28,15 @@ from app.db import SessionLocal
 from app.models import Pet
 from app.prompts.pet_image_prompts import (
     build_character_bible_prompt,
-    build_pet_sprite_sheet_prompt,
+    build_pet_single_sprite_prompt,
     create_lore_seed,
 )
 from app.prompts.style_direction import CHARACTER_BIBLE_STYLE_DIRECTION
+from app.prompts.world_description_anchors import (
+    WorldDescriptionAnchor,
+    format_world_description_anchors_for_prompt,
+    select_world_description_anchors,
+)
 from app.services.birth_message_service import ensure_birth_message
 from app.services.character_cards import upgrade_character_bible_v2
 from app.services.character_templates import create_character_bible_from_template
@@ -40,6 +46,7 @@ from app.services.external_character_sources import (
     select_external_character_fragments,
 )
 from app.services.game_service import calculate_stage
+from app.services.lite_initial_overlay import attach_lite_initial_overlay
 from app.services.openai_service import MissingOpenAIAPIKey, get_openai_client
 from app.services.pet_service import upsert_pet_image
 
@@ -657,7 +664,9 @@ def _collect_character_bible_text(value: Any) -> str:
             for child in item:
                 collect(child)
         elif isinstance(item, dict):
-            for child in item.values():
+            for key, child in item.items():
+                if key in ("external_source_fragments_used", "world_description_anchors_used"):
+                    continue
                 collect(child)
 
     collect(value)
@@ -714,6 +723,7 @@ def _repair_character_bible_prompt(
     issues: tuple[str, ...],
     lore_seed: dict[str, str] | None = None,
     external_source_fragments: str | None = None,
+    world_description_anchors: str | None = None,
 ) -> str:
     lore_seed_text = (
         "\nLORE_VARIATION_SEED_USED:\n" + json.dumps(lore_seed, ensure_ascii=False, indent=2)
@@ -730,8 +740,17 @@ USER_CHARACTER_DESCRIPTION:
 EXTERNAL_SOURCE_FRAGMENT_MIX_USED:
 {external_source_fragments or "нет локального внешнего корпуса"}
 
+WORLD_DESCRIPTION_ANCHORS_USED:
+{world_description_anchors or "нет"}
+
 CHARACTER_BIBLE_STYLE_DIRECTION:
 {CHARACTER_BIBLE_STYLE_DIRECTION}
+
+CREATURE_DESCRIPTION_STYLE_GUIDE:
+Use the same clean creature-description logic as the original prompt: physical anchor,
+mechanism, behavior trigger, habitat, want/conflict, and voice. External fragments are weak
+dialogue-rhythm references only; they must not preserve random settings, jobs, props, object
+societies, or backstory.
 
 QUALITY_ISSUES:
 {", ".join(issues)}
@@ -743,18 +762,27 @@ Repair rules:
 - Preserve Character Profile V2 fields: identity, voice, inner_state, world, dialogue_moves,
   openings, provenance, extensions, and schema_version=2.
 - Keep 8-12 voice.sample_replies, 5-8 lorebook entries, and 3-5 dialogue_moves.
-- Preserve visible influence of EXTERNAL_SOURCE_FRAGMENT_MIX_USED: keep concrete odd places,
-  objects, contradictions, dislikes, habits, and reply rhythm. Do not replace them with lessons,
-  norms, generic kindness, or preferences about how the user should speak.
+- Do not preserve random concrete settings from EXTERNAL_SOURCE_FRAGMENT_MIX_USED. Keep only useful
+  reply rhythm if it fits the current creature.
+- Preserve the transformed habitat logic from WORLD_DESCRIPTION_ANCHORS_USED when repairing
+  world, home, origin, routines, objects, sensory details, and story seeds. Do not copy anchor
+  text verbatim.
 - Remove fake-life phrases like "короткие просьбы", "добрые слова", "урок", "норма",
   "важно быть", or "быть собой". Replace them with concrete pet-owned objects, places,
-  habits, dislikes, and contradictions from the external fragments.
+  habits, dislikes, and contradictions from the creature's body, element, habitat, and needs.
 - If the pet is not plant/garden/window/shelf-based, remove greenhouse, shelf, moss, dew,
   warm-lamp, seed, and tiny-garden defaults from lore.
-- Replace generic cozy-corner lore with a concrete setting that follows the pet's own premise.
+- Replace generic cozy-corner lore with a compact habitat that follows the pet's own premise.
+- Remove random bureaus, boxes, labels, maps, travel cases, schools, guilds, workshops, relatives,
+  neighbors, jobs, and object societies unless the user description explicitly asks for them.
 - Fix physical nonsense. Steam can hiss, warm, curl, fog, or tickle; steam itself is not loud.
   If something makes sound, name the valve, kettle, vent, bell, shell, gear, or creature doing it.
 - Keep world, home, origin, relationships, and inner_life connected by clear cause and effect.
+- If one ability, field, glow, charge, flame, frost, shell, or body mechanism appears in too many
+  fields, keep it as the core mechanism but replace repeated mentions with routines, sensory
+  details, small wants, comfort actions, relationship behavior, flaws, or open story seeds.
+- Ensure voice.sample_replies do not all mention the same ability; most should express character
+  through emotion, relationship, observation, opinion, rhythm, or a tiny compatible invention.
 
 CURRENT_CHARACTER_BIBLE:
 {json.dumps(character_bible, ensure_ascii=False, indent=2)}
@@ -977,6 +1005,19 @@ def _attach_external_source_trace(
     return {**character_bible, "extensions": extensions}
 
 
+def _attach_world_anchor_trace(
+    character_bible: dict[str, Any],
+    anchors: tuple[WorldDescriptionAnchor, ...],
+) -> dict[str, Any]:
+    extensions = character_bible.get("extensions")
+    if not isinstance(extensions, dict):
+        extensions = {}
+    extensions["world_description_anchors_used"] = [
+        anchor.debug_dict() for anchor in anchors[:8]
+    ]
+    return {**character_bible, "extensions": extensions}
+
+
 def create_character_bible(
     user_description: str,
     lore_seed: dict[str, str] | None = None,
@@ -989,6 +1030,8 @@ def create_character_bible(
         count=12,
     )
     external_fragment_block = external_fragments_prompt_block(external_fragments)
+    world_anchors = select_world_description_anchors(user_description, count=5)
+    world_anchor_block = format_world_description_anchors_for_prompt(world_anchors)
     system_message = {
         "role": "system",
         "content": (
@@ -1008,6 +1051,7 @@ def create_character_bible(
                     user_description,
                     lore_seed=effective_lore_seed,
                     external_source_fragments=external_fragment_block,
+                    world_description_anchors=world_anchor_block,
                 ),
             },
         ],
@@ -1017,9 +1061,15 @@ def create_character_bible(
         raw_description=user_description,
     )
     character_bible = _attach_external_source_trace(character_bible, external_fragments)
+    character_bible = _attach_world_anchor_trace(character_bible, world_anchors)
     issues = character_bible_quality_issues(user_description, character_bible)
     if not issues:
-        return character_bible
+        return attach_lite_initial_overlay(
+            character_bible,
+            user_description,
+            client=client,
+            settings=settings,
+        )
 
     logger.info("Repairing character bible for quality issues: %s", issues)
     repaired = _character_bible_completion(
@@ -1035,12 +1085,20 @@ def create_character_bible(
                     issues,
                     effective_lore_seed,
                     external_fragment_block,
+                    world_anchor_block,
                 ),
             },
         ],
     )
     repaired = upgrade_character_bible_v2(repaired, raw_description=user_description)
-    return _attach_external_source_trace(repaired, external_fragments)
+    repaired = _attach_external_source_trace(repaired, external_fragments)
+    repaired = _attach_world_anchor_trace(repaired, world_anchors)
+    return attach_lite_initial_overlay(
+        repaired,
+        user_description,
+        client=client,
+        settings=settings,
+    )
 
 
 def build_image_generate_kwargs(settings: Any, prompt: str) -> dict[str, Any]:
@@ -1055,7 +1113,7 @@ def build_image_generate_kwargs(settings: Any, prompt: str) -> dict[str, Any]:
     }
 
 
-def generate_sprite_sheet_bytes(prompt: str) -> bytes:
+def generate_image_bytes(prompt: str) -> bytes:
     settings = get_settings()
     client = get_openai_client()
     kwargs = build_image_generate_kwargs(settings, prompt)
@@ -1074,8 +1132,65 @@ def generate_sprite_sheet_bytes(prompt: str) -> bytes:
     raise RuntimeError("IMAGE_RESPONSE_EMPTY")
 
 
+def generate_sprite_sheet_bytes(prompt: str) -> bytes:
+    return generate_image_bytes(prompt)
+
+
 def generated_dir_for(pet_id: uuid.UUID) -> Path:
     return Path(__file__).resolve().parents[2] / "static" / "generated" / str(pet_id)
+
+
+def normalize_single_sprite_image(image_bytes: bytes) -> bytes:
+    with Image.open(BytesIO(image_bytes)) as image:
+        normalized = image.convert("RGBA")
+        output_side = min(normalized.width, normalized.height)
+        background_pixel = background_pixel_for(normalized)
+        content_bbox = foreground_component_bbox(
+            normalized,
+            (0, 0, normalized.width, normalized.height),
+        )
+        if content_bbox is None:
+            output = normalized
+        else:
+            output = normalize_sprite_cell(
+                normalized,
+                content_bbox,
+                (output_side, output_side),
+                background_pixel,
+            )
+
+        buffer = BytesIO()
+        output.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
+def generate_single_sprite_image_bytes(prompt: str) -> bytes:
+    return normalize_single_sprite_image(generate_image_bytes(prompt))
+
+
+def generate_individual_sprite_paths(
+    asset_id: uuid.UUID,
+    description: str,
+    character_bible: dict[str, Any],
+) -> dict[tuple[str, str], tuple[Path, str]]:
+    output_dir = generated_dir_for(asset_id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_paths: dict[tuple[str, str], tuple[Path, str]] = {}
+
+    for stage in STAGE_ROWS:
+        for state in STATE_COLUMNS:
+            prompt = build_pet_single_sprite_prompt(
+                description,
+                character_bible,
+                stage=stage,
+                state=state,
+            )
+            image_bytes = generate_single_sprite_image_bytes(prompt)
+            path = output_dir / f"{stage}-{state}.png"
+            path.write_bytes(image_bytes)
+            output_paths[(stage, state)] = (path, prompt)
+
+    return output_paths
 
 
 def crop_sprite_sheet(pet_id: uuid.UUID, sprite_path: Path) -> dict[tuple[str, str], Path]:
@@ -1138,16 +1253,13 @@ def generate_pet_assets(pet_id: uuid.UUID) -> None:
             db.add(pet)
             db.commit()
 
-            sprite_prompt = build_pet_sprite_sheet_prompt(pet.original_description, character_bible)
-            image_bytes = generate_sprite_sheet_bytes(sprite_prompt)
+            generated_paths = generate_individual_sprite_paths(
+                pet.id,
+                pet.original_description,
+                character_bible,
+            )
 
-            output_dir = generated_dir_for(pet.id)
-            output_dir.mkdir(parents=True, exist_ok=True)
-            sprite_path = output_dir / "sprite-sheet.png"
-            sprite_path.write_bytes(image_bytes)
-            cropped_paths = crop_sprite_sheet(pet.id, sprite_path)
-
-            for (stage, state), path in cropped_paths.items():
+            for (stage, state), (path, prompt) in generated_paths.items():
                 version = int(path.stat().st_mtime)
                 upsert_pet_image(
                     db,
@@ -1155,7 +1267,7 @@ def generate_pet_assets(pet_id: uuid.UUID) -> None:
                     stage=stage,
                     state=state,
                     image_url=f"/static/generated/{pet.id}/{path.name}?v={version}",
-                    generation_prompt=sprite_prompt,
+                    generation_prompt=prompt,
                 )
 
             pet.status = "ready"
@@ -1183,26 +1295,24 @@ def generate_pet_asset_set(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     character_bible = (
-        create_character_bible_from_template(description)
+        attach_lite_initial_overlay(
+            create_character_bible_from_template(description),
+            description,
+        )
         if use_template_presets
         else create_character_bible(description)
     )
-    sprite_prompt = build_pet_sprite_sheet_prompt(description, character_bible)
-    image_bytes = generate_sprite_sheet_bytes(sprite_prompt)
-
-    sprite_path = output_dir / "sprite-sheet.png"
-    sprite_path.write_bytes(image_bytes)
-    cropped_paths = crop_sprite_sheet(asset_set_id, sprite_path)
+    generated_paths = generate_individual_sprite_paths(asset_set_id, description, character_bible)
     version = int(datetime.now(UTC).timestamp())
 
     images: dict[str, dict[str, str]] = {stage: {} for stage in STAGE_ROWS}
-    for (stage, state), path in cropped_paths.items():
+    for (stage, state), (path, _prompt) in generated_paths.items():
         images[stage][state] = f"/static/generated/{asset_set_id}/{path.name}?v={version}"
 
     return {
         "assetSetId": str(asset_set_id),
         "generatedAt": datetime.now(UTC),
         "images": images,
-        "spriteSheetUrl": f"/static/generated/{asset_set_id}/sprite-sheet.png?v={version}",
+        "spriteSheetUrl": None,
         "characterBible": character_bible,
     }

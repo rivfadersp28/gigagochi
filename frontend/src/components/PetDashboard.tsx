@@ -17,6 +17,7 @@ import type {
   PetLifeStage,
   PetMood,
   PromptLayers,
+  ReplyMode,
 } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 
@@ -480,7 +481,7 @@ function PetCharacterMessage({
 
   return (
     <div
-      className="w-full max-w-[405px] text-center text-[17px] font-normal leading-[21px] text-black"
+      className="w-full text-left text-[17px] font-normal leading-[21px] text-black sm:text-right"
       style={petMessageStackStyle}
       aria-live="polite"
     >
@@ -1129,6 +1130,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const pet = localPet.pet;
   const promptLayers = promptSettings.promptLayers;
   const includePromptDebug = promptSettings.includePromptDebug;
+  const replyMode = promptSettings.replyMode;
 
   useEffect(() => {
     if (localPet.status === "loading") {
@@ -1159,6 +1161,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     const nextSettings = {
       promptLayers: nextLayers,
       includePromptDebug,
+      replyMode,
     };
     setPromptSettings(nextSettings);
     writeLocalPetSettings(nextSettings);
@@ -1168,6 +1171,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     const nextSettings = {
       promptLayers,
       includePromptDebug: enabled,
+      replyMode,
+    };
+    setPromptSettings(nextSettings);
+    writeLocalPetSettings(nextSettings);
+  }
+
+  function handleReplyModeChange(nextMode: ReplyMode) {
+    const nextSettings = {
+      promptLayers,
+      includePromptDebug,
+      replyMode: nextMode,
     };
     setPromptSettings(nextSettings);
     writeLocalPetSettings(nextSettings);
@@ -1180,7 +1194,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       playSpeechAudio: true,
     }));
 
-    localPet.applyMoodHint(response.moodHint, response.loreMemoriesToSave, response.memoryPatch);
+    localPet.applyMoodHint(
+      response.moodHint,
+      response.loreMemoriesToSave,
+      response.memoryPatch,
+      response.debug?.liteOverlayPatch,
+    );
     hapticImpact("light");
   }
 
@@ -1316,23 +1335,50 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           </div>
         </div>
 
+        {petReplyMessage ? (
+          <div className="pointer-events-none absolute right-5 top-[max(76px,calc(var(--tma-safe-top)+70px))] z-30 w-[min(680px,calc(100vw-40px))] sm:right-8 sm:top-[max(82px,calc(var(--tma-safe-top)+78px))]">
+            <PetCharacterMessage
+              message={petReplyMessage}
+              textTranslateY={animationSettings.textTranslateY}
+              speechEndTrimMs={animationSettings.speechEndTrimMs}
+            />
+          </div>
+        ) : null}
+
         <div className="absolute bottom-[max(26px,calc(var(--tma-safe-bottom)+16px))] left-1/2 z-10 flex w-[min(405px,calc(100vw-40px))] -translate-x-1/2 flex-col items-center gap-[30px] sm:gap-[38px]">
-          <div className="flex w-full flex-col items-center gap-[clamp(62px,11vh,108px)]">
-            {petReplyMessage ? (
-              <PetCharacterMessage
-                message={petReplyMessage}
-                textTranslateY={animationSettings.textTranslateY}
-                speechEndTrimMs={animationSettings.speechEndTrimMs}
-              />
-            ) : (
-              <div className="w-full max-w-[405px]" style={petMessageStackStyle} aria-hidden="true" />
-            )}
+          <div className="flex w-full max-w-[405px] flex-col items-end gap-2">
             <PetQuickChat
               pet={previewPet}
               promptLayers={promptLayers}
               includePromptDebug={includePromptDebug}
+              replyMode={replyMode}
               onChatResponse={handleChatResponse}
+              onLiteOverlayPatch={localPet.applyLiteOverlayPatch}
             />
+            <label className="flex h-[28px] items-center gap-2 rounded-full bg-white px-3 text-[12px] font-medium leading-none text-black/60 drop-shadow-[0_4px_14px_rgba(0,0,0,0.08)]">
+              <span>Lite</span>
+              <input
+                type="checkbox"
+                checked={replyMode === "lite"}
+                onChange={(event) =>
+                  handleReplyModeChange(event.currentTarget.checked ? "lite" : "full")
+                }
+                className="sr-only"
+                aria-label="Lite режим"
+              />
+              <span
+                aria-hidden="true"
+                className={`relative h-[16px] w-[28px] rounded-full transition-colors ${
+                  replyMode === "lite" ? "bg-black/75" : "bg-black/10"
+                }`}
+              >
+                <span
+                  className={`absolute left-[2px] top-[2px] size-[12px] rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.18)] transition-transform ${
+                    replyMode === "lite" ? "translate-x-[12px]" : ""
+                  }`}
+                />
+              </span>
+            </label>
           </div>
 
           <div className="flex items-center gap-[20px] sm:gap-[28px]">

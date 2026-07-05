@@ -8,6 +8,10 @@ import pytest
 from PIL import Image, ImageDraw
 
 from app.prompts.pet_image_prompts import build_character_bible_prompt, create_lore_seed
+from app.prompts.world_description_anchors import (
+    format_world_description_anchors_for_prompt,
+    select_world_description_anchors,
+)
 from app.services.external_character_sources import (
     external_fragments_prompt_block,
     select_external_character_fragments,
@@ -148,15 +152,22 @@ def test_generate_sprite_sheet_omits_unset_background(monkeypatch) -> None:
 
 
 def test_create_character_bible_uses_character_timeout(monkeypatch) -> None:
-    captured: dict[str, object] = {}
+    calls: list[dict[str, object]] = []
 
     class FakeCompletions:
         def create(self, **kwargs):
-            captured.update(kwargs)
+            calls.append(kwargs)
+            last_message = kwargs["messages"][-1]["content"]
+            if "характере" in last_message:
+                content = "Я упрямый, теплый и люблю говорить коротко."
+            elif "мире" in last_message:
+                content = "Мой мир держится на горячих камнях и узких горных тропах."
+            else:
+                content = json.dumps({"species": "дракончик"})
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(
-                        message=SimpleNamespace(content=json.dumps({"species": "дракончик"}))
+                        message=SimpleNamespace(content=content)
                     )
                 ]
             )
@@ -182,25 +193,46 @@ def test_create_character_bible_uses_character_timeout(monkeypatch) -> None:
 
     assert result["schema_version"] == 2
     assert result["species"] == "дракончик"
-    assert captured["timeout"] == 180
+    assert result["extensions"]["world_description_anchors_used"]
+    assert result["extensions"]["lite_overlay"]["spheres"]["character"]["facts"][0]["text"]
+    assert result["extensions"]["lite_overlay"]["spheres"]["world"]["facts"][0]["text"]
+    assert all(call["timeout"] == 180 for call in calls)
+    assert "WORLD_DESCRIPTION_ANCHORS" in calls[0]["messages"][1]["content"]
+
+
+def test_world_description_anchors_select_habitat_from_description() -> None:
+    anchors = select_world_description_anchors("маленький огненный дракон с угольками", count=3)
+
+    assert anchors
+    assert anchors[0].habitat == "volcanic"
+    assert anchors[0].id.startswith("world:volcanic:")
+    assert anchors[0].source_text
+
+
+def test_character_bible_prompt_uses_world_description_anchors() -> None:
+    anchors = select_world_description_anchors("водяной зверек с ракушкой", count=2)
+    block = format_world_description_anchors_for_prompt(anchors)
+    prompt = build_character_bible_prompt(
+        "водяной зверек с ракушкой",
+        lore_seed=create_lore_seed(),
+        world_description_anchors=block,
+    )
+
+    assert "WORLD_DESCRIPTION_ANCHORS" in prompt
+    assert "source_text_do_not_copy" in prompt
+    assert "Do not copy source_text_do_not_copy" in prompt
+    assert "world:waters-edge:" in prompt
 
 
 def test_generate_pet_asset_set_can_use_template_presets(monkeypatch, tmp_path) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_crop_sprite_sheet(asset_id, _sprite_path):
-        return {
-            (stage, state): tmp_path / f"{stage}-{state}.png"
-            for stage in ("baby", "teen", "adult")
-            for state in ("idle", "happy", "hungry", "sad")
-        }
+    captured: dict[str, object] = {"prompt_calls": []}
 
     def fail_old_character_bible(_description):
         pytest.fail("create_character_bible should not run in template preset mode")
 
-    def fake_build_sprite_prompt(description, character_bible):
-        captured["prompt_args"] = (description, character_bible)
-        return "sprite prompt"
+    def fake_build_single_sprite_prompt(description, character_bible, *, stage, state):
+        captured["prompt_calls"].append((description, character_bible, stage, state))
+        return f"sprite prompt {stage} {state}"
 
     monkeypatch.setattr(
         "app.services.image_service.generated_dir_for",
@@ -215,14 +247,21 @@ def test_generate_pet_asset_set_can_use_template_presets(monkeypatch, tmp_path) 
         lambda description: {"schema_version": 2, "species": "дракон"},
     )
     monkeypatch.setattr(
-        "app.services.image_service.build_pet_sprite_sheet_prompt",
-        fake_build_sprite_prompt,
+        "app.services.image_service.attach_lite_initial_overlay",
+        lambda character_bible, description: character_bible,
     )
     monkeypatch.setattr(
-        "app.services.image_service.generate_sprite_sheet_bytes",
+        "app.services.image_service.build_pet_single_sprite_prompt",
+        fake_build_single_sprite_prompt,
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.generate_single_sprite_image_bytes",
         lambda _prompt: b"png",
     )
-    monkeypatch.setattr("app.services.image_service.crop_sprite_sheet", fake_crop_sprite_sheet)
+    monkeypatch.setattr(
+        "app.services.image_service.crop_sprite_sheet",
+        lambda *_args: pytest.fail("sprite sheet crop should not run"),
+    )
 
     result = generate_pet_asset_set(
         "я хочу сделать дракона",
@@ -230,9 +269,13 @@ def test_generate_pet_asset_set_can_use_template_presets(monkeypatch, tmp_path) 
     )
 
     assert result["characterBible"]["species"] == "дракон"
-    assert captured["prompt_args"] == (
+    assert result["spriteSheetUrl"] is None
+    assert len(captured["prompt_calls"]) == 12
+    assert captured["prompt_calls"][0] == (
         "я хочу сделать дракона",
         {"schema_version": 2, "species": "дракон"},
+        "baby",
+        "idle",
     )
     for stage in ("baby", "teen", "adult"):
         assert set(result["images"][stage]) == {"idle", "happy", "hungry", "sad"}
@@ -348,26 +391,29 @@ def test_character_bible_prompt_requests_species_specific_lore() -> None:
         external_source_fragments="- test_source [external; seed_reply; en]: concrete line",
     )
 
-    assert "scaffold-first character bible" in prompt
+    assert "clean original creature bible" in prompt
     assert "CHARACTER_BIBLE_STYLE_DIRECTION" in prompt
-    assert "adult author" in prompt
-    assert "World mood:" in prompt
-    assert "fantasy micro-worlds" in prompt
+    assert "CREATURE_DESCRIPTION_STYLE_GUIDE" in prompt
+    assert "species entry" in prompt
+    assert "physical anchor" in prompt
+    assert "mechanism" in prompt
+    assert "behavior trigger" in prompt
+    assert "habitat" in prompt
     assert "EXTERNAL_SOURCE_FRAGMENT_MIX" in prompt
     assert "test_source" in prompt
-    assert "Use EXTERNAL_SOURCE_FRAGMENT_MIX as raw test corpus material" in prompt
-    assert "own embodied world" in prompt
+    assert "weak dialogue-rhythm references" in prompt
+    assert "must not supply the pet's" in prompt
     assert "must never describe itself as digital" in prompt
-    assert "Prefer reference-driven concrete lore" in prompt
+    assert "Do not invent a random social world" in prompt
     assert "identity.role must be a lived role" in prompt
     assert "digital companion" not in prompt
-    assert "visibly blend at least 4 different source fragments" in prompt
+    assert "visibly blend at least 4 different source fragments" not in prompt
     assert "Write every user-facing string value in Russian" in prompt
     assert "мягкий дракончик-компаньон" in prompt
     assert "Keep visual support fields compact" in prompt
-    assert "signature and personality the center" in prompt
+    assert "signature must be 2-3 compact sentences" in prompt
     assert "personality must be 2-4 connected sentences" in prompt
-    assert "high-quality character card" in prompt
+    assert "high-quality character card" not in prompt
     assert "dialogue_style must be a compact behavior simulator" in prompt
     assert "voice.sample_replies must contain 8-12 short Russian replies" in prompt
     assert "dialogue_style.sample_replies may mirror the best 4-6" in prompt
@@ -377,36 +423,33 @@ def test_character_bible_prompt_requests_species_specific_lore() -> None:
     assert "Forbidden generic reply patterns" in prompt
     assert "короткие просьбы" in prompt
     assert "dragon-like" in prompt
-    assert (
-        "world, home, origin, relationships, and inner_life feel like one connected background"
-        in prompt
-    )
+    assert "world.home must be habitat" in prompt
     assert "Initial lore is a foundation for future improvisation" in prompt
     assert "Do not write event-log lore" in prompt
     assert "story_seeds must contain 4-6 open hooks" in prompt
-    assert "Do not default to the same" in prompt
-    assert "avoid greenhouse, shelf, moss, dew, warm lamp" in prompt
-    assert "storybook logic" in prompt
-    assert "steam itself is not loud" in prompt
-    assert "Do not make objects perform human-like actions" in prompt
-    assert 'BAD world rule: "Лист показывает правду настроения."' in prompt
-    assert 'BAD physical logic: "Я выпускаю мягкий пар' in prompt
-    assert "клапан на спине тихо шипит" in prompt
+    assert "Do not default to the same" not in prompt
+    assert "storybook logic" not in prompt
+    assert "Every cause must make literal or storybook sense" in prompt
+    assert "Do not make objects perform human-like actions" not in prompt
+    assert 'BAD world rule: "Лед помогает мне быть полезным' in prompt
+    assert 'BAD physical logic: "Я выпускаю мягкий пар' not in prompt
+    assert "слишком холодным" in prompt
     assert "because test" in prompt
     assert "короткие просьбы" in prompt
-    assert 'BAD likes: ["теплый утренний туман", "синие лейки", "короткие просьбы"]' in prompt
+    assert 'BAD likes: ["короткие просьбы", "добрые слова", "быть нужным"]' in prompt
     assert "story_seeds" in prompt
-    assert "larger concrete setting" in prompt
+    assert "larger concrete setting" not in prompt
     assert "GOOD world story" in prompt
-    assert "бюро забытых вещей" in prompt
+    assert "снежной нише" in prompt
+    assert "бюро забытых вещей" not in prompt
 
 
 def test_character_bible_prompt_accepts_private_lore_seed() -> None:
     lore_seed = {
-        "setting_tone": "ящик путешественника с вещами из разных мест",
-        "social_shape": "есть один потенциальный друг и строгий наставник",
-        "background_tension": "питомец хочет доказать самостоятельность",
-        "future_reveal": "позже можно раскрыть прозвище друга",
+        "body_mechanism": "заметная часть тела хранит энергию и меняется от состояния",
+        "behavior_trigger": "при радости признак становится ярче или активнее",
+        "habitat_pressure": "домом служит простое место, где удобно поддерживать главный элемент",
+        "growth_clue": "каждая стадия добавляет одну простую способность",
     }
 
     prompt = build_character_bible_prompt(
@@ -416,8 +459,8 @@ def test_character_bible_prompt_accepts_private_lore_seed() -> None:
     plain_prompt = build_character_bible_prompt("сонное облако с маленьким ключом")
 
     assert "LORE_VARIATION_SEED" in prompt
-    assert "ящик путешественника" in prompt
-    assert "shape the setting, social roles, background tension" in prompt
+    assert "body_mechanism" in prompt
+    assert "behavior triggers, habitat pressure, and growth clues" in prompt
     assert "LORE_VARIATION_SEED" not in plain_prompt
 
 
@@ -429,12 +472,12 @@ def test_create_lore_seed_uses_curated_dimensions() -> None:
     seed = create_lore_seed(FirstChoice())
 
     assert set(seed) == {
-        "setting_tone",
-        "social_shape",
-        "background_tension",
-        "future_reveal",
+        "body_mechanism",
+        "behavior_trigger",
+        "habitat_pressure",
+        "growth_clue",
     }
-    assert seed["setting_tone"] == "маленькое ремесленное место"
+    assert seed["body_mechanism"] == "заметная часть тела хранит энергию и меняется от состояния"
 
 
 def test_external_source_fragments_are_available_for_character_generation() -> None:
@@ -523,21 +566,25 @@ def test_create_character_bible_repairs_quality_issues_once(monkeypatch) -> None
     result = create_character_bible(
         "маленький паровой дракончик",
         lore_seed={
-            "setting_tone": "ночная пекарня с дежурными полками",
-            "social_shape": "есть один потенциальный друг и строгий наставник",
-            "background_tension": "питомец хочет быть полезным, но боится ошибиться",
-            "future_reveal": "позже можно раскрыть местную традицию",
+            "body_mechanism": "заметная часть тела хранит энергию и меняется от состояния",
+            "behavior_trigger": "при усталости элемент тускнеет, остывает или затихает",
+            "habitat_pressure": (
+                "домом служит простое место, где удобно поддерживать главный элемент"
+            ),
+            "growth_clue": "каждая стадия добавляет одну простую способность",
         },
     )
 
     assert result["schema_version"] == 2
     assert result["species"] == repaired_bible["species"]
     assert result["lore"]["world"]["story"] == repaired_bible["lore"]["world"]["story"]
+    assert result["extensions"]["lite_overlay"]["spheres"]["character"]["facts"]
+    assert result["extensions"]["lite_overlay"]["spheres"]["world"]["facts"]
     assert "identity" in result
     assert "dialogue_moves" in result
-    assert len(calls) == 2
+    assert len(calls) == 4
     assert "LORE_VARIATION_SEED" in calls[0][1]["content"]
-    assert "ночная пекарня" in calls[0][1]["content"]
+    assert "body_mechanism" in calls[0][1]["content"]
     assert "Repair this character bible" in calls[1][1]["content"]
     assert "CHARACTER_BIBLE_STYLE_DIRECTION" in calls[1][1]["content"]
     assert "LORE_VARIATION_SEED_USED" in calls[1][1]["content"]

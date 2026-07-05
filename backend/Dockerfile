@@ -7,6 +7,7 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 COPY app ./app
+COPY data ./data
 COPY alembic.ini ./
 COPY alembic ./alembic
 

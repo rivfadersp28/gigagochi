@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiError, sendLocalChatMessage } from "@/lib/api";
+import { ApiError, extractLocalLiteFacts, sendLocalChatMessage } from "@/lib/api";
 import {
   appendLocalChatMessages,
   createLocalId,
@@ -13,6 +13,7 @@ import {
   readLocalChatHistory,
   readLocalPetSettings,
 } from "@/lib/localPetStorage";
+import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
 import type { LocalChatMessage } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
@@ -87,15 +88,34 @@ export function ChatView({ petId }: ChatViewProps) {
       const response = await sendLocalChatMessage(message, pet, historyBeforeMessage, {
         promptLayers: settings.promptLayers,
         includeDebug: settings.includePromptDebug,
+        replyMode: settings.replyMode,
       });
+      logBrowserPromptDebug("chat reply", response);
       const assistantMessage: LocalChatMessage = {
         id: createLocalId("message"),
         role: "pet",
-        text: response.reply.slice(0, 1500),
+        text: response.reply,
         createdAt: new Date().toISOString(),
       };
       setMessages(appendLocalChatMessages([assistantMessage]).messages);
-      localPet.applyMoodHint(response.moodHint, response.loreMemoriesToSave, response.memoryPatch);
+      localPet.applyMoodHint(
+        response.moodHint,
+        response.loreMemoriesToSave,
+        response.memoryPatch,
+        response.debug?.liteOverlayPatch,
+      );
+      if (settings.replyMode === "lite") {
+        void extractLocalLiteFacts(message, response.reply, pet, historyBeforeMessage, {
+          includeDebug: settings.includePromptDebug,
+        })
+          .then((extraction) => {
+            logBrowserPromptDebug("lite fact extraction", extraction);
+            if (extraction.liteOverlayPatch) {
+              localPet.applyLiteOverlayPatch(extraction.liteOverlayPatch);
+            }
+          })
+          .catch(() => undefined);
+      }
     } catch (caught) {
       if (caught instanceof ApiError) {
         setError(caught.message);

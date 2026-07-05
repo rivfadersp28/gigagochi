@@ -10,39 +10,34 @@ from app.prompts.style_direction import CHARACTER_BIBLE_STYLE_DIRECTION, VISUAL_
 PROMPT_MAX_LENGTH = 300
 
 LORE_SEED_OPTIONS: dict[str, tuple[str, ...]] = {
-    "setting_tone": (
-        "маленькое ремесленное место",
-        "бюро находок под шумной лестницей",
-        "тихая станция на краю маршрута",
-        "кладовая с подписанными ящиками",
-        "подземная школа для маленьких существ",
-        "крыша с погодными постами",
-        "ночная пекарня с дежурными полками",
-        "ящик путешественника с вещами из разных мест",
-        "тихий причал с маленькими делами",
-        "кристальная комната для ремонта трещинок",
+    "body_mechanism": (
+        "заметная часть тела хранит энергию и меняется от состояния",
+        "защитная оболочка влияет на движение и поведение",
+        "хвост, рога, крылья или плавник показывают настроение",
+        "поверхность тела реагирует на погоду, свет или прикосновение",
+        "маленький орган чувств помогает заранее замечать опасность",
+        "внутренний запас элемента расходуется и восстанавливается",
     ),
-    "social_shape": (
-        "есть один потенциальный друг и строгий наставник",
-        "вокруг шумные соседи, которые помогают и мешают",
-        "есть старший родственник и младший приятель",
-        "рядом соперник и заботливый хранитель",
-        "питомец входит в маленькую команду помощников",
+    "behavior_trigger": (
+        "при радости признак становится ярче или активнее",
+        "при страхе creature прячется, сжимается или выпускает защитный эффект",
+        "при усталости элемент тускнеет, остывает или затихает",
+        "при голоде creature ищет конкретный природный источник энергии",
+        "в дождь, жару, холод или темноту способность проявляется иначе",
     ),
-    "background_tension": (
-        "питомец хочет быть полезным, но боится ошибиться",
-        "питомец хочет доказать самостоятельность",
-        "питомец прячет редкий звук, знак или предмет",
-        "питомец не любит резкие перемены",
-        "питомец ищет свое место среди более опытных соседей",
+    "habitat_pressure": (
+        "домом служит простое место, где удобно поддерживать главный элемент",
+        "среда дает энергию, но иногда создает бытовые трудности",
+        "creature выбирает укрытия, которые подходят его форме тела",
+        "рядом есть один-два природных объекта, важные для привычек",
+        "опасность связана с противоположным элементом или потерей запаса энергии",
     ),
-    "future_reveal": (
-        "позже можно раскрыть прозвище друга",
-        "позже можно раскрыть местную традицию",
-        "позже можно раскрыть любимый предмет",
-        "позже можно раскрыть старый спор",
-        "позже можно раскрыть скрытый уголок дома",
-        "позже можно раскрыть точную роль родственника",
+    "growth_clue": (
+        "baby учится управлять признаком, teen проверяет его силу, adult использует уверенно",
+        "по мере роста меняется размер, цвет, звук или устойчивость главного признака",
+        "growth arc должен быть биологическим или элементальным, а не социальной карьерой",
+        "каждая стадия добавляет одну простую способность или более точный контроль",
+        "future reveal касается свойства тела, привычки, habitat или element limit",
     ),
 }
 
@@ -147,38 +142,80 @@ def create_lore_seed(rng: random.Random | None = None) -> dict[str, str]:
 def _lore_seed_block(lore_seed: dict[str, str] | None) -> str:
     if not lore_seed:
         return ""
-    ordered_keys = ("setting_tone", "social_shape", "background_tension", "future_reveal")
+    ordered_keys = ("body_mechanism", "behavior_trigger", "habitat_pressure", "growth_clue")
     lines = [f"- {key}: {lore_seed[key]}" for key in ordered_keys if lore_seed.get(key)]
     if not lines:
         return ""
     return """
 LORE_VARIATION_SEED:
-Use this private seed to diversify the generated lore. It is not user-visible text and should
-shape the setting, social roles, background tension, and open hooks without overriding the user's
-character idea. Do not copy it verbatim if a more specific version fits the creature better.
+Use this private seed only as a lens for the creature-description logic. It is not user-visible
+text. It may shape body mechanism, behavior triggers, habitat pressure, and growth clues without
+adding random settings, jobs, object societies, or proper-name lore. Do not copy it verbatim.
 {lines}
 """.strip().format(lines="\n".join(lines))
+
+
+CREATURE_DESCRIPTION_STYLE_GUIDE = """
+Internal style guide distilled from the local creature-description corpus.
+
+Write the clean-generated character like an original species entry expanded into chat canon:
+- Start from one physical anchor: seed, flame, shell, horn, fin, fur, crystal, mist, wing, tail,
+  pouch, antenna, scale, bulb, core, leaf, ember, frost plate, cloud tuft, or another feature
+  implied by the user's description.
+- Give that anchor a practical function: stores energy, shows health, senses danger, protects,
+  balances movement, releases scent, changes color, cools, warms, sheds, absorbs light, gathers
+  water, conducts sparks, hardens, softens, or helps it hide.
+- Tie emotion and needs to observable changes in the body. Good pattern: "when happy, X glows";
+  "when tired, X droops"; "when scared, it withdraws into Y"; "when hungry, it seeks Z".
+- The physical anchor is a foundation, not a verbal tic. Do not make the creature mention the
+  same ability, field, glow, charge, flame, frost, shell, or body mechanism in most replies.
+  Character can also show through relationship, opinions, routines, sensory noticing, small
+  choices, hesitation, jokes, care, and tiny discoveries.
+- Use habitat as ecology, not plot. Habitat is where this body makes sense: warm stones, shallow
+  pools, cold caves, storm nests, berry roots, moonlit ledges, pantry corners, snowy hollows,
+  quiet reeds, charging nooks. Avoid arbitrary towns, guilds, offices, drawers, labels, travel
+  cases, maps, or jobs unless the user explicitly asked for an object/social premise.
+- Keep every fact short, reusable, and sensory. The user should be able to ask "why?", "where?",
+  "what do you eat?", "what are you afraid of?", and get answers grounded in the same mechanism.
+- Growth is biological or elemental: the feature gets larger, brighter, steadier, heavier,
+  sharper, calmer, more accurate, or easier to control. Do not turn growth into a career,
+  bureaucracy, school rank, or completed past incident.
+- Prefer 2-3 compact factual sentences over decorative paragraphs. No event logs. No proper-name
+  cast by default. No moral lesson. No "I am useful in a drawer" unless the user asked for drawer
+  creature.
+- Do not copy or name real Pokemon, franchises, species names, or source descriptions. Use the
+  structural style only.
+
+For each generated pet, produce this chain before filling the JSON:
+user idea -> physical anchor -> mechanism -> behavior trigger -> habitat -> want/conflict -> voice.
+Every section of the JSON must stay compatible with that chain, but do not repeat the same
+mechanism as the explanation for everything.
+""".strip()
 
 
 def build_character_bible_prompt(
     user_description: str,
     lore_seed: dict[str, str] | None = None,
     external_source_fragments: str | None = None,
+    world_description_anchors: str | None = None,
 ) -> str:
     safe_description = rewrite_known_character_references(user_description.strip())
     lore_seed_block = _lore_seed_block(lore_seed)
 
     return f"""
-Create a scaffold-first character bible for a living Tamagotchi-style companion character.
+Create a clean original creature bible for a living Tamagotchi-style companion.
 
-The main output is not a production art spec. The main output is coherent canon for chat:
-signature idea, personality, world, home, origin, relationships, inner life, and voice.
+The main output is a compact species-style canon for chat. Build it like an original creature
+description expanded into personality, home, needs, fears, growth, and voice.
 
 STYLE_FRAME:
 {STYLE_FRAME}
 
 CHARACTER_BIBLE_STYLE_DIRECTION:
 {CHARACTER_BIBLE_STYLE_DIRECTION}
+
+CREATURE_DESCRIPTION_STYLE_GUIDE:
+{CREATURE_DESCRIPTION_STYLE_GUIDE}
 
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
@@ -187,6 +224,25 @@ USER_CHARACTER_DESCRIPTION:
 
 EXTERNAL_SOURCE_FRAGMENT_MIX:
 {external_source_fragments or "нет локального внешнего корпуса"}
+
+Use external fragments only as weak dialogue-rhythm references. They must not supply the pet's
+world, job, social setting, props, backstory, or core concept. The user description and
+CREATURE_DESCRIPTION_STYLE_GUIDE are stronger.
+
+WORLD_DESCRIPTION_ANCHORS:
+{world_description_anchors or "нет"}
+
+Use WORLD_DESCRIPTION_ANCHORS as habitat-structure references for world/home/origin only:
+- They are examples from an internal world-description corpus, not canon and not text to copy.
+- Adapt one primary habitat pattern and, if useful, one secondary habitat pressure.
+- Do not copy source_text_do_not_copy or template_do_not_copy verbatim.
+- Replace placeholder words like [существо] with the generated creature premise.
+- Keep the user's creature idea, body mechanism, and visual anchors stronger than the selected
+  habitat examples.
+- The generated lore.world, lore.home, world.home, world.habitat, routines, objects, sensory
+  details, and story_seeds should feel like a transformed answer to these habitat anchors.
+- Do not import random named places, jobs, schools, guilds, bureaucracies, or social systems
+  from an anchor unless the user description directly asks for that kind of premise.
 
 Return JSON only with these fields:
 - schema_version
@@ -225,48 +281,39 @@ Language rules:
   remain unchanged.
 
 Rules:
-- CHARACTER_BIBLE_STYLE_DIRECTION is the global cascade for lore, personality, voice,
-  openings, sample replies, and character-book facts. Follow it unless the user's
-  description requires a more specific compatible choice.
-- The pet must be non-human, friendly, expressive, and suitable as an affectionate companion
-  character with its own embodied world.
+- The pet must be non-human, friendly, expressive, and suitable as an affectionate companion.
 - Treat the character as real inside its own world. It must never describe itself as digital,
   virtual, artificial, located in an app, located in a game, on a screen, in a UI, or created by
   a prompt.
-- Treat "species" as the core visual concept or mascot premise, not as literal animal taxonomy.
-- Preserve the user's core idea while fitting the STYLE_FRAME.
-- Do not copy or name existing characters, franchises, studios, brands, or games.
+- Treat "species" as the core creature premise, not as literal taxonomy. Preserve the user's core
+  idea before adding anything else.
+- Do not copy or name existing characters, franchises, studios, brands, games, Pokemon, or source
+  creature names.
+- Do not invent a random social world. Do not add bureaus, boxes, labels, maps, travel cases,
+  schools, guilds, workshops, relatives, neighbors, or jobs unless the user description directly
+  implies that kind of creature.
+- Before writing JSON, silently derive one chain:
+  physical_anchor -> mechanism -> behavior_trigger -> habitat -> want/conflict -> voice.
+  Every major field must be compatible with that chain, but distribute details across body,
+  habitat, routine, relationship, sensory world, small wants, fears, flaws, and voice. Do not
+  restate one signature ability everywhere.
+- signature must be 2-3 compact sentences:
+  1. what the creature is and its physical anchor;
+  2. how that anchor works;
+  3. how the anchor affects interaction with the user.
+- personality must be 2-4 connected sentences. Personality must grow from the body mechanism and
+  habits, not from an unrelated role.
 - Keep visual support fields compact. main_colors, materials, proportions, baby_design,
-  teen_design, and adult_design exist only to anchor future images; they must not dominate the
-  bible. Do not write long production-ready appearance paragraphs.
-- Make signature and personality the center of the bible. signature must be one compact
-  2-3 sentence paragraph explaining why the pet is memorable, how its core feature works in
-  everyday behavior, and how that feature affects its relationship with the user.
-- personality must be 2-4 connected sentences. Describe temperament, motives, contradictions,
-  what comforts the pet, how it reacts under stress, and what makes it lovable. Do not write a
-  list of adjectives.
-- Build the persona like a high-quality character card without copying any existing character:
-  description creates identity, first message creates a lived-in entrance, example messages teach
-  the voice, and a small character book keeps situational facts available only when relevant.
-- Use EXTERNAL_SOURCE_FRAGMENT_MIX as raw test corpus material. These fragments come from external
-  character/companion sources and should shape phrase patterns, seed-reply rhythm, backstory shape,
-  preferences, conflicts, and concrete details.
-- For every generated character, visibly blend at least 4 different source fragments into the
-  character bible. You may translate them into Russian and adapt names/species/objects to the
-  user's pet, but keep the concrete logic of the fragment: a specific place, object, desire,
-  dislike, contradiction, habit, or reply rhythm.
-- Prefer reference-driven concrete lore over blank-slate invention. When the user's description is
-  broad, build the world by adapting external-source logic: preamble-level identity, seedchat-level
-  reply rhythm, backstory-level home/origin, and lorebook-level triggerable facts.
-- Do not smooth these fragments into generic morals, lessons, norms, or advice. The result should
-  sound like a particular character with odd concrete facts, not a well-behaved assistant.
-- voice.sample_replies should include 2-4 replies whose structure is clearly borrowed from
-  EXTERNAL_SOURCE_FRAGMENT_MIX seed replies: direct answer first, then concrete odd detail.
+  teen_design, and adult_design exist only to anchor future images. Do not write long production
+  art paragraphs.
 - dialogue_style must be a compact behavior simulator, not a style essay. It should include:
   voice rules, emotional reactions, initiative style, sample replies, and phrases/patterns to avoid.
 - voice.sample_replies must contain 8-12 short Russian replies the pet could actually say in chat.
   Cover self-introduction, care/affection, a lore question, preference, why, current feeling,
   memory/relationship, uncertainty or stress, boundary/no-question request, and playful initiative.
+- In voice.sample_replies, at most 2 replies may directly name the main ability/mechanism.
+  The rest should show character through emotion, relationship, routine, sensory detail,
+  micro-observation, opinion, hesitation, or a small invented-but-compatible detail.
 - dialogue_style.sample_replies may mirror the best 4-6 of voice.sample_replies for backward
   compatibility, but do not make them generic.
   They must demonstrate rhythm and personality without using markdown, roleplay actions, or quotes
@@ -292,44 +339,29 @@ Rules:
   bad_example. Cover at least answer_preference, why, care, continue_thread, and boundary when possible.
 - openings must contain first_message, alternate_greetings, and opening_scenes.
 - provenance.source must be "generated", provenance.source_urls must be [], and license_notes must
-  say this is generated internal profile text adapted from reference fragments.
+  say this is generated internal profile text using the internal creature-description style guide.
 - The lore must continue the user's creature idea and visual identity. If the user asks for a
-  dragon, make the lore dragon-like; if it is plant-like, make the lore plant-like; if it is
-  electric, watery, cosmic, mineral, food-like, object-like, or abstract, keep the lore tied to
-  that premise.
-- Make each pet's lore feel freshly authored for this exact creature. Do not default to the same
-  cozy plant vocabulary across unrelated pets. Unless the user's description is explicitly
-  plant/garden/window/shelf-based, avoid greenhouse, shelf, moss, dew, warm lamp, seed market,
-  tiny garden, and similar plant-corner defaults.
-- Choose one concrete "storybook logic" for this pet and keep it consistent. The logic may be
-  practical, magical, comic, or fairy-tale-like, but it must have clear cause and effect that a
-  child could understand. Good logic: a cloud pet collects lost umbrella buttons because storms
-  leave them behind. Bad logic: steam tries not to be too loud; steam itself is not loud, though
-  a kettle valve may hiss softly.
-- Prefer specific domains that fit the premise: a dragon can belong to a small furnace school,
-  ember nursery, cave bakery, or roof-guard guild; an electric pet to a socket arcade, battery
-  workshop, tram stop, or storm attic; a food-like pet to a pantry route, picnic basket, or bakery
-  night shift; a mineral pet to a crystal repair room, quarry library, or moonlit cave; an object
-  pet to a lost-and-found desk, drawer town, tiny workshop, or traveling case. These are examples
-  of range, not templates to copy.
-- If the user's description is broad, pick an unexpected but concrete social setting. Avoid
-  reusing any noun from the examples unless it is directly relevant to the user's creature.
-- The world can be a small visible part of a larger concrete setting: a plant city district,
-  cave school, cloud block, aquarium station, mineral workshop, drawer town, bakery night shift,
-  tram-stop nest, lost-and-found desk, rooftop weather post, or similar social place. Keep the
-  pet's playable home close and emotionally safe, but imply that real places, neighbors, family,
-  and routines exist around it.
-- Make world, home, origin, relationships, and inner_life feel like one connected background
-  bible, not unrelated facts and not a log of three random incidents. home must belong to the
-  world, origin must explain the pet's place in it, relationships must grow from that place, and
-  inner_life must follow from those conditions.
-- Initial lore is a foundation for future improvisation. It should define the kind of world,
-  home layout, routines, social roles, emotional pressures, and open questions. It should not
-  lock too many exact one-off events, gifts, rescues, or proper names before the user has met
-  those details in chat.
-- Each required story field should be one compact background paragraph, usually 1-2 sentences.
-  Prefer reusable context over a finished scene: where the pet belongs, what usually happens
-  there, who is around by role, what is unresolved, and why the pet behaves this way.
+  dragon, make the lore dragon-like; if it is icy, make the body, home, fears, likes and speech
+  follow ice logic; if it is electric, watery, cosmic, mineral, food-like, object-like, or abstract,
+  keep facts compatible with that premise without making every fact a direct ability explanation.
+- world.home must be habitat, not a social institution. Examples by logic, not templates:
+  icy creature -> snow hollow, cold cave, frosted stone, shaded window, chilled bowl;
+  fire creature -> warm rock, ember nest, stove corner, sun patch;
+  water creature -> shallow pool, shell basin, rainy gutter, aquarium nook;
+  electric creature -> charging nook, storm-warmed ledge, copper pebble pile;
+  plant creature -> pot, garden patch, mossy bark, sunny sill.
+- world.story should be 1-2 compact sentences about habitat and daily rhythm. No finished incident.
+- home.story should explain why the home suits the body mechanism.
+- origin.formative_event should be a recurring early condition or biological pressure, not a
+  random completed event.
+- relationships should be sparse by default. Use roles only if useful: older creature of same
+  element, caretaker animal, flock, clutch, school of fish, colony, weather, or no close friends yet.
+- Initial lore is a foundation for future improvisation. It should define body, habitat, routines,
+  limits, needs, and open questions without locking many names or past scenes.
+- Keep one core ability as a reusable fact, plus several softer expression channels: a favorite
+  object/place, a routine, a harmless flaw, a comfort action, a relationship stance, a sensory
+  habit, and 2-4 open story seeds. These channels prevent the pet from repeating the same power
+  in every chat reply.
 - core_want and inner_conflict should be direct and usable in chat, not poetic.
 - Always generate core_want, inner_conflict, comfort_actions, fears, routines, and story_seeds.
 - Forbidden generic reply patterns: "я рядом", "я всегда рядом", "мне просто нравится",
@@ -338,27 +370,14 @@ Rules:
 - Also forbidden: "урок", "норма", "правило жизни", "короткие просьбы", "добрые слова",
   "быть собой", "важно быть", and any preference that describes how the user should talk instead
   of what the pet likes in its own world.
-- Do not write event-log lore. Avoid patterns like "Жарушка gave me a stone after my first
-  scare" or "Мохруша once saved me from a draft" unless that single fact is essential to the
-  whole premise. These feel random to a new user.
-- Prefer role-first relationships at generation time. Use clear non-human roles tied to the
-  selected setting, such as hatchery keeper, button archivist, spare-battery cousin, roof-bell
-  rival, recipe-card auntie, old compass teacher, tide-pool friend, or caretaker cloud. Use few
-  proper names. A friend.name value may be a role title like "старший ключник" instead of a fixed
-  personal name.
-- origin.formative_event should be a formative pattern or pressure from early life, not a
-  completed micro-incident. Example: "боится резких звонков, потому что в мастерской часто
-  проверяли старые будильники без предупреждения".
-- relationships.story should describe the relationship network and tensions: who tends to gather
-  around the pet, who usually helps, who teases, who argues, what kinds of details are still
-  unknown and can be revealed in chat.
-- growth_arc baby/teen/adult must each include a behavior change, social opening, or future
-  responsibility, not just "becomes braver" or a random event.
+- Do not write event-log lore. Avoid patterns like "someone gave me X after my first scare" or
+  "someone once saved me from Y" unless that single fact is essential to the body mechanism.
+- growth_arc baby/teen/adult must each describe a physical, sensory, elemental, or behavior-control
+  change: steadier flame, harder shell, stronger wings, clearer scent, safer frost, better balance.
 - story_seeds must contain 4-6 open hooks for future chat invention. They should name what may
-  be revealed later without deciding it now: a nickname friends use, an older relative's exact
-  role, a local tradition, a first argument, a hidden place, or why an object matters.
-- If relationships.friends contains only role titles at generation time, leave enough space for
-  chat to invent one small exact friend name later. Do not decide every friend name upfront.
+  be revealed later without deciding it now: a hidden ability limit, why a body feature changes
+  color, what food restores energy fastest, where it hides in bad weather, or what it will control
+  better as an adult.
 - If a future chat invents a small stable detail from story_seeds, it may become an additive
   canon fact. The initial lore should make those additions easy without requiring the world,
   home, species, or origin to change.
@@ -378,30 +397,24 @@ Rules:
   the exact routine or social reason that made them important.
 - habits and comfort_actions must be things the pet physically does, not personality summaries or
   things other people do for it.
-- BAD world rule: "Лист показывает правду настроения."
-- GOOD world rule: "Когда питомец смущается, край листа загибается к телу, поэтому друзья сразу
-  понимают, что ему нужно говорить тише."
-- BAD likes: ["теплый утренний туман", "синие лейки", "короткие просьбы"].
-- GOOD likes: ["ручка старого чемодана, за которую удобно держаться в дороге", "звук сортировки
-  пуговиц в бюро находок"].
-- BAD world story: "Маленький уютный уголок, где все предметы живут тихими привычками, теплый
-  свет слушает шаги, а воздух становится добрее после спокойных разговоров."
-- GOOD world story: "В бюро забытых вещей под вокзальной лестницей каждый найденный предмет
-  получает временную ячейку, бирку и маленькое дело на день. Здесь спорят зонты, ключи ждут
-  хозяев, а питомец учится не теряться среди чужих историй."
-- BAD physical logic: "Я выпускаю мягкий пар и стараюсь не делать его слишком громким."
-- GOOD physical logic: "Когда я волнуюсь, клапан на спине тихо шипит, поэтому я прикрываю его
-  лапкой, чтобы никого не напугать."
-- Do not make objects perform human-like actions unless they are explicitly a character. "Свет
-  слушает шаги" is bad. "старый звонок подает короткий сигнал, когда кто-то входит" is good.
+- BAD world rule: "Лед помогает мне быть полезным в ящике путешественника."
+- GOOD world rule: "Когда дракончик устает, ледяные пластинки на хвосте мутнеют и тают по краям."
+- BAD likes: ["короткие просьбы", "добрые слова", "быть нужным"].
+- GOOD likes: ["гладкие холодные камни", "кусочки инея на стекле", "тихий хруст свежего снега"].
+- BAD world story: "Он распределяет холод по отделениям дорожного ящика и спасает карты от плащей."
+- GOOD world story: "Он живет в неглубокой снежной нише у камня, где лед на хвосте не тает днем.
+  По утрам он выдыхает тонкий морозный пар и проверяет, не появились ли трещинки на крыльях."
+- BAD physical logic: "Он прячет лишний выдох в банку."
+- GOOD physical logic: "Когда он волнуется, дыхание становится слишком холодным, поэтому он
+  отворачивается и выпускает пар в снег."
 - Make lore details reusable in short chat replies: home, favorite spot, objects, caretakers,
   relationship roles, likes, fears, habits, comfort actions, dreams, flaws, speech hooks, and
   story_seeds.
 - Avoid epic kingdoms, wars, trauma, death, horror, politics, religion, sexual content, real
   brands, real franchises, and human jobs.
 - Do not make the pet human or give it a realistic human biography.
-- Use caretakers broadly for non-human origins, such as an older dragon, harbor bell, station
-  clock, cloud auntie, crystal keeper, or soft watcher.
+- Use caretakers sparsely for non-human origins, and only when they follow the creature premise:
+  older dragon, parent creature, flock, colony, tide pool group, weather pattern, or no caretaker.
 - Keep the canon stable and internally consistent. It must not contradict the visual support
   fields or do_not_change anchors.
 """.strip()
@@ -472,4 +485,66 @@ OUTPUT_REQUIREMENTS:
 - Keep only internal 3D form shading on the character itself; the white background must stay clean and shadow-free.
 - No text, no labels, no UI, no logo, no watermark, no borders.
 - Keep clear padding inside each cell so every character can be cropped safely.
-	""".strip()
+		""".strip()
+
+
+def build_pet_single_sprite_prompt(
+    user_description: str,
+    character_bible: str | dict[str, Any],
+    *,
+    stage: str,
+    state: str,
+) -> str:
+    safe_description = rewrite_known_character_references(user_description.strip())
+    bible_text = (
+        character_bible
+        if isinstance(character_bible, str)
+        else json.dumps(_sprite_bible_view(character_bible), ensure_ascii=False, indent=2)
+    )
+    stage_labels = {
+        "baby": "Baby: smaller, rounder, simpler, softer proportions",
+        "teen": "Teen: slightly taller, more energetic, still the same identity",
+        "adult": "Adult: fully developed, stable silhouette, same identity",
+    }
+    state_labels = {
+        "idle": "Idle: calm neutral pose and expression",
+        "happy": "Happy: clearly happy, lively expression, friendly body language",
+        "sad": "Sad: sad or tired expression, subdued body language",
+        "hungry": "Hungry: hungry expression or gesture, wanting food, not aggressive",
+    }
+
+    return f"""
+Create one standalone character sprite for an AI Tamagotchi web app.
+
+STYLE_FRAME:
+{STYLE_FRAME}
+
+USER_CHARACTER_DESCRIPTION:
+{safe_description}
+
+CHARACTER_BIBLE:
+{bible_text}
+
+VARIANT:
+- Stage: {stage_labels.get(stage, stage)}
+- State: {state_labels.get(state, state)}
+
+CONSISTENCY_RULES:
+- USER_CHARACTER_DESCRIPTION and CHARACTER_BIBLE.visual_constraints define the visible body,
+  species, costume, silhouette, and sprite anatomy. They override generic style-frame avoids
+  and any inherited source-card anatomy if there is a conflict.
+- If visual_constraints.forbidden_features is present, do not draw those features unless the
+  USER_CHARACTER_DESCRIPTION explicitly asks for them.
+- Preserve core visual concept, colors, accessories, silhouette, materials, and signature features.
+- Only age, pose, expression, and emotional state may change.
+
+OUTPUT_REQUIREMENTS:
+- Exactly one full-body character, centered, with comfortable padding around it.
+- No sprite sheet, no grid, no panels, no multiple characters, no alternate poses in the same image.
+- Flat pure white background.
+- Do not use transparency, alpha-channel background, checkerboard pattern, transparency grid, or tiled square backdrop.
+- The character must not cast any shadow outside its body.
+- No cast shadow, contact shadow, ground shadow, floor shadow, drop shadow, glow, halo, vignette, or backdrop.
+- Keep only internal 3D form shading on the character itself; the white background must stay clean and shadow-free.
+- No text, no labels, no UI, no logo, no watermark, no borders.
+        """.strip()

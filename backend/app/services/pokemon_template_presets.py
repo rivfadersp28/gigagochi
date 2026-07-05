@@ -1236,14 +1236,22 @@ def create_character_bible_from_pokemon_preset(
                 "story": (
                     "World facts come from source_descriptions only:\n"
                     f"{_source_description_blob(source_descriptions)}"
+                    if source_descriptions
+                    else ""
                 ),
-                "environment": f"безопасная среда для формы «{target_phrase}»",
+                "environment": (
+                    f"безопасная среда для формы «{target_phrase}»"
+                    if source_descriptions
+                    else ""
+                ),
                 "daily_life": list(source_descriptions[:8]),
             },
             "home": {
                 "story": (
                     "Home/habitat details must be inferred only from source_descriptions:\n"
                     f"{_source_description_blob(source_descriptions[:6])}"
+                    if source_descriptions
+                    else ""
                 ),
                 "favorite_spot": "",
                 "objects": [],

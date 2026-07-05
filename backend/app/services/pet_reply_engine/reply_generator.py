@@ -14,7 +14,9 @@ from app.services.pet_reply_engine.prompt_builder import (
     build_pet_prompt_context,
     build_pet_reply_messages,
 )
+from app.services.pet_reply_engine.reply_limits import MAX_REPLY_CHARS, clamp_reply_text
 from app.services.pet_reply_engine.reply_validator import validate_reply
+from app.services.prompt_debug import log_chat_completion_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +37,8 @@ PET_REPLY_RESPONSE_SCHEMA: dict[str, Any] = {
         "reply": {
             "type": "string",
             "description": (
-                "One living pet reply in Russian, usually 3-7 short sentences, without markdown "
-                "or assistant-like phrasing."
+                "One living pet reply in Russian, no more than "
+                f"{MAX_REPLY_CHARS} characters, without markdown or assistant-like phrasing."
             ),
         },
         "moodHint": {
@@ -94,6 +96,7 @@ PET_REPLY_RESPONSE_SCHEMA: dict[str, Any] = {
                             "relationship_event",
                             "pet_canon_fact",
                             "pet_emotional_fact",
+                            "pet_generated_fact",
                             "open_thread",
                             "preference",
                             "boundary",
@@ -337,9 +340,10 @@ def _fallback_result(
     reply_input: PetReplyInput,
     flags: tuple[str, ...],
     prompt_context: PetPromptContext | None = None,
+    prompt_debug: tuple[Any, ...] = (),
 ) -> PetReplyResult:
     prompt_context = prompt_context or build_pet_prompt_context(reply_input)
-    fallback_text = fallback_reply(reply_input)
+    fallback_text = clamp_reply_text(fallback_reply(reply_input))
     return PetReplyResult(
         reply=fallback_text,
         mood_hint=reply_input.pet.mood if reply_input.prompt_layers.mood_style else None,
@@ -348,8 +352,14 @@ def _fallback_result(
         lore_memories_to_save=(),
         detected_intent=prompt_context.detected_intent,
         reference_card_ids=tuple(card.id for card in prompt_context.reference_cards),
+        speech_anchor_ids=tuple(anchor.id for anchor in prompt_context.speech_anchors),
+        speech_anchor_debug=tuple(anchor.debug_dict() for anchor in prompt_context.speech_anchors),
+        rejected_speech_anchor_debug=tuple(
+            anchor.debug_dict() for anchor in prompt_context.rejected_speech_anchors
+        ),
         included_layers=prompt_context.included_layers,
         excluded_layers=prompt_context.excluded_layers,
+        prompt_debug=prompt_debug,
     )
 
 
@@ -401,13 +411,15 @@ def generate_pet_reply(
     model = model or settings.openai_chat_model
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     prompt_context = build_pet_prompt_context(reply_input)
+    prompt_debug: list[dict[str, Any]] = []
 
     try:
         openai_client = client or get_openai_client()
-        completion = openai_client.chat.completions.create(
-            model=model,
-            messages=build_pet_reply_messages(reply_input, prompt_context=prompt_context),
-            response_format={
+        messages = build_pet_reply_messages(reply_input, prompt_context=prompt_context)
+        request_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "response_format": {
                 "type": "json_schema",
                 "json_schema": {
                     "name": "pet_reply_response",
@@ -415,9 +427,11 @@ def generate_pet_reply(
                     "strict": True,
                 },
             },
-            timeout=timeout,
+            "timeout": timeout,
             **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
-        )
+        }
+        prompt_debug.append(log_chat_completion_prompt("pet_reply/full", request_kwargs))
+        completion = openai_client.chat.completions.create(**request_kwargs)
         model_output, lore_memories = parse_pet_reply_payload(
             completion.choices[0].message.content or "{}"
         )
@@ -431,6 +445,7 @@ def generate_pet_reply(
             reply_input,
             (f"generation_error:{exc.__class__.__name__}",),
             prompt_context,
+            tuple(prompt_debug),
         )
 
     validation = validate_reply(
@@ -441,13 +456,14 @@ def generate_pet_reply(
         if reply_input.prompt_layers.mood_style or reply_input.prompt_layers.stat_needs
         else None,
         reply_input.user_text,
+        tuple(item.text for item in reply_input.recent_messages if item.role == "pet"),
     )
     if not validation.is_valid:
         logger.info("Pet reply validation fallback flags=%s", validation.flags)
         return _fallback_result(reply_input, validation.flags, prompt_context)
 
     return PetReplyResult(
-        reply=validation.normalized_reply,
+        reply=clamp_reply_text(validation.normalized_reply),
         mood_hint=model_output.moodHint if reply_input.prompt_layers.mood_style else None,
         used_fallback=False,
         validation_flags=validation.flags,
@@ -468,6 +484,12 @@ def generate_pet_reply(
         goal_patch=model_output.goalPatch if reply_input.prompt_layers.memory else None,
         detected_intent=prompt_context.detected_intent,
         reference_card_ids=tuple(card.id for card in prompt_context.reference_cards),
+        speech_anchor_ids=tuple(anchor.id for anchor in prompt_context.speech_anchors),
+        speech_anchor_debug=tuple(anchor.debug_dict() for anchor in prompt_context.speech_anchors),
+        rejected_speech_anchor_debug=tuple(
+            anchor.debug_dict() for anchor in prompt_context.rejected_speech_anchors
+        ),
         included_layers=prompt_context.included_layers,
         excluded_layers=prompt_context.excluded_layers,
+        prompt_debug=tuple(prompt_debug),
     )

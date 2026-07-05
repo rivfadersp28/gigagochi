@@ -14,6 +14,10 @@ from app.services.pet_reply_engine import (
     build_visual_identity,
     generate_pet_reply,
 )
+from app.services.pet_reply_engine.age_message_examples import (
+    adapt_template,
+    format_age_message_examples_for_prompt,
+)
 from app.services.pet_reply_engine.fallbacks import (
     appearance_fallback,
     fallback_reply,
@@ -27,9 +31,15 @@ from app.services.pet_reply_engine.intent import (
     is_status_question,
 )
 from app.services.pet_reply_engine.lore import compact_lore_lines, preference_fragment
-from app.services.pet_reply_engine.models import PetAgeStage, PetMood
+from app.services.pet_reply_engine.models import PetAgeStage, PetMood, PetPromptLayers
 from app.services.pet_reply_engine.prompt_builder import build_pet_reply_messages
 from app.services.pet_reply_engine.reply_validator import validate_reply
+from app.services.pet_reply_engine.speech_anchors import (
+    format_expression_variety_for_prompt,
+    load_speech_anchor_examples,
+    select_expression_variety_cues,
+    select_speech_anchors,
+)
 from app.services.pet_reply_engine.state_interpreter import interpret_state
 from app.services.pet_reply_engine.text_style import style_for_age
 
@@ -102,9 +112,7 @@ def make_reply_input(
                     "Тихая оранжерея стоит внутри теплого окна, где каждый росток "
                     "знает свой уголок и просыпается от мягкого света."
                 ),
-                "rules": [
-                    "Листья шепчут только при доверии, поэтому громкие слова гаснут в мхе."
-                ],
+                "rules": ["Листья шепчут только при доверии, поэтому громкие слова гаснут в мхе."],
                 "sensory_details": ["запах росы", "мягкий зеленый свет"],
             },
             "home": {
@@ -218,7 +226,7 @@ def test_state_interpreter_avoids_repeating_food_request_too_often() -> None:
 
     assert cues.recent_food_mention
     assert "не повторяй" in cues.hunger_cue
-    assert fallback_reply(reply_input) == "я тут. слушаю тебя."
+    assert validate_reply(fallback_reply(reply_input), "baby").is_valid
 
 
 def test_text_style_changes_limits_by_age() -> None:
@@ -226,13 +234,14 @@ def test_text_style_changes_limits_by_age() -> None:
     teen = style_for_age("teen")
     adult = style_for_age("adult")
 
-    assert baby.max_words == 90
-    assert baby.max_chars == 560
-    assert "без сюсюканья" in " ".join(baby.style_rules)
-    assert teen.max_words == 110
-    assert adult.max_chars == 700
-    assert style_for_age("baby", "low").max_words == 55
-    assert style_for_age("adult", "low").sentence_limit == 5
+    assert baby.max_words == 12
+    assert baby.max_chars == 120
+    assert "2-5 слов" in " ".join(baby.style_rules)
+    assert "речевые ошибки" in " ".join(baby.style_rules)
+    assert teen.max_words == 18
+    assert adult.max_chars == 300
+    assert style_for_age("baby", "low").max_words == 7
+    assert style_for_age("adult", "low").sentence_limit == 3
 
 
 def test_prompt_builder_uses_selected_age_behavior_profile() -> None:
@@ -240,21 +249,138 @@ def test_prompt_builder_uses_selected_age_behavior_profile() -> None:
     teen_prompt = build_pet_reply_messages(make_reply_input(age_stage="teen"))[0]["content"]
     adult_prompt = build_pet_reply_messages(make_reply_input(age_stage="adult"))[0]["content"]
 
-    assert "Возрастной профиль текущей стадии" in baby_prompt
-    assert "текущая стадия: малой" in baby_prompt
-    assert "мир яркий, плотный" in baby_prompt
-    assert "Не будь просто милым" in baby_prompt
-    assert "немного бунтарский" not in baby_prompt
+    assert "Примеры фраз по возрасту" in baby_prompt
+    assert "selected_stage: baby" in baby_prompt
+    assert "2-5 слов" in baby_prompt
+    assert "Звукоподражания ОБЯЗАТЕЛЬНЫ" in baby_prompt
+    assert "Глустно" in baby_prompt or "Приветик" in baby_prompt
+    assert "скрытая нежность" not in baby_prompt
 
-    assert "текущая стадия: подросток" in teen_prompt
-    assert "немного бунтарский" in teen_prompt
-    assert "проверять границы" in teen_prompt
-    assert "внутренний стержень" not in teen_prompt
+    assert "selected_stage: teen" in teen_prompt
+    assert "5-12 слов" in teen_prompt
+    assert "сленг" in teen_prompt
+    assert "скрытая нежность" in teen_prompt
+    assert "10-25 слов" not in teen_prompt
 
-    assert "текущая стадия: взрослый" in adult_prompt
-    assert "внутренний стержень" in adult_prompt
-    assert "саморефлексия" in adult_prompt
-    assert "проверять границы" not in adult_prompt
+    assert "selected_stage: adult" in adult_prompt
+    assert "10-25 слов" in adult_prompt
+    assert "спокойный" in adult_prompt
+    assert "с юмором" in adult_prompt
+    assert "Звукоподражания ОБЯЗАТЕЛЬНЫ" not in adult_prompt
+
+
+def test_age_message_examples_adapt_placeholders_from_character_bible() -> None:
+    reply_input = make_reply_input(age_stage="baby", mood="hungry")
+
+    text = adapt_template(
+        "[звук]-[звук]! [имя] хочет [еда], боится [страх], держит [часть тела].",
+        reply_input,
+    )
+
+    assert "[" not in text
+    assert "Листик" in text
+    assert "роса" in text
+    assert "темные углы" in text
+
+
+def test_age_message_examples_prompt_block_stays_compact() -> None:
+    reply_input = make_reply_input(age_stage="baby", mood="hungry")
+
+    block = format_age_message_examples_for_prompt(reply_input, "status")
+
+    assert "selected_stage: baby" in block
+    assert "Speech rules from dataset" in block
+    assert block.count("- hungry:") <= 2
+    assert sum(1 for line in block.splitlines() if line.startswith("- ") and ":" in line) < 30
+    assert "adult" not in block
+
+
+def test_turn_level_speech_anchor_dataset_is_loaded() -> None:
+    examples = load_speech_anchor_examples()
+
+    assert len(examples) == 243
+    assert any(item.intent == "correction_no_hallucination" for item in examples)
+    assert any(item.intent == "proactive" for item in examples)
+    assert all(item.id.startswith("turn:") for item in examples)
+
+
+def test_expression_variety_cues_use_enriched_dataset_sections() -> None:
+    reply_input = replace(
+        make_reply_input(age_stage="teen"),
+        user_text="как дела?",
+        pet=replace(
+            make_reply_input(age_stage="teen").pet,
+            visual_identity=replace(
+                make_reply_input(age_stage="teen").pet.visual_identity,
+                species="электрический дракончик",
+                signature_features=("маленькие рога", "заряд на хвосте"),
+            ),
+        ),
+    )
+
+    cues = select_expression_variety_cues(reply_input, "status", limit=4)
+    prompt_block = format_expression_variety_for_prompt(cues)
+
+    assert cues
+    assert any(cue.id.startswith("speech_style:electric:") for cue in cues)
+    assert any(cue.id.startswith("character_axis:energy:") for cue in cues)
+    assert any(cue.id.startswith("character_axis:intellect:") for cue in cues)
+    assert any(cue.id.startswith("expression:") for cue in cues)
+    assert "Подсказки для разнообразия речи" in prompt_block
+    assert "готовый ответ" in prompt_block
+    assert "thinking style" in prompt_block
+
+
+def test_speech_anchor_retrieval_selects_intent_specific_turn_examples() -> None:
+    reply_input = replace(make_reply_input(age_stage="baby"), user_text="как ты?")
+
+    anchors, rejected = select_speech_anchors(reply_input, "status", limit=3)
+
+    assert anchors
+    assert anchors[0].intent == "status"
+    assert anchors[0].stage == "baby"
+    assert "intent_match" in anchors[0].score_reasons
+    assert "[" not in anchors[0].source_text
+    assert isinstance(rejected, tuple)
+
+
+def test_prompt_builder_includes_speech_anchors_and_hides_stage_actions() -> None:
+    prompt = build_pet_reply_messages(
+        replace(make_reply_input(age_stage="baby"), user_text="как ты?")
+    )[0]["content"]
+
+    assert "Примеры ближайших реплик" in prompt
+    assert "Темп, мышление и каналы выражения" in prompt
+    assert "source_text:" in prompt
+    assert "Ближайшие речевые примеры" in prompt
+    assert "do not transfer body_parts" not in prompt
+    assert "не выводи сценические действия" not in prompt
+    assert "*трёт" not in prompt
+
+
+def test_prompt_builder_disables_speech_anchors_with_age_style() -> None:
+    reply_input = replace(
+        make_reply_input(age_stage="baby"),
+        prompt_layers=PetPromptLayers(age_style=False),
+    )
+
+    prompt = build_pet_reply_messages(reply_input)[0]["content"]
+
+    assert "Примеры ближайших реплик" not in prompt
+
+
+def test_prompt_builder_disables_age_examples_when_age_style_is_off() -> None:
+    reply_input = replace(
+        make_reply_input(age_stage="baby"),
+        prompt_layers=PetPromptLayers(age_style=False),
+    )
+
+    prompt = build_pet_reply_messages(reply_input)[0]["content"]
+
+    assert "Примеры фраз по возрасту" not in prompt
+    assert "2-5 слов" not in prompt
+    assert "Звукоподражания ОБЯЗАТЕЛЬНЫ" not in prompt
+    assert "selected_stage: baby" not in prompt
 
 
 def test_prompt_builder_keeps_character_core_without_visual_body_cues() -> None:
@@ -270,30 +396,29 @@ def test_prompt_builder_keeps_character_core_without_visual_body_cues() -> None:
     assert "Тихая оранжерея" in prompt
     assert "теплая полка у окна" in prompt
     assert "главное желание" in prompt
-    assert "история отношений" in prompt
-    assert "не пересказывай весь лор" in prompt
+    assert "история отношений" not in prompt
+    assert "не пересказывай весь лор" not in prompt
     assert "Референс голоса" in prompt
     assert "Character Profile V2 stable core" in prompt
-    assert "Диалоговые ходы персонажа" in prompt
-    assert "Reference cards, use structure only and do not copy examples" in prompt
-    assert "detected_intent: status" in prompt
-    assert "sample_replies_do_not_copy" in prompt
+    assert "Диалоговые ходы персонажа" not in prompt
+    assert "Reference cards" not in prompt
+    assert "Текущий intent: status" in prompt
+    assert "sample_replies" in prompt
+    assert "sample_replies_do_not_copy" not in prompt
     assert "шур... я тут. листик почти не дрожит)" in prompt
     assert "Ситуативный character book" in prompt
     assert "Кап, друг, роса" in prompt
-    assert "используй его как поведенческий стиль, но не копируй" in prompt
     assert "темперамент: shy" in prompt
-    assert "Ты не ассистент" in prompt
-    assert "не начинай реплику с имени питомца" in prompt
-    assert "Библия персонажа" in prompt
-    assert "живым разговорным русским" in prompt
-    assert "Сквозная стилистическая настройка" in prompt
-    assert "Mature baseline" in prompt
-    assert "reply всегда строго на русском" in prompt
-    assert "переведи смысл в простой русский" in prompt
-    assert "так я быстрее оживаю" in prompt
+    assert "Отвечай как Листик" in prompt
+    assert "Не отвечай как ассистент" in prompt
+    assert "не начинай реплику с имени питомца" not in prompt
+    assert "Лор ниже - опора, а не клетка" in prompt
+    assert "Сквозная стилистическая настройка" not in prompt
+    assert "Mature baseline" not in prompt
+    assert "Примеры фраз по возрасту" in prompt
+    assert "переведи смысл в простой русский" not in prompt
+    assert "так я быстрее оживаю" not in prompt
     assert "как ты выглядишь" not in prompt
-    assert "живой персонаж-компаньон из собственного мира" in prompt
     assert "внутри этой игры" not in prompt
     assert "место в приложении" not in prompt
     assert "Baby voice" not in prompt
@@ -310,6 +435,33 @@ def test_compact_lore_lines_prioritize_story_fields() -> None:
     assert "история отношений" in text
     assert "главное желание" in text
     assert "внутренний конфликт" in text
+
+
+def test_compact_lore_lines_light_mode_omits_world_rules() -> None:
+    lore = {
+        "world": {
+            "story": "Электрический дракон живет у медных камней.",
+            "rules": [
+                "магнитное поле иногда сбивает компасы",
+                "приборы рядом с ним щелкают",
+            ],
+        },
+        "home": {"story": "Он спит в теплой нише.", "favorite_spot": "медный камень"},
+        "inner_life": {
+            "core_want": "научиться не пугать друзей разрядами",
+            "inner_conflict": "хочет подойти ближе, но боится щелчков",
+            "habits": ["перекладывает гладкие камушки"],
+        },
+        "voice": {"speech_pattern": "говорит быстро и обрывает фразы"},
+    }
+
+    full = "\n".join(compact_lore_lines(lore, age_stage="teen"))
+    light = "\n".join(compact_lore_lines(lore, age_stage="teen", detail_mode="light"))
+
+    assert "магнитное поле" in full
+    assert "магнитное поле" not in light
+    assert "главное желание" in light
+    assert "привычки" in light
 
 
 def test_lore_preferences_skip_weak_template_phrases() -> None:
@@ -340,15 +492,16 @@ def test_lore_preferences_skip_weak_template_phrases() -> None:
     assert "после кошки" in fragment
 
 
-def test_prompt_builder_marks_lore_question_and_expands_baby_limit() -> None:
+def test_prompt_builder_keeps_lore_question_context_with_300_char_limit() -> None:
     messages = build_pet_reply_messages(
         replace(make_reply_input(age_stage="baby"), user_text="где ты живешь?")
     )
     prompt = messages[0]["content"]
 
-    assert "максимум слов: 100" in prompt
-    assert "максимум символов: 620" in prompt
-    assert "текущий вопрос про лор" in prompt
+    assert "максимум слов" not in prompt
+    assert "Длина reply: максимум 300 символов" in prompt
+    assert "Лор питомца" in prompt
+    assert "если детали не хватает, придумай ее органично на ходу" in prompt
     assert "где ты живешь" in messages[-1]["content"]
 
 
@@ -380,7 +533,7 @@ def test_reply_intent_router_covers_character_dialogue_moves() -> None:
     )
 
 
-def test_prompt_builder_expands_teen_lore_answer_limit_and_requires_context() -> None:
+def test_prompt_builder_uses_lore_as_context_without_internal_preparation_rules() -> None:
     messages = build_pet_reply_messages(
         replace(
             make_reply_input(age_stage="teen"),
@@ -389,25 +542,34 @@ def test_prompt_builder_expands_teen_lore_answer_limit_and_requires_context() ->
     )
     prompt = messages[0]["content"]
 
-    assert "максимум слов: 125" in prompt
-    assert "максимум символов: 700" in prompt
-    assert "максимум коротких предложений: 7" in prompt
-    assert "не уходи в общую фразу" in prompt
-    assert "можно придумать одну маленькую новую" in prompt
-    assert "учитывай последние сообщения как контекст" in prompt
-    assert "Внутренняя подготовка перед ответом" in prompt
-    assert "не объясняй ход мыслей" in prompt
+    assert "максимум слов" not in prompt
+    assert "не уходи в общую фразу" not in prompt
+    assert "Внутренняя подготовка перед ответом" not in prompt
+    assert "Лор ниже - опора, а не клетка" in prompt
+    assert "Тихая оранжерея" in prompt
 
 
-def test_prompt_builder_tells_preference_answers_to_use_grounded_reason() -> None:
+def test_prompt_builder_keeps_preference_answers_organic() -> None:
     messages = build_pet_reply_messages(
         replace(make_reply_input(age_stage="teen"), user_text="что ты любишь?")
     )
     prompt = messages[0]["content"]
 
-    assert "не перечисляй список likes" in prompt
-    assert "дом, рутину, роль" in prompt
-    assert "декоративная таб-фраза" in prompt
+    assert "не перечисляй список likes" not in prompt
+    assert "декоративная таб-фраза" not in prompt
+    assert "если детали не хватает, придумай ее органично на ходу" in prompt
+    assert "Лор питомца" in prompt
+
+
+def test_prompt_builder_keeps_small_self_invention_as_one_general_rule() -> None:
+    messages = build_pet_reply_messages(
+        replace(make_reply_input(age_stage="teen"), user_text="что ты обычно ешь?")
+    )
+    prompt = messages[0]["content"]
+
+    assert "если детали не хватает, придумай ее органично на ходу" in prompt
+    assert "не уходи в отказ" not in prompt
+    assert "не заявляй конкретных фактов о доме или семье" not in prompt
 
 
 def test_prompt_builder_includes_lore_memory_rules() -> None:
@@ -442,10 +604,10 @@ def test_prompt_builder_handles_legacy_profile_without_lore() -> None:
     prompt = build_pet_reply_messages(reply_input)[0]["content"]
 
     assert "лора нет; опирайся на визуальную идею: маленький дракон" in prompt
-    assert "если лора нет, не заявляй конкретных фактов о доме или семье" in prompt
+    assert "если лора нет, не заявляй конкретных фактов о доме или семье" not in prompt
 
 
-def test_prompt_builder_does_not_add_baby_voice_or_visual_cues() -> None:
+def test_prompt_builder_replaces_old_baby_voice_with_message_examples() -> None:
     messages = build_pet_reply_messages(make_reply_input(age_stage="baby"))
     prompt = messages[0]["content"]
 
@@ -455,6 +617,9 @@ def test_prompt_builder_does_not_add_baby_voice_or_visual_cues() -> None:
     assert "я безымянен" not in prompt
     assert "только звуки из образа" not in prompt
     assert "шур-шур" not in prompt
+    assert "Примеры фраз по возрасту" in prompt
+    assert "Звукоподражания ОБЯЗАТЕЛЬНЫ" in prompt
+    assert "Речевые ошибки" in prompt
     assert "телесные слова" not in prompt
     assert "метафоры для редкого использования" not in prompt
 
@@ -474,7 +639,7 @@ def test_prompt_builder_does_not_add_baby_voice_or_visual_cues() -> None:
         ("я не знаю", "dry_baby_reply"),
         ("мне 35 лет, но я все равно слушаю.", "literal_age_claim"),
         ("мне за тридцать, хотя я выгляжу иначе.", "literal_age_claim"),
-        (" ".join(["слово"] * 91), "too_many_words"),
+        (" ".join(["слово"] * 13), "too_many_words"),
     ],
 )
 def test_reply_validator_rejects_bad_outputs(reply: str, expected_flag: str) -> None:
@@ -489,6 +654,52 @@ def test_reply_validator_rejects_third_person_pet_name() -> None:
 
     assert not result.is_valid
     assert "third_person" in result.flags
+
+
+def test_reply_validator_allows_baby_name_self_reference() -> None:
+    result = validate_reply("Листик хочет ням!", "baby", pet_name="Листик")
+
+    assert result.is_valid
+
+
+def test_reply_validator_rejects_adult_baby_coded_speech() -> None:
+    result = validate_reply("Уля! Очень-очень хочу спатки!", "adult")
+
+    assert not result.is_valid
+    assert "age_style_mismatch" in result.flags
+
+
+def test_reply_validator_rejects_multiple_copied_age_examples() -> None:
+    result = validate_reply("Приветик! Ты пришёл! Ты... ты мой Болшой?", "baby")
+
+    assert not result.is_valid
+    assert "copied_age_examples" in result.flags
+
+
+def test_reply_validator_rejects_copied_turn_level_speech_anchor() -> None:
+    result = validate_reply(
+        "Понятия не имею. Не был. Но если интересно — можем вместе сходить.",
+        "teen",
+    )
+
+    assert not result.is_valid
+    assert "copied_speech_anchor" in result.flags
+
+
+def test_reply_validator_rejects_repeated_lore_term_from_recent_pet_replies() -> None:
+    result = validate_reply(
+        "Моё магнитное поле опять тихо щёлкает, так что я осторожничаю.",
+        "teen",
+        user_text="как ты?",
+        recent_pet_replies=(
+            "Магнитное поле сегодня щёлкает у хвоста.",
+            "Я лучше отойду, магнитное поле шалит.",
+            "А потом я посмотрел на камушек.",
+        ),
+    )
+
+    assert not result.is_valid
+    assert "repeated_lore_term" in result.flags
 
 
 @pytest.mark.parametrize(
@@ -594,9 +805,8 @@ def test_reply_validator_allows_slightly_longer_baby_lore_answer() -> None:
 def test_reply_validator_allows_expanded_teen_lore_answer() -> None:
     result = validate_reply(
         (
-            "в теплице номер четыре была нижняя полка. там я впервые нашел "
-            "каплю-колокольчик. Кап подбадривал меня утром, а фонарь грел землю "
-            "после холодной ночи."
+            "В теплице была нижняя полка, где я нашел каплю-колокольчик. "
+            "Кап подбадривал меня утром, так что да, место важное."
         ),
         "teen",
         user_text="расскажи побольше про теплицу номер четыре",
@@ -609,9 +819,7 @@ def test_fallbacks_cover_base_age_mood_energy_matrix() -> None:
     for age_stage in ("baby", "teen", "adult"):
         for mood in ("idle", "happy", "hungry", "sad"):
             for energy_band in ("low", "medium", "high"):
-                reply = select_fallback_reply(
-                    age_stage, mood, energy_band, action="chat_message"
-                )
+                reply = select_fallback_reply(age_stage, mood, energy_band, action="chat_message")
 
                 assert reply
                 assert validate_reply(reply, age_stage).is_valid
@@ -629,14 +837,15 @@ def test_fallback_avoids_repeating_last_pet_reply() -> None:
 
     reply = fallback_reply(reply_input)
 
-    assert reply == "я аж подпрыгнул. давай еще?"
+    assert reply != "шур-шур! листик"
     assert validate_reply(reply, "baby").is_valid
 
 
 def test_baby_fallback_uses_character_sound_and_body_word() -> None:
     reply = fallback_reply(make_reply_input(age_stage="baby", mood="happy", energy=90))
 
-    assert reply == "я аж подпрыгнул. давай еще?"
+    assert reply
+    assert reply != "я тут. слушаю тебя."
     assert validate_reply(reply, "baby").is_valid
 
 
@@ -645,7 +854,7 @@ def test_baby_name_fallback_uses_pet_name_warmly() -> None:
 
     reply = fallback_reply(reply_input)
 
-    assert reply == "я Листик. а ты как меня позовешь?"
+    assert reply == "я Листик! а ты?"
     assert validate_reply(reply, "baby", pet_name="Листик").is_valid
 
 
@@ -654,7 +863,7 @@ def test_baby_reason_fallback_is_not_dry() -> None:
 
     reply = fallback_reply(reply_input)
 
-    assert reply == "пока не знаю точно. но чувствую, что так."
+    assert reply == "я не знаю... стланно."
     assert validate_reply(reply, "baby").is_valid
 
 
@@ -665,7 +874,10 @@ def test_baby_action_fallback_keeps_action_specific_response() -> None:
         user_text=None,
     )
 
-    assert fallback_reply(reply_input) == "фух, спасибо! стало легче."
+    reply = fallback_reply(reply_input)
+
+    assert reply
+    assert validate_reply(reply, "baby").is_valid
 
 
 def test_lore_question_fallback_uses_home_detail() -> None:
@@ -806,7 +1018,7 @@ def test_reply_generator_returns_fallback_for_invalid_model_output() -> None:
 
     assert result.used_fallback
     assert "banned_word" in result.validation_flags
-    assert result.reply == "о, вот это мне нравится."
+    assert result.reply == "ДА! Я знал, что получится! Я крут!"
 
 
 def test_reply_generator_uses_state_fallback_for_mood_mismatch() -> None:
@@ -832,7 +1044,7 @@ def test_reply_generator_uses_state_fallback_for_mood_mismatch() -> None:
 
     assert result.used_fallback
     assert "mood_mismatch" in result.validation_flags
-    assert result.reply == "можно я просто побуду рядом?"
+    assert result.reply == "Да норм всё. *отворачивается* Норм..."
 
 
 def test_reply_generator_replaces_dry_baby_name_reply() -> None:
@@ -856,7 +1068,7 @@ def test_reply_generator_replaces_dry_baby_name_reply() -> None:
 
     assert result.used_fallback
     assert "dry_baby_reply" in result.validation_flags
-    assert result.reply == "я Листик. а ты как меня позовешь?"
+    assert result.reply == "я Листик! а ты?"
 
 
 def test_reply_generator_replaces_template_lore_phrase() -> None:

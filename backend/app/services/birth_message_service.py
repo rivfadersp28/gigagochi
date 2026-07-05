@@ -26,7 +26,7 @@ def fallback_birth_message(pet: Pet) -> str:
     personality = str(profile.get("personality") or "").strip()
 
     if pet.current_stage == "baby":
-        return "Ох... я проснулся. Всё вокруг новое, но ты уже рядом. Как тебя звать?"
+        return "ой... я проснулся! ты кто?"
 
     detail = species or personality or pet.original_description
     if pet.current_stage == "adult":

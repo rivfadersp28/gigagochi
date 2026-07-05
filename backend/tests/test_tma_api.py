@@ -392,10 +392,124 @@ def test_chat_returns_fallback_on_openai_error(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "reply": "эх, есть хочется. я слушаю, но ворчу.",
+        "reply": "Я устал... спатки хочу...",
         "moodHint": "hungry",
         "loreMemoriesToSave": [],
     }
+
+    app.dependency_overrides.clear()
+
+
+def test_chat_wraps_unhandled_error_with_cors(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+    )
+
+    def fail_chat(_payload):
+        raise RuntimeError("openai rejected chat request")
+
+    monkeypatch.setattr("app.routers.tma.chat_with_local_pet", fail_chat)
+    client = tma_client()
+
+    response = client.post(
+        "/api/chat",
+        headers={"Origin": "http://localhost:3000"},
+        json={
+            "message": "расскажи о своем мире",
+            "replyMode": "lite",
+            "pet": {
+                "name": "Громм",
+                "description": "гигантский земляной великан",
+                "stage": "adult",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 70,
+                    "energy": 60,
+                    "cleanliness": 90,
+                },
+            },
+            "history": [],
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+    assert response.json()["detail"] == {
+        "code": "CHAT_FAILED",
+        "error": "chat_failed",
+        "message": "Не удалось получить ответ питомца. Попробуйте еще раз.",
+    }
+
+    app.dependency_overrides.clear()
+
+
+def test_extract_lite_facts_returns_overlay_patch(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+    )
+
+    def fake_extract(_payload):
+        return (
+            {
+                "facts": [
+                    {
+                        "sphere": "world",
+                        "kind": "world_fact",
+                        "text": "Мир Громма состоит из базальтовых гор.",
+                        "pathHint": "lite_overlay.spheres.world",
+                        "source": "lite_post_reply_extractor",
+                        "createdAt": "2026-07-05T00:00:00Z",
+                    }
+                ],
+                "spheres": {
+                    "world": {
+                        "facts": [
+                            {
+                                "sphere": "world",
+                                "kind": "world_fact",
+                                "text": "Мир Громма состоит из базальтовых гор.",
+                                "pathHint": "lite_overlay.spheres.world",
+                                "source": "lite_post_reply_extractor",
+                                "createdAt": "2026-07-05T00:00:00Z",
+                            }
+                        ]
+                    }
+                },
+            },
+            None,
+        )
+
+    monkeypatch.setattr("app.routers.tma.extract_lite_overlay_patch_from_reply", fake_extract)
+    client = tma_client()
+
+    response = client.post(
+        "/api/chat/lite-facts",
+        json={
+            "message": "расскажи о своем мире",
+            "reply": "Мой мир состоит из базальтовых гор.",
+            "pet": {
+                "name": "Громм",
+                "description": "гигантский земляной великан",
+                "stage": "adult",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 70,
+                    "energy": 60,
+                    "cleanliness": 90,
+                },
+            },
+            "history": [],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["liteOverlayPatch"]["facts"][0]["sphere"] == "world"
+    assert payload["liteOverlayPatch"]["spheres"]["world"]["facts"][0]["kind"] == "world_fact"
 
     app.dependency_overrides.clear()
 

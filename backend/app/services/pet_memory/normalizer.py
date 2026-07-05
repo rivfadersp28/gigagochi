@@ -11,6 +11,7 @@ from app.services.pet_memory.models import (
     ActiveGoal,
     CanonMemoryFact,
     ConversationThread,
+    GeneratedFactCandidate,
     PetMemoryStateV1,
     ReflectionMemory,
     RelationshipEvent,
@@ -19,6 +20,7 @@ from app.services.pet_memory.models import (
 )
 
 MAX_CANON_FACTS = 60
+MAX_GENERATED_FACTS = 50
 MAX_RELATIONSHIP_EVENTS = 30
 MAX_USER_FACTS = 30
 MAX_THREADS = 12
@@ -121,6 +123,74 @@ def _dedupe_canon(items: list[CanonMemoryFact], now: str) -> list[CanonMemoryFac
         key=lambda fact: (fact.pinned, fact.type == "milestone", fact.importance, fact.updatedAt),
         reverse=True,
     )[:MAX_CANON_FACTS]
+
+
+def _clean_generated_fact(
+    item: GeneratedFactCandidate, now: str
+) -> GeneratedFactCandidate | None:
+    text = normalize_text(item.text)
+    if not text:
+        return None
+    return item.model_copy(
+        update={
+            "text": text,
+            "sourceSpan": normalize_text(item.sourceSpan, 240) if item.sourceSpan else None,
+            "confidence": clamp_float(item.confidence),
+            "importance": clamp_float(item.importance),
+            "promotionPolicy": normalize_text(item.promotionPolicy, 80)
+            or "needs_reinforcement",
+            "conflictReasons": [
+                normalize_text(reason, 120)
+                for reason in item.conflictReasons[:6]
+                if normalize_text(reason, 120)
+            ],
+            "createdAt": _safe_date(item.createdAt, now),
+            "updatedAt": _safe_date(item.updatedAt, now),
+        }
+    )
+
+
+def _dedupe_generated_facts(
+    items: list[GeneratedFactCandidate], now: str
+) -> list[GeneratedFactCandidate]:
+    by_key: dict[str, GeneratedFactCandidate] = {}
+    for item in items:
+        clean = _clean_generated_fact(item, now)
+        if not clean:
+            continue
+        key = f"{clean.scope}:{normalized_key(clean.text)}"
+        existing = by_key.get(key)
+        if not existing:
+            by_key[key] = clean
+            continue
+        status_rank = {
+            "rejected": 0,
+            "draft": 1,
+            "needs_user_confirmation": 2,
+            "accepted_soft": 3,
+            "canon": 4,
+        }
+        preferred = clean if status_rank[clean.status] > status_rank[existing.status] else existing
+        by_key[key] = preferred.model_copy(
+            update={
+                "confidence": max(existing.confidence, clean.confidence),
+                "importance": max(existing.importance, clean.importance),
+                "reinforcementCount": max(existing.reinforcementCount, clean.reinforcementCount),
+                "updatedAt": max(existing.updatedAt, clean.updatedAt),
+                "conflictReasons": list(
+                    dict.fromkeys([*existing.conflictReasons, *clean.conflictReasons])
+                )[:6],
+            }
+        )
+    return sorted(
+        by_key.values(),
+        key=lambda fact: (
+            fact.status in ("accepted_soft", "needs_user_confirmation"),
+            fact.importance,
+            fact.updatedAt,
+        ),
+        reverse=True,
+    )[:MAX_GENERATED_FACTS]
 
 
 def _clean_relationship(memory: RelationshipMemory, now: str) -> RelationshipMemory:
@@ -363,6 +433,7 @@ def normalize_memory(
         ],
         now_value,
     )
+    generated_facts = _dedupe_generated_facts(memory.generatedFacts, now_value)
     relationship = _clean_relationship(memory.relationship, now_value)
     threads = _clean_threads(memory.threads, now_value)
     reflections = _clean_reflections(memory.reflections, now_value)
@@ -392,6 +463,7 @@ def normalize_memory(
     return PetMemoryStateV1(
         schemaVersion=1,
         canon=canon,
+        generatedFacts=generated_facts,
         relationship=relationship,
         threads=threads,
         reflections=reflections,

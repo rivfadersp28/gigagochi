@@ -156,6 +156,9 @@ class PetReplyInput:
 class PetPromptContext:
     detected_intent: str
     reference_cards: tuple[Any, ...] = ()
+    speech_anchors: tuple[Any, ...] = ()
+    rejected_speech_anchors: tuple[Any, ...] = ()
+    expression_cues: tuple[Any, ...] = ()
     included_layers: tuple[str, ...] = ()
     excluded_layers: tuple[str, ...] = ()
 
@@ -203,6 +206,10 @@ class PetReplyResult:
     goal_patch: Any | None = None
     detected_intent: str | None = None
     reference_card_ids: tuple[str, ...] = ()
+    speech_anchor_ids: tuple[str, ...] = ()
+    speech_anchor_debug: tuple[Any, ...] = ()
+    rejected_speech_anchor_debug: tuple[Any, ...] = ()
     quality_axes: dict[str, int] | None = None
     included_layers: tuple[str, ...] = ()
     excluded_layers: tuple[str, ...] = ()
+    prompt_debug: tuple[Any, ...] = ()

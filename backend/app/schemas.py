@@ -10,6 +10,7 @@ from app.services.pet_memory.models import LocalChatDebug, PetMemoryPatch, PetMe
 
 PetStageValue = Literal["baby", "teen", "adult"]
 PetStateValue = Literal["idle", "happy", "sad", "hungry"]
+ReplyMode = Literal["full", "lite"]
 PET_STAGE_VALUES: tuple[PetStageValue, ...] = ("baby", "teen", "adult")
 PET_STATE_VALUES: tuple[PetStateValue, ...] = ("idle", "happy", "hungry", "sad")
 AdminGenerateMode = Literal["profile_only", "full_assets"]
@@ -319,7 +320,7 @@ class LocalPetChatContext(BaseModel):
 
 class LocalChatHistoryItem(BaseModel):
     role: Literal["user", "pet"]
-    text: str = Field(min_length=1, max_length=1500)
+    text: str = Field(min_length=1, max_length=8000)
 
 
 class LocalChatRequest(BaseModel):
@@ -328,11 +329,25 @@ class LocalChatRequest(BaseModel):
     history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
     includeDebug: bool = False
     promptLayers: PromptLayers = Field(default_factory=PromptLayers)
+    replyMode: ReplyMode = "full"
 
 
 class LocalChatResponse(BaseModel):
-    reply: str = Field(max_length=1500)
+    reply: str
     moodHint: PetStateValue | None = None
     loreMemoriesToSave: list[str] = Field(default_factory=list, max_length=10)
     memoryPatch: PetMemoryPatch | None = None
+    debug: LocalChatDebug | None = None
+
+
+class LiteFactExtractionRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=1000)
+    reply: str = Field(min_length=1, max_length=8000)
+    pet: LocalPetChatContext
+    history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
+    includeDebug: bool = False
+
+
+class LiteFactExtractionResponse(BaseModel):
+    liteOverlayPatch: dict[str, Any] | None = None
     debug: LocalChatDebug | None = None

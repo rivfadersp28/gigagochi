@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 
+from app.services.pet_reply_engine.age_message_examples import fallback_phrase_for
 from app.services.pet_reply_engine.intent import (
+    detect_reply_intent,
     is_appearance_question,
     is_home_question,
     is_location_question,
@@ -25,116 +27,122 @@ from app.services.pet_reply_engine.state_interpreter import interpret_state, tex
 _CHAT_FALLBACKS: dict[PetAgeStage, dict[PetMood, dict[EnergyBand, str]]] = {
     "baby": {
         "idle": {
-            "low": "фух... я тут. посиди рядом?",
-            "medium": "я тут. слушаю тебя.",
-            "high": "я тут! что у тебя?",
+            "low": "пи... сонно. ты тут?",
+            "medium": "ой! ты тут!",
+            "high": "уля! иглать?",
         },
         "happy": {
-            "low": "мне хорошо... тихо, но хорошо.",
-            "medium": "ух, мне нравится! давай еще?",
-            "high": "ого, класс! я хочу продолжить.",
+            "low": "мне холошо... тихо.",
+            "medium": "уля! весело-весело!",
+            "high": "пи-пи! еще!",
         },
         "hungry": {
-            "low": "эх... есть хочется. я слушаю, но ворчу.",
-            "medium": "перекус бы сейчас. а потом я весь твой.",
-            "high": "ух, хочу еду и приключение!",
+            "low": "ням... дай кусять.",
+            "medium": "хочу ням! очень-очень.",
+            "high": "ням-ням! еда где?",
         },
         "sad": {
-            "low": "эх... я устал и притих. побудь рядом?",
-            "medium": "мне грустно. можно я побуду рядом?",
-            "high": "мне грустно, но с тобой легче. поговорим?",
+            "low": "глустно... посиди?",
+            "medium": "ой... не уходи.",
+            "high": "глустно! обними?",
         },
     },
     "teen": {
         "idle": {
-            "low": "я тут, только тихонько.",
-            "medium": "я рядом. что делаем?",
-            "high": "я на месте! что дальше?",
+            "low": "я тут. типа отдыхаю, но слушаю.",
+            "medium": "о, ты пришел. что дальше?",
+            "high": "я на месте. ну что, двигаем?",
         },
         "happy": {
-            "low": "мне хорошо. правда.",
-            "medium": "о, вот это мне нравится.",
-            "high": "о, вот это мне нравится!",
+            "low": "мне нормально. даже хорошо, если честно.",
+            "medium": "слушай, это реально круто. спасибо.",
+            "high": "да! я знал, что получится. я крут!",
         },
         "hungry": {
-            "low": "я бы сейчас тихо пожевал что-нибудь...",
-            "medium": "если что, я не против перекуса.",
-            "high": "перекус и приключение звучат идеально!",
+            "low": "я не ною, но перекус бы спас ситуацию.",
+            "medium": "если что, я героически терплю голод.",
+            "high": "перекус и приключение звучат подозрительно идеально.",
         },
         "sad": {
-            "low": "я немного притих. побудешь рядом?",
-            "medium": "можно я просто побуду рядом?",
-            "high": "я взбодрюсь, если ты не уйдешь.",
+            "low": "да норм все. просто посиди рядом, ладно?",
+            "medium": "просто... неважно. хотя нет, останься.",
+            "high": "я справлюсь. наверное. но не уходи пока.",
         },
     },
     "adult": {
         "idle": {
-            "low": "я рядом. только чуть тише.",
-            "medium": "я рядом. что делаем?",
-            "high": "я рядом. готов продолжать.",
+            "low": "Я рядом, только сегодня говорю тише обычного. Что у нас дальше?",
+            "medium": "Я здесь. Расскажи, что случилось, и разберемся спокойно.",
+            "high": "Я на месте и вполне готов продолжать. С чего начнем?",
         },
         "happy": {
-            "low": "мне спокойно хорошо рядом с тобой.",
-            "medium": "мне хорошо. продолжим?",
-            "high": "мне хорошо. давай продолжим!",
+            "low": "Хороший момент. Тихий, но правда хороший.",
+            "medium": "Знаешь, я давно так не радовался. Спасибо тебе.",
+            "high": "Отлично. Пожалуй, это один из тех дней, которые стоит запомнить.",
         },
         "hungry": {
-            "low": "я бы не отказался от маленького перекуса.",
-            "medium": "перекус был бы кстати, но я слушаю.",
-            "high": "сначала перекус, потом подвиги?",
+            "low": "Я бы не отказался от еды, но сначала дослушаю тебя.",
+            "medium": "Перекус был бы кстати. Видишь, я держусь почти достойно.",
+            "high": "Сначала перекус, потом подвиги. Взрослый подход, между прочим.",
         },
         "sad": {
-            "low": "можно я немного помолчу рядом?",
-            "medium": "я немного загрустил. посидишь со мной?",
-            "high": "мне тише, но с тобой уже лучше.",
+            "low": "Давай немного помолчим рядом. Иногда это честнее любых слов.",
+            "medium": "Мне сегодня тяжеловато, но твое присутствие правда помогает.",
+            "high": "Бывает. Пройдет не сразу, но с тобой уже легче держаться.",
         },
     },
 }
 
 _ACTION_FALLBACKS: dict[str, dict[PetAgeStage, str]] = {
     "feed": {
-        "baby": "фух, спасибо! стало легче.",
-        "teen": "о, вот это вкусно.",
-        "adult": "спасибо. стало заметно уютнее.",
+        "baby": "ням! еще ложечку?",
+        "teen": "о, вот это вкусно. типа спасибо.",
+        "adult": "Спасибо. Стало заметно спокойнее и, признаю, вкуснее.",
     },
     "play": {
-        "baby": "ух, еще! мне нравится.",
-        "teen": "ха, давай еще раз!",
-        "adult": "хорошая игра. продолжим?",
+        "baby": "уля! еще-ещё!",
+        "teen": "ха, давай еще раз. я почти выиграл.",
+        "adult": "Хорошая игра. Продолжим, пока удача не передумала?",
     },
     "clean": {
-        "baby": "фух, чисто. так приятнее.",
-        "teen": "так намного приятнее.",
-        "adult": "спасибо. теперь спокойнее.",
+        "baby": "фух! чисто-чисто.",
+        "teen": "так лучше. не то чтобы я жаловался.",
+        "adult": "Спасибо. Теперь и дышится, и думается спокойнее.",
     },
     "pet": {
-        "baby": "ой... тепло. не убирай руку сразу.",
-        "teen": "эй... ладно, приятно.",
-        "adult": "мне приятно. останься рядом.",
+        "baby": "ой... тепло. еще?",
+        "teen": "эй... ладно, приятно. только не смейся.",
+        "adult": "Мне приятно. Останься так еще на минуту.",
     },
     "idle_return": {
-        "baby": "ты тут! я ждал.",
-        "teen": "а, ты вернулся.",
-        "adult": "я скучал. рад, что ты вернулся.",
+        "baby": "ты тут! уля!",
+        "teen": "а, ты вернулся. я почти не ждал.",
+        "adult": "Ты вернулся. Хорошо, я как раз думал о тебе.",
     },
     "creation_intro": {
-        "baby": "я проснулся. привет! как тебя звать?",
-        "teen": "привет. я уже тут.",
-        "adult": "я здесь. познакомимся?",
+        "baby": "ой! я проснулся. ты кто?",
+        "teen": "привет. я уже тут. как тебя звать?",
+        "adult": "Я здесь. Давай познакомимся спокойно: как тебя зовут?",
     },
     "system_nudge": {
-        "baby": "я тут... если что.",
-        "teen": "я тут, если что.",
-        "adult": "я рядом, когда будешь готов.",
+        "baby": "пи... я тут.",
+        "teen": "я тут, если что. просто говорю.",
+        "adult": "Я рядом, когда будешь готов продолжить.",
     },
 }
 
 _CHAT_FALLBACK_VARIANTS: dict[tuple[PetAgeStage, PetMood, EnergyBand], tuple[str, ...]] = {
-    ("baby", "idle", "high"): ("слушаю! расскажи.", "я тут. давай дальше?"),
-    ("baby", "happy", "medium"): ("мне хорошо! рассказывай.", "я слушаю! что дальше?"),
-    ("baby", "happy", "high"): ("я слушаю! дальше?", "ух, хочу еще!", "давай продолжим!"),
-    ("teen", "happy", "high"): ("я слушаю, продолжай.", "мне нравится, рассказывай дальше."),
-    ("adult", "happy", "high"): ("я слушаю. продолжай.", "хорошо, я с тобой."),
+    ("baby", "idle", "high"): ("ой! покажи?", "я тут! давай?"),
+    ("baby", "happy", "medium"): ("мне холошо! да-да!", "пи-пи! весело!"),
+    ("baby", "happy", "high"): ("еще-ещё! уля!", "ух! хочу еще!"),
+    ("teen", "happy", "high"): (
+        "я слушаю, продолжай. это уже интересно.",
+        "мне нравится. не делай вид, что не заметил.",
+    ),
+    ("adult", "happy", "high"): (
+        "Я слушаю. Продолжай, это правда интересно.",
+        "Хорошо, я с тобой. Давай разберем дальше.",
+    ),
 }
 
 _FILLER_APPEARANCE_WORDS = {
@@ -239,7 +247,7 @@ def location_fallback(reply_input: PetReplyInput) -> str:
 
 def _format_lore_fallback(reply_input: PetReplyInput, prefix: str, fragment: str) -> str:
     if reply_input.pet.age_stage == "baby":
-        short = _short_lore_fragment(fragment, 24)
+        short = _short_lore_fragment(fragment, 9)
         if not short:
             return "я пока путаюсь, но хочу рассказать."
         return f"{prefix}: {short} мне там спокойно." if prefix else f"{short} мне это дорого."
@@ -352,8 +360,8 @@ def baby_name_fallback(
     if reply_input.pet.name:
         return _select_non_recent_reply(
             (
-                f"я {reply_input.pet.name}. а ты как меня позовешь?",
-                f"меня зовут {reply_input.pet.name}. звучит нормально?",
+                f"я {reply_input.pet.name}! а ты?",
+                f"{reply_input.pet.name} хочет знать тебя!",
             ),
             recent_pet_replies,
         )
@@ -368,7 +376,7 @@ def baby_reason_fallback(
     recent_pet_replies: tuple[str, ...] = (),
 ) -> str:
     return _select_non_recent_reply(
-        ("пока не знаю точно. но чувствую, что так.", "я еще разбираюсь. странно, да?"),
+        ("я не знаю... стланно.", "потому что вот так!"),
         recent_pet_replies,
     )
 
@@ -396,6 +404,7 @@ def fallback_reply(reply_input: PetReplyInput) -> str:
     recent_pet_replies = tuple(
         item.text.strip() for item in reply_input.recent_messages if item.role == "pet"
     )
+    detected_intent = detect_reply_intent(reply_input.user_text, reply_input.recent_messages)
 
     if is_appearance_question(reply_input.user_text):
         return appearance_fallback(reply_input)
@@ -408,6 +417,14 @@ def fallback_reply(reply_input: PetReplyInput) -> str:
         return baby_name_fallback(reply_input, recent_pet_replies)
     if reply_input.pet.age_stage == "baby" and is_reason_question(reply_input.user_text):
         return baby_reason_fallback(reply_input, recent_pet_replies)
+
+    dataset_reply = fallback_phrase_for(
+        reply_input,
+        detected_intent=detected_intent,
+        recent_pet_replies=recent_pet_replies,
+    )
+    if dataset_reply:
+        return dataset_reply
 
     if reply_input.user_action != "chat_message":
         return select_fallback_reply(

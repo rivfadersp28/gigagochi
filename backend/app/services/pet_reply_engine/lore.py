@@ -7,13 +7,27 @@ from app.services.character_cards import normalize_character_profile_v2
 
 LoreDict = dict[str, Any]
 
+TECHNICAL_LORE_TEXT_PATTERN = re.compile(
+    r"("
+    r"source_descriptions|Home/habitat details must be inferred|"
+    r"World facts come from|No extra origin is invented|Use source_descriptions|"
+    r"безопасная среда для формы|No relationship lore is added"
+    r")",
+    re.IGNORECASE,
+)
+
 
 def _object(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
 def _string(value: Any) -> str | None:
-    return value.strip() if isinstance(value, str) and value.strip() else None
+    if not isinstance(value, str):
+        return None
+    text = re.sub(r"\s+", " ", value).strip()
+    if not text or TECHNICAL_LORE_TEXT_PATTERN.search(text):
+        return None
+    return text
 
 
 def _strings(value: Any, limit: int = 4) -> tuple[str, ...]:
@@ -137,7 +151,12 @@ def lore_text_for_legacy_profile(
     return f"лора нет; опирайся на визуальную идею: {basis}" if basis else "лора нет"
 
 
-def compact_lore_lines(lore: LoreDict | None, *, age_stage: str) -> tuple[str, ...]:
+def compact_lore_lines(
+    lore: LoreDict | None,
+    *,
+    age_stage: str,
+    detail_mode: str = "full",
+) -> tuple[str, ...]:
     if not lore:
         return ()
 
@@ -238,6 +257,26 @@ def compact_lore_lines(lore: LoreDict | None, *, age_stage: str) -> tuple[str, .
     age_arc = _string(growth_arc.get(age_stage))
     if age_arc:
         lines.append(f"возрастная дуга: {age_arc}")
+
+    if detail_mode == "light":
+        preferred_prefixes = (
+            "отношение к собеседнику:",
+            "главное желание:",
+            "внутренний конфликт:",
+            "любимое место:",
+            "привычки:",
+            "манера речи:",
+            "темы для редкого упоминания:",
+        )
+        light = [line for line in lines if line.startswith(preferred_prefixes)]
+        if len(light) < 4:
+            fallback_prefixes = ("дом:", "важные предметы:", "боится:", "мечта:")
+            light.extend(
+                line
+                for line in lines
+                if line.startswith(fallback_prefixes) and line not in light
+            )
+        return tuple(light[:8])
 
     return tuple(lines[:20])
 

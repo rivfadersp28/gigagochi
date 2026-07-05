@@ -5,6 +5,7 @@ import type {
   CreatePetResponse,
   FeedResponse,
   GeneratePetResponse,
+  LiteFactExtractionResponse,
   LocalChatMessage,
   LocalChatResponse,
   LocalPetState,
@@ -13,6 +14,7 @@ import type {
   PetMood,
   PetStage,
   PromptLayers,
+  ReplyMode,
 } from "./types";
 import { getTelegramInitData } from "./telegram";
 
@@ -31,6 +33,7 @@ type RequestOptions = Omit<RequestInit, "body"> & {
 type LocalChatOptions = {
   promptLayers?: PromptLayers;
   includeDebug?: boolean;
+  replyMode?: ReplyMode;
 };
 
 type GeneratePetOptions = {
@@ -222,6 +225,39 @@ export async function sendLocalChatMessage(
       message: message.slice(0, MAX_CHAT_INPUT_LENGTH),
       includeDebug: options.includeDebug ?? false,
       promptLayers: options.promptLayers,
+      replyMode: options.replyMode ?? "full",
+      pet: {
+        name: pet.name,
+        description: pet.description,
+        characterBible: pet.assetSet?.characterBible,
+        stage: pet.stage,
+        mood: pet.mood,
+        stats: pet.stats,
+        memory: pet.memory,
+        loreMemories: pet.loreMemories ?? [],
+      },
+      history: history.slice(-12).map((item) => ({
+        role: item.role,
+        text: item.text,
+      })),
+    },
+  });
+}
+
+export async function extractLocalLiteFacts(
+  message: string,
+  reply: string,
+  pet: LocalPetState,
+  history: LocalChatMessage[],
+  options: { includeDebug?: boolean } = {},
+): Promise<LiteFactExtractionResponse> {
+  return request<LiteFactExtractionResponse>("/api/chat/lite-facts", {
+    method: "POST",
+    headers: tmaAuthHeaders(),
+    body: {
+      message: message.slice(0, MAX_CHAT_INPUT_LENGTH),
+      reply,
+      includeDebug: options.includeDebug ?? false,
       pet: {
         name: pet.name,
         description: pet.description,

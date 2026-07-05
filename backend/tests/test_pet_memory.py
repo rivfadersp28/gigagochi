@@ -93,6 +93,141 @@ def test_memory_resolver_accepts_friend_fact_and_relationship_updates() -> None:
     assert patch.developmentPatch.trust == 25
 
 
+def test_memory_resolver_stores_pet_canon_candidate_as_generated_draft() -> None:
+    memory = normalize_memory(None)
+    patch = resolve_memory_update(
+        memory,
+        character_bible={"species": "leaf mascot"},
+        memory_context=build_memory_context(memory, "что ты любишь?"),
+        user_text="что ты любишь?",
+        pet_reply="я люблю прятать пуговицы под теплой чашкой.",
+        memory_candidates=[
+            MemoryCandidate(
+                type="pet_canon_fact",
+                text="Питомец любит прятать пуговицы под теплой чашкой.",
+                importance=0.55,
+                confidence=0.6,
+                sourceSpan="я люблю прятать пуговицы под теплой чашкой",
+            )
+        ],
+    )
+
+    assert not patch.canonUpserts
+    assert patch.generatedFactUpserts
+    generated = patch.generatedFactUpserts[0]
+    assert generated.status == "draft"
+    assert generated.scope == "preference"
+    assert generated.sourceSpan
+
+
+def test_memory_resolver_requires_confirmation_for_generated_friend_fact() -> None:
+    memory = normalize_memory(None)
+    patch = resolve_memory_update(
+        memory,
+        character_bible={"species": "leaf mascot"},
+        memory_context=build_memory_context(memory, "кто твой друг?"),
+        user_text="кто твой друг?",
+        pet_reply="у меня есть друг Луми, он сторожит крошки света.",
+        memory_candidates=[
+            MemoryCandidate(
+                type="pet_generated_fact",
+                text="У питомца есть друг Луми, который сторожит крошки света.",
+                importance=0.72,
+                confidence=0.62,
+            )
+        ],
+    )
+
+    assert not patch.canonUpserts
+    assert patch.generatedFactUpserts
+    assert patch.generatedFactUpserts[0].scope == "friend"
+    assert patch.generatedFactUpserts[0].status == "needs_user_confirmation"
+
+
+def test_memory_resolver_rejects_conflicting_generated_fact() -> None:
+    memory = normalize_memory(None)
+    patch = resolve_memory_update(
+        memory,
+        character_bible={"lore": {"home": {"place": "нижняя полка"}}},
+        memory_context=None,
+        user_text="расскажи про дом",
+        pet_reply="теперь я живу в другом доме за стеклянным мостом.",
+        memory_candidates=[
+            MemoryCandidate(
+                type="pet_generated_fact",
+                text="Питомец теперь живет в другом доме за стеклянным мостом.",
+                importance=0.85,
+                confidence=0.75,
+            )
+        ],
+    )
+
+    assert not patch.canonUpserts
+    assert patch.generatedFactUpserts
+    generated = patch.generatedFactUpserts[0]
+    assert generated.status == "rejected"
+    assert "canon_home_conflict" in generated.conflictReasons
+    assert {item.reason for item in patch.rejectedCandidateAppends} == {"canon_home_conflict"}
+
+
+def test_memory_resolver_promotes_repeated_generated_voice_fact_to_soft_accept() -> None:
+    memory = normalize_memory(None)
+    first_patch = resolve_memory_update(
+        memory,
+        character_bible={"species": "leaf mascot"},
+        memory_context=None,
+        user_text="как ты говоришь?",
+        pet_reply="я отвечаю тихо и звеню последним словом.",
+        memory_candidates=[
+            MemoryCandidate(
+                type="pet_emotional_fact",
+                text="Питомец часто отвечает тихо и звенит последним словом.",
+                importance=0.55,
+                confidence=0.62,
+            )
+        ],
+    )
+    memory = normalize_memory(
+        {
+            **memory.model_dump(),
+            "generatedFacts": [fact.model_dump() for fact in first_patch.generatedFactUpserts],
+        }
+    )
+
+    second_patch = resolve_memory_update(
+        memory,
+        character_bible={"species": "leaf mascot"},
+        memory_context=build_memory_context(memory, "повтори так"),
+        user_text="повтори так",
+        pet_reply="я снова отвечаю тихо и звеню последним словом.",
+        memory_candidates=[
+            MemoryCandidate(
+                type="pet_emotional_fact",
+                text="Питомец часто отвечает тихо и звенит последним словом.",
+                importance=0.55,
+                confidence=0.65,
+            )
+        ],
+    )
+
+    assert not second_patch.canonUpserts
+    assert second_patch.generatedFactUpserts
+    generated = second_patch.generatedFactUpserts[0]
+    assert generated.status == "accepted_soft"
+    assert generated.reinforcementCount == 2
+
+    memory = normalize_memory(
+        {
+            **memory.model_dump(),
+            "generatedFacts": [fact.model_dump() for fact in second_patch.generatedFactUpserts],
+        }
+    )
+    context = build_memory_context(memory, "скажи своим голосом")
+    assert context.generated_fact_lines == (
+        "voice: Питомец часто отвечает тихо и звенит последним словом.",
+    )
+
+
 def test_memory_resolver_rejects_conflicting_technical_and_sensitive_facts() -> None:
     memory = normalize_memory(None)
     patch = resolve_memory_update(
@@ -232,9 +367,11 @@ def test_memory_resolver_extracts_implicit_friend_fact_from_lore_reply() -> None
         memory_candidates=[],
     )
 
-    assert patch.canonUpserts
-    assert patch.canonUpserts[0].type == "friend_fact"
-    assert "билетик-искатель" in patch.canonUpserts[0].text
+    assert not patch.canonUpserts
+    assert patch.generatedFactUpserts
+    assert patch.generatedFactUpserts[0].scope == "friend"
+    assert patch.generatedFactUpserts[0].status == "needs_user_confirmation"
+    assert "билетик-искатель" in patch.generatedFactUpserts[0].text
 
 
 def test_memory_resolver_extracts_companion_from_direct_friend_answer() -> None:
@@ -248,9 +385,11 @@ def test_memory_resolver_extracts_companion_from_direct_friend_answer() -> None:
         memory_candidates=[],
     )
 
-    assert patch.canonUpserts
-    assert patch.canonUpserts[0].type == "friend_fact"
-    assert "младший капельный жетон" in patch.canonUpserts[0].text
+    assert not patch.canonUpserts
+    assert patch.generatedFactUpserts
+    assert patch.generatedFactUpserts[0].scope == "friend"
+    assert patch.generatedFactUpserts[0].status == "needs_user_confirmation"
+    assert "младший капельный жетон" in patch.generatedFactUpserts[0].text
 
 
 def test_memory_resolver_extracts_nearby_companion_from_friend_answer() -> None:
@@ -266,9 +405,11 @@ def test_memory_resolver_extracts_nearby_companion_from_friend_answer() -> None:
         memory_candidates=[],
     )
 
-    assert patch.canonUpserts
-    assert patch.canonUpserts[0].type == "friend_fact"
-    assert "хранитель бирок" in patch.canonUpserts[0].text
+    assert not patch.canonUpserts
+    assert patch.generatedFactUpserts
+    assert patch.generatedFactUpserts[0].scope == "friend"
+    assert patch.generatedFactUpserts[0].status == "needs_user_confirmation"
+    assert "хранитель бирок" in patch.generatedFactUpserts[0].text
 
 
 def test_memory_control_commands_read_forget_and_boundary() -> None:

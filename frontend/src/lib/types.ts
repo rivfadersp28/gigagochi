@@ -4,6 +4,7 @@ export type PetState = "idle" | "happy" | "sad" | "hungry";
 export type MessageRole = "user" | "assistant";
 export type PetLifeStage = "baby" | "teen" | "adult";
 export type PetMood = "idle" | "happy" | "hungry" | "sad";
+export type ReplyMode = "full" | "lite";
 export type AdminGenerateMode = "profile_only" | "full_assets";
 
 export type AnonymousUser = {
@@ -127,6 +128,34 @@ export type CanonMemoryFact = {
   pinned?: boolean;
 };
 
+export type GeneratedFactCandidate = {
+  id: string;
+  scope:
+    | "world"
+    | "home"
+    | "friend"
+    | "family"
+    | "origin"
+    | "preference"
+    | "fear"
+    | "habit"
+    | "voice"
+    | "relationship"
+    | "thread";
+  text: string;
+  source: "model" | "user" | "system";
+  sourceSpan?: string;
+  confidence: number;
+  importance: number;
+  status: "draft" | "accepted_soft" | "needs_user_confirmation" | "rejected" | "canon";
+  promotionPolicy: string;
+  conflictReasons: string[];
+  reinforcementCount: number;
+  relatedCanonFactId?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type RelationshipEvent = {
   id: string;
   text: string;
@@ -230,7 +259,16 @@ export type PetEvent = {
 
 export type RejectedMemoryCandidate = {
   id: string;
-  type: CanonMemoryFactType | "user_fact" | "relationship_event";
+  type:
+    | CanonMemoryFactType
+    | "user_fact"
+    | "relationship_event"
+    | "pet_canon_fact"
+    | "pet_emotional_fact"
+    | "pet_generated_fact"
+    | "open_thread"
+    | "preference"
+    | "boundary";
   text: string;
   reason: string;
   confidence: number;
@@ -241,6 +279,7 @@ export type RejectedMemoryCandidate = {
 export type PetMemoryStateV1 = {
   schemaVersion: 1;
   canon: CanonMemoryFact[];
+  generatedFacts: GeneratedFactCandidate[];
   relationship: RelationshipMemory;
   threads: ConversationThread[];
   reflections: ReflectionMemory[];
@@ -272,6 +311,8 @@ export type AppliedDevelopmentPatch = Partial<DevelopmentState>;
 export type PetMemoryPatch = {
   canonUpserts?: CanonMemoryFact[];
   canonDeletes?: string[];
+  generatedFactUpserts?: GeneratedFactCandidate[];
+  generatedFactDeletes?: string[];
   relationshipPatch?: RelationshipMemoryPatch;
   threadUpserts?: ConversationThread[];
   threadDeletes?: string[];
@@ -347,21 +388,44 @@ export type GeneratePetResponse = {
   spriteSheetUrl?: string;
 };
 
+export type ChatPromptDebug = {
+  label?: string;
+  model?: string;
+  messages?: Record<string, unknown>[];
+  tools?: unknown;
+  tool_choice?: unknown;
+  response_format?: unknown;
+};
+
 export type LocalChatResponse = {
   reply: string;
   moodHint?: PetMood;
   loreMemoriesToSave?: string[];
   memoryPatch?: PetMemoryPatch;
   debug?: {
+    replyMode?: ReplyMode;
     usedFallback?: boolean;
     validationFlags?: string[];
     rejectedMemoryCount?: number;
     proactivityFlags?: string[];
     detectedIntent?: string;
     selectedReferenceCardIds?: string[];
+    selectedSpeechAnchorIds?: string[];
+    speechAnchors?: Record<string, unknown>[];
+    rejectedSpeechAnchors?: Record<string, unknown>[];
+    generatedFacts?: Record<string, unknown>[];
+    rejectedGeneratedFacts?: Record<string, unknown>[];
     includedLayers?: string[];
     excludedLayers?: string[];
+    promptDebug?: ChatPromptDebug[];
+    liteToolCalls?: Record<string, unknown>[];
+    liteOverlayPatch?: Record<string, unknown>;
   };
+};
+
+export type LiteFactExtractionResponse = {
+  liteOverlayPatch?: Record<string, unknown>;
+  debug?: LocalChatResponse["debug"];
 };
 
 export type AdminGenerateOneRequest = {

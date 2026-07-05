@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import re
 
+from app.services.pet_reply_engine.age_message_examples import all_stage_phrases
 from app.services.pet_reply_engine.intent import is_lore_question, is_status_question
 from app.services.pet_reply_engine.models import PetAgeStage, PetMood, PetValidationResult
+from app.services.pet_reply_engine.reply_limits import MAX_REPLY_CHARS
+from app.services.pet_reply_engine.speech_anchors import all_turn_anchor_texts
 from app.services.pet_reply_engine.text_style import style_for_reply
 
-ABSOLUTE_MAX_CHARS = 700
+ABSOLUTE_MAX_CHARS = MAX_REPLY_CHARS
 BANNED_WORDS_FOR_PROMPT = (
     "ИИ",
     "AI",
@@ -124,6 +127,37 @@ _DRY_BABY_REPLY_PATTERNS = (
     re.compile(r"^\s*(?:я\s+)?не\s+знаю[.!?…)]*\s*$", re.IGNORECASE),
     re.compile(r"^\s*(?:я\s+)?не\s+понимаю[.!?…)]*\s*$", re.IGNORECASE),
 )
+_BABY_CODED_PATTERN = re.compile(
+    r"(?:\bуля\b|\bпи(?:ку)?\b|\bням\b|глустн|стлашн|болшо|спатк|кусят|"
+    r"делжи|клепк|иглат|да-да|нет-нет|ещ[её]-ещ[её]|очень-очень)",
+    re.IGNORECASE,
+)
+_REPEAT_STOPWORDS = {
+    "меня",
+    "тебя",
+    "тебе",
+    "тобой",
+    "себя",
+    "себе",
+    "свой",
+    "своя",
+    "свои",
+    "свое",
+    "своё",
+    "очень",
+    "просто",
+    "сейчас",
+    "потом",
+    "когда",
+    "если",
+    "только",
+    "можно",
+    "хочу",
+    "буду",
+    "будет",
+    "знаешь",
+    "смотри",
+}
 
 
 def _word_count(text: str) -> int:
@@ -197,12 +231,88 @@ def _is_dry_baby_reply(text: str, age_stage: PetAgeStage) -> bool:
     return any(pattern.search(text) for pattern in _DRY_BABY_REPLY_PATTERNS)
 
 
+def _has_age_style_mismatch(text: str, age_stage: PetAgeStage) -> bool:
+    if age_stage == "adult":
+        return bool(_BABY_CODED_PATTERN.search(text))
+    return False
+
+
+def _has_multi_example_copy(text: str, age_stage: PetAgeStage) -> bool:
+    normalized_text = _normalize_for_copy_check(text)
+    matches = 0
+    for phrase in all_stage_phrases(age_stage):
+        normalized_phrase = _normalize_for_copy_check(phrase)
+        if len(normalized_phrase) < 12:
+            continue
+        if normalized_phrase in normalized_text:
+            matches += 1
+        if matches >= 2:
+            return True
+    return False
+
+
+def _has_turn_anchor_copy(text: str, age_stage: PetAgeStage) -> bool:
+    normalized_text = _normalize_for_copy_check(text)
+    if len(normalized_text) < 18:
+        return False
+    for phrase in all_turn_anchor_texts(age_stage):
+        normalized_phrase = _normalize_for_copy_check(phrase)
+        if len(normalized_phrase) < 18:
+            continue
+        if normalized_text == normalized_phrase or normalized_phrase in normalized_text:
+            return True
+    return False
+
+
+def _normalize_for_copy_check(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[\"'«»“”„*.,!?…:;()—-]+", " ", text.casefold())).strip()
+
+
+def _content_words(text: str) -> list[str]:
+    return [
+        word.casefold()
+        for word in _WORD_PATTERN.findall(text)
+        if len(word) >= 4 and word.casefold() not in _REPEAT_STOPWORDS
+    ]
+
+
+def _repeated_phrases(text: str) -> set[str]:
+    words = _content_words(text)
+    phrases: set[str] = set()
+    for size in (2, 3):
+        for index in range(0, max(0, len(words) - size + 1)):
+            phrases.add(" ".join(words[index : index + size]))
+    return phrases
+
+
+def _has_repeated_lore_term(
+    text: str,
+    recent_pet_replies: tuple[str, ...],
+    user_text: str | None,
+) -> bool:
+    if is_lore_question(user_text):
+        return False
+    current = _repeated_phrases(text)
+    if not current:
+        return False
+    user_phrases = _repeated_phrases(user_text or "")
+    recent_matches = 0
+    for reply in recent_pet_replies[-4:]:
+        overlap = current & _repeated_phrases(reply)
+        if user_phrases:
+            overlap -= user_phrases
+        if overlap:
+            recent_matches += 1
+    return recent_matches >= 2
+
+
 def validate_reply(
     reply: str,
     age_stage: PetAgeStage,
     pet_name: str | None = None,
     current_mood: PetMood | None = None,
     user_text: str | None = None,
+    recent_pet_replies: tuple[str, ...] = (),
 ) -> PetValidationResult:
     text = reply.strip()
     flags: list[str] = []
@@ -236,7 +346,18 @@ def validate_reply(
         flags.append("literal_age_claim")
     if _is_dry_baby_reply(text, age_stage):
         flags.append("dry_baby_reply")
-    if _starts_with_pet_name(text, pet_name) or _THIRD_PERSON_START_PATTERN.search(text):
+    if _has_age_style_mismatch(text, age_stage):
+        flags.append("age_style_mismatch")
+    if _has_multi_example_copy(text, age_stage):
+        flags.append("copied_age_examples")
+    if _has_turn_anchor_copy(text, age_stage):
+        flags.append("copied_speech_anchor")
+    if _has_repeated_lore_term(text, recent_pet_replies, user_text):
+        flags.append("repeated_lore_term")
+    third_person_blocked = age_stage != "baby" and (
+        _starts_with_pet_name(text, pet_name) or _THIRD_PERSON_START_PATTERN.search(text)
+    )
+    if third_person_blocked:
         flags.append("third_person")
     if _has_mood_mismatch(text, current_mood, user_text):
         flags.append("mood_mismatch")

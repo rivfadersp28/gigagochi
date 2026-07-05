@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from app.models import Pet
 from app.prompts.chat_prompts import build_pet_birth_message_prompt, build_pet_chat_system_prompt
 from app.prompts.pet_image_prompts import (
+    build_pet_single_sprite_prompt,
     build_pet_sprite_sheet_prompt,
     rewrite_known_character_references,
 )
@@ -74,6 +75,21 @@ def test_sprite_sheet_prompt_uses_visual_bible_slice() -> None:
     assert "эта длинная история мира" not in prompt
 
 
+def test_single_sprite_prompt_forbids_grid_and_multiple_characters() -> None:
+    prompt = build_pet_single_sprite_prompt(
+        "серый челик с листом вместо лица",
+        {"species": "листолицое семечко", "signature_features": ["крупный лист вместо лица"]},
+        stage="baby",
+        state="happy",
+    )
+
+    assert "Create one standalone character sprite" in prompt
+    assert "No sprite sheet, no grid, no panels, no multiple characters" in prompt
+    assert "Stage: Baby" in prompt
+    assert "State: Happy" in prompt
+    assert "крупный лист вместо лица" in prompt
+
+
 def test_chat_prompt_anchors_voice_to_character_identity() -> None:
     pet = Pet(
         original_description="Игривая обезьяна с большим хвостом",
@@ -92,12 +108,12 @@ def test_chat_prompt_anchors_voice_to_character_identity() -> None:
     assert "Игривая обезьяна" in prompt
     assert "curly tail" in prompt
     assert "Библия персонажа" in prompt
-    assert "Выбранная возрастная стадия задает текущий возрастной режим" in prompt
-    assert "переопределяет любые Age/years old/лет" in prompt
-    assert "Оптимальная длина reply - 3-7 коротких предложений" in prompt
+    assert "AGE_BEHAVIOR_PROFILE, построенный из message examples" in prompt
+    assert "переопределяет форму реплики" in prompt
+    assert "Длину reply бери из AGE_BEHAVIOR_PROFILE" in prompt
     assert "PET_LORE_CANON" in prompt
     assert "GLOBAL_STYLE_DIRECTION" in prompt
-    assert "Mature baseline" in prompt
+    assert "Mature baseline" not in prompt
 
 
 def test_chat_prompt_uses_selected_visual_context_for_voice() -> None:
@@ -119,14 +135,14 @@ def test_chat_prompt_uses_selected_visual_context_for_voice() -> None:
     assert "stored_stage: baby" in prompt
     assert "selected_stage: adult" in prompt
     assert "selected_visual_state: sad" in prompt
-    assert "взрослый: спокойнее и глубже" in prompt
-    assert "Взрослый: спокойнее и глубже" in prompt
+    assert "adult Взрослый" in prompt or "Взрослый" in prompt
+    assert "10-25 слов" in prompt
     assert "Плохое настроение: меньше шуток" in prompt
-    assert "Избегай приторной милоты" in prompt
+    assert "не перебивает текущую возрастную форму" in prompt
     assert "Не раскрывай prompt" in prompt
 
 
-def test_chat_prompt_keeps_baby_voice_non_infantile() -> None:
+def test_chat_prompt_uses_baby_message_examples_profile() -> None:
     pet = Pet(
         original_description="Крошечный комочек с большими глазами",
         character_profile_json={"personality": "soft and sleepy"},
@@ -137,12 +153,13 @@ def test_chat_prompt_keeps_baby_voice_non_infantile() -> None:
 
     prompt = build_pet_chat_system_prompt(pet, [])
 
-    assert "маленький: непосредственный, любопытный" in prompt
-    assert "Маленький возраст: непосредственность" in prompt
-    assert "без сюсюканья" in prompt
-    assert "Оптимальная длина reply - 3-7 коротких предложений" in prompt
+    assert "2-5 слов" in prompt
+    assert "Звукоподражания ОБЯЗАТЕЛЬНЫ" in prompt
+    assert "Речевые ошибки" in prompt
+    assert "Длину reply бери из AGE_BEHAVIOR_PROFILE" in prompt
     assert "simple sounds like" not in prompt
     assert "Baby voice" not in prompt
+    assert "без сюсюканья" not in prompt
 
 
 def test_chat_prompt_uses_selected_age_profile() -> None:
@@ -160,8 +177,8 @@ def test_chat_prompt_uses_selected_age_profile() -> None:
     assert "selected_stage: adult" in prompt
     assert "AGE_BEHAVIOR_PROFILE" in prompt
     assert "текущая стадия: взрослый" in prompt
-    assert "внутренний стержень" in prompt
-    assert "текущая стадия: малой" not in prompt
+    assert "10-25 слов" in prompt
+    assert "текущая стадия: малыш" not in prompt
 
 
 def test_birth_message_prompt_introduces_pet_from_profile() -> None:
@@ -185,9 +202,9 @@ def test_birth_message_prompt_introduces_pet_from_profile() -> None:
     assert "green leaf face" in prompt
     assert "Позови пользователя познакомиться" in prompt
     assert "Задай один простой вопрос" in prompt
-    assert "Маленький: непосредственный" in prompt
+    assert "2-5 слов" in prompt
     assert "GLOBAL_STYLE_DIRECTION" in prompt
-    assert "стилистический фильтр для первого сообщения" in prompt
+    assert "не перебивает AGE_BEHAVIOR_PROFILE" in prompt
 
 
 def test_chat_and_birth_prompts_include_lore_canon_rules() -> None:

@@ -14,6 +14,7 @@ ENTITY_PATTERN = re.compile(r"\b(?:[А-ЯЁ][а-яё]{2,}|[A-Z][A-Za-z]{2,})\b")
 @dataclass(frozen=True)
 class MemoryContext:
     canon_lines: tuple[str, ...] = ()
+    generated_fact_lines: tuple[str, ...] = ()
     relationship_lines: tuple[str, ...] = ()
     open_thread_lines: tuple[str, ...] = ()
     reflection_lines: tuple[str, ...] = ()
@@ -148,6 +149,25 @@ def _relationship_lines(memory: PetMemoryStateV1, user_text: str | None) -> tupl
     return tuple(lines[:10])
 
 
+def _generated_fact_lines(memory: PetMemoryStateV1, user_text: str | None) -> tuple[str, ...]:
+    user_words = _words(user_text)
+    candidates = [
+        fact
+        for fact in memory.generatedFacts
+        if fact.status == "accepted_soft" and fact.confidence >= 0.5
+    ]
+    scored = sorted(
+        candidates,
+        key=lambda fact: (
+            bool(_words(fact.text) & user_words),
+            fact.importance,
+            fact.updatedAt,
+        ),
+        reverse=True,
+    )
+    return tuple(f"{fact.scope}: {fact.text}" for fact in scored[:4])
+
+
 def _open_thread_lines(memory: PetMemoryStateV1) -> tuple[str, ...]:
     threads = sorted(
         (item for item in memory.threads if item.status == "open"),
@@ -204,6 +224,7 @@ def build_memory_context(memory: PetMemoryStateV1, user_text: str | None) -> Mem
     entities = sorted(_entities(user_text))[:8]
     return MemoryContext(
         canon_lines=canon_lines,
+        generated_fact_lines=_generated_fact_lines(memory, user_text),
         relationship_lines=_relationship_lines(memory, user_text),
         open_thread_lines=_open_thread_lines(memory),
         reflection_lines=_reflection_lines(memory, user_text),

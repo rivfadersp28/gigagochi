@@ -12,6 +12,7 @@ from app.services.pet_memory.models import (
     CanonMemoryFact,
     ConversationThread,
     DevelopmentPatch,
+    GeneratedFactCandidate,
     GoalPatch,
     MemoryCandidate,
     PetEvent,
@@ -26,6 +27,7 @@ from app.services.pet_memory.models import (
 )
 from app.services.pet_memory.normalizer import (
     MAX_CANON_FACTS,
+    MAX_GENERATED_FACTS,
     clamp_float,
     clamp_int,
     make_memory_id,
@@ -98,6 +100,43 @@ ROLE_NAME_PATTERN = re.compile(
     r"сосед|соседка|соперник|хранитель|мастер|учитель|брат|сестра|тетя|дядя)"
     r"\s+(?:питомца\s+)?[-—–]?\s*([А-ЯЁA-Z][А-Яа-яЁёA-Za-z0-9_-]{1,40})"
 )
+ENTITY_PATTERN = re.compile(r"\b(?:[А-ЯЁ][а-яё]{2,}|[A-Z][A-Za-z]{2,})\b")
+FRIEND_SCOPE_PATTERN = re.compile(
+    r"\b(?:друг|друз\w*|подруг\w*|приятел\w*|сосед\w*|соседк\w*)\b",
+    re.IGNORECASE,
+)
+GENERATED_FACT_CANDIDATE_TYPES = (
+    "pet_generated_fact",
+    "pet_canon_fact",
+    "pet_emotional_fact",
+)
+GENERATED_SCOPE_BY_TYPE = {
+    "world_fact": "world",
+    "home_fact": "home",
+    "friend_fact": "friend",
+    "family_fact": "family",
+    "origin_fact": "origin",
+    "preference_fact": "preference",
+    "preference": "preference",
+    "fear_fact": "fear",
+    "habit_fact": "habit",
+    "voice_fact": "voice",
+    "pet_emotional_fact": "voice",
+    "milestone": "world",
+}
+CANON_TYPE_BY_GENERATED_SCOPE = {
+    "world": "world_fact",
+    "home": "home_fact",
+    "friend": "friend_fact",
+    "family": "family_fact",
+    "origin": "origin_fact",
+    "preference": "preference_fact",
+    "fear": "fear_fact",
+    "habit": "habit_fact",
+    "voice": "voice_fact",
+    "relationship": "voice_fact",
+    "thread": "world_fact",
+}
 
 
 @dataclass(frozen=True)
@@ -186,7 +225,10 @@ def _implicit_lore_candidates(
     pet_reply: str,
     explicit_candidates: list[MemoryCandidate],
 ) -> list[MemoryCandidate]:
-    if any(candidate.type == "friend_fact" for candidate in explicit_candidates):
+    if any(
+        candidate.type in ("friend_fact", "pet_generated_fact", "pet_canon_fact")
+        for candidate in explicit_candidates
+    ):
         return []
     if not FRIEND_QUESTION_PATTERN.search(user_text):
         return []
@@ -207,7 +249,7 @@ def _implicit_lore_candidates(
 
     return [
         MemoryCandidate(
-            type="friend_fact",
+            type="pet_generated_fact",
             text=f"У питомца есть {role} {detail}.",
             importance=0.68,
             confidence=0.66,
@@ -299,6 +341,11 @@ def _apply_patch_to_memory(memory: PetMemoryStateV1, patch: PetMemoryPatch) -> P
         canon.pop(deleted_id, None)
     canon.update({fact.id: fact for fact in patch.canonUpserts})
 
+    generated_facts = {fact.id: fact for fact in memory.generatedFacts}
+    for deleted_id in patch.generatedFactDeletes:
+        generated_facts.pop(deleted_id, None)
+    generated_facts.update({fact.id: fact for fact in patch.generatedFactUpserts})
+
     threads = {item.id: item for item in memory.threads}
     for deleted_id in patch.threadDeletes:
         threads.pop(deleted_id, None)
@@ -317,6 +364,7 @@ def _apply_patch_to_memory(memory: PetMemoryStateV1, patch: PetMemoryPatch) -> P
     memory = memory.model_copy(
         update={
             "canon": list(canon.values()),
+            "generatedFacts": list(generated_facts.values()),
             "threads": list(threads.values()),
             "reflections": list(reflections.values()),
             "activeGoals": list(goals.values()),
@@ -505,6 +553,184 @@ def _apply_development_patch(
     )
 
 
+def _generated_scope_for_candidate(candidate: MemoryCandidate) -> str:
+    mapped = GENERATED_SCOPE_BY_TYPE.get(candidate.type)
+    if mapped:
+        return mapped
+    text = candidate.text.casefold()
+    if any(word in text for word in ("семь", "родн", "брат", "сестр", "мам", "пап")):
+        return "family"
+    if any(word in text for word in ("дом", "полк", "нор", "гнезд", "комнат", "жив", "обита")):
+        return "home"
+    if FRIEND_SCOPE_PATTERN.search(text):
+        return "friend"
+    if any(word in text for word in ("откуда", "прошл", "родил", "появил", "нашли")):
+        return "origin"
+    if any(word in text for word in ("страш", "бою", "боиш", "страх")):
+        return "fear"
+    if any(word in text for word in ("люб", "нрав", "любим")):
+        return "preference"
+    if any(word in text for word in ("привыч", "обычно", "всегда", "часто")):
+        return "habit"
+    if any(word in text for word in ("говор", "голос", "шеп", "бурч", "ворч", "мурч")):
+        return "voice"
+    return "world"
+
+
+def _has_named_entity(text: str) -> bool:
+    ignored = {"Питомец", "Пользователь"}
+    return any(match.group(0) not in ignored for match in ENTITY_PATTERN.finditer(text))
+
+
+def _generated_initial_status(scope: str, candidate: MemoryCandidate) -> str:
+    if scope in ("friend", "family", "origin"):
+        return "needs_user_confirmation"
+    if scope in ("home", "world") and candidate.importance >= 0.75 and _has_named_entity(
+        candidate.text
+    ):
+        return "needs_user_confirmation"
+    return "draft"
+
+
+def _generated_promotion_policy(status: str, scope: str) -> str:
+    if status == "rejected":
+        return "never_promote_conflict"
+    if status == "needs_user_confirmation":
+        return "ask_user_before_canon"
+    if scope in ("friend", "family", "origin", "home", "world"):
+        return "needs_reinforcement_and_confirmation"
+    return "reinforce_twice_for_soft_accept"
+
+
+def _generated_conflict_reasons(
+    candidate: MemoryCandidate,
+    scope: str,
+    character_bible: dict[str, Any] | None,
+) -> list[str]:
+    reason = _is_sensitive_or_technical(candidate.text)
+    if reason:
+        return [reason]
+    shadow_type = CANON_TYPE_BY_GENERATED_SCOPE.get(scope, "world_fact")
+    shadow = candidate.model_copy(update={"type": shadow_type})
+    canon_reason = _canon_conflict_reason(shadow, character_bible)
+    return [canon_reason] if canon_reason else []
+
+
+def _related_canon_fact_id(memory: PetMemoryStateV1, text: str) -> str | None:
+    key = normalized_key(text)
+    for fact in memory.canon:
+        if normalized_key(fact.text) == key:
+            return fact.id
+    return None
+
+
+def _promote_generated_status(
+    existing_status: str,
+    proposed_status: str,
+    scope: str,
+    reinforcement_count: int,
+) -> str:
+    if proposed_status == "rejected":
+        return "rejected"
+    if existing_status == "canon":
+        return "canon"
+    if existing_status == "rejected":
+        return proposed_status
+    if existing_status == "needs_user_confirmation" or proposed_status == "needs_user_confirmation":
+        return "needs_user_confirmation"
+    if reinforcement_count >= 2 and scope in (
+        "voice",
+        "habit",
+        "preference",
+        "fear",
+        "world",
+        "home",
+    ):
+        return "accepted_soft"
+    return proposed_status
+
+
+def _upsert_generated_fact(
+    memory: PetMemoryStateV1,
+    patch: PetMemoryPatch,
+    candidate: MemoryCandidate,
+    character_bible: dict[str, Any] | None,
+    now: str,
+) -> None:
+    clean = normalize_text(candidate.text)
+    if not clean:
+        return
+    scope = _generated_scope_for_candidate(candidate)
+    conflict_reasons = _generated_conflict_reasons(candidate, scope, character_bible)
+    proposed_status = (
+        "rejected" if conflict_reasons else _generated_initial_status(scope, candidate)
+    )
+    key = f"{scope}:{normalized_key(clean)}"
+    existing = next(
+        (
+            fact
+            for fact in [*memory.generatedFacts, *patch.generatedFactUpserts]
+            if f"{fact.scope}:{normalized_key(fact.text)}" == key
+        ),
+        None,
+    )
+    if existing:
+        reinforcement_count = existing.reinforcementCount + (
+            0 if proposed_status == "rejected" else 1
+        )
+        status = _promote_generated_status(
+            existing.status,
+            proposed_status,
+            scope,
+            reinforcement_count,
+        )
+        patch.generatedFactUpserts.append(
+            existing.model_copy(
+                update={
+                    "text": clean,
+                    "sourceSpan": normalize_text(candidate.sourceSpan, 240)
+                    if candidate.sourceSpan
+                    else existing.sourceSpan,
+                    "confidence": max(existing.confidence, clamp_float(candidate.confidence)),
+                    "importance": max(existing.importance, clamp_float(candidate.importance)),
+                    "status": status,
+                    "promotionPolicy": _generated_promotion_policy(status, scope),
+                    "conflictReasons": list(
+                        dict.fromkeys([*existing.conflictReasons, *conflict_reasons])
+                    )[:6],
+                    "reinforcementCount": reinforcement_count,
+                    "relatedCanonFactId": existing.relatedCanonFactId
+                    or _related_canon_fact_id(memory, clean),
+                    "updatedAt": now,
+                }
+            )
+        )
+    else:
+        status = proposed_status
+        patch.generatedFactUpserts.append(
+            GeneratedFactCandidate(
+                id=make_memory_id("genfact"),
+                scope=scope,
+                text=clean,
+                source="model",
+                sourceSpan=normalize_text(candidate.sourceSpan, 240)
+                if candidate.sourceSpan
+                else None,
+                confidence=clamp_float(candidate.confidence),
+                importance=clamp_float(candidate.importance),
+                status=status,
+                promotionPolicy=_generated_promotion_policy(status, scope),
+                conflictReasons=conflict_reasons,
+                reinforcementCount=1,
+                relatedCanonFactId=_related_canon_fact_id(memory, clean),
+                createdAt=now,
+                updatedAt=now,
+            )
+        )
+    if conflict_reasons:
+        patch.rejectedCandidateAppends.append(_reject(candidate, conflict_reasons[0], now))
+
+
 def _resolve_canon_candidate(
     memory: PetMemoryStateV1,
     patch: PetMemoryPatch,
@@ -686,6 +912,9 @@ def _resolve_candidates(
                 continue
             _resolve_thread_candidate(memory, patch, candidate, now)
             continue
+        if candidate.type in GENERATED_FACT_CANDIDATE_TYPES:
+            _upsert_generated_fact(memory, patch, candidate, character_bible, now)
+            continue
         _resolve_canon_candidate(memory, patch, candidate, character_bible, now)
 
 
@@ -823,6 +1052,8 @@ def _memory_from_patch(memory: PetMemoryStateV1, patch: PetMemoryPatch) -> PetMe
 def _merge_patch(target: PetMemoryPatch, source: PetMemoryPatch) -> None:
     target.canonUpserts.extend(source.canonUpserts)
     target.canonDeletes.extend(source.canonDeletes)
+    target.generatedFactUpserts.extend(source.generatedFactUpserts)
+    target.generatedFactDeletes.extend(source.generatedFactDeletes)
     target.threadUpserts.extend(source.threadUpserts)
     target.threadDeletes.extend(source.threadDeletes)
     target.reflectionUpserts.extend(source.reflectionUpserts)
@@ -847,6 +1078,13 @@ def _dedupe_canon_upserts(patch: PetMemoryPatch) -> None:
     for fact in patch.canonUpserts:
         by_id[fact.id] = fact
     patch.canonUpserts = list(by_id.values())
+
+
+def _dedupe_generated_fact_upserts(patch: PetMemoryPatch) -> None:
+    by_id: dict[str, GeneratedFactCandidate] = {}
+    for fact in patch.generatedFactUpserts:
+        by_id[fact.id] = fact
+    patch.generatedFactUpserts = list(by_id.values())
 
 
 def _memory_summary_reply(memory: PetMemoryStateV1) -> str:
@@ -906,6 +1144,9 @@ def _forget_patch(memory: PetMemoryStateV1, text: str, now: str) -> PetMemoryPat
         for fact in memory.canon:
             if tokens & set(re.findall(r"[А-Яа-яЁёA-Za-z0-9]{4,}", fact.text.casefold())):
                 patch.canonDeletes.append(fact.id)
+        for fact in memory.generatedFacts:
+            if tokens & set(re.findall(r"[А-Яа-яЁёA-Za-z0-9]{4,}", fact.text.casefold())):
+                patch.generatedFactDeletes.append(fact.id)
     if not relationship_patch.userFactDeletes and not patch.canonDeletes:
         recent_fact = memory.relationship.userFacts[0] if memory.relationship.userFacts else None
         if recent_fact:
@@ -1050,7 +1291,30 @@ def resolve_memory_update(
         ][:overflow]
         patch.canonDeletes.extend(removable_ids)
 
+    if (
+        len(interim_memory.generatedFacts)
+        + len(patch.generatedFactUpserts)
+        - len(patch.generatedFactDeletes)
+        > MAX_GENERATED_FACTS
+    ):
+        by_value = sorted(
+            interim_memory.generatedFacts,
+            key=lambda fact: (
+                fact.status in ("accepted_soft", "needs_user_confirmation"),
+                fact.importance,
+                fact.updatedAt,
+            ),
+        )
+        overflow = (
+            len(interim_memory.generatedFacts)
+            + len(patch.generatedFactUpserts)
+            - len(patch.generatedFactDeletes)
+            - MAX_GENERATED_FACTS
+        )
+        patch.generatedFactDeletes.extend(fact.id for fact in by_value[:overflow])
+
     compacted = compact_memory(_memory_from_patch(memory, patch), now=now_value)
     _merge_patch(patch, compacted)
     _dedupe_canon_upserts(patch)
+    _dedupe_generated_fact_upserts(patch)
     return patch

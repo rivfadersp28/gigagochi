@@ -34,9 +34,11 @@ from app.services.pet_reply_engine import (
 )
 from app.services.pet_reply_engine.effective_bible import build_effective_character_bible
 from app.services.pet_reply_engine.fallbacks import fallback_reply
+from app.services.pet_reply_engine.lite_generator import generate_lite_pet_reply
 from app.services.pet_reply_engine.lore import extract_lore
 from app.services.pet_reply_engine.models import PetAgeStage, PetMood, PetPromptLayers
 from app.services.pet_reply_engine.proactivity_gate import apply_proactivity_gate
+from app.services.pet_reply_engine.reply_limits import clamp_reply_text
 from app.services.pet_reply_engine.reply_validator import validate_reply
 from app.services.pet_service import get_pet_or_404, image_url_for
 
@@ -133,6 +135,8 @@ def _is_empty_memory_patch(patch: PetMemoryPatch | None) -> bool:
         (
             patch.canonUpserts,
             patch.canonDeletes,
+            patch.generatedFactUpserts,
+            patch.generatedFactDeletes,
             patch.relationshipPatch,
             patch.threadUpserts,
             patch.threadDeletes,
@@ -201,22 +205,50 @@ def _persisted_memories_to_save(
 def _local_debug(
     result: object,
     *,
+    memory_patch: PetMemoryPatch | None = None,
     proactivity_flags: tuple[str, ...] = (),
     rejected_memory_count: int | None = None,
 ) -> LocalChatDebug:
     return LocalChatDebug(
+        replyMode="full",
         usedFallback=bool(getattr(result, "used_fallback", False)),
         validationFlags=list(getattr(result, "validation_flags", ()) or ()),
         rejectedMemoryCount=rejected_memory_count,
         proactivityFlags=list(proactivity_flags),
         detectedIntent=getattr(result, "detected_intent", None),
         selectedReferenceCardIds=list(getattr(result, "reference_card_ids", ()) or ()),
+        selectedSpeechAnchorIds=list(getattr(result, "speech_anchor_ids", ()) or ()),
+        speechAnchors=list(getattr(result, "speech_anchor_debug", ()) or ()),
+        rejectedSpeechAnchors=list(
+            getattr(result, "rejected_speech_anchor_debug", ()) or ()
+        ),
+        generatedFacts=[
+            fact.model_dump()
+            for fact in (memory_patch.generatedFactUpserts if memory_patch else ())
+            if fact.status != "rejected"
+        ],
+        rejectedGeneratedFacts=[
+            fact.model_dump()
+            for fact in (memory_patch.generatedFactUpserts if memory_patch else ())
+            if fact.status == "rejected"
+        ],
         includedLayers=list(getattr(result, "included_layers", ()) or ()),
         excludedLayers=list(getattr(result, "excluded_layers", ()) or ()),
+        promptDebug=list(getattr(result, "prompt_debug", ()) or ()),
     )
 
 
+def _prompt_debug_only(result: object, reply_mode: str) -> LocalChatDebug | None:
+    prompt_debug = list(getattr(result, "prompt_debug", ()) or ())
+    if not prompt_debug:
+        return None
+    return LocalChatDebug(replyMode=reply_mode, promptDebug=prompt_debug)
+
+
 def chat_with_local_pet(payload: LocalChatRequest) -> LocalChatResponse:
+    if payload.replyMode == "lite":
+        return generate_lite_pet_reply(payload)
+
     pet = payload.pet
     prompt_layers = _pet_prompt_layers(payload.promptLayers)
     memory = normalize_memory(pet.memory, lore_memories=pet.loreMemories)
@@ -224,7 +256,7 @@ def chat_with_local_pet(payload: LocalChatRequest) -> LocalChatResponse:
     if control:
         patch = None if _is_empty_memory_patch(control.patch) else control.patch
         return LocalChatResponse(
-            reply=control.reply,
+            reply=clamp_reply_text(control.reply),
             moodHint=pet.mood,
             loreMemoriesToSave=[],
             memoryPatch=patch,
@@ -235,10 +267,14 @@ def chat_with_local_pet(payload: LocalChatRequest) -> LocalChatResponse:
     result = generate_pet_reply(reply_input)
     if result.used_fallback:
         return LocalChatResponse(
-            reply=result.reply,
+            reply=clamp_reply_text(result.reply),
             moodHint=result.mood_hint,
             loreMemoriesToSave=[],
-            debug=_local_debug(result) if payload.includeDebug else None,
+            debug=(
+                _local_debug(result)
+                if payload.includeDebug
+                else _prompt_debug_only(result, "full")
+            ),
         )
 
     if prompt_layers.proactivity:
@@ -252,11 +288,11 @@ def chat_with_local_pet(payload: LocalChatRequest) -> LocalChatResponse:
             mood=reply_input.pet.mood,
             stats=reply_input.pet.stats,
         )
-        reply_text = proactivity.reply
+        reply_text = clamp_reply_text(proactivity.reply)
         proactivity_flags = proactivity.flags
         proactivity_allowed = proactivity.allowed
     else:
-        reply_text = result.reply
+        reply_text = clamp_reply_text(result.reply)
         proactivity_flags = ("layer_disabled:proactivity",)
         proactivity_allowed = False
     no_memory_write = is_no_memory_write_message(payload.message)
@@ -301,13 +337,14 @@ def chat_with_local_pet(payload: LocalChatRequest) -> LocalChatResponse:
         debug=(
             _local_debug(
                 result,
+                memory_patch=memory_patch,
                 proactivity_flags=proactivity_flags,
                 rejected_memory_count=(
                     len(memory_patch.rejectedCandidateAppends) if memory_patch else 0
                 ),
             )
             if payload.includeDebug
-            else None
+            else _prompt_debug_only(result, "full")
         ),
     )
 
@@ -483,10 +520,10 @@ def chat_with_pet(
             mood=reply_input.pet.mood,
             stats=reply_input.pet.stats,
         )
-        reply = proactivity.reply
+        reply = clamp_reply_text(proactivity.reply)
         proactivity_allowed = proactivity.allowed
     else:
-        reply = result.reply
+        reply = clamp_reply_text(result.reply)
         proactivity_allowed = False
     memory_patch = None
     memories_to_save: list[dict] = []

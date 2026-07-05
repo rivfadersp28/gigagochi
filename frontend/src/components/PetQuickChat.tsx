@@ -4,17 +4,20 @@
 import { Loader2 } from "lucide-react";
 import { FormEvent, useState } from "react";
 
-import { ApiError, sendLocalChatMessage } from "@/lib/api";
+import { ApiError, extractLocalLiteFacts, sendLocalChatMessage } from "@/lib/api";
 import { appendLocalChatMessages, createLocalId, latestChatMessages } from "@/lib/localPetStorage";
 import { primePetSpeechAudio } from "@/lib/petSpeechAudio";
+import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification } from "@/lib/telegram";
-import type { LocalChatResponse, LocalPetState, PromptLayers } from "@/lib/types";
+import type { LocalChatResponse, LocalPetState, PromptLayers, ReplyMode } from "@/lib/types";
 
 type PetQuickChatProps = {
   pet: LocalPetState;
   promptLayers: PromptLayers;
   includePromptDebug: boolean;
+  replyMode: ReplyMode;
   onChatResponse: (response: LocalChatResponse) => void;
+  onLiteOverlayPatch?: (patch?: Record<string, unknown>) => void;
 };
 
 function errorMessage(caught: unknown, fallback: string): string {
@@ -25,7 +28,9 @@ export function PetQuickChat({
   pet,
   promptLayers,
   includePromptDebug,
+  replyMode,
   onChatResponse,
+  onLiteOverlayPatch,
 }: PetQuickChatProps) {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -56,16 +61,30 @@ export function PetQuickChat({
       const response = await sendLocalChatMessage(message, pet, history, {
         promptLayers,
         includeDebug: includePromptDebug,
+        replyMode,
       });
+      logBrowserPromptDebug("quick chat reply", response);
       appendLocalChatMessages([
         {
           id: createLocalId("message"),
           role: "pet",
-          text: response.reply.slice(0, 1500),
+          text: response.reply,
           createdAt: new Date().toISOString(),
         },
       ]);
       onChatResponse(response);
+      if (replyMode === "lite") {
+        void extractLocalLiteFacts(message, response.reply, pet, history, {
+          includeDebug: includePromptDebug,
+        })
+          .then((extraction) => {
+            logBrowserPromptDebug("quick chat lite fact extraction", extraction);
+            if (extraction.liteOverlayPatch) {
+              onLiteOverlayPatch?.(extraction.liteOverlayPatch);
+            }
+          })
+          .catch(() => undefined);
+      }
     } catch (caught) {
       setError(errorMessage(caught, "Не удалось отправить сообщение."));
       hapticNotification("error");

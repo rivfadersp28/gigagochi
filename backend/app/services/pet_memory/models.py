@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -21,11 +21,32 @@ MemoryCandidateType = MemoryFactType | Literal[
     "relationship_event",
     "pet_canon_fact",
     "pet_emotional_fact",
+    "pet_generated_fact",
     "open_thread",
     "preference",
     "boundary",
 ]
 MemorySource = Literal["model", "user", "system"]
+GeneratedFactStatus = Literal[
+    "draft",
+    "accepted_soft",
+    "needs_user_confirmation",
+    "rejected",
+    "canon",
+]
+GeneratedFactScope = Literal[
+    "world",
+    "home",
+    "friend",
+    "family",
+    "origin",
+    "preference",
+    "fear",
+    "habit",
+    "voice",
+    "relationship",
+    "thread",
+]
 ThreadStatus = Literal["open", "paused", "resolved"]
 ReflectionScope = Literal["self", "user", "relationship", "world"]
 GoalKind = Literal[
@@ -66,6 +87,23 @@ class CanonMemoryFact(MemoryBaseModel):
     lastReinforcedAt: str | None = None
     relatedThreadId: str | None = None
     pinned: bool = False
+
+
+class GeneratedFactCandidate(MemoryBaseModel):
+    id: str
+    scope: GeneratedFactScope = "world"
+    text: str = Field(max_length=500)
+    source: MemorySource = "model"
+    sourceSpan: str | None = Field(default=None, max_length=240)
+    confidence: float = Field(default=0.55, ge=0, le=1)
+    importance: float = Field(default=0.45, ge=0, le=1)
+    status: GeneratedFactStatus = "draft"
+    promotionPolicy: str = Field(default="needs_reinforcement", max_length=80)
+    conflictReasons: list[str] = Field(default_factory=list)
+    reinforcementCount: int = Field(default=1, ge=1)
+    relatedCanonFactId: str | None = None
+    createdAt: str
+    updatedAt: str
 
 
 class RelationshipEvent(MemoryBaseModel):
@@ -177,6 +215,7 @@ class RejectedMemoryCandidate(MemoryBaseModel):
 class PetMemoryStateV1(MemoryBaseModel):
     schemaVersion: Literal[1] = 1
     canon: list[CanonMemoryFact] = Field(default_factory=list)
+    generatedFacts: list[GeneratedFactCandidate] = Field(default_factory=list)
     relationship: RelationshipMemory = Field(default_factory=RelationshipMemory)
     threads: list[ConversationThread] = Field(default_factory=list)
     reflections: list[ReflectionMemory] = Field(default_factory=list)
@@ -299,6 +338,8 @@ class AppliedDevelopmentPatch(MemoryBaseModel):
 class PetMemoryPatch(MemoryBaseModel):
     canonUpserts: list[CanonMemoryFact] = Field(default_factory=list)
     canonDeletes: list[str] = Field(default_factory=list)
+    generatedFactUpserts: list[GeneratedFactCandidate] = Field(default_factory=list)
+    generatedFactDeletes: list[str] = Field(default_factory=list)
     relationshipPatch: RelationshipMemoryPatch | None = None
     threadUpserts: list[ConversationThread] = Field(default_factory=list)
     threadDeletes: list[str] = Field(default_factory=list)
@@ -312,11 +353,20 @@ class PetMemoryPatch(MemoryBaseModel):
 
 
 class LocalChatDebug(MemoryBaseModel):
+    replyMode: Literal["full", "lite"] | None = None
     usedFallback: bool | None = None
     validationFlags: list[str] = Field(default_factory=list)
     rejectedMemoryCount: int | None = None
     proactivityFlags: list[str] = Field(default_factory=list)
     detectedIntent: str | None = None
     selectedReferenceCardIds: list[str] = Field(default_factory=list)
+    selectedSpeechAnchorIds: list[str] = Field(default_factory=list)
+    speechAnchors: list[dict] = Field(default_factory=list)
+    rejectedSpeechAnchors: list[dict] = Field(default_factory=list)
+    generatedFacts: list[dict] = Field(default_factory=list)
+    rejectedGeneratedFacts: list[dict] = Field(default_factory=list)
     includedLayers: list[str] = Field(default_factory=list)
     excludedLayers: list[str] = Field(default_factory=list)
+    promptDebug: list[dict[str, Any]] = Field(default_factory=list)
+    liteToolCalls: list[dict] = Field(default_factory=list)
+    liteOverlayPatch: dict | None = None
