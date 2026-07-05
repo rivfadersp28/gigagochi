@@ -4,12 +4,14 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.services.pet_memory.models import LocalChatDebug, PetMemoryPatch, PetMemoryStateV1
 
 PetStageValue = Literal["baby", "teen", "adult"]
 PetStateValue = Literal["idle", "happy", "sad", "hungry"]
+PET_STAGE_VALUES: tuple[PetStageValue, ...] = ("baby", "teen", "adult")
+PET_STATE_VALUES: tuple[PetStateValue, ...] = ("idle", "happy", "hungry", "sad")
 AdminGenerateMode = Literal["profile_only", "full_assets"]
 CalibrationTaskType = Literal[
     "lore_pairwise",
@@ -122,6 +124,7 @@ class GeneratePetRequest(BaseModel):
     style: str = "cute mobile game pet"
     stages: list[PetStageValue] = Field(default_factory=lambda: ["baby", "teen", "adult"])
     moods: list[PetStateValue] = Field(default_factory=lambda: ["idle", "happy", "hungry", "sad"])
+    useTemplatePresets: bool = False
 
 
 class GeneratedPetImages(BaseModel):
@@ -136,6 +139,15 @@ class GeneratePetAssetResponse(BaseModel):
     images: GeneratedPetImages
     spriteSheetUrl: str | None = None
     characterBible: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def require_complete_image_set(self) -> GeneratePetAssetResponse:
+        for stage in PET_STAGE_VALUES:
+            stage_images = getattr(self.images, stage)
+            for mood in PET_STATE_VALUES:
+                if not stage_images.get(mood):
+                    raise ValueError(f"missing generated image for {stage}/{mood}")
+        return self
 
 
 class AdminGenerateOneRequest(BaseModel):

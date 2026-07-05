@@ -26,13 +26,16 @@ def fallback_birth_message(pet: Pet) -> str:
     personality = str(profile.get("personality") or "").strip()
 
     if pet.current_stage == "baby":
-        return "Я тут... Привет. Как тебя звать?"
+        return "Ох... я проснулся. Всё вокруг новое, но ты уже рядом. Как тебя звать?"
 
     detail = species or personality or pet.original_description
     if pet.current_stage == "adult":
-        return f"Я появился. Кажется, я {detail}; давай познакомимся, как тебя зовут?"
+        return (
+            f"Я здесь. Кажется, я {detail}, и мне важно понять, кто рядом со мной. "
+            "Как тебя зовут?"
+        )
 
-    return f"О, я появился! Я {detail}; как тебя зовут?"
+    return f"Ого, я здесь! Я {detail}, и мне уже хочется осмотреться. Как тебя зовут?"
 
 
 def generate_birth_message_text(pet: Pet) -> str:

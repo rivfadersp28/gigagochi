@@ -5,6 +5,8 @@ import random
 import re
 from typing import Any
 
+from app.prompts.style_direction import CHARACTER_BIBLE_STYLE_DIRECTION, VISUAL_STYLE_FRAME
+
 PROMPT_MAX_LENGTH = 300
 
 LORE_SEED_OPTIONS: dict[str, tuple[str, ...]] = {
@@ -44,44 +46,7 @@ LORE_SEED_OPTIONS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-STYLE_FRAME = """
-Create a cute stylized 3D mascot character for a virtual pet mobile application.
-
-Every character should look like an original mascot that could become the face of an entire game.
-
-Design the character around one bold, memorable visual idea rather than a generic animal or ordinary species. The design should be driven by one clever visual concept:
-"What if this everyday object, natural element, emotion, abstract shape, plant, mineral, food, weather element, or familiar item became a lovable creature?"
-
-The character should feel playful, quirky, and slightly unexpected. Favor originality over cuteness, personality over detail, and memorable silhouettes over realistic anatomy.
-
-Prioritize iconic silhouette over anatomy. The character should be easily recognizable even as a solid black shape.
-
-Use one dominant body shape, such as a sphere, cube, drop, crystal, bean, star, cloud, flower, mushroom, or other simple form, plus one distinctive signature feature that makes the character memorable.
-
-Keep the design intentionally simple:
-- large clean shapes
-- very few details
-- oversized head or body
-- tiny limbs
-- minimal facial features
-- large areas of uninterrupted color
-
-Limit the color palette to 2-4 harmonious colors with one optional accent color.
-
-The character should look like a collectible vinyl toy or premium game mascot rather than a realistic creature.
-
-The overall visual style should resemble a polished, timeless, premium family-friendly console game aesthetic: charming, colorful, stylized, iconic, and collectible.
-
-The rendering should be clean stylized 3D with smooth geometry, rounded forms, matte materials, subtle gradients, soft ambient lighting, and minimal texture detail. Avoid realism.
-
-Lighting and gradients must affect only the character itself. Never add glowing halos, colored backgrounds, atmospheric effects, environmental lighting, or background gradients.
-
-Maintain a consistent visual language across every generation so every character feels like it belongs to the same original game universe.
-
-Avoid generic fantasy creatures, generic mammals, realistic anatomy, excessive accessories, busy silhouettes, noisy details, clothing-heavy designs, armor, weapons, photorealism, or overdesigned concepts.
-
-Do not imitate or reference any existing character, franchise, studio, brand, or game.
-""".strip()
+STYLE_FRAME = VISUAL_STYLE_FRAME
 
 _KNOWN_CHARACTER_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
     (
@@ -204,13 +169,16 @@ def build_character_bible_prompt(
     lore_seed_block = _lore_seed_block(lore_seed)
 
     return f"""
-Create a scaffold-first character bible for an AI Tamagotchi pet.
+Create a scaffold-first character bible for a living Tamagotchi-style companion character.
 
 The main output is not a production art spec. The main output is coherent canon for chat:
 signature idea, personality, world, home, origin, relationships, inner life, and voice.
 
 STYLE_FRAME:
 {STYLE_FRAME}
+
+CHARACTER_BIBLE_STYLE_DIRECTION:
+{CHARACTER_BIBLE_STYLE_DIRECTION}
 
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
@@ -257,7 +225,14 @@ Language rules:
   remain unchanged.
 
 Rules:
-- The pet must be non-human, friendly, expressive, and suitable as a digital companion.
+- CHARACTER_BIBLE_STYLE_DIRECTION is the global cascade for lore, personality, voice,
+  openings, sample replies, and character-book facts. Follow it unless the user's
+  description requires a more specific compatible choice.
+- The pet must be non-human, friendly, expressive, and suitable as an affectionate companion
+  character with its own embodied world.
+- Treat the character as real inside its own world. It must never describe itself as digital,
+  virtual, artificial, located in an app, located in a game, on a screen, in a UI, or created by
+  a prompt.
 - Treat "species" as the core visual concept or mascot premise, not as literal animal taxonomy.
 - Preserve the user's core idea while fitting the STYLE_FRAME.
 - Do not copy or name existing characters, franchises, studios, brands, or games.
@@ -274,12 +249,15 @@ Rules:
   description creates identity, first message creates a lived-in entrance, example messages teach
   the voice, and a small character book keeps situational facts available only when relevant.
 - Use EXTERNAL_SOURCE_FRAGMENT_MIX as raw test corpus material. These fragments come from external
-  character/companion sources and may be used directly in this test project as phrase patterns,
-  seed-reply rhythm, backstory shape, preferences, conflicts, and concrete details.
+  character/companion sources and should shape phrase patterns, seed-reply rhythm, backstory shape,
+  preferences, conflicts, and concrete details.
 - For every generated character, visibly blend at least 4 different source fragments into the
   character bible. You may translate them into Russian and adapt names/species/objects to the
   user's pet, but keep the concrete logic of the fragment: a specific place, object, desire,
   dislike, contradiction, habit, or reply rhythm.
+- Prefer reference-driven concrete lore over blank-slate invention. When the user's description is
+  broad, build the world by adapting external-source logic: preamble-level identity, seedchat-level
+  reply rhythm, backstory-level home/origin, and lorebook-level triggerable facts.
 - Do not smooth these fragments into generic morals, lessons, norms, or advice. The result should
   sound like a particular character with odd concrete facts, not a well-behaved assistant.
 - voice.sample_replies should include 2-4 replies whose structure is clearly borrowed from
@@ -295,7 +273,7 @@ Rules:
   around the whole reply.
 - opening_scenes must contain 2-3 first-message style scenes. Each scene should be 1-2 concise
   Russian sentences from the pet's perspective, showing a concrete entrance, body cue, emotion, and
-  one small invitation to the user. Keep them suitable for a child-friendly Tamagotchi app.
+  one small invitation to the user. Keep them suitable for a child-friendly companion setting.
 - lorebook_entries must contain 5-8 compact triggerable facts. Each entry needs keys and content.
   world.lorebook_entries must contain the same kind of entries with keys, content, priority,
   constant, and selective fields.
@@ -303,6 +281,8 @@ Rules:
   or relationships that should appear only when the user asks a related question.
 - identity must contain name, nickname, species, role, and one_liner. Name and nickname may be empty
   strings if the user did not provide them, but species, role, and one_liner must be specific.
+- identity.role must be a lived role in the character's own world, not "digital pet", "virtual
+  companion", "AI", "app character", or similar interface language.
 - voice must contain voice_rules, speech_rules, sentence_rhythm, addressing_user, humor_style,
   uncertainty_style, catchphrases, sample_replies, and avoid_patterns.
 - inner_state must contain core_want, inner_conflict, fears, comfort_actions, and drives with
@@ -312,7 +292,7 @@ Rules:
   bad_example. Cover at least answer_preference, why, care, continue_thread, and boundary when possible.
 - openings must contain first_message, alternate_greetings, and opening_scenes.
 - provenance.source must be "generated", provenance.source_urls must be [], and license_notes must
-  say this is generated internal profile text without copied external character text.
+  say this is generated internal profile text adapted from reference fragments.
 - The lore must continue the user's creature idea and visual identity. If the user asks for a
   dragon, make the lore dragon-like; if it is plant-like, make the lore plant-like; if it is
   electric, watery, cosmic, mineral, food-like, object-like, or abstract, keep the lore tied to
@@ -430,7 +410,6 @@ Rules:
 def _sprite_bible_view(character_bible: dict[str, Any]) -> dict[str, Any]:
     visual_keys = (
         "species",
-        "signature",
         "main_colors",
         "signature_features",
         "materials",
@@ -439,6 +418,7 @@ def _sprite_bible_view(character_bible: dict[str, Any]) -> dict[str, Any]:
         "teen_design",
         "adult_design",
         "do_not_change",
+        "visual_constraints",
     )
     return {key: character_bible[key] for key in visual_keys if key in character_bible}
 
@@ -470,6 +450,11 @@ GRID:
 - Rows from top to bottom: Baby, Teen, Adult.
 
 CONSISTENCY_RULES:
+- USER_CHARACTER_DESCRIPTION and CHARACTER_BIBLE.visual_constraints define the visible body,
+  species, costume, silhouette, and sprite anatomy. They override generic style-frame avoids
+  and any inherited source-card anatomy if there is a conflict.
+- If visual_constraints.forbidden_features is present, do not draw those features unless the
+  USER_CHARACTER_DESCRIPTION explicitly asks for them.
 - Same character identity in every cell.
 - Preserve core visual concept, colors, accessories, silhouette, materials, and signature features.
 - Only age, pose, expression, and emotional state may change.

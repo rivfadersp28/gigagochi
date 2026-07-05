@@ -1,7 +1,7 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
-import { Loader2, Settings } from "lucide-react";
+import { Loader2, ScrollText, Settings, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { CSSProperties, ReactNode } from "react";
@@ -147,6 +147,59 @@ function shouldReduceMotion() {
 
 function generatedSpriteUrl(pet: LocalPetState, stage: PetStage, state: PetState) {
   return pet.assetSet?.images[stage]?.[state] || null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function stringValue(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return null;
+}
+
+function hasCharacterValue(value: unknown): boolean {
+  if (value === null || value === undefined || value === "") {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.some(hasCharacterValue);
+  }
+  if (isRecord(value)) {
+    return Object.values(value).some(hasCharacterValue);
+  }
+  return true;
+}
+
+function formatGeneratedAt(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function jsonText(value: unknown): string {
+  return JSON.stringify(value, null, 2);
 }
 
 function finishAnimation(element: HTMLElement, finalStyles: Partial<CSSStyleDeclaration>) {
@@ -757,11 +810,316 @@ function IdleAnimationControls({
   );
 }
 
+type CharacterProfileItem = {
+  label: string;
+  value: unknown;
+};
+
+function CharacterParameterValue({ value }: { value: unknown }) {
+  if (Array.isArray(value)) {
+    const items = value.filter(hasCharacterValue);
+    if (!items.length) {
+      return null;
+    }
+
+    return (
+      <ul className="grid gap-1.5">
+        {items.map((item, index) => (
+          <li
+            key={index}
+            className="min-w-0 rounded-[6px] bg-black/[0.035] px-2.5 py-2 text-[12px] leading-[17px] text-black/72"
+          >
+            <CharacterParameterValue value={item} />
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (isRecord(value)) {
+    return (
+      <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-[6px] bg-black/[0.035] p-2.5 font-mono text-[11px] leading-[15px] text-black/68">
+        {jsonText(value)}
+      </pre>
+    );
+  }
+
+  return <span>{String(value)}</span>;
+}
+
+function CharacterProfileRows({ items }: { items: CharacterProfileItem[] }) {
+  const visibleItems = items.filter((item) => hasCharacterValue(item.value));
+  if (!visibleItems.length) {
+    return null;
+  }
+
+  return (
+    <dl className="grid gap-3">
+      {visibleItems.map((item) => (
+        <div key={item.label} className="grid gap-1.5">
+          <dt className="text-[11px] font-medium uppercase leading-none tracking-normal text-black/38">
+            {item.label}
+          </dt>
+          <dd className="min-w-0 text-[13px] leading-[18px] text-black/78">
+            <CharacterParameterValue value={item.value} />
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function CharacterProfileSection({
+  title,
+  items,
+  children,
+}: {
+  title: string;
+  items?: CharacterProfileItem[];
+  children?: ReactNode;
+}) {
+  const visibleItems = items?.filter((item) => hasCharacterValue(item.value)) ?? [];
+  if (!visibleItems.length && !children) {
+    return null;
+  }
+
+  return (
+    <section className="border-t border-black/10 py-4 first:border-t-0 first:pt-0">
+      <h3 className="mb-3 text-[13px] font-semibold leading-none text-black">{title}</h3>
+      {visibleItems.length ? <CharacterProfileRows items={visibleItems} /> : null}
+      {children}
+    </section>
+  );
+}
+
+function CharacterProfilePanel({
+  pet,
+  onClose,
+}: {
+  pet: LocalPetState;
+  onClose: () => void;
+}) {
+  const bible = pet.assetSet?.characterBible;
+  const identity = recordValue(bible?.identity);
+  const topLevelWorld = recordValue(bible?.world);
+  const topLevelVoice = recordValue(bible?.voice);
+  const topLevelInnerState = recordValue(bible?.inner_state);
+  const dialogueStyle = recordValue(bible?.dialogue_style);
+  const openings = recordValue(bible?.openings);
+  const provenance = recordValue(bible?.provenance);
+  const lore = recordValue(bible?.lore);
+  const loreWorld = recordValue(lore.world);
+  const loreHome = recordValue(lore.home);
+  const loreOrigin = recordValue(lore.origin);
+  const loreRelationships = recordValue(lore.relationships);
+  const loreInnerLife = recordValue(lore.inner_life);
+  const loreVoice = recordValue(lore.voice);
+  const growthArc = recordValue(lore.growth_arc);
+  const signature = bible?.signature;
+  const signatureSummary = isRecord(signature)
+    ? signature.core_gimmick ?? signature.behavioral_hook ?? signature.relationship_hook ?? signature
+    : signature;
+  const displayName =
+    stringValue(identity.name) ||
+    stringValue(identity.nickname) ||
+    stringValue(pet.name) ||
+    "Паспорт персонажа";
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/[0.16]" role="presentation">
+      <button
+        type="button"
+        aria-label="Закрыть паспорт персонажа"
+        className="absolute inset-0 cursor-default"
+        onClick={onClose}
+      />
+
+      <aside
+        id="character-profile-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="character-profile-title"
+        className="absolute bottom-[max(14px,var(--tma-safe-bottom))] right-[max(12px,var(--tma-safe-right))] top-[max(72px,calc(var(--tma-safe-top)+64px))] flex w-[min(430px,calc(100vw-24px))] flex-col overflow-hidden rounded-[8px] border border-black/10 bg-white text-black shadow-[0_18px_46px_rgba(0,0,0,0.16)]"
+      >
+        <header className="flex items-start justify-between gap-3 border-b border-black/10 px-4 py-4">
+          <div className="min-w-0">
+            <h2
+              id="character-profile-title"
+              className="break-words text-[18px] font-semibold leading-[22px] text-black"
+            >
+              {displayName}
+            </h2>
+            <p className="mt-1 text-[12px] leading-[16px] text-black/45">Параметры персонажа</p>
+          </div>
+          <button
+            type="button"
+            aria-label="Закрыть"
+            onClick={onClose}
+            className="grid size-8 shrink-0 place-items-center rounded-full text-black/45 transition-colors hover:bg-black/[0.04] hover:text-black/70 focus:outline-none focus:ring-2 focus:ring-black/10"
+          >
+            <X className="size-4" aria-hidden="true" />
+          </button>
+        </header>
+
+        <div className="min-h-0 overflow-y-auto px-4 py-4">
+          {bible ? (
+            <>
+              <CharacterProfileSection
+                title="Кто это"
+                items={[
+                  { label: "Исходное описание", value: pet.description },
+                  { label: "Сгенерировано", value: formatGeneratedAt(pet.assetSet?.generatedAt) },
+                  { label: "Имя", value: identity.name },
+                  { label: "Прозвище", value: identity.nickname },
+                  { label: "Вид", value: identity.species ?? bible.species },
+                  { label: "Роль", value: identity.role },
+                  { label: "Коротко", value: identity.one_liner },
+                ]}
+              />
+
+              <CharacterProfileSection
+                title="Почему он такой"
+                items={[
+                  { label: "Запоминаемая идея", value: signatureSummary },
+                  { label: "Характер", value: bible.personality },
+                  { label: "Главное желание", value: topLevelInnerState.core_want ?? loreInnerLife.core_want },
+                  {
+                    label: "Внутренний конфликт",
+                    value: topLevelInnerState.inner_conflict ?? loreInnerLife.inner_conflict,
+                  },
+                  { label: "Страхи", value: topLevelInnerState.fears ?? loreInnerLife.fears },
+                  {
+                    label: "Что успокаивает",
+                    value: topLevelInnerState.comfort_actions ?? loreInnerLife.comfort_actions,
+                  },
+                  { label: "Драйвы", value: topLevelInnerState.drives },
+                  { label: "Любит", value: loreInnerLife.likes },
+                  { label: "Не любит", value: loreInnerLife.dislikes },
+                  { label: "Мечты", value: loreInnerLife.dreams },
+                  { label: "Привычки", value: loreInnerLife.habits },
+                  { label: "Слабости", value: loreInnerLife.flaws },
+                ]}
+              />
+
+              <CharacterProfileSection
+                title="Предыстория и мир"
+                items={[
+                  { label: "Дом", value: topLevelWorld.home ?? loreHome.story },
+                  { label: "Среда", value: topLevelWorld.habitat ?? loreWorld.environment },
+                  { label: "Мир", value: loreWorld.story },
+                  { label: "Правила мира", value: loreWorld.rules },
+                  { label: "Сенсорные детали", value: loreWorld.sensory_details },
+                  { label: "Место дома", value: loreHome.place },
+                  { label: "Комната", value: loreHome.room },
+                  { label: "Любимое место", value: loreHome.favorite_spot },
+                  { label: "Предметы", value: topLevelWorld.objects ?? loreHome.objects },
+                  { label: "Рутины", value: topLevelWorld.routines },
+                  { label: "Происхождение", value: loreOrigin.story },
+                  { label: "Место рождения", value: loreOrigin.birthplace },
+                  { label: "Кто растил", value: loreOrigin.caretakers },
+                  { label: "Что сформировало", value: loreOrigin.formative_event },
+                  { label: "Семья", value: loreRelationships.family },
+                  { label: "Друзья", value: loreRelationships.friends },
+                  { label: "Отношение к пользователю", value: loreRelationships.attitude_to_user },
+                  { label: "Связи", value: topLevelWorld.relationships ?? loreRelationships.story },
+                  { label: "Открытые истории", value: topLevelWorld.story_seeds ?? lore.story_seeds },
+                ]}
+              />
+
+              <CharacterProfileSection
+                title="Голос и поведение"
+                items={[
+                  { label: "Правила голоса", value: topLevelVoice.voice_rules ?? dialogueStyle.voice_rules },
+                  { label: "Правила речи", value: topLevelVoice.speech_rules },
+                  { label: "Ритм", value: topLevelVoice.sentence_rhythm },
+                  { label: "Обращение к пользователю", value: topLevelVoice.addressing_user },
+                  { label: "Юмор", value: topLevelVoice.humor_style },
+                  { label: "Неуверенность", value: topLevelVoice.uncertainty_style },
+                  { label: "Речевой паттерн", value: loreVoice.speech_pattern },
+                  { label: "Любимые фразы", value: topLevelVoice.catchphrases ?? loreVoice.favorite_phrases },
+                  { label: "Реакции", value: dialogueStyle.emotional_reactions },
+                  { label: "Инициатива", value: dialogueStyle.initiative_style },
+                  { label: "Темы для зацепок", value: loreVoice.topic_hooks },
+                  { label: "Секретные детали", value: loreVoice.secret_details },
+                  {
+                    label: "Что не говорить",
+                    value: topLevelVoice.avoid_patterns ?? dialogueStyle.avoid_patterns ?? loreVoice.avoid_saying,
+                  },
+                ]}
+              />
+
+              <CharacterProfileSection
+                title="Внешность"
+                items={[
+                  { label: "Цвета", value: bible.main_colors },
+                  { label: "Особые черты", value: bible.signature_features },
+                  { label: "Материалы", value: bible.materials },
+                  { label: "Пропорции", value: bible.proportions },
+                  { label: "Baby", value: bible.baby_design },
+                  { label: "Teen", value: bible.teen_design },
+                  { label: "Adult", value: bible.adult_design },
+                  { label: "Не менять", value: bible.do_not_change },
+                ]}
+              />
+
+              <CharacterProfileSection
+                title="Сцены и реплики"
+                items={[
+                  { label: "Первое сообщение", value: openings.first_message },
+                  { label: "Приветствия", value: openings.alternate_greetings },
+                  { label: "Входные сцены", value: openings.opening_scenes ?? bible.opening_scenes },
+                  { label: "Примеры реплик", value: topLevelVoice.sample_replies ?? dialogueStyle.sample_replies },
+                  { label: "Диалоговые ходы", value: bible.dialogue_moves },
+                ]}
+              />
+
+              <CharacterProfileSection
+                title="Character book"
+                items={[
+                  { label: "Лорбук", value: bible.lorebook_entries ?? topLevelWorld.lorebook_entries },
+                  { label: "Рост", value: growthArc },
+                  { label: "Источник", value: provenance.source },
+                  { label: "URL источников", value: provenance.source_urls },
+                  { label: "Лицензии", value: provenance.license_notes },
+                  { label: "Extensions", value: bible.extensions },
+                ]}
+              />
+
+              <CharacterProfileSection title="Полный JSON">
+                <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-[8px] bg-black/[0.035] p-3 font-mono text-[11px] leading-[15px] text-black/70">
+                  {jsonText(bible)}
+                </pre>
+              </CharacterProfileSection>
+            </>
+          ) : (
+            <div className="rounded-[8px] border border-black/10 bg-black/[0.025] p-4 text-[13px] leading-[18px] text-black/62">
+              Для этого питомца нет сохраненной библии персонажа. Новый персонаж после генерации
+              будет сохранять здесь характер, предысторию, голос, внешний вид и полный JSON.
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 export function PetDashboard({ petId }: PetDashboardProps) {
   const router = useRouter();
   const localPet = useLocalPetState();
   const [isFeeding, setIsFeeding] = useState(false);
   const [isIdleControlsOpen, setIsIdleControlsOpen] = useState(false);
+  const [isCharacterProfileOpen, setIsCharacterProfileOpen] = useState(false);
   const [selectedSprite, setSelectedSprite] = useState<SelectedSprite | null>(null);
   const [idleAnimationSettings, setIdleAnimationSettings] = useState<IdleAnimationSettings>(
     defaultIdleAnimationSettings,
@@ -907,6 +1265,24 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           onToggle={() => setIsIdleControlsOpen((current) => !current)}
         />
 
+        <button
+          type="button"
+          aria-controls="character-profile-panel"
+          aria-expanded={isCharacterProfileOpen}
+          aria-label={isCharacterProfileOpen ? "Скрыть параметры персонажа" : "Показать параметры персонажа"}
+          onClick={() => {
+            setIsIdleControlsOpen(false);
+            setIsCharacterProfileOpen(true);
+          }}
+          className="fixed right-5 top-5 z-40 grid size-[42px] place-items-center rounded-full border border-black/10 bg-[#f3f3f3] text-black/45 shadow-[0_8px_22px_rgba(0,0,0,0.08)] transition-colors hover:bg-[#e9e9e9] hover:text-black/60 focus:outline-none focus:ring-2 focus:ring-black/15"
+        >
+          <ScrollText className="size-5" aria-hidden="true" />
+        </button>
+
+        {isCharacterProfileOpen ? (
+          <CharacterProfilePanel pet={pet} onClose={() => setIsCharacterProfileOpen(false)} />
+        ) : null}
+
         <div className="sr-only" aria-live="polite">
           Stage {stageLabels[pet.stage]}. State {stateLabels[pet.mood]}. Hunger{" "}
           {pet.stats.hunger}/100. Happiness {pet.stats.happiness}/100. Energy{" "}
@@ -999,8 +1375,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
         <button
           type="button"
+          aria-label="Создать нового друга"
           onClick={handleReset}
-          className="absolute right-[max(20px,var(--tma-safe-right))] top-[max(24px,calc(var(--tma-safe-top)+16px))] z-10 inline-flex h-[21px] items-center justify-center gap-[12px] text-[17px] font-normal leading-none text-black/30 transition-colors hover:text-black/50 focus:outline-none focus:ring-2 focus:ring-black/10 sm:bottom-[max(32px,calc(var(--tma-safe-bottom)+32px))] sm:right-[clamp(24px,4.86vw,70px)] sm:top-auto"
+          className="absolute right-[max(20px,var(--tma-safe-right))] top-[max(74px,calc(var(--tma-safe-top)+66px))] z-10 grid size-[42px] place-items-center rounded-full border border-black/10 bg-[#f3f3f3] text-[17px] font-normal leading-none text-black/30 shadow-[0_8px_22px_rgba(0,0,0,0.08)] transition-colors hover:bg-[#e9e9e9] hover:text-black/50 focus:outline-none focus:ring-2 focus:ring-black/10 sm:bottom-[max(32px,calc(var(--tma-safe-bottom)+32px))] sm:right-[clamp(24px,4.86vw,70px)] sm:top-auto sm:inline-flex sm:h-[21px] sm:w-auto sm:gap-[12px] sm:rounded-none sm:border-0 sm:bg-transparent sm:shadow-none sm:hover:bg-transparent"
         >
           <span
             aria-hidden="true"
@@ -1010,7 +1387,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               mask: "url('/figma/new-pet-icon.svg') center / contain no-repeat",
             }}
           />
-          <span className="whitespace-nowrap">Создать нового друга</span>
+          <span className="hidden whitespace-nowrap sm:inline">Создать нового друга</span>
         </button>
       </section>
     </main>

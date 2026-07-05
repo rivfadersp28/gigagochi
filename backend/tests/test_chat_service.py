@@ -6,11 +6,13 @@ from app.models import Pet
 from app.schemas import LocalChatRequest
 from app.services.birth_message_service import fallback_birth_message, parse_birth_message_payload
 from app.services.chat_service import (
+    build_pet_reply_input,
     chat_with_local_pet,
     parse_chat_payload,
     validate_or_fallback_persisted_reply,
 )
 from app.services.pet_reply_engine.models import PetReplyResult
+from app.services.pet_reply_engine.prompt_builder import build_pet_reply_messages
 
 
 def test_memory_extraction_parsing() -> None:
@@ -52,7 +54,10 @@ def test_birth_message_fallback_respects_baby_stage() -> None:
         current_stage="baby",
     )
 
-    assert fallback_birth_message(pet) == "Я тут... Привет. Как тебя звать?"
+    assert (
+        fallback_birth_message(pet)
+        == "Ох... я проснулся. Всё вокруг новое, но ты уже рядом. Как тебя звать?"
+    )
 
 
 def test_persisted_chat_replaces_template_preference_reply() -> None:
@@ -129,6 +134,59 @@ def test_local_chat_response_returns_lore_memories(monkeypatch) -> None:
     assert response.reply == "друзья зовут меня Листикор."
     assert response.loreMemoriesToSave == ["ЛОР: друзья зовут питомца Листикор."]
     assert response.debug is None
+
+
+def test_local_chat_builds_effective_bible_over_template_age() -> None:
+    source_bible = {
+        "identity": {
+            "name": "Лука",
+            "species": "дракон",
+            "one_liner": "Luca is a 26-year-old guardian.",
+        },
+        "species": "дракон",
+        "personality": "Age: 35. Appears mid-thirties, calm and tired.",
+        "voice": {
+            "voice_rules": ["sometimes says he is 35 years old"],
+            "avoid_patterns": [],
+        },
+        "dialogue_style": {
+            "voice_rules": ["speaks like a tired adult"],
+            "avoid_patterns": [],
+        },
+        "lore": {"home": {"story": "живет в маленькой башне"}},
+    }
+    payload = LocalChatRequest.model_validate(
+        {
+            "message": "сколько тебе лет?",
+            "pet": {
+                "description": "маленький дракон",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 80,
+                    "energy": 80,
+                    "cleanliness": 80,
+                },
+                "characterBible": source_bible,
+            },
+            "history": [],
+        }
+    )
+
+    reply_input = build_pet_reply_input(payload)
+    prompt = build_pet_reply_messages(reply_input)[0]["content"]
+    effective = reply_input.pet.effective_character_bible or {}
+
+    assert source_bible["personality"].startswith("Age: 35")
+    assert effective["extensions"]["runtime_bible"]["selected_age_stage"] == "baby"
+    assert "Effective Character Bible runtime overrides" in prompt
+    assert "selected_age_stage: baby" in prompt
+    assert "Age: 35" not in prompt
+    assert "35 years old" not in prompt
+    assert "26-year-old" not in prompt
+    assert "Appears mid-thirties" not in prompt
+    assert "текущая возрастная стадия задается приложением" in prompt
 
 
 def test_local_chat_debug_is_opt_in(monkeypatch) -> None:

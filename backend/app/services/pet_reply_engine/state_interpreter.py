@@ -1,18 +1,15 @@
 from __future__ import annotations
 
+from app.services.pet_reply_engine.age_profiles import AGE_STAGE_VOICE_DESCRIPTIONS
 from app.services.pet_reply_engine.models import EnergyBand, HungerBand, PetReplyInput, PetStateCues
 
-_AGE_CUES = {
-    "baby": "малышовый голос: звук плюс одно ласковое слово, очень просто",
-    "teen": "живее и характернее, одна-две короткие фразы, без резкости",
-    "adult": "спокойнее, увереннее и теплее, без детского лепета",
-}
+_AGE_CUES = AGE_STAGE_VOICE_DESCRIPTIONS
 
 _MOOD_CUES = {
-    "idle": "спокойный простой тон, без сильного возбуждения",
-    "happy": "радостнее и прямо, можно одно легкое восклицание",
-    "sad": "тише и прямо: можно сказать, что грустно или хочется рядом",
-    "hungry": "прямо дать понять, что хочется еды, но не повторять это каждый раз",
+    "idle": "нейтральное настроение: ровный живой тон, без лишнего восторга или драмы",
+    "happy": "хорошее настроение: больше тепла, реакции и легкой игры",
+    "sad": "плохое настроение: меньше шуток, больше тишины, тяжести и просьбы побыть рядом",
+    "hungry": "голодное настроение: мысли о еде заметнее, можно быть чуть ворчливее",
 }
 
 _ACTION_CUES = {
@@ -69,18 +66,18 @@ def energy_band(energy: int | None) -> EnergyBand:
 
 def hunger_cue_for(band: HungerBand) -> str:
     if band == "low":
-        return "сытость низкая: голод может мягко всплыть, без чисел и постоянных просьб"
+        return "сильный голод: еда чаще всплывает в речи, появляется легкая капризность"
     if band == "medium":
-        return "сытость нейтральная: еду упоминать только если это естественно"
-    return "сытость высокая: обычно не говорить о еде"
+        return "легкий голод: еду упоминать только если это естественно"
+    return "голод почти не чувствуется: обычно не говорить о еде"
 
 
 def energy_cue_for(band: EnergyBand) -> str:
     if band == "low":
-        return "ритм сонный и короткий, меньше знаков и движения"
+        return "низкая энергия: ответы короче, меньше инициативы, можно усталое 'фух' или 'эх'"
     if band == "medium":
-        return "обычный ровный ритм"
-    return "бодрее, можно больше движения и одно восклицание"
+        return "средняя энергия: обычный живой темп"
+    return "высокая энергия: больше реакции, движения и одно-два естественных восклицания"
 
 
 def cleanliness_cue_for(cleanliness: int | None) -> str | None:
@@ -108,7 +105,7 @@ def interpret_state(reply_input: PetReplyInput) -> PetStateCues:
     recent_food = recent_pet_food_mention(reply_input)
     hunger_cue = hunger_cue_for(hunger)
     if hunger == "low" and recent_food and not text_mentions_food(reply_input.user_text):
-        hunger_cue = f"{hunger_cue}; недавно уже была просьба о еде, сейчас не повторяй ее прямо"
+        hunger_cue = f"{hunger_cue}; недавно еда уже звучала, сейчас не повторяй просьбу прямо"
 
     return PetStateCues(
         age_cue=_AGE_CUES[pet.age_stage],

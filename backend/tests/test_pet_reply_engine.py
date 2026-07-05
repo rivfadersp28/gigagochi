@@ -199,8 +199,8 @@ def test_state_interpreter_translates_numbers_to_qualitative_cues() -> None:
 
     assert cues.hunger_band == "low"
     assert cues.energy_band == "low"
-    assert "сытость низкая" in cues.hunger_cue
-    assert "ритм сонный" in cues.energy_cue
+    assert "сильный голод" in cues.hunger_cue
+    assert "низкая энергия" in cues.energy_cue
     assert "18" not in cues.hunger_cue
     assert "25" not in cues.energy_cue
 
@@ -218,7 +218,7 @@ def test_state_interpreter_avoids_repeating_food_request_too_often() -> None:
 
     assert cues.recent_food_mention
     assert "не повторяй" in cues.hunger_cue
-    assert fallback_reply(reply_input) == "пи. я рядом)"
+    assert fallback_reply(reply_input) == "я тут. слушаю тебя."
 
 
 def test_text_style_changes_limits_by_age() -> None:
@@ -226,13 +226,35 @@ def test_text_style_changes_limits_by_age() -> None:
     teen = style_for_age("teen")
     adult = style_for_age("adult")
 
-    assert baby.max_words == 3
-    assert baby.max_chars == 36
-    assert "детский звук" in " ".join(baby.style_rules)
-    assert teen.max_words == 18
-    assert adult.max_chars == 180
-    assert style_for_age("baby", "low").max_words == 2
-    assert style_for_age("adult", "low").sentence_limit == 1
+    assert baby.max_words == 90
+    assert baby.max_chars == 560
+    assert "без сюсюканья" in " ".join(baby.style_rules)
+    assert teen.max_words == 110
+    assert adult.max_chars == 700
+    assert style_for_age("baby", "low").max_words == 55
+    assert style_for_age("adult", "low").sentence_limit == 5
+
+
+def test_prompt_builder_uses_selected_age_behavior_profile() -> None:
+    baby_prompt = build_pet_reply_messages(make_reply_input(age_stage="baby"))[0]["content"]
+    teen_prompt = build_pet_reply_messages(make_reply_input(age_stage="teen"))[0]["content"]
+    adult_prompt = build_pet_reply_messages(make_reply_input(age_stage="adult"))[0]["content"]
+
+    assert "Возрастной профиль текущей стадии" in baby_prompt
+    assert "текущая стадия: малой" in baby_prompt
+    assert "мир яркий, плотный" in baby_prompt
+    assert "Не будь просто милым" in baby_prompt
+    assert "немного бунтарский" not in baby_prompt
+
+    assert "текущая стадия: подросток" in teen_prompt
+    assert "немного бунтарский" in teen_prompt
+    assert "проверять границы" in teen_prompt
+    assert "внутренний стержень" not in teen_prompt
+
+    assert "текущая стадия: взрослый" in adult_prompt
+    assert "внутренний стержень" in adult_prompt
+    assert "саморефлексия" in adult_prompt
+    assert "проверять границы" not in adult_prompt
 
 
 def test_prompt_builder_keeps_character_core_without_visual_body_cues() -> None:
@@ -263,12 +285,17 @@ def test_prompt_builder_keeps_character_core_without_visual_body_cues() -> None:
     assert "темперамент: shy" in prompt
     assert "Ты не ассистент" in prompt
     assert "не начинай реплику с имени питомца" in prompt
-    assert "простым бытовым русским" in prompt
+    assert "Библия персонажа" in prompt
+    assert "живым разговорным русским" in prompt
+    assert "Сквозная стилистическая настройка" in prompt
+    assert "Mature baseline" in prompt
     assert "reply всегда строго на русском" in prompt
     assert "переведи смысл в простой русский" in prompt
     assert "так я быстрее оживаю" in prompt
     assert "как ты выглядишь" not in prompt
-    assert "внутри этой игры" in prompt
+    assert "живой персонаж-компаньон из собственного мира" in prompt
+    assert "внутри этой игры" not in prompt
+    assert "место в приложении" not in prompt
     assert "Baby voice" not in prompt
     assert "mood" in prompt
     assert messages[-1]["content"].endswith("как ты?")
@@ -319,8 +346,8 @@ def test_prompt_builder_marks_lore_question_and_expands_baby_limit() -> None:
     )
     prompt = messages[0]["content"]
 
-    assert "максимум слов: 6" in prompt
-    assert "максимум символов: 48" in prompt
+    assert "максимум слов: 100" in prompt
+    assert "максимум символов: 620" in prompt
     assert "текущий вопрос про лор" in prompt
     assert "где ты живешь" in messages[-1]["content"]
 
@@ -362,9 +389,9 @@ def test_prompt_builder_expands_teen_lore_answer_limit_and_requires_context() ->
     )
     prompt = messages[0]["content"]
 
-    assert "максимум слов: 55" in prompt
-    assert "максимум символов: 420" in prompt
-    assert "максимум коротких предложений: 4" in prompt
+    assert "максимум слов: 125" in prompt
+    assert "максимум символов: 700" in prompt
+    assert "максимум коротких предложений: 7" in prompt
     assert "не уходи в общую фразу" in prompt
     assert "можно придумать одну маленькую новую" in prompt
     assert "учитывай последние сообщения как контекст" in prompt
@@ -438,15 +465,16 @@ def test_prompt_builder_does_not_add_baby_voice_or_visual_cues() -> None:
         ("Конечно, пользователь, чем могу помочь?", "banned_word"),
         ("Мне хочется, чтобы ты побыл рядом, так я быстрее оживаю", "banned_word"),
         ("внутри меня стало светлее", "banned_word"),
+        ("я цифровой питомец в приложении", "banned_word"),
+        ("я здесь, на экране", "banned_word"),
         ("мне нужно, чтобы ты остался рядом", "unclear_abstraction"),
         ("- Я рядом", "markdown_or_list"),
         ("первая строка\nвторая строка", "multi_paragraph"),
         ("я безымянен", "dry_baby_reply"),
         ("я не знаю", "dry_baby_reply"),
-        (
-            "это слишком длинная реплика для малыша, она точно не поместится в короткий пузырь",
-            "too_many_words",
-        ),
+        ("мне 35 лет, но я все равно слушаю.", "literal_age_claim"),
+        ("мне за тридцать, хотя я выгляжу иначе.", "literal_age_claim"),
+        (" ".join(["слово"] * 91), "too_many_words"),
     ],
 )
 def test_reply_validator_rejects_bad_outputs(reply: str, expected_flag: str) -> None:
@@ -601,14 +629,14 @@ def test_fallback_avoids_repeating_last_pet_reply() -> None:
 
     reply = fallback_reply(reply_input)
 
-    assert reply == "шур! еще)"
+    assert reply == "я аж подпрыгнул. давай еще?"
     assert validate_reply(reply, "baby").is_valid
 
 
 def test_baby_fallback_uses_character_sound_and_body_word() -> None:
     reply = fallback_reply(make_reply_input(age_stage="baby", mood="happy", energy=90))
 
-    assert reply == "шур-шур! листик)"
+    assert reply == "я аж подпрыгнул. давай еще?"
     assert validate_reply(reply, "baby").is_valid
 
 
@@ -617,7 +645,7 @@ def test_baby_name_fallback_uses_pet_name_warmly() -> None:
 
     reply = fallback_reply(reply_input)
 
-    assert reply == "шур, я Листик)"
+    assert reply == "я Листик. а ты как меня позовешь?"
     assert validate_reply(reply, "baby", pet_name="Листик").is_valid
 
 
@@ -626,7 +654,7 @@ def test_baby_reason_fallback_is_not_dry() -> None:
 
     reply = fallback_reply(reply_input)
 
-    assert reply == "шур... так вышло)"
+    assert reply == "пока не знаю точно. но чувствую, что так."
     assert validate_reply(reply, "baby").is_valid
 
 
@@ -637,7 +665,7 @@ def test_baby_action_fallback_keeps_action_specific_response() -> None:
         user_text=None,
     )
 
-    assert fallback_reply(reply_input) == "ням... спасибо)"
+    assert fallback_reply(reply_input) == "фух, спасибо! стало легче."
 
 
 def test_lore_question_fallback_uses_home_detail() -> None:
@@ -645,7 +673,8 @@ def test_lore_question_fallback_uses_home_detail() -> None:
 
     reply = fallback_reply(reply_input)
 
-    assert reply == "шур... Теплая полка у окна)"
+    assert reply.startswith("мой дом: Теплая полка у окна")
+    assert "мне там спокойно" in reply
     assert validate_reply(reply, "baby", user_text="где ты живешь?").is_valid
 
 
@@ -736,7 +765,11 @@ def test_fallback_answers_location_question() -> None:
         user_text="где ты?",
     )
 
-    assert fallback_reply(reply_input) == "я здесь, на экране"
+    reply = fallback_reply(reply_input)
+
+    assert reply.startswith("я сейчас: Теплая полка у окна")
+    assert "экран" not in reply
+    assert validate_reply(reply, "adult", user_text="где ты?").is_valid
 
 
 def test_baby_appearance_fallback_stays_short() -> None:
@@ -823,7 +856,7 @@ def test_reply_generator_replaces_dry_baby_name_reply() -> None:
 
     assert result.used_fallback
     assert "dry_baby_reply" in result.validation_flags
-    assert result.reply == "шур, я Листик)"
+    assert result.reply == "я Листик. а ты как меня позовешь?"
 
 
 def test_reply_generator_replaces_template_lore_phrase() -> None:

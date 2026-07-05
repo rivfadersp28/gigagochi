@@ -34,12 +34,27 @@ def check_rate_limit(bucket: str, user: TelegramUserContext) -> None:
         rate_limiter.check(bucket, user.telegram_id, limit=30, window=timedelta(hours=1))
 
 
+def generation_error_message(code: str) -> str:
+    if code == "OPENAI_TIMEOUT":
+        return "Генерация заняла больше времени, чем ожидалось. Попробуйте еще раз."
+    if code == "OPENAI_RATE_LIMIT":
+        return "OpenAI временно ограничил генерацию. Попробуйте позже."
+    if code in {"OPENAI_AUTH_FAILED", "OPENAI_PERMISSION_DENIED"}:
+        return "OpenAI API key не принят сервером. Проверьте настройки backend."
+    if code == "MISSING_OPENAI_API_KEY":
+        return "На сервере не настроен OpenAI API key."
+    return "Не удалось создать питомца. Попробуйте еще раз."
+
+
 @router.post("/generate-pet", response_model=GeneratePetAssetResponse)
 def generate_pet(payload: GeneratePetRequest, user: TelegramUser) -> GeneratePetAssetResponse:
     check_rate_limit("generation", user)
     try:
         return GeneratePetAssetResponse.model_validate(
-            generate_pet_asset_set(payload.description.strip())
+            generate_pet_asset_set(
+                payload.description.strip(),
+                use_template_presets=payload.useTemplatePresets,
+            )
         )
     except MissingOpenAIAPIKey:
         raise public_error(
@@ -55,7 +70,7 @@ def generate_pet(payload: GeneratePetRequest, user: TelegramUser) -> GeneratePet
             detail={
                 "code": code,
                 "error": "generation_failed",
-                "message": "Не удалось создать питомца. Попробуйте еще раз.",
+                "message": generation_error_message(code),
             },
         ) from exc
 

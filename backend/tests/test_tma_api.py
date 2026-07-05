@@ -3,11 +3,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.dependencies import get_telegram_user
 from app.main import app
-from app.schemas import LocalChatResponse
+from app.routers.tma import generation_error_message
+from app.schemas import GeneratePetAssetResponse, LocalChatResponse
 from app.services.pet_memory.models import (
     DevelopmentPatch,
     MemoryCandidate,
@@ -89,9 +92,12 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
     )
-    monkeypatch.setattr(
-        "app.routers.tma.generate_pet_asset_set",
-        lambda description: {
+    captured: dict[str, object] = {}
+
+    def fake_generate_pet_asset_set(description: str, **kwargs):
+        captured["description"] = description
+        captured["kwargs"] = kwargs
+        return {
             "assetSetId": "asset-1",
             "generatedAt": datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
             "images": {
@@ -119,7 +125,11 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
                 "species": "small dragon mascot",
                 "main_colors": ["green", "yellow"],
             },
-        },
+        }
+
+    monkeypatch.setattr(
+        "app.routers.tma.generate_pet_asset_set",
+        fake_generate_pet_asset_set,
     )
     client = tma_client()
 
@@ -129,10 +139,74 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
     payload = response.json()
     assert payload["assetSetId"] == "asset-1"
     assert payload["characterBible"]["species"] == "small dragon mascot"
+    assert captured["description"] == "маленький дракон"
+    assert captured["kwargs"] == {"use_template_presets": False}
     for stage in ("baby", "teen", "adult"):
         assert set(payload["images"][stage]) == {"idle", "happy", "hungry", "sad"}
 
     app.dependency_overrides.clear()
+
+
+def test_generate_pet_passes_template_preset_flag(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_generate_pet_asset_set(description: str, **kwargs):
+        captured["description"] = description
+        captured["kwargs"] = kwargs
+        return {
+            "assetSetId": "asset-1",
+            "generatedAt": datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
+            "images": {
+                stage: {
+                    "idle": f"/static/generated/asset-1/{stage}-idle.png",
+                    "happy": f"/static/generated/asset-1/{stage}-happy.png",
+                    "hungry": f"/static/generated/asset-1/{stage}-hungry.png",
+                    "sad": f"/static/generated/asset-1/{stage}-sad.png",
+                }
+                for stage in ("baby", "teen", "adult")
+            },
+            "characterBible": {"species": "дракон"},
+        }
+
+    monkeypatch.setattr("app.routers.tma.generate_pet_asset_set", fake_generate_pet_asset_set)
+    client = tma_client()
+
+    response = client.post(
+        "/api/generate-pet",
+        json={"description": "я хочу сделать дракона", "useTemplatePresets": True},
+    )
+
+    assert response.status_code == 200
+    assert captured["description"] == "я хочу сделать дракона"
+    assert captured["kwargs"] == {"use_template_presets": True}
+
+    app.dependency_overrides.clear()
+
+
+def test_generate_pet_asset_response_rejects_incomplete_image_set() -> None:
+    with pytest.raises(ValidationError):
+        GeneratePetAssetResponse.model_validate(
+            {
+                "assetSetId": "asset-1",
+                "generatedAt": datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
+                "images": {
+                    "baby": {"happy": "/static/generated/asset-1/baby-happy.png"},
+                    "teen": {},
+                    "adult": {},
+                },
+            }
+        )
+
+
+def test_generation_error_message_handles_openai_timeout() -> None:
+    assert (
+        generation_error_message("OPENAI_TIMEOUT")
+        == "Генерация заняла больше времени, чем ожидалось. Попробуйте еще раз."
+    )
 
 
 def test_chat_accepts_local_pet_state(monkeypatch) -> None:
@@ -318,7 +392,7 @@ def test_chat_returns_fallback_on_openai_error(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "reply": "фыр... ням)",
+        "reply": "эх, есть хочется. я слушаю, но ворчу.",
         "moodHint": "hungry",
         "loreMemoriesToSave": [],
     }
@@ -333,7 +407,7 @@ def test_generation_rate_limit(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "app.routers.tma.generate_pet_asset_set",
-        lambda description: {
+        lambda description, **kwargs: {
             "assetSetId": "asset-1",
             "generatedAt": datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
             "images": {

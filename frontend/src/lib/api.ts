@@ -10,6 +10,8 @@ import type {
   LocalPetState,
   MessagesResponse,
   Pet,
+  PetMood,
+  PetStage,
   PromptLayers,
 } from "./types";
 import { getTelegramInitData } from "./telegram";
@@ -30,6 +32,13 @@ type LocalChatOptions = {
   promptLayers?: PromptLayers;
   includeDebug?: boolean;
 };
+
+type GeneratePetOptions = {
+  useTemplatePresets?: boolean;
+};
+
+const REQUIRED_STAGES = ["baby", "teen", "adult"] as const satisfies readonly PetStage[];
+const REQUIRED_MOODS = ["idle", "happy", "hungry", "sad"] as const satisfies readonly PetMood[];
 
 export class ApiError extends Error {
   code?: string;
@@ -72,18 +81,74 @@ function tmaAuthHeaders(): HeadersInit {
   if (initData) {
     return { Authorization: `tma ${initData}` };
   }
-  if (ENABLE_TMA_DEV_FALLBACK) {
+  if (shouldUseDevTmaAuth()) {
     return { "X-Telegram-Init-Data": "dev" };
   }
   return {};
 }
 
 export function canUseTmaApi() {
-  return Boolean(getTelegramInitData()) || ENABLE_TMA_DEV_FALLBACK;
+  return Boolean(getTelegramInitData()) || shouldUseDevTmaAuth();
+}
+
+function shouldUseDevTmaAuth() {
+  if (ENABLE_TMA_DEV_FALLBACK) {
+    return true;
+  }
+  if (process.env.NODE_ENV !== "development" || typeof window === "undefined") {
+    return false;
+  }
+  return ["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"].includes(
+    window.location.hostname,
+  );
 }
 
 function publicImageUrl(imageUrl: string): string {
   return resolveImageUrl(imageUrl) ?? imageUrl;
+}
+
+function requiredGeneratedImage(
+  response: GeneratePetApiResponse,
+  stage: PetStage,
+  mood: PetMood,
+): string {
+  const imageUrl = response.images[stage]?.[mood];
+  if (!imageUrl) {
+    throw new ApiError(
+      `Сгенерировался неполный набор спрайтов: нет ${stage}/${mood}. Попробуйте еще раз.`,
+      "INCOMPLETE_ASSET_SET",
+    );
+  }
+  return publicImageUrl(imageUrl);
+}
+
+function completeGeneratedImages(response: GeneratePetApiResponse): GeneratePetResponse["images"] {
+  for (const stage of REQUIRED_STAGES) {
+    for (const mood of REQUIRED_MOODS) {
+      requiredGeneratedImage(response, stage, mood);
+    }
+  }
+
+  return {
+    baby: {
+      idle: requiredGeneratedImage(response, "baby", "idle"),
+      happy: requiredGeneratedImage(response, "baby", "happy"),
+      hungry: requiredGeneratedImage(response, "baby", "hungry"),
+      sad: requiredGeneratedImage(response, "baby", "sad"),
+    },
+    teen: {
+      idle: requiredGeneratedImage(response, "teen", "idle"),
+      happy: requiredGeneratedImage(response, "teen", "happy"),
+      hungry: requiredGeneratedImage(response, "teen", "hungry"),
+      sad: requiredGeneratedImage(response, "teen", "sad"),
+    },
+    adult: {
+      idle: requiredGeneratedImage(response, "adult", "idle"),
+      happy: requiredGeneratedImage(response, "adult", "happy"),
+      hungry: requiredGeneratedImage(response, "adult", "hungry"),
+      sad: requiredGeneratedImage(response, "adult", "sad"),
+    },
+  };
 }
 
 export async function createAnonymousUser(): Promise<AnonymousUser> {
@@ -120,7 +185,10 @@ export async function sendChatMessage(
   });
 }
 
-export async function generatePetAssets(description: string): Promise<GeneratePetResponse> {
+export async function generatePetAssets(
+  description: string,
+  options: GeneratePetOptions = {},
+): Promise<GeneratePetResponse> {
   const response = await request<GeneratePetApiResponse>("/api/generate-pet", {
     method: "POST",
     headers: tmaAuthHeaders(),
@@ -129,32 +197,14 @@ export async function generatePetAssets(description: string): Promise<GeneratePe
       style: "cute mobile game pet",
       stages: ["baby", "teen", "adult"],
       moods: ["idle", "happy", "hungry", "sad"],
+      useTemplatePresets: options.useTemplatePresets ?? false,
     },
   });
 
   return {
     ...response,
     characterBible: response.characterBible ?? undefined,
-    images: {
-      baby: {
-        idle: publicImageUrl(response.images.baby.idle),
-        happy: publicImageUrl(response.images.baby.happy),
-        hungry: publicImageUrl(response.images.baby.hungry),
-        sad: publicImageUrl(response.images.baby.sad),
-      },
-      teen: {
-        idle: publicImageUrl(response.images.teen.idle),
-        happy: publicImageUrl(response.images.teen.happy),
-        hungry: publicImageUrl(response.images.teen.hungry),
-        sad: publicImageUrl(response.images.teen.sad),
-      },
-      adult: {
-        idle: publicImageUrl(response.images.adult.idle),
-        happy: publicImageUrl(response.images.adult.happy),
-        hungry: publicImageUrl(response.images.adult.hungry),
-        sad: publicImageUrl(response.images.adult.sad),
-      },
-    },
+    images: completeGeneratedImages(response),
     spriteSheetUrl: response.spriteSheetUrl ? publicImageUrl(response.spriteSheetUrl) : undefined,
   };
 }

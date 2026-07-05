@@ -34,7 +34,10 @@ PET_REPLY_RESPONSE_SCHEMA: dict[str, Any] = {
     "properties": {
         "reply": {
             "type": "string",
-            "description": "One pet reply, without markdown or assistant-like phrasing.",
+            "description": (
+                "One living pet reply in Russian, usually 3-7 short sentences, without markdown "
+                "or assistant-like phrasing."
+            ),
         },
         "moodHint": {
             "type": ["string", "null"],

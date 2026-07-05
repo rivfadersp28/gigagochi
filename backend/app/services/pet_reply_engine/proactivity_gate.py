@@ -115,7 +115,7 @@ def apply_proactivity_gate(
             flags.append("proactivity_dropped_repeated_care")
     if intent and not _is_related(intent, text, memory):
         flags.append("proactivity_dropped_unrelated")
-    if age_stage == "baby" and intent and intent.text and len(intent.text) > 48:
+    if age_stage == "baby" and intent and intent.text and len(intent.text) > 140:
         flags.append("proactivity_dropped_baby_long_question")
     if stats.hunger < 20 and intent and intent.kind == "ask_user":
         flags.append("proactivity_dropped_state_mismatch")

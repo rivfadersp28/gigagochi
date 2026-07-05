@@ -23,6 +23,12 @@ BANNED_WORDS_FOR_PROMPT = (
     "state",
     "чем могу помочь",
     "как я могу помочь",
+    "цифровой",
+    "виртуальный",
+    "на экране",
+    "в приложении",
+    "внутри игры",
+    "интерфейс",
     "оживаю",
     "душа",
     "внутри меня",
@@ -46,6 +52,12 @@ _BANNED_PATTERNS = (
     re.compile(r"(?<!\w)state(?!\w)", re.IGNORECASE),
     re.compile(r"чем\s+могу\s+помочь", re.IGNORECASE),
     re.compile(r"как\s+я\s+могу\s+помочь", re.IGNORECASE),
+    re.compile(r"\bцифров\w*", re.IGNORECASE),
+    re.compile(r"\bвиртуаль\w*", re.IGNORECASE),
+    re.compile(r"на\s+экран\w*", re.IGNORECASE),
+    re.compile(r"в\s+приложени[еяию]", re.IGNORECASE),
+    re.compile(r"внутри\s+игр[ыаеу]", re.IGNORECASE),
+    re.compile(r"интерфейс", re.IGNORECASE),
     re.compile(r"ожива", re.IGNORECASE),
     re.compile(r"(?<!\w)душ[аеуы](?!\w)", re.IGNORECASE),
     re.compile(r"внутри\s+меня", re.IGNORECASE),
@@ -62,6 +74,14 @@ _UNCLEAR_ABSTRACTION_PATTERNS = (
 _TEMPLATE_LORE_PHRASE_PATTERNS = (
     re.compile(r"\bкоротк\w*\s+просьб", re.IGNORECASE),
     re.compile(r"\bлюб\w*\s+[^.!?…]*(?:туман[^.!?…]*лейк|лейк[^.!?…]*туман)", re.IGNORECASE),
+)
+_LITERAL_AGE_CLAIM_PATTERNS = (
+    re.compile(
+        r"\bмне\s+(?:уже\s+)?(?:за\s+)?(?:\d{1,3}|тридц\w+|сорок\w+)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:\d{1,3}|тридц\w+|сорок\w+)\s*(?:лет|года|год)\b", re.IGNORECASE),
+    re.compile(r"\b(?:за|под)\s+(?:\d{2}|тридц\w+|сорок\w+)\b", re.IGNORECASE),
 )
 _MARKDOWN_OR_LIST_PATTERN = re.compile(r"^\s*(?:[-*•]|\d+[.)]|#{1,6})\s+", re.MULTILINE)
 _WORD_PATTERN = re.compile(r"[A-Za-zА-Яа-яЁё0-9]+")
@@ -128,6 +148,10 @@ def _has_unclear_abstraction(text: str) -> bool:
 
 def _has_template_lore_phrase(text: str) -> bool:
     return any(pattern.search(text) for pattern in _TEMPLATE_LORE_PHRASE_PATTERNS)
+
+
+def _has_literal_age_claim(text: str) -> bool:
+    return any(pattern.search(text) for pattern in _LITERAL_AGE_CLAIM_PATTERNS)
 
 
 def _starts_with_pet_name(text: str, pet_name: str | None) -> bool:
@@ -208,6 +232,8 @@ def validate_reply(
         flags.append("unclear_abstraction")
     if _has_template_lore_phrase(text):
         flags.append("template_lore_phrase")
+    if _has_literal_age_claim(text):
+        flags.append("literal_age_claim")
     if _is_dry_baby_reply(text, age_stage):
         flags.append("dry_baby_reply")
     if _starts_with_pet_name(text, pet_name) or _THIRD_PERSON_START_PATTERN.search(text):

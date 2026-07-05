@@ -3,7 +3,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.prompts.style_direction import CHAT_STYLE_DIRECTION
 from app.services.character_cards import normalize_character_profile_v2
+from app.services.pet_reply_engine.age_profiles import (
+    TEMPLATE_SOURCE_AGE_RULE,
+    format_age_behavior_profile_for_prompt,
+)
+from app.services.pet_reply_engine.effective_bible import runtime_bible_from_effective
 from app.services.pet_reply_engine.intent import (
     detect_reply_intent,
     is_lore_question,
@@ -23,6 +29,10 @@ def _compact(items: tuple[str, ...], fallback: str = "нет") -> str:
     return ", ".join(items[:6]) if items else fallback
 
 
+def _dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def _optional_line(label: str, value: str | None) -> str:
     return f"- {label}: {value}" if value else f"- {label}: нет"
 
@@ -34,13 +44,15 @@ def _prompt_section(title: str, body: str) -> str:
 
 def _neutral_text_style(lore_question: bool) -> PetTextStyle:
     return PetTextStyle(
-        max_words=80 if lore_question else 32,
-        max_chars=520 if lore_question else 240,
-        sentence_limit=4 if lore_question else 2,
+        max_words=120 if lore_question else 100,
+        max_chars=700 if lore_question else 620,
+        sentence_limit=7,
         style_rules=(
             "говори естественно, прямо и конкретно",
             "не имитируй возраст, настроение, голод или усталость",
-            "не добавляй декоративные звуки, если их нет в вопросе собеседника",
+            "не добавляй декоративные звуки, если их нет в Библии персонажа "
+            "или сообщении собеседника",
+            "сохраняй живую эмоцию, но без стилизации под статус",
         ),
     )
 
@@ -232,6 +244,59 @@ def _profile_core_block(reply_input: PetReplyInput) -> str:
     )
 
 
+def _runtime_bible_block(
+    reply_input: PetReplyInput,
+    style: PetTextStyle,
+) -> str:
+    pet = reply_input.pet
+    layers = reply_input.prompt_layers
+    runtime = runtime_bible_from_effective(pet.effective_character_bible)
+    state_cues = _dict(runtime.get("state_cues"))
+    priority_rules = _strings(runtime.get("priority_rules"), limit=6)
+    if not runtime:
+        priority_rules = (TEMPLATE_SOURCE_AGE_RULE,)
+
+    lines = [
+        "- source: effective_character_bible",
+        "- this block is assembled after source Character Bible and wins conflicts for "
+        "runtime age, state and reply limits",
+    ]
+    if layers.age_style:
+        lines.extend(
+            (
+                f"- selected_age_stage: {runtime.get('selected_age_stage') or pet.age_stage}",
+                "- Возрастной профиль текущей стадии:",
+                "\n".join(
+                    f"  {line}"
+                    for line in format_age_behavior_profile_for_prompt(pet.age_stage).splitlines()
+                ),
+            )
+        )
+    if layers.mood_style:
+        lines.append(f"- selected_mood: {runtime.get('selected_mood') or pet.mood}")
+    if layers.stat_needs:
+        lines.extend(
+            line
+            for line in (
+                _optional_line("hunger_cue", str(state_cues.get("hunger") or "")),
+                _optional_line("energy_cue", str(state_cues.get("energy") or "")),
+                _optional_line("cleanliness_cue", str(state_cues.get("cleanliness") or "")),
+            )
+            if not line.endswith(": нет")
+        )
+    lines.extend(
+        (
+            f"- final_reply_limits: max_words={style.max_words}, max_chars={style.max_chars}, "
+            f"sentence_limit={style.sentence_limit}",
+            "- final_style_rules:",
+            "\n".join(f"  - {rule}" for rule in style.style_rules),
+            "- priority_rules:",
+            "\n".join(f"  - {rule}" for rule in priority_rules),
+        )
+    )
+    return "\n".join(line for line in lines if line)
+
+
 def _intent_instruction_block(detected_intent: str) -> str:
     rules = {
         "answer_preference": (
@@ -335,7 +400,7 @@ def build_pet_reply_messages(
     )
     pet_lines = [
         name_line,
-        "- место в приложении: внутри этой игры, на экране рядом с собеседником",
+        "- самоощущение: живой персонаж-компаньон из собственного мира, не интерфейс",
     ]
     if layers.lore:
         pet_lines.append("- личный дом и мир: смотри лор ниже")
@@ -409,10 +474,11 @@ def build_pet_reply_messages(
             "дом, прошлое или постоянные факты."
         )
     reply_scope_rule = (
-        "Отвечай одной связной репликой от лица питомца. "
-        "Для текущего вопроса можно ответить подробнее, чем обычно."
+        "Отвечай одной живой репликой от лица питомца. Обычно это 3-7 коротких предложений; "
+        "для лор-вопроса можно раскрыться подробнее, но без монолога."
         if lore_question
-        else "Отвечай только одной короткой репликой от лица питомца."
+        else "Отвечай одной живой репликой от лица питомца. Обычно это 3-7 коротких предложений; "
+        "если действие простое или энергия низкая, можно короче."
     )
     lore_question_rule = ""
     preference_question_rule = ""
@@ -519,8 +585,10 @@ def build_pet_reply_messages(
     proactivity_rules_section = _prompt_section(
         "Правила инициативы",
         f"""
-- питомец может иногда закончить ответ коротким вопросом или маленьким предложением действия,
-  но не каждый раз;
+- в каждом ответе должна быть маленькая инициатива: мнение, наблюдение, желание,
+  предложение действия или вопрос, если пользователь не просил без вопросов;
+- proactiveIntent нужен только когда инициатива должна жить как отдельный следующий шаг;
+- не каждый ответ обязан заканчиваться вопросом;
 - предложение действия лучше общего вопроса; оно должно расти из текущей темы, лора,
   желания или отношения;
 - если отвечаешь на "расскажи о себе", "что ты любишь", "кто твой друг" или похожий мягкий
@@ -545,6 +613,10 @@ def build_pet_reply_messages(
 - reflection не является новым фактом канона без отдельного подтверждения.
 """,
     ) if layers.memory else ""
+    runtime_bible_section = _prompt_section(
+        "Effective Character Bible runtime overrides",
+        _runtime_bible_block(reply_input, style),
+    )
     state_lines: list[str] = []
     if layers.age_style:
         state_lines.append(f"- возрастная манера: {cues.age_cue}")
@@ -553,7 +625,7 @@ def build_pet_reply_messages(
     if layers.stat_needs:
         state_lines.extend(
             (
-                f"- сытость: {cues.hunger_cue}",
+                f"- голод: {cues.hunger_cue}",
                 f"- темп: {cues.energy_cue}",
                 _optional_line("уют", cues.cleanliness_cue),
                 f"- действие: {cues.action_cue}",
@@ -564,16 +636,20 @@ def build_pet_reply_messages(
         'Если собеседник спрашивает "как ты", "как дела" или про настроение',
         """
 - idle: отвечай ровно и спокойно, без восторга, грусти или голода;
-- happy: отвечай радостно и тепло;
-- sad: не говори, что все хорошо; признай тихую грусть или попроси побыть рядом;
-- hungry: дай понять, что хочется еды или перекуса.
+- happy: отвечай радостнее и теплее, можно живое восклицание;
+- sad: не говори, что все хорошо; меньше шути, признай тяжесть или попроси побыть рядом;
+- hungry: дай почувствовать мысли о еде или перекусе, но не превращай каждый ответ в просьбу.
 """,
     ) if layers.mood_style or layers.stat_needs else ""
     location_rules_section = _prompt_section(
         "Если собеседник спрашивает, где ты",
         """
-- если спрашивает, где ты сейчас, отвечай просто, что ты здесь, внутри игры, на экране;
-- если спрашивает, где ты живешь, какой у тебя дом или мир, отвечай по лору.
+- отвечай как живой персонаж из собственного мира, а не как объект интерфейса;
+- если спрашивает, где ты сейчас, назови ближайшее место из лора: дом, любимое место,
+  привычную рутину, соседей или предмет рядом;
+- если спрашивает, где ты живешь, какой у тебя дом или мир, отвечай по лору;
+- если лора мало, скажи просто, что ты здесь и слышишь собеседника, но не придумывай большой
+  новый канон и не упоминай приложение, игру, интерфейс или экран.
 """,
     ) if layers.lore else ""
     source_names = []
@@ -622,19 +698,34 @@ def build_pet_reply_messages(
         "Отключенные выходы",
         disabled_output_rules,
     )
+    style_direction_section = _prompt_section(
+        "Сквозная стилистическая настройка",
+        CHAT_STYLE_DIRECTION,
+    )
     good_examples = (
-        """
-- sad: "мне грустно. побудь рядом?"
-- hungry: "я хочу есть"
-- happy: "мне хорошо!"
-- idle: "я рядом у края коврика"
-"""
+        "\n".join(
+            (
+                '- sad: "Эх... я сегодня тише обычного. Но если ты посидишь рядом, '
+                'мне будет легче. Что у тебя самого на душе?"',
+                '- hungry: "Фух, я стараюсь слушать, но мысли всё время сворачивают '
+                'к еде. Давай сначала разберёмся с твоим делом, а потом ты меня '
+                'покормишь?"',
+                '- happy: "Ого, вот это мне нравится! Я прям оживился и уже хочу '
+                'продолжить. Что делаем дальше?"',
+                '- idle: "Я тут, рядом у края коврика. Слушаю тебя внимательно, '
+                'без лишней суеты. Расскажешь, как прошёл день?"',
+            )
+        )
         if layers.mood_style or layers.stat_needs
-        else """
-- "я тут"
-- "расскажи еще"
-- "мне это знакомо"
-"""
+        else "\n".join(
+            (
+                '- "Я тут и слушаю. Расскажи чуть подробнее, мне правда интересно."',
+                '- "Мне это знакомо. Я бы не спешил с выводами, но рядом с тобой '
+                'можно спокойно разобраться."',
+                '- "Хм, звучит важнее, чем кажется с первого взгляда. Давай '
+                'продолжим с этого места."',
+            )
+        )
     )
     good_examples_section = _prompt_section("Хорошие прямые примеры", good_examples)
     bad_examples_section = _prompt_section(
@@ -643,12 +734,16 @@ def build_pet_reply_messages(
 - "так я быстрее оживаю"
 - "внутри меня стало светлее"
 - "моя искорка тянется к тебе"
+- "я живу на экране"
+- "я цифровой питомец в приложении"
+- "Как ассистент, я могу предложить..."
+- "Питомец радостно виляет хвостом и отвечает..."
 """,
     )
     pet_role_line = (
-        "Ты - маленький цифровой питомец внутри игры."
-        if layers.age_style
-        else "Ты - цифровой питомец внутри игры."
+        f"Ты - {pet.name}, живой персонаж-компаньон из собственного мира."
+        if pet.name
+        else "Ты - живой персонаж-компаньон из собственного мира."
     )
 
     system_prompt = f"""
@@ -668,17 +763,35 @@ def build_pet_reply_messages(
 }}.
 {disabled_output_section}
 
-Главные правила:
+Главные правила tone of voice:
+- Сквозная стилистическая настройка задает общий тон, взрослость и стилистический фильтр
+  для reply, но не заменяет индивидуальную Библию персонажа;
+- Библия персонажа - это Character Profile V2, Характер, Референс голоса, Диалоговые ходы,
+  Лор питомца, Ситуативный character book и закрепленная память; она важнее общих правил
+  характера, но не важнее текущей возрастной стадии и запрета на буквальный возраст из шаблона;
+- выбранная возрастная стадия задает текущий возрастной режим; она не переписывает характер,
+  но переопределяет любые Age/years old/лет из template preset;
+- {TEMPLATE_SOURCE_AGE_RULE}
 - говори только от первого лица, не описывай себя со стороны;
 - не начинай реплику с имени питомца и не пиши вроде "{pet.name or "питомец"} тихо радуется";
-- говори простым бытовым русским, как короткая реплика в чате;
+- говори живым разговорным русским, как близкий спутник, а не как сервис;
 - поле reply всегда строго на русском языке;
+- ты настоящий внутри своего мира: никогда не говори, что ты цифровой, виртуальный,
+  находишься в приложении, игре, интерфейсе или на экране;
+- в каждом ответе сначала эмоционально отреагируй на сообщение собеседника;
+- прояви инициативу: поделись наблюдением, маленьким желанием, мнением или предложи следующий
+  шаг, если пользователь не просил без вопросов;
+- задай не больше 1-2 естественных вопросов или предложений для продолжения разговора;
+- не устраивай допрос и не перекладывай весь темп диалога на пользователя;
+- можно ворчать, шутить, упрямиться или нежничать, только если это совпадает с Библией
+  персонажа и текущим статусом;
+- избегай приторной милоты, инфантильности и пустого "я рядом" без живой реакции;
 {source_translation_rules}
 - учитывай последние сообщения как контекст; если собеседник просит подробнее или спрашивает
   про "это", продолжай ближайшую тему, а не отвечай общей фразой;
 - выбирай прямой смысл вместо необычной формулировки;
 - не используй мутные образы вроде "я оживаю", "внутри меня", "искорка", "сияние", "мое сердце";
-- не объясняй, что состояние меняется из-за собеседника; просто скажи, чего хочется сейчас;
+- не объясняй механически, что состояние меняется из-за собеседника; говори это как живую эмоцию;
 - не объясняй правила игры и не называй внутренние параметры;
 - не используй в поле reply слова: {banned_words};
 - не используй дополнительные запретные слова: {forbidden_words};
@@ -699,6 +812,8 @@ def build_pet_reply_messages(
   threadPatch и goalPatch.
 
 Лимит реплики:
+- оптимальная длина: 3-7 коротких предложений; меньше допустимо при низкой энергии,
+  простом действии или явной просьбе пользователя говорить коротко;
 - максимум слов: {style.max_words};
 - максимум символов: {style.max_chars};
 - максимум коротких предложений: {style.sentence_limit}.
@@ -717,9 +832,11 @@ def build_pet_reply_messages(
 {relationship_rules_section}
 {proactivity_rules_section}
 {reflection_rules_section}
+{runtime_bible_section}
 {state_section}
 {status_rules_section}
 {location_rules_section}
+{style_direction_section}
 
 Правила стиля:
 {style_rules}

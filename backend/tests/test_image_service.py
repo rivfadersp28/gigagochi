@@ -4,6 +4,7 @@ import base64
 import json
 from types import SimpleNamespace
 
+import pytest
 from PIL import Image, ImageDraw
 
 from app.prompts.pet_image_prompts import build_character_bible_prompt, create_lore_seed
@@ -16,6 +17,7 @@ from app.services.image_service import (
     character_bible_quality_issues,
     create_character_bible,
     extract_sprite_cells,
+    generate_pet_asset_set,
     generate_sprite_sheet_bytes,
     generation_error_code,
 )
@@ -145,6 +147,97 @@ def test_generate_sprite_sheet_omits_unset_background(monkeypatch) -> None:
     assert captured["timeout"] == 180
 
 
+def test_create_character_bible_uses_character_timeout(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps({"species": "дракончик"}))
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            openai_chat_model="test-model",
+            openai_chat_timeout_seconds=1,
+            openai_character_timeout_seconds=180,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.get_openai_client",
+        lambda: SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.character_bible_quality_issues",
+        lambda description, character_bible: (),
+    )
+
+    result = create_character_bible("маленький дракон")
+
+    assert result["schema_version"] == 2
+    assert result["species"] == "дракончик"
+    assert captured["timeout"] == 180
+
+
+def test_generate_pet_asset_set_can_use_template_presets(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_crop_sprite_sheet(asset_id, _sprite_path):
+        return {
+            (stage, state): tmp_path / f"{stage}-{state}.png"
+            for stage in ("baby", "teen", "adult")
+            for state in ("idle", "happy", "hungry", "sad")
+        }
+
+    def fail_old_character_bible(_description):
+        pytest.fail("create_character_bible should not run in template preset mode")
+
+    def fake_build_sprite_prompt(description, character_bible):
+        captured["prompt_args"] = (description, character_bible)
+        return "sprite prompt"
+
+    monkeypatch.setattr(
+        "app.services.image_service.generated_dir_for",
+        lambda asset_id: tmp_path / str(asset_id),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.create_character_bible",
+        fail_old_character_bible,
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.create_character_bible_from_template",
+        lambda description: {"schema_version": 2, "species": "дракон"},
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.build_pet_sprite_sheet_prompt",
+        fake_build_sprite_prompt,
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.generate_sprite_sheet_bytes",
+        lambda _prompt: b"png",
+    )
+    monkeypatch.setattr("app.services.image_service.crop_sprite_sheet", fake_crop_sprite_sheet)
+
+    result = generate_pet_asset_set(
+        "я хочу сделать дракона",
+        use_template_presets=True,
+    )
+
+    assert result["characterBible"]["species"] == "дракон"
+    assert captured["prompt_args"] == (
+        "я хочу сделать дракона",
+        {"schema_version": 2, "species": "дракон"},
+    )
+    for stage in ("baby", "teen", "adult"):
+        assert set(result["images"][stage]) == {"idle", "happy", "hungry", "sad"}
+
+
 def test_generation_error_code_defaults_to_generic() -> None:
     assert generation_error_code(RuntimeError("unknown")) == "GENERATION_FAILED"
 
@@ -256,9 +349,18 @@ def test_character_bible_prompt_requests_species_specific_lore() -> None:
     )
 
     assert "scaffold-first character bible" in prompt
+    assert "CHARACTER_BIBLE_STYLE_DIRECTION" in prompt
+    assert "adult author" in prompt
+    assert "World mood:" in prompt
+    assert "fantasy micro-worlds" in prompt
     assert "EXTERNAL_SOURCE_FRAGMENT_MIX" in prompt
     assert "test_source" in prompt
     assert "Use EXTERNAL_SOURCE_FRAGMENT_MIX as raw test corpus material" in prompt
+    assert "own embodied world" in prompt
+    assert "must never describe itself as digital" in prompt
+    assert "Prefer reference-driven concrete lore" in prompt
+    assert "identity.role must be a lived role" in prompt
+    assert "digital companion" not in prompt
     assert "visibly blend at least 4 different source fragments" in prompt
     assert "Write every user-facing string value in Russian" in prompt
     assert "мягкий дракончик-компаньон" in prompt
@@ -437,4 +539,5 @@ def test_create_character_bible_repairs_quality_issues_once(monkeypatch) -> None
     assert "LORE_VARIATION_SEED" in calls[0][1]["content"]
     assert "ночная пекарня" in calls[0][1]["content"]
     assert "Repair this character bible" in calls[1][1]["content"]
+    assert "CHARACTER_BIBLE_STYLE_DIRECTION" in calls[1][1]["content"]
     assert "LORE_VARIATION_SEED_USED" in calls[1][1]["content"]

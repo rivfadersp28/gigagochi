@@ -102,6 +102,7 @@ class PetReplyPet:
     lore: dict[str, Any] | None = None
     name: str | None = None
     character_profile_v2: dict[str, Any] | None = None
+    effective_character_bible: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

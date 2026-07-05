@@ -30,8 +30,10 @@ from app.prompts.pet_image_prompts import (
     build_pet_sprite_sheet_prompt,
     create_lore_seed,
 )
+from app.prompts.style_direction import CHARACTER_BIBLE_STYLE_DIRECTION
 from app.services.birth_message_service import ensure_birth_message
 from app.services.character_cards import upgrade_character_bible_v2
+from app.services.character_templates import create_character_bible_from_template
 from app.services.external_character_sources import (
     ExternalSourceFragment,
     external_fragments_prompt_block,
@@ -684,6 +686,11 @@ def _character_bible_completion(
     settings: Any,
     messages: list[dict[str, str]],
 ) -> dict[str, Any]:
+    timeout = getattr(
+        settings,
+        "openai_character_timeout_seconds",
+        settings.openai_chat_timeout_seconds,
+    )
     completion = client.chat.completions.create(
         model=settings.openai_chat_model,
         messages=messages,
@@ -695,7 +702,7 @@ def _character_bible_completion(
                 "strict": True,
             },
         },
-        timeout=settings.openai_chat_timeout_seconds,
+        timeout=timeout,
     )
     content = completion.choices[0].message.content or "{}"
     return json.loads(content)
@@ -723,10 +730,15 @@ USER_CHARACTER_DESCRIPTION:
 EXTERNAL_SOURCE_FRAGMENT_MIX_USED:
 {external_source_fragments or "нет локального внешнего корпуса"}
 
+CHARACTER_BIBLE_STYLE_DIRECTION:
+{CHARACTER_BIBLE_STYLE_DIRECTION}
+
 QUALITY_ISSUES:
 {", ".join(issues)}
 
 Repair rules:
+- Keep the repaired lore, personality, voice, openings, sample replies, and lorebook entries
+  aligned with CHARACTER_BIBLE_STYLE_DIRECTION.
 - Preserve the same visual identity and all required schema fields.
 - Preserve Character Profile V2 fields: identity, voice, inner_state, world, dialogue_moves,
   openings, provenance, extensions, and schema_version=2.
@@ -1161,12 +1173,20 @@ def generate_pet_assets(pet_id: uuid.UUID) -> None:
             mark_generation_failed(pet_id, code)
 
 
-def generate_pet_asset_set(description: str) -> dict[str, Any]:
+def generate_pet_asset_set(
+    description: str,
+    *,
+    use_template_presets: bool = False,
+) -> dict[str, Any]:
     asset_set_id = uuid.uuid4()
     output_dir = generated_dir_for(asset_set_id)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    character_bible = create_character_bible(description)
+    character_bible = (
+        create_character_bible_from_template(description)
+        if use_template_presets
+        else create_character_bible(description)
+    )
     sprite_prompt = build_pet_sprite_sheet_prompt(description, character_bible)
     image_bytes = generate_sprite_sheet_bytes(sprite_prompt)
 

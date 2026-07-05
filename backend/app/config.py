@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     openai_image_size: str = "1536x1152"
     openai_image_output_format: str = "png"
     openai_chat_reasoning_effort: OpenAIReasoningEffort | None = "low"
+    openai_character_timeout_seconds: float = 180
     openai_chat_timeout_seconds: float = 90
     openai_image_timeout_seconds: float = 180
     openai_max_retries: int = 0

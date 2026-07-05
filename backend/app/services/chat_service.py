@@ -32,6 +32,7 @@ from app.services.pet_reply_engine import (
     build_visual_identity,
     generate_pet_reply,
 )
+from app.services.pet_reply_engine.effective_bible import build_effective_character_bible
 from app.services.pet_reply_engine.fallbacks import fallback_reply
 from app.services.pet_reply_engine.lore import extract_lore
 from app.services.pet_reply_engine.models import PetAgeStage, PetMood, PetPromptLayers
@@ -80,8 +81,23 @@ def build_pet_reply_input(
 ) -> PetReplyInput:
     pet = payload.pet
     character_bible = pet.characterBible
-    visual_identity = build_visual_identity(pet.description, character_bible)
-    personality = build_default_personality(pet.description, character_bible)
+    prompt_layers = _pet_prompt_layers(payload.promptLayers)
+    stats = PetStats(
+        hunger=pet.stats.hunger,
+        happiness=pet.stats.happiness,
+        energy=pet.stats.energy,
+        cleanliness=pet.stats.cleanliness,
+    )
+    effective_character_bible = build_effective_character_bible(
+        character_bible,
+        raw_description=pet.description,
+        age_stage=pet.stage,
+        mood=pet.mood,
+        stats=stats,
+        prompt_layers=prompt_layers,
+    )
+    visual_identity = build_visual_identity(pet.description, effective_character_bible)
+    personality = build_default_personality(pet.description, effective_character_bible)
     lore_memories = tuple(item.strip()[:500] for item in pet.loreMemories if item.strip())
 
     return PetReplyInput(
@@ -91,26 +107,22 @@ def build_pet_reply_input(
             name=pet.name,
             age_stage=pet.stage,
             mood=pet.mood,
-            stats=PetStats(
-                hunger=pet.stats.hunger,
-                happiness=pet.stats.happiness,
-                energy=pet.stats.energy,
-                cleanliness=pet.stats.cleanliness,
-            ),
+            stats=stats,
             visual_identity=visual_identity,
             personality=personality,
-            lore=extract_lore(character_bible),
+            lore=extract_lore(effective_character_bible),
             character_profile_v2=normalize_character_profile_v2(
-                character_bible,
+                effective_character_bible,
                 raw_description=pet.description,
             ),
+            effective_character_bible=effective_character_bible,
         ),
         recent_messages=tuple(
             PetRecentMessage(role=item.role, text=item.text) for item in payload.history[-12:]
         ),
         lore_memories=lore_memories[-12:],
         memory_context=memory_context,
-        prompt_layers=_pet_prompt_layers(payload.promptLayers),
+        prompt_layers=prompt_layers,
     )
 
 
@@ -323,30 +335,42 @@ def build_persisted_pet_reply_input(
     prompt_layers: PetPromptLayers | None = None,
 ) -> PetReplyInput:
     character_bible = pet.character_profile_json
-    visual_identity = build_visual_identity(pet.original_description, character_bible)
-    personality = build_default_personality(pet.original_description, character_bible)
+    prompt_layers = prompt_layers or PetPromptLayers()
+    age_stage = _pet_age_stage(selected_stage or pet.current_stage)
     mood = _pet_mood(selected_state or select_visual_state(pet.hunger, pet.mood))
+    stats = PetStats(
+        hunger=pet.hunger,
+        happiness=pet.mood,
+        energy=60,
+        cleanliness=90,
+    )
+    effective_character_bible = build_effective_character_bible(
+        character_bible,
+        raw_description=pet.original_description,
+        age_stage=age_stage,
+        mood=mood,
+        stats=stats,
+        prompt_layers=prompt_layers,
+    )
+    visual_identity = build_visual_identity(pet.original_description, effective_character_bible)
+    personality = build_default_personality(pet.original_description, effective_character_bible)
 
     return PetReplyInput(
         user_action="chat_message",
         user_text=message_text,
         pet=PetReplyPet(
             name=None,
-            age_stage=_pet_age_stage(selected_stage or pet.current_stage),
+            age_stage=age_stage,
             mood=mood,
-            stats=PetStats(
-                hunger=pet.hunger,
-                happiness=pet.mood,
-                energy=60,
-                cleanliness=90,
-            ),
+            stats=stats,
             visual_identity=visual_identity,
             personality=personality,
-            lore=extract_lore(character_bible),
+            lore=extract_lore(effective_character_bible),
             character_profile_v2=normalize_character_profile_v2(
-                character_bible,
+                effective_character_bible,
                 raw_description=pet.original_description,
             ),
+            effective_character_bible=effective_character_bible,
         ),
         recent_messages=tuple(
             PetRecentMessage(
@@ -357,7 +381,7 @@ def build_persisted_pet_reply_input(
             if item.role in ("assistant", "user")
         ),
         memory_context=memory_context,
-        prompt_layers=prompt_layers or PetPromptLayers(),
+        prompt_layers=prompt_layers,
     )
 
 

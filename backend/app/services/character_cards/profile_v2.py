@@ -229,7 +229,10 @@ def normalize_character_profile_v2(
             "name": _first_string(existing_identity.get("name"), bible.get("name")),
             "nickname": _first_string(existing_identity.get("nickname"), bible.get("nickname")),
             "species": species,
-            "role": _first_string(existing_identity.get("role"), "цифровой питомец-компаньон"),
+            "role": _first_string(
+                existing_identity.get("role"),
+                "персонаж-компаньон из собственного мира",
+            ),
             "one_liner": one_liner,
         },
         "voice": {
@@ -357,7 +360,7 @@ def normalize_character_profile_v2(
             "source_urls": _merge_strings(existing_provenance.get("source_urls"), limit=8),
             "license_notes": _first_string(
                 existing_provenance.get("license_notes"),
-                "generated internal profile; no copied external character text",
+                "generated internal profile text adapted from reference fragments",
             ),
         },
         "extensions": _dict(bible.get("extensions")),

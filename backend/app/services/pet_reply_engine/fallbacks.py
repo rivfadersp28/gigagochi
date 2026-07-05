@@ -18,7 +18,6 @@ from app.services.pet_reply_engine.lore import (
     origin_fragment,
     preference_fragment,
     relationship_fragment,
-    short_words,
 )
 from app.services.pet_reply_engine.models import EnergyBand, PetAgeStage, PetMood, PetReplyInput
 from app.services.pet_reply_engine.state_interpreter import interpret_state, text_mentions_food
@@ -26,24 +25,24 @@ from app.services.pet_reply_engine.state_interpreter import interpret_state, tex
 _CHAT_FALLBACKS: dict[PetAgeStage, dict[PetMood, dict[EnergyBand, str]]] = {
     "baby": {
         "idle": {
-            "low": "мр... я тут)",
-            "medium": "пи. я рядом)",
-            "high": "пи! я тут)",
+            "low": "фух... я тут. посиди рядом?",
+            "medium": "я тут. слушаю тебя.",
+            "high": "я тут! что у тебя?",
         },
         "happy": {
-            "low": "мр... хорошо)",
-            "medium": "пи! мне тепло)",
-            "high": "пи-пи! еще)",
+            "low": "мне хорошо... тихо, но хорошо.",
+            "medium": "ух, мне нравится! давай еще?",
+            "high": "ого, класс! я хочу продолжить.",
         },
         "hungry": {
-            "low": "мр... крошку)",
-            "medium": "пи... крошку)",
-            "high": "пи! вкусненькое)",
+            "low": "эх... есть хочется. я слушаю, но ворчу.",
+            "medium": "перекус бы сейчас. а потом я весь твой.",
+            "high": "ух, хочу еду и приключение!",
         },
         "sad": {
-            "low": "мр... рядом:(",
-            "medium": "пи... рядом:(",
-            "high": "пи... обними:(",
+            "low": "эх... я устал и притих. побудь рядом?",
+            "medium": "мне грустно. можно я побуду рядом?",
+            "high": "мне грустно, но с тобой легче. поговорим?",
         },
     },
     "teen": {
@@ -94,46 +93,46 @@ _CHAT_FALLBACKS: dict[PetAgeStage, dict[PetMood, dict[EnergyBand, str]]] = {
 
 _ACTION_FALLBACKS: dict[str, dict[PetAgeStage, str]] = {
     "feed": {
-        "baby": "ням... спасибо)",
+        "baby": "фух, спасибо! стало легче.",
         "teen": "о, вот это вкусно.",
         "adult": "спасибо. стало заметно уютнее.",
     },
     "play": {
-        "baby": "пи! еще)",
+        "baby": "ух, еще! мне нравится.",
         "teen": "ха, давай еще раз!",
         "adult": "хорошая игра. продолжим?",
     },
     "clean": {
-        "baby": "мр... чисто)",
+        "baby": "фух, чисто. так приятнее.",
         "teen": "так намного приятнее.",
         "adult": "спасибо. теперь спокойнее.",
     },
     "pet": {
-        "baby": "мрр... тепло)",
+        "baby": "ой... тепло. не убирай руку сразу.",
         "teen": "эй... ладно, приятно.",
         "adult": "мне приятно. останься рядом.",
     },
     "idle_return": {
-        "baby": "пи... ты тут)",
+        "baby": "ты тут! я ждал.",
         "teen": "а, ты вернулся.",
         "adult": "я скучал. рад, что ты вернулся.",
     },
     "creation_intro": {
-        "baby": "пи... привет)",
+        "baby": "я проснулся. привет! как тебя звать?",
         "teen": "привет. я уже тут.",
-        "adult": "я появился. познакомимся?",
+        "adult": "я здесь. познакомимся?",
     },
     "system_nudge": {
-        "baby": "мр... я тут)",
+        "baby": "я тут... если что.",
         "teen": "я тут, если что.",
         "adult": "я рядом, когда будешь готов.",
     },
 }
 
 _CHAT_FALLBACK_VARIANTS: dict[tuple[PetAgeStage, PetMood, EnergyBand], tuple[str, ...]] = {
-    ("baby", "idle", "high"): ("мр! слушаю)", "пи, что)"),
-    ("baby", "happy", "medium"): ("мр! еще)", "пи, слушаю)"),
-    ("baby", "happy", "high"): ("пи! слушаю)", "мр, еще)", "пи! дальше)"),
+    ("baby", "idle", "high"): ("слушаю! расскажи.", "я тут. давай дальше?"),
+    ("baby", "happy", "medium"): ("мне хорошо! рассказывай.", "я слушаю! что дальше?"),
+    ("baby", "happy", "high"): ("я слушаю! дальше?", "ух, хочу еще!", "давай продолжим!"),
     ("teen", "happy", "high"): ("я слушаю, продолжай.", "мне нравится, рассказывай дальше."),
     ("adult", "happy", "high"): ("я слушаю. продолжай.", "хорошо, я с тобой."),
 }
@@ -218,33 +217,32 @@ def appearance_fallback(reply_input: PetReplyInput) -> str:
     visual = reply_input.pet.visual_identity
     if reply_input.pet.age_stage == "baby":
         feature = _short_words(_first_visual_feature(reply_input), 2)
-        sound = _baby_sound(reply_input)
-        return f"{sound}... {feature})" if feature else f"{sound}... маленький)"
+        return f"я вот такой: {feature}. странный, да?" if feature else "я маленький. но настоящий."
 
     raw_description = _short_words(visual.raw_description, 12)
     if raw_description:
         return f"я выгляжу так: {raw_description}"
 
     feature = _short_words(_first_visual_feature(reply_input), 8)
-    return f"я похож на {feature}" if feature else "я маленький цифровой питомец"
+    return f"я похож на {feature}" if feature else "я маленький, но настоящий"
 
 
 def location_fallback(reply_input: PetReplyInput) -> str:
-    if is_home_question(reply_input.user_text):
-        fragment = home_fragment(reply_input.pet.lore)
-        if fragment:
-            return _format_lore_fallback(reply_input, "мой дом", fragment)
+    fragment = home_fragment(reply_input.pet.lore)
+    if fragment:
+        prefix = "мой дом" if is_home_question(reply_input.user_text) else "я сейчас"
+        return _format_lore_fallback(reply_input, prefix, fragment)
     if reply_input.pet.age_stage == "baby":
-        sound = _baby_sound(reply_input)
-        return f"{sound}... я тут)"
-    return "я здесь, на экране"
+        return "я здесь. слышу тебя близко."
+    return "я здесь, рядом с тобой."
 
 
 def _format_lore_fallback(reply_input: PetReplyInput, prefix: str, fragment: str) -> str:
     if reply_input.pet.age_stage == "baby":
-        sound = _baby_sound(reply_input)
-        short = short_words(fragment, 4)
-        return f"{sound}... {short})" if short else f"{sound}... там)"
+        short = _short_lore_fragment(fragment, 24)
+        if not short:
+            return "я пока путаюсь, но хочу рассказать."
+        return f"{prefix}: {short} мне там спокойно." if prefix else f"{short} мне это дорого."
 
     short = _short_lore_fragment(fragment, 32 if reply_input.pet.age_stage == "teen" else 42)
     if not short:
@@ -320,25 +318,29 @@ def baby_fallback_reply(
 
     if mood == "happy":
         options = (
-            (f"{sound}-{sound}! {body_word})", f"{sound}! еще)", f"{sound}! хорошо)")
+            (
+                "я аж подпрыгнул. давай еще?",
+                "ух, мне хорошо! продолжим?",
+                "ого, я весь во внимании!",
+            )
             if energy == "high"
-            else (f"{sound}! хорошо)", f"{sound}! {body_word})")
+            else ("мне хорошо. я слушаю.", f"{body_word} спокойнее. рассказывай.")
         )
         return _select_non_recent_reply(options, recent_pet_replies)
     if mood == "hungry":
         options = (
-            (f"{sound}... ням)", "ням... крошку)")
+            ("эх, есть хочется. я слушаю, но ворчу.", "перекус бы сейчас... правда.")
             if sound != "ням"
-            else ("ням... крошку)", "ням... еще)")
+            else ("есть хочется. потом поговорим бодрее?", "перекус бы сейчас... правда.")
         )
         return _select_non_recent_reply(options, recent_pet_replies)
     if mood == "sad":
         return _select_non_recent_reply(
-            (f"{sound}... рядом:(", f"{sound}... тихо:("),
+            ("мне грустно. побудь рядом?", "я притих. поговори со мной?"),
             recent_pet_replies,
         )
     return _select_non_recent_reply(
-        (f"{sound}. я тут)", f"{sound}. тут)"),
+        ("я тут. слушаю тебя.", "я рядом. что у тебя?"),
         recent_pet_replies,
     )
 
@@ -347,14 +349,16 @@ def baby_name_fallback(
     reply_input: PetReplyInput,
     recent_pet_replies: tuple[str, ...] = (),
 ) -> str:
-    sound = _baby_sound(reply_input)
     if reply_input.pet.name:
         return _select_non_recent_reply(
-            (f"{sound}, я {reply_input.pet.name})", f"{sound}! {reply_input.pet.name})"),
+            (
+                f"я {reply_input.pet.name}. а ты как меня позовешь?",
+                f"меня зовут {reply_input.pet.name}. звучит нормально?",
+            ),
             recent_pet_replies,
         )
     return _select_non_recent_reply(
-        (f"{sound}... назови меня)", f"{sound}... имя хочу)"),
+        ("имени пока нет. придумаешь мне?", "я пока без имени. давай выберем?"),
         recent_pet_replies,
     )
 
@@ -363,9 +367,8 @@ def baby_reason_fallback(
     reply_input: PetReplyInput,
     recent_pet_replies: tuple[str, ...] = (),
 ) -> str:
-    sound = _baby_sound(reply_input)
     return _select_non_recent_reply(
-        (f"{sound}... так вышло)", f"{sound}... я маленький)"),
+        ("пока не знаю точно. но чувствую, что так.", "я еще разбираюсь. странно, да?"),
         recent_pet_replies,
     )
 
