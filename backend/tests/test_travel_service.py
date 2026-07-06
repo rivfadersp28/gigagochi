@@ -149,6 +149,18 @@ def test_asset_input_references_use_public_urls(monkeypatch) -> None:
     ]
 
 
+def test_adventure_story_prompt_uses_compact_story_context_without_asset_urls() -> None:
+    framework = travel_service.STORY_FRAMEWORKS[0]
+    messages = travel_service._build_adventure_story_messages(travel_payload(), framework)
+    user_content = messages[1]["content"]
+
+    assert "PET_CONTEXT_JSON:" in user_content
+    assert "маленький листолицый питомец" in user_content
+    assert "leaf-shaped face" in user_content
+    assert "assetReferenceImages" not in user_content
+    assert "https://cdn.example.test/assets/baby-happy.png" not in user_content
+
+
 def test_generate_scene_images_generates_every_story_scene(monkeypatch, tmp_path) -> None:
     calls: list[dict[str, object]] = []
 

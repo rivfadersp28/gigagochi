@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from io import BytesIO
 from typing import Any
 from urllib.parse import urlparse
 
+from openai import APIConnectionError, APIStatusError, APITimeoutError
 from PIL import Image, ImageOps
 from pydantic import BaseModel, Field, model_validator
 
@@ -38,6 +40,8 @@ ADVENTURE_SCENE_COUNT = 7
 TRAVEL_CARD_OUTPUT_HEIGHT = 1080
 IMAGE_PROVIDER_SIZE_MULTIPLE = 16
 DEFAULT_IMAGE_ASPECT_RATIO = "322:540"
+TRAVEL_CHAT_MAX_ATTEMPTS = 3
+TRAVEL_CHAT_RETRY_SECONDS = (3.0, 8.0)
 
 
 @dataclass(frozen=True)
@@ -230,6 +234,19 @@ def _compact_json(value: Any, *, max_chars: int = 5000) -> str:
     return text[: max_chars - 1] + "…"
 
 
+def _string_list(value: Any, *, limit: int = 5) -> list[str]:
+    if not isinstance(value, list | tuple):
+        return []
+    strings: list[str] = []
+    for item in value:
+        text = _string_value(item)
+        if text:
+            strings.append(text)
+        if len(strings) == limit:
+            break
+    return strings
+
+
 def _selected_character_profile(character_bible: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(character_bible, dict):
         return {}
@@ -252,6 +269,48 @@ def _selected_character_profile(character_bible: dict[str, Any] | None) -> dict[
         "opening_scenes",
     )
     return {key: character_bible[key] for key in keys if key in character_bible}
+
+
+def _story_character_profile(payload: GenerateTravelRequest) -> dict[str, Any]:
+    character_bible = (
+        payload.pet.characterBible if isinstance(payload.pet.characterBible, dict) else {}
+    )
+    lore = character_bible.get("lore") if isinstance(character_bible.get("lore"), dict) else {}
+    world = character_bible.get("world") if isinstance(character_bible.get("world"), dict) else {}
+    home = lore.get("home") if isinstance(lore.get("home"), dict) else {}
+    inner_life = lore.get("inner_life") if isinstance(lore.get("inner_life"), dict) else {}
+    lore_world = lore.get("world") if isinstance(lore.get("world"), dict) else {}
+
+    return {
+        "identity": character_bible.get("identity"),
+        "species": character_bible.get("species"),
+        "signature": character_bible.get("signature"),
+        "stageDesign": _stage_design_for(payload),
+        "visual": {
+            "mainColors": character_bible.get("main_colors"),
+            "signatureFeatures": character_bible.get("signature_features"),
+            "materials": character_bible.get("materials"),
+            "proportions": character_bible.get("proportions"),
+        },
+        "world": {
+            "habitat": world.get("habitat") or lore_world.get("environment"),
+            "home": world.get("home") or home.get("place"),
+            "favoriteSpot": home.get("favorite_spot"),
+            "objects": _string_list(world.get("objects") or home.get("objects"), limit=5),
+            "routines": _string_list(world.get("routines"), limit=4),
+            "storySeeds": _string_list(
+                world.get("story_seeds") or lore.get("story_seeds"),
+                limit=4,
+            ),
+        },
+        "innerLife": {
+            "coreWant": inner_life.get("core_want"),
+            "innerConflict": inner_life.get("inner_conflict"),
+            "comfortActions": _string_list(inner_life.get("comfort_actions"), limit=4),
+            "likes": _string_list(inner_life.get("likes"), limit=4),
+            "fears": _string_list(inner_life.get("fears"), limit=4),
+        },
+    }
 
 
 def _ordered_values(current: str, values: tuple[str, ...]) -> list[str]:
@@ -367,6 +426,18 @@ def _pet_context(payload: GenerateTravelRequest) -> dict[str, Any]:
     }
 
 
+def _story_pet_context(payload: GenerateTravelRequest) -> dict[str, Any]:
+    pet = payload.pet
+    return {
+        "name": pet.name,
+        "description": pet.description,
+        "stage": pet.stage,
+        "mood": pet.mood,
+        "stats": pet.stats.model_dump(),
+        "characterProfile": _story_character_profile(payload),
+    }
+
+
 def _select_story_framework() -> StoryFramework:
     return random.choice(STORY_FRAMEWORKS)
 
@@ -387,6 +458,27 @@ def _log_framework_selection(framework: StoryFramework) -> dict[str, Any]:
 
 def _story_reasoning_kwargs(settings: Any) -> dict[str, str]:
     return chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort)
+
+
+def _is_retryable_chat_error(exc: Exception) -> bool:
+    if isinstance(exc, APIStatusError):
+        return exc.status_code == 429 or exc.status_code >= 500
+    return isinstance(exc, APIConnectionError | APITimeoutError)
+
+
+def _chat_completion_with_retry(client: Any, request_kwargs: dict[str, Any]) -> Any:
+    for attempt_index in range(TRAVEL_CHAT_MAX_ATTEMPTS):
+        try:
+            return client.chat.completions.create(**request_kwargs)
+        except Exception as exc:
+            is_last_attempt = attempt_index == TRAVEL_CHAT_MAX_ATTEMPTS - 1
+            if is_last_attempt or not _is_retryable_chat_error(exc):
+                raise
+            retry_delay = TRAVEL_CHAT_RETRY_SECONDS[
+                min(attempt_index, len(TRAVEL_CHAT_RETRY_SECONDS) - 1)
+            ]
+            time.sleep(retry_delay)
+    raise RuntimeError("unreachable travel chat retry state")
 
 
 def _framework_context(framework: StoryFramework) -> dict[str, str]:
@@ -420,7 +512,7 @@ USER_PROMPT:
 No explicit user prompt is available yet. Derive the adventure from PET_CONTEXT_JSON.
 
 PET_CONTEXT_JSON:
-{_compact_json(_pet_context(payload), max_chars=9000)}
+{_compact_json(_story_pet_context(payload), max_chars=4500)}
 
 SELECTED_STORY_FRAMEWORK_JSON:
 {_compact_json(_framework_context(framework))}
@@ -474,7 +566,7 @@ def _generate_complete_story(
         **_story_reasoning_kwargs(settings),
     }
     prompt_debug = log_chat_completion_prompt("travel/full_story", request_kwargs)
-    completion = client.chat.completions.create(**request_kwargs)
+    completion = _chat_completion_with_retry(client, request_kwargs)
     log_chat_completion_response("travel/full_story", completion)
     content = completion.choices[0].message.content or "{}"
     return AdventureStory.model_validate(json.loads(content)), prompt_debug
@@ -540,7 +632,7 @@ def _generate_storyboard(story: AdventureStory) -> tuple[Storyboard, dict[str, A
         **_story_reasoning_kwargs(settings),
     }
     prompt_debug = log_chat_completion_prompt("travel/storyboard", request_kwargs)
-    completion = client.chat.completions.create(**request_kwargs)
+    completion = _chat_completion_with_retry(client, request_kwargs)
     log_chat_completion_response("travel/storyboard", completion)
     content = completion.choices[0].message.content or "{}"
     return Storyboard.model_validate(json.loads(content)), prompt_debug
