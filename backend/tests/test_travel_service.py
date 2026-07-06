@@ -93,7 +93,7 @@ def test_travel_image_prompt_includes_pet_asset_references() -> None:
     assert "face placement, colors" in prompt
     assert "ASPECT RATIO:" in prompt
     assert "OUTPUT SIZE:" in prompt
-    assert "644x1080" in prompt
+    assert "640x1072" in prompt
     assert prompt.index("PRIMARY CURRENT SPRITE baby/happy") < prompt.index(
         "reference sprite baby/idle"
     )
@@ -189,7 +189,7 @@ def test_generate_scene_images_generates_every_story_scene(monkeypatch, tmp_path
         "travel/scene_06_image",
         "travel/scene_07_image",
     ]
-    assert [call["size"] for call in calls] == ["644x1080"] * 7
+    assert [call["size"] for call in calls] == ["640x1072"] * 7
     assert "SCENE STORY:\nКороткая теплая сцена 7." in calls[-1]["prompt"]
     assert calls[0]["inputReferences"] == [
         {
@@ -215,8 +215,16 @@ def test_generate_scene_images_generates_every_story_scene(monkeypatch, tmp_path
             assert saved_image.size == travel_service._travel_card_output_size()
 
 
-def test_travel_image_size_uses_configured_aspect_ratio() -> None:
+def test_travel_image_size_uses_configured_aspect_ratio_and_provider_multiple() -> None:
     settings = SimpleNamespace(image_aspect_ratio="1:2")
 
     assert travel_service._travel_card_output_size(settings) == (540, 1080)
-    assert travel_service._travel_image_size(settings) == "540x1080"
+    assert travel_service._travel_image_size(settings) == "544x1088"
+
+    default_settings = SimpleNamespace(image_aspect_ratio="322:540")
+    provider_width, provider_height = travel_service._provider_compatible_image_size(
+        default_settings
+    )
+    assert (provider_width, provider_height) == (640, 1072)
+    assert provider_width % 16 == 0
+    assert provider_height % 16 == 0

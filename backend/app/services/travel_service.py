@@ -36,6 +36,7 @@ from app.services.prompt_debug import (
 
 ADVENTURE_SCENE_COUNT = 7
 TRAVEL_CARD_OUTPUT_HEIGHT = 1080
+IMAGE_PROVIDER_SIZE_MULTIPLE = 16
 DEFAULT_IMAGE_ASPECT_RATIO = "322:540"
 
 
@@ -623,8 +624,42 @@ def _travel_card_output_size(settings: Any | None = None) -> tuple[int, int]:
     return width, height
 
 
+def _provider_compatible_image_size(settings: Any | None = None) -> tuple[int, int]:
+    target_width, target_height = _travel_card_output_size(settings)
+    target_ratio = target_width / target_height
+    min_height = max(IMAGE_PROVIDER_SIZE_MULTIPLE, target_height - 256)
+    max_height = target_height + 256
+    best: tuple[int, float, int, int, int] | None = None
+
+    for height in range(
+        IMAGE_PROVIDER_SIZE_MULTIPLE,
+        max_height + IMAGE_PROVIDER_SIZE_MULTIPLE,
+        IMAGE_PROVIDER_SIZE_MULTIPLE,
+    ):
+        if height < min_height:
+            continue
+        approximate_width = max(IMAGE_PROVIDER_SIZE_MULTIPLE, round(height * target_ratio))
+        for width in (
+            approximate_width - (approximate_width % IMAGE_PROVIDER_SIZE_MULTIPLE),
+            approximate_width
+            + (IMAGE_PROVIDER_SIZE_MULTIPLE - approximate_width % IMAGE_PROVIDER_SIZE_MULTIPLE),
+        ):
+            if width <= 0:
+                continue
+            ratio_error = abs((width / height) - target_ratio)
+            dimension_error = abs(width - target_width) + abs(height - target_height)
+            area_error = abs((width * height) - (target_width * target_height))
+            candidate = (dimension_error, ratio_error, area_error, width, height)
+            if best is None or candidate < best:
+                best = candidate
+
+    if best is None:
+        raise RuntimeError("Could not derive provider-compatible travel image size")
+    return best[3], best[4]
+
+
 def _travel_image_size(settings: Any | None = None) -> str:
-    width, height = _travel_card_output_size(settings)
+    width, height = _provider_compatible_image_size(settings)
     return f"{width}x{height}"
 
 
