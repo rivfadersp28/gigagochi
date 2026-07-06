@@ -16,8 +16,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.config import get_settings
 from app.schemas import (
-    PET_STAGE_VALUES,
-    PET_STATE_VALUES,
     GenerateTravelRequest,
     GenerateTravelResponse,
     LocalChatDebug,
@@ -234,19 +232,6 @@ def _compact_json(value: Any, *, max_chars: int = 5000) -> str:
     return text[: max_chars - 1] + "…"
 
 
-def _string_list(value: Any, *, limit: int = 5) -> list[str]:
-    if not isinstance(value, list | tuple):
-        return []
-    strings: list[str] = []
-    for item in value:
-        text = _string_value(item)
-        if text:
-            strings.append(text)
-        if len(strings) == limit:
-            break
-    return strings
-
-
 def _selected_character_profile(character_bible: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(character_bible, dict):
         return {}
@@ -271,81 +256,78 @@ def _selected_character_profile(character_bible: dict[str, Any] | None) -> dict[
     return {key: character_bible[key] for key in keys if key in character_bible}
 
 
-def _story_character_profile(payload: GenerateTravelRequest) -> dict[str, Any]:
-    character_bible = (
-        payload.pet.characterBible if isinstance(payload.pet.characterBible, dict) else {}
+def _short_list_text(value: Any, *, limit: int = 3) -> str:
+    if not isinstance(value, list | tuple):
+        return ""
+    parts: list[str] = []
+    for item in value:
+        text = _string_value(item)
+        if text:
+            parts.append(text)
+        if len(parts) == limit:
+            break
+    return ", ".join(parts)
+
+
+def _simple_character_description(payload: GenerateTravelRequest) -> str:
+    pet = payload.pet
+    character_bible = pet.characterBible if isinstance(pet.characterBible, dict) else {}
+    identity = (
+        character_bible.get("identity") if isinstance(character_bible.get("identity"), dict) else {}
     )
-    lore = character_bible.get("lore") if isinstance(character_bible.get("lore"), dict) else {}
-    world = character_bible.get("world") if isinstance(character_bible.get("world"), dict) else {}
-    home = lore.get("home") if isinstance(lore.get("home"), dict) else {}
-    inner_life = lore.get("inner_life") if isinstance(lore.get("inner_life"), dict) else {}
-    lore_world = lore.get("world") if isinstance(lore.get("world"), dict) else {}
-
-    return {
-        "identity": character_bible.get("identity"),
-        "species": character_bible.get("species"),
-        "signature": character_bible.get("signature"),
-        "stageDesign": _stage_design_for(payload),
-        "visual": {
-            "mainColors": character_bible.get("main_colors"),
-            "signatureFeatures": character_bible.get("signature_features"),
-            "materials": character_bible.get("materials"),
-            "proportions": character_bible.get("proportions"),
-        },
-        "world": {
-            "habitat": world.get("habitat") or lore_world.get("environment"),
-            "home": world.get("home") or home.get("place"),
-            "favoriteSpot": home.get("favorite_spot"),
-            "objects": _string_list(world.get("objects") or home.get("objects"), limit=5),
-            "routines": _string_list(world.get("routines"), limit=4),
-            "storySeeds": _string_list(
-                world.get("story_seeds") or lore.get("story_seeds"),
-                limit=4,
-            ),
-        },
-        "innerLife": {
-            "coreWant": inner_life.get("core_want"),
-            "innerConflict": inner_life.get("inner_conflict"),
-            "comfortActions": _string_list(inner_life.get("comfort_actions"), limit=4),
-            "likes": _string_list(inner_life.get("likes"), limit=4),
-            "fears": _string_list(inner_life.get("fears"), limit=4),
-        },
-    }
+    parts = [
+        _string_value(character_bible.get("signature")),
+        _string_value(character_bible.get("species")),
+        _string_value(identity.get("one_liner")) if isinstance(identity, dict) else "",
+        _stage_design_for(payload),
+        _short_list_text(character_bible.get("main_colors")),
+        _short_list_text(character_bible.get("signature_features")),
+        _short_list_text(character_bible.get("materials")),
+        _string_value(character_bible.get("proportions")),
+        pet.description,
+    ]
+    unique_parts: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        normalized = " ".join(part.split())
+        if normalized and normalized not in seen:
+            unique_parts.append(normalized)
+            seen.add(normalized)
+        if len(unique_parts) == 5:
+            break
+    return "; ".join(unique_parts) or pet.description
 
 
-def _ordered_values(current: str, values: tuple[str, ...]) -> list[str]:
-    return [current, *(value for value in values if value != current)]
+def _current_asset_reference_entry(payload: GenerateTravelRequest) -> tuple[str, str, str] | None:
+    asset_images = payload.pet.assetImages
+    if not isinstance(asset_images, dict):
+        return None
+
+    stage_images = asset_images.get(payload.pet.stage)
+    if not isinstance(stage_images, dict):
+        return None
+
+    image_url = _string_value(stage_images.get(payload.pet.mood))
+    if not image_url:
+        return None
+
+    return payload.pet.stage, payload.pet.mood, image_url
 
 
 def _asset_reference_entries(payload: GenerateTravelRequest) -> list[tuple[str, str, str]]:
-    asset_images = payload.pet.assetImages
-    if not isinstance(asset_images, dict):
-        return []
-
-    entries: list[tuple[str, str, str]] = []
-    stage_order = _ordered_values(payload.pet.stage, PET_STAGE_VALUES)
-    mood_order = _ordered_values(payload.pet.mood, PET_STATE_VALUES)
-    for stage in stage_order:
-        stage_images = asset_images.get(stage)
-        if not isinstance(stage_images, dict):
-            continue
-        for mood in mood_order:
-            image_url = _string_value(stage_images.get(mood))
-            if image_url:
-                entries.append((stage, mood, image_url))
-    return entries
+    current_reference = _current_asset_reference_entry(payload)
+    return [current_reference] if current_reference else []
 
 
 def _asset_reference_context(payload: GenerateTravelRequest) -> list[dict[str, str]]:
     references: list[dict[str, str]] = []
     for stage, mood, image_url in _asset_reference_entries(payload):
-        is_primary = stage == payload.pet.stage and mood == payload.pet.mood
         references.append(
             {
                 "stage": stage,
                 "mood": mood,
                 "imageUrl": image_url,
-                "priority": "primary" if is_primary else "reference",
+                "priority": "primary",
             }
         )
     return references
@@ -357,15 +339,11 @@ def _asset_reference_text(payload: GenerateTravelRequest) -> str:
         return "No sprite asset URLs were provided. Follow the text visual identity exactly."
 
     lines = [
-        "Use these pet sprite assets as character references when the image model "
-        "can inspect URLs.",
-        "The current stage/mood sprite is the primary reference; the other sprites "
-        "show the same character in nearby states.",
+        "Use only this current on-screen pet sprite as the character reference "
+        "when the image model can inspect URLs.",
     ]
     for stage, mood, image_url in entries:
-        is_primary = stage == payload.pet.stage and mood == payload.pet.mood
-        label = "PRIMARY CURRENT SPRITE" if is_primary else "reference sprite"
-        lines.append(f"- {label} {stage}/{mood}: {image_url}")
+        lines.append(f"- PRIMARY CURRENT SPRITE {stage}/{mood}: {image_url}")
     return "\n".join(lines)
 
 
@@ -428,13 +406,15 @@ def _pet_context(payload: GenerateTravelRequest) -> dict[str, Any]:
 
 def _story_pet_context(payload: GenerateTravelRequest) -> dict[str, Any]:
     pet = payload.pet
+    current_reference = _current_asset_reference_entry(payload)
     return {
         "name": pet.name,
         "description": pet.description,
         "stage": pet.stage,
         "mood": pet.mood,
         "stats": pet.stats.model_dump(),
-        "characterProfile": _story_character_profile(payload),
+        "simpleCharacterDescription": _simple_character_description(payload),
+        "currentReferenceImage": current_reference[2] if current_reference else None,
     }
 
 
@@ -657,27 +637,13 @@ def _stage_design_for(payload: GenerateTravelRequest) -> str:
 
 def _visual_identity_text(payload: GenerateTravelRequest) -> str:
     pet = payload.pet
-    character_bible = pet.characterBible if isinstance(pet.characterBible, dict) else {}
     visual_parts: list[str] = [
         f"Pet name: {pet.name or 'unnamed pet'}",
         f"Pet description: {pet.description}",
+        f"Simple character description: {_simple_character_description(payload)}",
         f"Life stage: {pet.stage}",
         f"Current mood reference: {pet.mood}",
     ]
-
-    stage_design = _stage_design_for(payload)
-    if stage_design:
-        visual_parts.append(f"Current stage design: {stage_design}")
-
-    for key in ("main_colors", "signature_features", "materials", "proportions"):
-        value = character_bible.get(key)
-        if value:
-            visual_parts.append(f"{key}: {_compact_json(value, max_chars=800)}")
-
-    identity = character_bible.get("identity")
-    if identity:
-        visual_parts.append(f"identity: {_compact_json(identity, max_chars=800)}")
-
     return "\n".join(visual_parts)
 
 

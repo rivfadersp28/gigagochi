@@ -88,15 +88,14 @@ def test_travel_image_prompt_includes_pet_asset_references() -> None:
     assert "PET REFERENCE ASSETS:" in prompt
     assert "PRIMARY CURRENT SPRITE baby/happy" in prompt
     assert "https://cdn.example.test/assets/baby-happy.png" in prompt
-    assert "reference sprite baby/idle" in prompt
+    assert "reference sprite baby/idle" not in prompt
+    assert "https://cdn.example.test/assets/baby-idle.png" not in prompt
     assert "preserve species, silhouette, body proportions" in prompt
     assert "face placement, colors" in prompt
     assert "ASPECT RATIO:" in prompt
     assert "OUTPUT SIZE:" in prompt
     assert "640x1072" in prompt
-    assert prompt.index("PRIMARY CURRENT SPRITE baby/happy") < prompt.index(
-        "reference sprite baby/idle"
-    )
+    assert "Simple character description:" in prompt
 
 
 def test_asset_input_references_use_public_urls(monkeypatch) -> None:
@@ -142,10 +141,6 @@ def test_asset_input_references_use_public_urls(monkeypatch) -> None:
                 "url": "https://api.example.test/static/generated/asset-1/baby-happy.png"
             },
         },
-        {
-            "type": "image_url",
-            "image_url": {"url": "https://cdn.example.test/assets/teen-happy.png"},
-        },
     ]
 
 
@@ -156,9 +151,13 @@ def test_adventure_story_prompt_uses_compact_story_context_without_asset_urls() 
 
     assert "PET_CONTEXT_JSON:" in user_content
     assert "маленький листолицый питомец" in user_content
+    assert "simpleCharacterDescription" in user_content
     assert "leaf-shaped face" in user_content
+    assert "currentReferenceImage" in user_content
+    assert "characterProfile" not in user_content
     assert "assetReferenceImages" not in user_content
-    assert "https://cdn.example.test/assets/baby-happy.png" not in user_content
+    assert "https://cdn.example.test/assets/baby-happy.png" in user_content
+    assert "https://cdn.example.test/assets/baby-idle.png" not in user_content
 
 
 def test_generate_scene_images_generates_every_story_scene(monkeypatch, tmp_path) -> None:
@@ -207,14 +206,6 @@ def test_generate_scene_images_generates_every_story_scene(monkeypatch, tmp_path
         {
             "type": "image_url",
             "image_url": {"url": "https://cdn.example.test/assets/baby-happy.png"},
-        },
-        {
-            "type": "image_url",
-            "image_url": {"url": "https://cdn.example.test/assets/baby-idle.png"},
-        },
-        {
-            "type": "image_url",
-            "image_url": {"url": "https://cdn.example.test/assets/teen-happy.png"},
         },
     ]
 
