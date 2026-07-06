@@ -1,21 +1,19 @@
 import type {
-  AnonymousUser,
-  ChatResponse,
-  ChatVisualContext,
-  CreatePetResponse,
-  FeedResponse,
   GeneratePetResponse,
   LiteFactExtractionResponse,
   LocalChatMessage,
   LocalChatResponse,
   LocalPetState,
-  MessagesResponse,
-  Pet,
   PetMood,
   PetStage,
-  PromptLayers,
-  ReplyMode,
 } from "./types";
+import type {
+  LocalPetMemoryContext,
+  LocalPetMemoryStateV1,
+  MemoryConsolidationResponse,
+  MemoryExtractionResponse,
+} from "./localPetMemoryTypes";
+import { buildExistingMemoryBrief } from "./localPetMemoryStorage";
 import { getTelegramInitData } from "./telegram";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -26,54 +24,177 @@ type GeneratePetApiResponse = Omit<GeneratePetResponse, "characterBible"> & {
   characterBible?: Record<string, unknown> | null;
 };
 
+type GeneratePetJobResponse = {
+  jobId: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  createdAt: string;
+  updatedAt: string;
+  result?: GeneratePetApiResponse | null;
+  error?: ApiErrorDetail | null;
+};
+
 type RequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
 };
 
 type LocalChatOptions = {
-  promptLayers?: PromptLayers;
   includeDebug?: boolean;
-  replyMode?: ReplyMode;
-};
-
-type GeneratePetOptions = {
-  useTemplatePresets?: boolean;
+  memoryContext?: LocalPetMemoryContext;
 };
 
 const REQUIRED_STAGES = ["baby", "teen", "adult"] as const satisfies readonly PetStage[];
 const REQUIRED_MOODS = ["idle", "happy", "hungry", "sad"] as const satisfies readonly PetMood[];
+const MAX_ERROR_BODY_CHARS = 900;
+const GENERATION_POLL_INTERVAL_MS = 2000;
+const MAX_GENERATION_POLL_MS = 10 * 60 * 1000;
+
+type ApiErrorDetail = {
+  error?: unknown;
+  message?: unknown;
+  code?: unknown;
+  providerStatus?: unknown;
+  providerMessage?: unknown;
+  requestId?: unknown;
+};
 
 export class ApiError extends Error {
   code?: string;
+  status?: number;
 
-  constructor(message: string, code?: string) {
+  constructor(message: string, code?: string, status?: number) {
     super(message);
     this.name = "ApiError";
     this.code = code;
+    this.status = status;
   }
 }
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+function compactText(value: string, limit = MAX_ERROR_BODY_CHARS): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numericValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function errorDetail(payload: unknown): ApiErrorDetail {
+  if (!payload || typeof payload !== "object") {
+    return {};
+  }
+  const record = payload as Record<string, unknown>;
+  const detail = record.detail;
+  if (detail && typeof detail === "object") {
+    return detail as ApiErrorDetail;
+  }
+  return record as ApiErrorDetail;
+}
+
+function errorMessageFromResponse(
+  path: string,
+  response: Response,
+  payload: unknown,
+  rawBody: string,
+): { message: string; code?: string } {
+  const detail = errorDetail(payload);
+  const statusLine = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`;
+  const code = stringValue(detail.code);
+  const error = stringValue(detail.error);
+  const message = stringValue(detail.message) ?? stringValue((payload as { message?: unknown })?.message);
+  const providerStatus = numericValue(detail.providerStatus);
+  const providerMessage = stringValue(detail.providerMessage);
+  const requestId = stringValue(detail.requestId);
+
+  const lines = [message ?? statusLine, `Endpoint: ${path}`, `Status: ${statusLine}`];
+  if (code) {
+    lines.push(`Code: ${code}`);
+  }
+  if (error) {
+    lines.push(`Error: ${error}`);
+  }
+  if (providerStatus !== undefined) {
+    lines.push(`Provider status: ${providerStatus}`);
+  }
+  if (providerMessage) {
+    lines.push(`Provider message: ${providerMessage}`);
+  }
+  if (requestId) {
+    lines.push(`Request ID: ${requestId}`);
+  }
+  if (!payload && rawBody.trim()) {
+    lines.push(`Response: ${compactText(rawBody)}`);
+  }
+  return { message: lines.join("\n"), code };
+}
+
+function errorMessageFromDetail(
+  path: string,
+  statusLine: string,
+  detail: ApiErrorDetail,
+): { message: string; code?: string } {
+  const code = stringValue(detail.code);
+  const error = stringValue(detail.error);
+  const message = stringValue(detail.message);
+  const providerStatus = numericValue(detail.providerStatus);
+  const providerMessage = stringValue(detail.providerMessage);
+  const requestId = stringValue(detail.requestId);
+
+  const lines = [message ?? statusLine, `Endpoint: ${path}`, `Status: ${statusLine}`];
+  if (code) {
+    lines.push(`Code: ${code}`);
+  }
+  if (error) {
+    lines.push(`Error: ${error}`);
+  }
+  if (providerStatus !== undefined) {
+    lines.push(`Provider status: ${providerStatus}`);
+  }
+  if (providerMessage) {
+    lines.push(`Provider message: ${providerMessage}`);
+  }
+  if (requestId) {
+    lines.push(`Request ID: ${requestId}`);
+  }
+  return { message: lines.join("\n"), code };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
   });
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const url = `${API_URL}${path}`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : String(caught);
+    throw new ApiError(`Network error\nEndpoint: ${path}\nURL: ${url}\nMessage: ${message}`, "NETWORK_ERROR");
+  }
 
   if (!response.ok) {
-    let message = "Request failed";
-    let code: string | undefined;
+    let rawBody = "";
+    let payload: unknown;
     try {
-      const payload = await response.json();
-      message = payload?.detail?.message ?? payload?.message ?? message;
-      code = payload?.detail?.code ?? payload?.code;
+      rawBody = await response.text();
+      payload = rawBody ? JSON.parse(rawBody) : undefined;
     } catch {
-      message = response.statusText || message;
+      payload = undefined;
     }
-    throw new ApiError(message, code);
+    const { message, code } = errorMessageFromResponse(path, response, payload, rawBody);
+    throw new ApiError(message, code, response.status);
   }
 
   return response.json() as Promise<T>;
@@ -104,6 +225,13 @@ function shouldUseDevTmaAuth() {
   return ["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"].includes(
     window.location.hostname,
   );
+}
+
+function browserTimezone() {
+  if (typeof Intl === "undefined") {
+    return "Europe/Moscow";
+  }
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Moscow";
 }
 
 function publicImageUrl(imageUrl: string): string {
@@ -154,45 +282,8 @@ function completeGeneratedImages(response: GeneratePetApiResponse): GeneratePetR
   };
 }
 
-export async function createAnonymousUser(): Promise<AnonymousUser> {
-  return request<AnonymousUser>("/users/anonymous", { method: "POST" });
-}
-
-export async function createPet(userId: string, description: string): Promise<CreatePetResponse> {
-  return request<CreatePetResponse>("/pets", {
-    method: "POST",
-    body: { user_id: userId, description },
-  });
-}
-
-export async function getPet(petId: string): Promise<Pet> {
-  return request<Pet>(`/pets/${petId}`);
-}
-
-export async function feedPet(petId: string): Promise<FeedResponse> {
-  return request<FeedResponse>(`/pets/${petId}/feed`, { method: "POST" });
-}
-
-export async function getMessages(petId: string): Promise<MessagesResponse> {
-  return request<MessagesResponse>(`/pets/${petId}/messages`);
-}
-
-export async function sendChatMessage(
-  petId: string,
-  message: string,
-  context: ChatVisualContext = {},
-): Promise<ChatResponse> {
-  return request<ChatResponse>(`/pets/${petId}/chat`, {
-    method: "POST",
-    body: { message, ...context },
-  });
-}
-
-export async function generatePetAssets(
-  description: string,
-  options: GeneratePetOptions = {},
-): Promise<GeneratePetResponse> {
-  const response = await request<GeneratePetApiResponse>("/api/generate-pet", {
+export async function generatePetAssets(description: string): Promise<GeneratePetResponse> {
+  const job = await request<GeneratePetJobResponse>("/api/generate-pet", {
     method: "POST",
     headers: tmaAuthHeaders(),
     body: {
@@ -200,9 +291,9 @@ export async function generatePetAssets(
       style: "cute mobile game pet",
       stages: ["baby", "teen", "adult"],
       moods: ["idle", "happy", "hungry", "sad"],
-      useTemplatePresets: options.useTemplatePresets ?? false,
     },
   });
+  const response = await waitForGeneratedPet(job);
 
   return {
     ...response,
@@ -210,6 +301,47 @@ export async function generatePetAssets(
     images: completeGeneratedImages(response),
     spriteSheetUrl: response.spriteSheetUrl ? publicImageUrl(response.spriteSheetUrl) : undefined,
   };
+}
+
+async function waitForGeneratedPet(initialJob: GeneratePetJobResponse): Promise<GeneratePetApiResponse> {
+  let job = initialJob;
+  const deadline = Date.now() + MAX_GENERATION_POLL_MS;
+
+  while (true) {
+    if (job.status === "succeeded") {
+      if (!job.result) {
+        throw new ApiError(
+          `Генерация завершилась без результата.\nEndpoint: /api/generate-pet/jobs/${job.jobId}\nStatus: succeeded`,
+          "GENERATION_RESULT_MISSING",
+        );
+      }
+      return job.result;
+    }
+
+    if (job.status === "failed") {
+      const { message, code } = errorMessageFromDetail(
+        `/api/generate-pet/jobs/${job.jobId}`,
+        "generation failed",
+        job.error ?? {},
+      );
+      throw new ApiError(message, code);
+    }
+
+    if (Date.now() > deadline) {
+      throw new ApiError(
+        `Генерация заняла слишком много времени.\nEndpoint: /api/generate-pet/jobs/${job.jobId}\nStatus: ${job.status}`,
+        "GENERATION_POLL_TIMEOUT",
+      );
+    }
+
+    await delay(GENERATION_POLL_INTERVAL_MS);
+    job = await request<GeneratePetJobResponse>(
+      `/api/generate-pet/jobs/${encodeURIComponent(job.jobId)}`,
+      {
+        headers: tmaAuthHeaders(),
+      },
+    );
+  }
 }
 
 export async function sendLocalChatMessage(
@@ -224,8 +356,7 @@ export async function sendLocalChatMessage(
     body: {
       message: message.slice(0, MAX_CHAT_INPUT_LENGTH),
       includeDebug: options.includeDebug ?? false,
-      promptLayers: options.promptLayers,
-      replyMode: options.replyMode ?? "full",
+      memoryContext: options.memoryContext,
       pet: {
         name: pet.name,
         description: pet.description,
@@ -233,13 +364,90 @@ export async function sendLocalChatMessage(
         stage: pet.stage,
         mood: pet.mood,
         stats: pet.stats,
-        memory: pet.memory,
-        loreMemories: pet.loreMemories ?? [],
       },
       history: history.slice(-12).map((item) => ({
         role: item.role,
         text: item.text,
       })),
+    },
+  });
+}
+
+export async function extractLocalUserMemory(
+  message: string,
+  reply: string,
+  pet: LocalPetState,
+  history: LocalChatMessage[],
+  memory: LocalPetMemoryStateV1,
+  options: { includeDebug?: boolean; memoryContext?: LocalPetMemoryContext } = {},
+): Promise<MemoryExtractionResponse> {
+  return request<MemoryExtractionResponse>("/api/chat/memory-extract", {
+    method: "POST",
+    headers: tmaAuthHeaders(),
+    body: {
+      message: message.slice(0, MAX_CHAT_INPUT_LENGTH),
+      reply,
+      includeDebug: options.includeDebug ?? false,
+      nowIso: new Date().toISOString(),
+      timezone: browserTimezone(),
+      existingMemoryBrief: buildExistingMemoryBrief(memory),
+      memoryContext: options.memoryContext,
+      pet: {
+        name: pet.name,
+        description: pet.description,
+        characterBible: pet.assetSet?.characterBible,
+        stage: pet.stage,
+        mood: pet.mood,
+        stats: pet.stats,
+      },
+      history: history.slice(-12).map((item) => ({
+        role: item.role,
+        text: item.text,
+      })),
+    },
+  });
+}
+
+export async function consolidateLocalUserMemory(
+  memory: LocalPetMemoryStateV1,
+  options: { includeDebug?: boolean } = {},
+): Promise<MemoryConsolidationResponse> {
+  return request<MemoryConsolidationResponse>("/api/chat/memory-consolidate", {
+    method: "POST",
+    headers: tmaAuthHeaders(),
+    body: {
+      pendingLearnings: memory.learnings.filter((item) => item.status === "pending"),
+      existingMemories: memory.memories,
+      summary: memory.summary,
+      userProfile: memory.userProfile,
+      nowIso: new Date().toISOString(),
+      timezone: browserTimezone(),
+      includeDebug: options.includeDebug ?? false,
+    },
+  });
+}
+
+export async function generateLocalProactiveMessage(
+  pet: LocalPetState,
+  memoryContext: LocalPetMemoryContext,
+  options: { includeDebug?: boolean } = {},
+): Promise<LocalChatResponse> {
+  return request<LocalChatResponse>("/api/chat/proactive", {
+    method: "POST",
+    headers: tmaAuthHeaders(),
+    body: {
+      includeDebug: options.includeDebug ?? false,
+      nowIso: new Date().toISOString(),
+      timezone: browserTimezone(),
+      memoryContext,
+      pet: {
+        name: pet.name,
+        description: pet.description,
+        characterBible: pet.assetSet?.characterBible,
+        stage: pet.stage,
+        mood: pet.mood,
+        stats: pet.stats,
+      },
     },
   });
 }
@@ -265,8 +473,6 @@ export async function extractLocalLiteFacts(
         stage: pet.stage,
         mood: pet.mood,
         stats: pet.stats,
-        memory: pet.memory,
-        loreMemories: pet.loreMemories ?? [],
       },
       history: history.slice(-12).map((item) => ({
         role: item.role,

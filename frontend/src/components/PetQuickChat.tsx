@@ -4,18 +4,34 @@
 import { Loader2 } from "lucide-react";
 import { FormEvent, useState } from "react";
 
-import { ApiError, extractLocalLiteFacts, sendLocalChatMessage } from "@/lib/api";
+import {
+  ApiError,
+  extractLocalLiteFacts,
+  extractLocalUserMemory,
+  sendLocalChatMessage,
+} from "@/lib/api";
 import { appendLocalChatMessages, createLocalId, latestChatMessages } from "@/lib/localPetStorage";
+import { buildMemoryContextForMessage } from "@/lib/localPetMemoryRecall";
+import {
+  applyMemoryOperations,
+  markMemoryContextUsed,
+  readLocalPetMemory,
+  writeLocalPetMemory,
+} from "@/lib/localPetMemoryStorage";
 import { primePetSpeechAudio } from "@/lib/petSpeechAudio";
+import {
+  recordLiteOverlayPatchDebug,
+  recordMemoryContextDebug,
+  recordMemoryOperationsDebug,
+  recordReplyPromptDebug,
+} from "@/lib/debugPanelStorage";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification } from "@/lib/telegram";
-import type { LocalChatResponse, LocalPetState, PromptLayers, ReplyMode } from "@/lib/types";
+import type { LocalChatResponse, LocalPetState } from "@/lib/types";
 
 type PetQuickChatProps = {
   pet: LocalPetState;
-  promptLayers: PromptLayers;
   includePromptDebug: boolean;
-  replyMode: ReplyMode;
   onChatResponse: (response: LocalChatResponse) => void;
   onLiteOverlayPatch?: (patch?: Record<string, unknown>) => void;
 };
@@ -26,9 +42,7 @@ function errorMessage(caught: unknown, fallback: string): string {
 
 export function PetQuickChat({
   pet,
-  promptLayers,
   includePromptDebug,
-  replyMode,
   onChatResponse,
   onLiteOverlayPatch,
 }: PetQuickChatProps) {
@@ -57,34 +71,61 @@ export function PetQuickChat({
         createdAt: new Date().toISOString(),
       };
       const history = latestChatMessages(12);
+      const memoryBeforeMessage = readLocalPetMemory(pet.petId);
+      const memoryContext = buildMemoryContextForMessage(memoryBeforeMessage, message);
+      if (includePromptDebug) {
+        console.log("[memory-debug] quick chat recall context", memoryContext);
+      }
+      recordMemoryContextDebug(memoryContext);
       appendLocalChatMessages([userMessage]);
       const response = await sendLocalChatMessage(message, pet, history, {
-        promptLayers,
-        includeDebug: includePromptDebug,
-        replyMode,
+        includeDebug: true,
+        memoryContext,
       });
       logBrowserPromptDebug("quick chat reply", response);
-      appendLocalChatMessages([
-        {
-          id: createLocalId("message"),
-          role: "pet",
-          text: response.reply,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
+      recordReplyPromptDebug(response);
+      const assistantMessage = {
+        id: createLocalId("message"),
+        role: "pet" as const,
+        text: response.reply,
+        createdAt: new Date().toISOString(),
+      };
+      appendLocalChatMessages([assistantMessage]);
       onChatResponse(response);
-      if (replyMode === "lite") {
-        void extractLocalLiteFacts(message, response.reply, pet, history, {
-          includeDebug: includePromptDebug,
-        })
-          .then((extraction) => {
-            logBrowserPromptDebug("quick chat lite fact extraction", extraction);
-            if (extraction.liteOverlayPatch) {
-              onLiteOverlayPatch?.(extraction.liteOverlayPatch);
-            }
-          })
-          .catch(() => undefined);
+      recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
+      const selectedMemoryIds = memoryContext.relevantMemories.map((item) => item.id);
+      if (selectedMemoryIds.length) {
+        writeLocalPetMemory(
+          markMemoryContextUsed(readLocalPetMemory(pet.petId), selectedMemoryIds),
+        );
       }
+      void extractLocalLiteFacts(message, response.reply, pet, history, {
+        includeDebug: includePromptDebug,
+      })
+        .then((extraction) => {
+          logBrowserPromptDebug("quick chat lite fact extraction", extraction);
+          if (extraction.liteOverlayPatch) {
+            recordLiteOverlayPatchDebug(extraction.liteOverlayPatch);
+            onLiteOverlayPatch?.(extraction.liteOverlayPatch);
+          }
+        })
+        .catch(() => undefined);
+      void extractLocalUserMemory(message, response.reply, pet, history, memoryBeforeMessage, {
+        includeDebug: includePromptDebug,
+        memoryContext,
+      })
+        .then((extraction) => {
+          logBrowserPromptDebug("quick chat memory extraction", extraction);
+          recordMemoryOperationsDebug(extraction.operations);
+          const latestMemory = readLocalPetMemory(pet.petId);
+          writeLocalPetMemory(
+            applyMemoryOperations(latestMemory, extraction.operations, [
+              userMessage.id,
+              assistantMessage.id,
+            ]),
+          );
+        })
+        .catch(() => undefined);
     } catch (caught) {
       setError(errorMessage(caught, "Не удалось отправить сообщение."));
       hapticNotification("error");

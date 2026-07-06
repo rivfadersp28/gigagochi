@@ -5,7 +5,7 @@ from fastapi import HTTPException, status
 ERROR_MESSAGES = {
     "EMPTY_PROMPT": "Опишите персонажа перед генерацией.",
     "PROMPT_TOO_LONG": "Описание слишком длинное. Сократите его до 300 символов.",
-    "MISSING_OPENAI_API_KEY": "На сервере не настроен OpenAI API key.",
+    "MISSING_OPENAI_API_KEY": "На сервере не настроен API key AI-провайдера.",
     "PET_NOT_FOUND": "Питомец не найден.",
     "PET_NOT_READY": "Питомец еще создается. Подождите немного.",
     "GENERATION_FAILED": "Не удалось сгенерировать персонажа. Попробуйте еще раз.",

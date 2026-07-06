@@ -420,7 +420,11 @@ Rules:
 """.strip()
 
 
-def _sprite_bible_view(character_bible: dict[str, Any]) -> dict[str, Any]:
+def _sprite_bible_view(
+    character_bible: dict[str, Any],
+    *,
+    active_stage: str | None = None,
+) -> dict[str, Any]:
     visual_keys = (
         "species",
         "main_colors",
@@ -433,7 +437,37 @@ def _sprite_bible_view(character_bible: dict[str, Any]) -> dict[str, Any]:
         "do_not_change",
         "visual_constraints",
     )
-    return {key: character_bible[key] for key in visual_keys if key in character_bible}
+    key_aliases = {
+        "baby_design": "small_growth_form_design",
+        "teen_design": "middle_growth_form_design",
+        "adult_design": "mature_growth_form_design",
+    }
+    active_design_key = {
+        "baby": "baby_design",
+        "teen": "teen_design",
+        "adult": "adult_design",
+    }.get(active_stage or "")
+
+    if active_design_key:
+        return {
+            (
+                "active_growth_form_design"
+                if key == active_design_key
+                else key_aliases.get(key, key)
+            ): character_bible[key]
+            for key in visual_keys
+            if key in character_bible
+            and (
+                key not in key_aliases
+                or key == active_design_key
+            )
+        }
+
+    return {
+        key_aliases.get(key, key): character_bible[key]
+        for key in visual_keys
+        if key in character_bible
+    }
 
 
 def build_pet_sprite_sheet_prompt(
@@ -443,7 +477,11 @@ def build_pet_sprite_sheet_prompt(
     bible_text = (
         character_bible
         if isinstance(character_bible, str)
-        else json.dumps(_sprite_bible_view(character_bible), ensure_ascii=False, indent=2)
+        else json.dumps(
+            _sprite_bible_view(character_bible),
+            ensure_ascii=False,
+            indent=2,
+        )
     )
 
     return f"""
@@ -460,7 +498,7 @@ CHARACTER_BIBLE:
 
 GRID:
 - Columns from left to right: Idle, Happy, Sad, Hungry.
-- Rows from top to bottom: Baby, Teen, Adult.
+- Rows from top to bottom: Small growth form, Middle growth form, Mature growth form.
 
 CONSISTENCY_RULES:
 - USER_CHARACTER_DESCRIPTION and CHARACTER_BIBLE.visual_constraints define the visible body,
@@ -470,10 +508,10 @@ CONSISTENCY_RULES:
   USER_CHARACTER_DESCRIPTION explicitly asks for them.
 - Same character identity in every cell.
 - Preserve core visual concept, colors, accessories, silhouette, materials, and signature features.
-- Only age, pose, expression, and emotional state may change.
-- Baby should look smaller, rounder, and simpler.
-- Teen should look slightly taller and more energetic.
-- Adult should look fully developed while keeping the same identity.
+- Only growth form, pose, expression, and emotional state may change.
+- Small growth form should look smaller, rounder, and simpler.
+- Middle growth form should look slightly taller and more energetic.
+- Mature growth form should look fully developed while keeping the same identity.
 
 OUTPUT_REQUIREMENTS:
 - Cute stylized 3D mascot, full body, centered in each cell.
@@ -499,12 +537,16 @@ def build_pet_single_sprite_prompt(
     bible_text = (
         character_bible
         if isinstance(character_bible, str)
-        else json.dumps(_sprite_bible_view(character_bible), ensure_ascii=False, indent=2)
+        else json.dumps(
+            _sprite_bible_view(character_bible, active_stage=stage),
+            ensure_ascii=False,
+            indent=2,
+        )
     )
     stage_labels = {
-        "baby": "Baby: smaller, rounder, simpler, softer proportions",
-        "teen": "Teen: slightly taller, more energetic, still the same identity",
-        "adult": "Adult: fully developed, stable silhouette, same identity",
+        "baby": "Small growth form: smaller, rounder, simpler, softer proportions",
+        "teen": "Middle growth form: slightly taller, more energetic, same creature identity",
+        "adult": "Mature growth form: fully developed, stable silhouette, same identity",
     }
     state_labels = {
         "idle": "Idle: calm neutral pose and expression",
@@ -536,7 +578,7 @@ CONSISTENCY_RULES:
 - If visual_constraints.forbidden_features is present, do not draw those features unless the
   USER_CHARACTER_DESCRIPTION explicitly asks for them.
 - Preserve core visual concept, colors, accessories, silhouette, materials, and signature features.
-- Only age, pose, expression, and emotional state may change.
+- Only growth form, pose, expression, and emotional state may change.
 
 OUTPUT_REQUIREMENTS:
 - Exactly one full-body character, centered, with comfortable padding around it.
@@ -547,4 +589,71 @@ OUTPUT_REQUIREMENTS:
 - No cast shadow, contact shadow, ground shadow, floor shadow, drop shadow, glow, halo, vignette, or backdrop.
 - Keep only internal 3D form shading on the character itself; the white background must stay clean and shadow-free.
 - No text, no labels, no UI, no logo, no watermark, no borders.
+        """.strip()
+
+
+def build_pet_state_strip_prompt(
+    user_description: str,
+    character_bible: str | dict[str, Any],
+    *,
+    stage: str = "teen",
+) -> str:
+    safe_description = rewrite_known_character_references(user_description.strip())
+    bible_text = (
+        character_bible
+        if isinstance(character_bible, str)
+        else json.dumps(
+            _sprite_bible_view(character_bible, active_stage=stage),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    stage_labels = {
+        "baby": "Small growth form: smaller, rounder, simpler, softer proportions",
+        "teen": "Middle growth form: slightly taller, more energetic, same creature identity",
+        "adult": "Mature growth form: fully developed, stable silhouette, same identity",
+    }
+
+    return f"""
+Create one horizontal 3-column character sprite strip for an AI Tamagotchi web app.
+
+STYLE_FRAME:
+{STYLE_FRAME}
+
+USER_CHARACTER_DESCRIPTION:
+{safe_description}
+
+CHARACTER_BIBLE:
+{bible_text}
+
+GRID:
+- Exactly one row and three equal columns.
+- Columns from left to right: Idle, Happy, Sad.
+- All three cells show the same character and the same growth form.
+- Growth form: {stage_labels.get(stage, stage)}
+
+CONSISTENCY_RULES:
+- USER_CHARACTER_DESCRIPTION and CHARACTER_BIBLE.visual_constraints define the visible body,
+  species, costume, silhouette, and sprite anatomy. They override generic style-frame avoids
+  and any inherited source-card anatomy if there is a conflict.
+- If visual_constraints.forbidden_features is present, do not draw those features unless the
+  USER_CHARACTER_DESCRIPTION explicitly asks for them.
+- Preserve core visual concept, colors, accessories, silhouette, materials, and signature features.
+- Only pose, expression, and emotional state may change between columns.
+
+STATE_RULES:
+- Idle: calm neutral pose and expression.
+- Happy: clearly happy, lively expression, friendly body language.
+- Sad: sad or tired expression, subdued body language.
+
+OUTPUT_REQUIREMENTS:
+- Cute stylized 3D mascot, full body, centered in each cell.
+- Perfectly aligned 1 by 3 horizontal grid with equal cell sizes.
+- Flat pure white background across the entire strip and every cell.
+- Do not use transparency, alpha-channel background, checkerboard pattern, transparency grid, or tiled square backdrop.
+- The character must not cast any shadow outside its body.
+- No cast shadow, contact shadow, ground shadow, floor shadow, drop shadow, glow, halo, vignette, or backdrop.
+- Keep only internal 3D form shading on the character itself; the white background must stay clean and shadow-free.
+- No text, no labels, no UI, no logo, no watermark, no borders.
+- Keep clear padding inside each cell so every character can be cropped safely.
         """.strip()

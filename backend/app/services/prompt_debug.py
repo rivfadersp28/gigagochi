@@ -2,7 +2,39 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from contextvars import ContextVar
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+
+AI_PROMPT_LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "ai-prompts.jsonl"
+AI_RESPONSE_LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "ai-responses.jsonl"
+_prompt_log_context: ContextVar[dict[str, Any] | None] = ContextVar(
+    "prompt_log_context",
+    default=None,
+)
+_last_prompt_context: ContextVar[dict[str, Any] | None] = ContextVar(
+    "last_prompt_context",
+    default=None,
+)
+
+
+def set_prompt_log_context(context: dict[str, Any]) -> Any:
+    _last_prompt_context.set(None)
+    return _prompt_log_context.set(context)
+
+
+def reset_prompt_log_context(token: Any) -> None:
+    _prompt_log_context.reset(token)
+    _last_prompt_context.set(None)
+
+
+def current_ai_log_context() -> dict[str, Any]:
+    context = dict(_prompt_log_context.get() or {})
+    last_prompt = _last_prompt_context.get()
+    if last_prompt:
+        context["lastPrompt"] = last_prompt
+    return context
 
 
 def _response_format_summary(value: Any) -> Any:
@@ -17,6 +49,127 @@ def _response_format_summary(value: Any) -> Any:
             "strict": json_schema.get("strict"),
         }
     return summary
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def write_prompt_log_line(payload: Mapping[str, Any]) -> dict[str, Any]:
+    AI_PROMPT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    context = _prompt_log_context.get() or {}
+    line_payload = {
+        "timestamp": _now_iso(),
+        **context,
+        **payload,
+    }
+    with AI_PROMPT_LOG_PATH.open("a", encoding="utf-8") as log_file:
+        log_file.write(json.dumps(line_payload, ensure_ascii=False, default=str))
+        log_file.write("\n")
+    return line_payload
+
+
+def write_response_log_line(payload: Mapping[str, Any]) -> dict[str, Any]:
+    AI_RESPONSE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    context = current_ai_log_context()
+    line_payload = {
+        "timestamp": _now_iso(),
+        **context,
+        **payload,
+    }
+    with AI_RESPONSE_LOG_PATH.open("a", encoding="utf-8") as log_file:
+        log_file.write(json.dumps(line_payload, ensure_ascii=False, default=str))
+        log_file.write("\n")
+    return line_payload
+
+
+def _object_value(value: Any, key: str) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(key)
+    return getattr(value, key, None)
+
+
+def _usage_summary(usage: Any) -> dict[str, Any] | None:
+    if usage is None:
+        return None
+    if hasattr(usage, "model_dump"):
+        usage = usage.model_dump()
+    if isinstance(usage, Mapping):
+        return {
+            key: usage.get(key)
+            for key in (
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+                "cost",
+            )
+            if usage.get(key) is not None
+        }
+    return None
+
+
+def _first_choice(completion: Any) -> Any:
+    choices = _object_value(completion, "choices") or []
+    return choices[0] if choices else None
+
+
+def log_chat_completion_response(label: str, completion: Any) -> dict[str, Any]:
+    choice = _first_choice(completion)
+    payload = {
+        "event": "ai_response",
+        "promptType": "chat_completion",
+        "label": label,
+        "providerGenerationId": _object_value(completion, "id"),
+        "model": _object_value(completion, "model"),
+        "finishReason": _object_value(choice, "finish_reason") if choice else None,
+        "usage": _usage_summary(_object_value(completion, "usage")),
+    }
+    return write_response_log_line(payload)
+
+
+def _response_id_from_payload(payload: Mapping[str, Any]) -> str | None:
+    for key in ("id", "generation_id", "generationId"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _interesting_headers(headers: Mapping[str, Any] | None) -> dict[str, str]:
+    if headers is None:
+        return {}
+    interesting: dict[str, str] = {}
+    for key, value in headers.items():
+        lower_key = str(key).lower()
+        if lower_key in {
+            "x-request-id",
+            "cf-ray",
+            "x-openrouter-generation-id",
+            "x-generation-id",
+        }:
+            interesting[str(key)] = str(value)
+    return interesting
+
+
+def log_image_generation_response(
+    label: str,
+    request_kwargs: Mapping[str, Any],
+    response_payload: Mapping[str, Any],
+    *,
+    headers: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "event": "ai_response",
+        "promptType": "image_generation",
+        "label": label,
+        "providerGenerationId": _response_id_from_payload(response_payload),
+        "model": request_kwargs.get("model"),
+        "created": response_payload.get("created"),
+        "usage": _usage_summary(response_payload.get("usage")),
+        "responseKeys": sorted(response_payload.keys()),
+        "headers": _interesting_headers(headers),
+    }
+    return write_response_log_line(payload)
 
 
 def chat_completion_prompt_snapshot(
@@ -38,7 +191,60 @@ def chat_completion_prompt_snapshot(
 
 def log_chat_completion_prompt(label: str, request_kwargs: Mapping[str, Any]) -> dict[str, Any]:
     payload = chat_completion_prompt_snapshot(label, request_kwargs)
-    print(f"\n=== OpenAI chat prompt: {label} ===", flush=True)
+    line_payload = write_prompt_log_line(
+        {
+            "event": "ai_prompt",
+            "promptType": "chat_completion",
+            **payload,
+        }
+    )
+    _last_prompt_context.set(
+        {
+            "timestamp": line_payload["timestamp"],
+            "promptType": "chat_completion",
+            "label": label,
+            "model": payload.get("model"),
+        }
+    )
+    print(f"\n=== AI chat prompt: {label} ===", flush=True)
     print(json.dumps(payload, ensure_ascii=False, indent=2, default=str), flush=True)
-    print("=== End OpenAI chat prompt ===\n", flush=True)
+    print("=== End AI chat prompt ===\n", flush=True)
+    return payload
+
+
+def image_generation_prompt_snapshot(
+    label: str,
+    request_kwargs: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "label": label,
+        "model": request_kwargs.get("model"),
+        "prompt": request_kwargs.get("prompt"),
+        "size": request_kwargs.get("size"),
+        "quality": request_kwargs.get("quality"),
+        "n": request_kwargs.get("n"),
+        "output_format": request_kwargs.get("output_format"),
+    }
+
+
+def log_image_generation_prompt(label: str, request_kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    payload = image_generation_prompt_snapshot(label, request_kwargs)
+    line_payload = write_prompt_log_line(
+        {
+            "event": "ai_prompt",
+            "promptType": "image_generation",
+            **payload,
+        }
+    )
+    _last_prompt_context.set(
+        {
+            "timestamp": line_payload["timestamp"],
+            "promptType": "image_generation",
+            "label": label,
+            "model": payload.get("model"),
+        }
+    )
+    print(f"\n=== AI image prompt: {label} ===", flush=True)
+    print(json.dumps(payload, ensure_ascii=False, indent=2, default=str), flush=True)
+    print("=== End AI image prompt ===\n", flush=True)
     return payload

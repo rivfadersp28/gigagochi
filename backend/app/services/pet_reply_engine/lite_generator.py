@@ -7,9 +7,24 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.config import get_settings
-from app.schemas import LiteFactExtractionRequest, LocalChatRequest, LocalChatResponse
-from app.services.openai_service import chat_reasoning_effort_kwargs, get_openai_client
-from app.services.pet_memory.models import LocalChatDebug
+from app.schemas import (
+    LiteFactExtractionRequest,
+    LocalChatDebug,
+    LocalChatRequest,
+    LocalChatResponse,
+    LocalPetMemoryContext,
+    LocalProactiveRequest,
+    LocalProactiveResponse,
+    MemoryConsolidationRequest,
+    MemoryConsolidationResponse,
+    MemoryExtractionRequest,
+    MemoryExtractionResponse,
+)
+from app.services.openai_service import (
+    chat_reasoning_effort_kwargs,
+    get_chat_model,
+    get_openai_client,
+)
 from app.services.pet_reply_engine.age_message_examples import (
     categories_for_reply,
     phrases_for_categories,
@@ -28,7 +43,7 @@ from app.services.pet_reply_engine.state_interpreter import (
     energy_band,
     hunger_band,
 )
-from app.services.prompt_debug import log_chat_completion_prompt
+from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
 
 MAX_LITE_TOOL_ROUNDS = 3
 MAX_LITE_BABY_EXAMPLES = 8
@@ -41,6 +56,20 @@ LITE_FACT_KINDS = (
     "world_fact",
     "relationship_fact",
 )
+USER_MEMORY_KINDS = (
+    "user_fact",
+    "preference",
+    "event",
+    "deadline",
+    "relationship",
+    "routine",
+    "goal",
+    "promise",
+    "emotion",
+    "boundary",
+)
+FACE_HINTS = ("happy", "excited", "curious", "content", "grumpy", "sleepy")
+MAX_MEMORY_CONTEXT_ITEMS = 5
 
 LITE_AGE_ROLE_HINTS = {
     "baby": "малыш такого существа",
@@ -97,8 +126,6 @@ LITE_TOOLS: list[dict[str, Any]] = [
                             "enum": [
                                 "characterBible",
                                 "liteOverlay",
-                                "memory",
-                                "loreMemories",
                             ],
                         },
                     }
@@ -192,6 +219,114 @@ LITE_WORLD_SEED_SCHEMA: dict[str, Any] = {
     "required": ["worldText"],
 }
 
+MEMORY_EXTRACTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "operations": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": ["capture_learning", "remember_user_fact"],
+                    },
+                    "observation": {"type": ["string", "null"], "maxLength": 500},
+                    "patternKey": {"type": ["string", "null"], "maxLength": 120},
+                    "kind": {"type": ["string", "null"], "enum": [*USER_MEMORY_KINDS, None]},
+                    "text": {"type": ["string", "null"], "maxLength": 500},
+                    "normalizedKey": {"type": ["string", "null"], "maxLength": 160},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "importance": {"type": "number", "minimum": 0, "maximum": 1},
+                    "dueAt": {"type": ["string", "null"], "maxLength": 80},
+                    "expiresAt": {"type": ["string", "null"], "maxLength": 80},
+                    "tags": {
+                        "type": "array",
+                        "maxItems": 6,
+                        "items": {"type": "string", "maxLength": 40},
+                    },
+                },
+                "required": [
+                    "type",
+                    "observation",
+                    "patternKey",
+                    "kind",
+                    "text",
+                    "normalizedKey",
+                    "confidence",
+                    "importance",
+                    "dueAt",
+                    "expiresAt",
+                    "tags",
+                ],
+            },
+        }
+    },
+    "required": ["operations"],
+}
+
+MEMORY_CONSOLIDATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "operations": {
+            "type": "array",
+            "maxItems": 40,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "promote_learning",
+                            "prune_learning",
+                            "rewrite_summary",
+                            "rewrite_user_profile",
+                        ],
+                    },
+                    "learningId": {"type": ["string", "null"], "maxLength": 120},
+                    "reason": {"type": ["string", "null"], "maxLength": 240},
+                    "content": {"type": ["string", "null"], "maxLength": 1000},
+                    "memory": {
+                        "type": ["object", "null"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "kind": {"type": "string", "enum": list(USER_MEMORY_KINDS)},
+                            "text": {"type": "string", "maxLength": 500},
+                            "normalizedKey": {"type": "string", "maxLength": 160},
+                            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                            "importance": {"type": "number", "minimum": 0, "maximum": 1},
+                            "dueAt": {"type": ["string", "null"], "maxLength": 80},
+                            "expiresAt": {"type": ["string", "null"], "maxLength": 80},
+                            "tags": {
+                                "type": "array",
+                                "maxItems": 6,
+                                "items": {"type": "string", "maxLength": 40},
+                            },
+                        },
+                        "required": [
+                            "kind",
+                            "text",
+                            "normalizedKey",
+                            "confidence",
+                            "importance",
+                            "dueAt",
+                            "expiresAt",
+                            "tags",
+                        ],
+                    },
+                },
+                "required": ["type", "learningId", "reason", "content", "memory"],
+            },
+        }
+    },
+    "required": ["operations"],
+}
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -211,11 +346,84 @@ def _truncate_text(value: str, limit: int) -> str:
     return f"{value[:limit].rstrip()}…"
 
 
-def _short_character_description(payload: LocalChatRequest) -> str:
-    pet = payload.pet
+def _lite_persona_contract() -> str:
+    return (
+        "Отвечай владельцу естественно, кратко и своим голосом. "
+        "Сначала скажи что-то живое пользователю. Пиши простым естественным языком. "
+        "Не используй generic robotic sounds вроде beep boop, whirr, Beep!. "
+        "Не используй *stage directions*, если пользователь сам не просит roleplay-формат. "
+        "У тебя есть свои вкусы, реакции и настроение; они могут мягко окрашивать ответ."
+    )
+
+
+def _clean_optional_text(value: str | None, limit: int) -> str | None:
+    text = _compact_spaces(value or "")
+    return _truncate_text(text, limit) if text else None
+
+
+def _memory_context_block(memory_context: LocalPetMemoryContext | None) -> str | None:
+    if not memory_context:
+        return None
+
+    lines: list[str] = []
+    user_profile = _clean_optional_text(memory_context.userProfile, 500)
+    summary = _clean_optional_text(memory_context.summary, 500)
+    if user_profile:
+        lines.append(f"Профиль пользователя: {user_profile}")
+    if summary:
+        lines.append(f"Краткий контекст: {summary}")
+
+    memory_lines = []
+    for memory in memory_context.relevantMemories[:MAX_MEMORY_CONTEXT_ITEMS]:
+        text = _clean_optional_text(memory.text, 240)
+        if text:
+            memory_lines.append(f"- {text}")
+    if memory_lines:
+        lines.append("Ты помнишь о пользователе:")
+        lines.extend(memory_lines)
+
+    if not lines:
+        return None
+    return (
+        "\n".join(lines)
+        + "\nИспользуй это только если уместно. Не пересказывай память списком "
+        "и не говори, что видишь memoryContext."
+    )
+
+
+def _extract_hidden_reaction(raw_reply: str) -> tuple[str, str | None, str | None]:
+    visible_lines: list[str] = []
+    inner_thought: str | None = None
+    face_hint: str | None = None
+
+    for line in (raw_reply or "").splitlines():
+        stripped = line.strip()
+        thought_match = re.match(r"^THOUGHT\s*:\s*(.+)$", stripped, flags=re.IGNORECASE)
+        if thought_match:
+            inner_thought = _truncate_text(_compact_spaces(thought_match.group(1)), 80)
+            continue
+
+        face_match = re.match(r"^FACE\s*:\s*(.+)$", stripped, flags=re.IGNORECASE)
+        if face_match:
+            raw_face = _compact_spaces(face_match.group(1)).casefold()
+            if raw_face in FACE_HINTS:
+                face_hint = raw_face
+            continue
+
+        visible_lines.append(line)
+
+    reply = clamp_reply_text("\n".join(visible_lines).strip())
+    return reply, inner_thought, face_hint
+
+
+def _short_pet_description(pet: Any) -> str:
     description = _compact_spaces(pet.description)
     name = _compact_spaces(pet.name or "")
     return f"{name}, {description}" if name else description
+
+
+def _short_character_description(payload: LocalChatRequest) -> str:
+    return _short_pet_description(payload.pet)
 
 
 def _state_role_modifier(payload: LocalChatRequest) -> str | None:
@@ -246,7 +454,6 @@ def _lite_reply_input_for_examples(payload: LocalChatRequest) -> PetReplyInput:
         recent_messages=tuple(
             PetRecentMessage(role=item.role, text=item.text) for item in payload.history[-8:]
         ),
-        lore_memories=tuple(payload.pet.loreMemories),
         pet=PetReplyPet(
             age_stage=payload.pet.stage,
             mood=payload.pet.mood,
@@ -317,9 +524,10 @@ def build_lite_chat_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
         f"{system_content} Ответ максимум {MAX_REPLY_CHARS} символов; "
         "можно короче, даже одной фразой."
     )
-    character_seed = _lite_character_seed_for_prompt(payload)
-    if character_seed:
-        system_content = f"{system_content}\n\nОснова характера: {character_seed}"
+    system_content = f"{system_content}\n\n{_lite_persona_contract()}"
+    memory_block = _memory_context_block(payload.memoryContext)
+    if memory_block:
+        system_content = f"{system_content}\n\n{memory_block}"
     baby_examples = _baby_phrase_examples_for_prompt(payload)
     if baby_examples:
         system_content = f"{system_content}\n\n{baby_examples}"
@@ -411,38 +619,6 @@ def _existing_world_texts(payload: LocalChatRequest) -> list[str]:
     return [text for text in texts if len(text) >= 12]
 
 
-def _lite_character_seed_for_prompt(payload: LocalChatRequest) -> str | None:
-    overlay = _lite_overlay_from(payload)
-    texts: list[str] = []
-    seen: set[str] = set()
-
-    def add_text(raw_text: Any) -> None:
-        text = _text_value(raw_text)
-        key = text.casefold()
-        if text and key not in seen and not _is_technical_world_text(text):
-            seen.add(key)
-            texts.append(text)
-
-    character_sphere = overlay.get("spheres", {}).get("character", {})
-    if isinstance(character_sphere, dict) and isinstance(character_sphere.get("facts"), list):
-        for fact in character_sphere["facts"]:
-            if isinstance(fact, dict):
-                add_text(fact.get("text"))
-    for fact in overlay.get("facts", []):
-        if not isinstance(fact, dict):
-            continue
-        if fact.get("sphere") != "character" and fact.get("kind") not in {
-            "character_fact",
-            "preference",
-            "habit",
-        }:
-            continue
-        add_text(fact.get("text"))
-    if not texts:
-        return None
-    return _truncate_text(" ".join(texts[:2]), 600)
-
-
 def _world_seed_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     return [
         {
@@ -488,6 +664,7 @@ def _world_seed_overlay_patch(
     timeout: float,
     prompt_debug: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
+    settings = get_settings()
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": _world_seed_messages(payload),
@@ -500,10 +677,11 @@ def _world_seed_overlay_patch(
             },
         },
         "timeout": timeout,
-        **chat_reasoning_effort_kwargs(get_settings().openai_chat_reasoning_effort),
+        **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
     }
     prompt_debug.append(log_chat_completion_prompt("pet_reply/lite_world_seed", request_kwargs))
     completion = client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("pet_reply/lite_world_seed", completion)
     world_text = _parse_world_seed_text(completion.choices[0].message.content or "")
     if not world_text:
         return None
@@ -609,7 +787,7 @@ def _read_character_json(
     raw_sections = arguments.get("sections")
     sections = set(raw_sections if isinstance(raw_sections, list) else [])
     if not sections:
-        sections = {"characterBible", "liteOverlay", "memory", "loreMemories"}
+        sections = {"characterBible", "liteOverlay"}
 
     should_seed_world = (
         bool(LITE_WORLD_REQUEST_PATTERN.search(payload.message))
@@ -646,10 +824,6 @@ def _read_character_json(
             "createdByChatGPT": True,
             "patch": world_seed_patch,
         }
-    if "memory" in sections:
-        result["memory"] = payload.pet.memory.model_dump() if payload.pet.memory else {}
-    if "loreMemories" in sections:
-        result["loreMemories"] = payload.pet.loreMemories
     return result
 
 
@@ -801,11 +975,10 @@ def _lite_extraction_context(payload: LiteFactExtractionRequest) -> str:
     character_context = _read_character_json(
         LocalChatRequest(
             message=payload.message,
-            replyMode="lite",
             pet=payload.pet,
             history=payload.history,
         ),
-        {"sections": ["characterBible", "liteOverlay", "memory", "loreMemories"]},
+        {"sections": ["characterBible", "liteOverlay"]},
     )
     return _truncate_text(
         json.dumps(character_context, ensure_ascii=False, default=str),
@@ -934,7 +1107,7 @@ def generate_lite_pet_reply(
     timeout: float | None = None,
 ) -> LocalChatResponse:
     settings = get_settings()
-    model = model or settings.openai_chat_model
+    model = model or get_chat_model(settings)
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
     messages: list[dict[str, Any]] = build_lite_chat_messages(payload)
@@ -943,6 +1116,8 @@ def generate_lite_pet_reply(
     tool_debug: list[dict[str, Any]] = []
     prompt_debug: list[dict[str, Any]] = []
     reply = ""
+    inner_thought: str | None = None
+    face_hint: str | None = None
 
     for round_index in range(MAX_LITE_TOOL_ROUNDS + 1):
         request_kwargs: dict[str, Any] = {
@@ -962,10 +1137,13 @@ def generate_lite_pet_reply(
             log_chat_completion_prompt(f"pet_reply/lite round {round_index + 1}", request_kwargs)
         )
         completion = openai_client.chat.completions.create(**request_kwargs)
+        log_chat_completion_response(f"pet_reply/lite round {round_index + 1}", completion)
         message = completion.choices[0].message
         tool_calls = list(getattr(message, "tool_calls", None) or [])
         if not tools or not tool_calls:
-            reply = clamp_reply_text(getattr(message, "content", None) or "")
+            reply, inner_thought, face_hint = _extract_hidden_reaction(
+                getattr(message, "content", None) or ""
+            )
             break
 
         messages.append(_assistant_tool_call_message(message, tool_calls))
@@ -983,7 +1161,6 @@ def generate_lite_pet_reply(
             messages.append(_tool_response_message(_tool_call_id(tool_call), result))
 
     debug = LocalChatDebug(
-        replyMode="lite",
         usedFallback=False,
         validationFlags=[],
         promptDebug=prompt_debug,
@@ -993,8 +1170,8 @@ def generate_lite_pet_reply(
     return LocalChatResponse(
         reply=reply,
         moodHint=None,
-        loreMemoriesToSave=[],
-        memoryPatch=None,
+        innerThought=inner_thought,
+        faceHint=face_hint,
         debug=debug,
     )
 
@@ -1007,7 +1184,7 @@ def extract_lite_overlay_patch_from_reply(
     timeout: float | None = None,
 ) -> tuple[dict[str, Any] | None, LocalChatDebug | None]:
     settings = get_settings()
-    model = model or settings.openai_chat_model
+    model = model or get_chat_model(settings)
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
     prompt_debug: list[dict[str, Any]] = []
@@ -1030,14 +1207,390 @@ def extract_lite_overlay_patch_from_reply(
         log_chat_completion_prompt("pet_reply/lite_fact_extraction", request_kwargs)
     )
     completion = openai_client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("pet_reply/lite_fact_extraction", completion)
     patch = _parse_lite_fact_extraction_payload(completion.choices[0].message.content or "{}")
     debug = None
     if payload.includeDebug or prompt_debug:
         debug = LocalChatDebug(
-            replyMode="lite",
             usedFallback=False,
             validationFlags=[],
             promptDebug=prompt_debug,
             liteOverlayPatch=patch,
         )
     return patch, debug
+
+
+def _safe_json_context(value: Any, limit: int = 6000) -> str:
+    return _truncate_text(json.dumps(value, ensure_ascii=False, default=str), limit)
+
+
+def _clamp_float(value: Any, default: float = 0.5) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(0.0, min(1.0, number))
+
+
+def _memory_key_from_text(text: str) -> str:
+    words = re.findall(r"[\wа-яё]+", text.casefold(), flags=re.IGNORECASE)
+    return "-".join(words[:12])[:160] or "memory"
+
+
+def _optional_iso_text(value: Any) -> str | None:
+    text = _compact_spaces(str(value or ""))
+    return text[:80] if text else None
+
+
+def _normalized_memory_operation(value: Any) -> dict[str, Any] | None:
+    if not _is_record(value):
+        return None
+    operation_type = str(value.get("type") or "").strip()
+    kind = str(value.get("kind") or "user_fact").strip()
+    if kind not in USER_MEMORY_KINDS:
+        kind = "user_fact"
+
+    if operation_type == "capture_learning":
+        observation = _compact_spaces(str(value.get("observation") or ""))
+        if not observation:
+            return None
+        operation: dict[str, Any] = {
+            "type": "capture_learning",
+            "observation": _truncate_text(observation, 500),
+            "confidence": _clamp_float(value.get("confidence"), 0.6),
+            "importance": _clamp_float(value.get("importance"), 0.5),
+        }
+        pattern_key = _compact_spaces(str(value.get("patternKey") or ""))
+        if pattern_key:
+            operation["patternKey"] = _truncate_text(pattern_key, 120)
+        operation["kind"] = kind
+        due_at = _optional_iso_text(value.get("dueAt"))
+        if due_at:
+            operation["dueAt"] = due_at
+        return operation
+
+    if operation_type == "remember_user_fact":
+        text = _compact_spaces(str(value.get("text") or ""))
+        if not text:
+            return None
+        normalized_key = _compact_spaces(str(value.get("normalizedKey") or ""))
+        tags = value.get("tags") if isinstance(value.get("tags"), list) else []
+        operation = {
+            "type": "remember_user_fact",
+            "kind": kind,
+            "text": _truncate_text(text, 500),
+            "normalizedKey": _truncate_text(normalized_key or _memory_key_from_text(text), 160),
+            "confidence": _clamp_float(value.get("confidence"), 0.75),
+            "importance": _clamp_float(value.get("importance"), 0.7),
+            "tags": [
+                _truncate_text(_compact_spaces(str(tag)), 40)
+                for tag in tags[:6]
+                if _compact_spaces(str(tag))
+            ],
+        }
+        due_at = _optional_iso_text(value.get("dueAt"))
+        expires_at = _optional_iso_text(value.get("expiresAt"))
+        if due_at:
+            operation["dueAt"] = due_at
+        if expires_at:
+            operation["expiresAt"] = expires_at
+        return operation
+
+    return None
+
+
+def _parse_memory_extraction_payload(raw_content: str) -> list[dict[str, Any]]:
+    try:
+        parsed = json.loads(raw_content or "{}")
+    except json.JSONDecodeError:
+        return []
+    if not _is_record(parsed) or not isinstance(parsed.get("operations"), list):
+        return []
+    operations: list[dict[str, Any]] = []
+    for raw_operation in parsed["operations"]:
+        operation = _normalized_memory_operation(raw_operation)
+        if operation:
+            operations.append(operation)
+    return operations
+
+
+def build_memory_extraction_messages(payload: MemoryExtractionRequest) -> list[dict[str, str]]:
+    memory_context = payload.memoryContext.model_dump(mode="json") if payload.memoryContext else {}
+    history_context = [item.model_dump(mode="json") for item in payload.history[-8:]]
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Ты фоновый анализатор памяти пользователя. Не отвечай пользователю. "
+                "Верни только JSON по схеме. Извлекай только факты, которые сказал "
+                "или явно подтвердил пользователь. Не сохраняй догадки персонажа, "
+                "одноразовые команды интерфейса, секреты, токены, пароли и случайный small talk. "
+                "Если пользователь говорит 'завтра', 'в пятницу' или похожую дату, "
+                "нормализуй dueAt относительно nowIso/timezone. Важные конкретные факты "
+                "можно сразу вернуть как remember_user_fact; слабые наблюдения — "
+                "как capture_learning. "
+                "Если сохранять нечего, верни пустой operations."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"nowIso: {payload.nowIso or _now_iso()}\n"
+                f"timezone: {payload.timezone or 'Europe/Moscow'}\n\n"
+                f"Уже известная память:\n{payload.existingMemoryBrief or '-'}\n\n"
+                f"Recall context:\n{_safe_json_context(memory_context, 3000)}\n\n"
+                f"Недавняя история:\n{_safe_json_context(history_context, 3000)}\n\n"
+                f"Последнее сообщение пользователя:\n{payload.message}\n\n"
+                f"Ответ персонажа, уже показанный пользователю:\n{payload.reply}"
+            ),
+        },
+    ]
+
+
+def extract_user_memory_operations(
+    payload: MemoryExtractionRequest,
+    *,
+    client: Any | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+) -> MemoryExtractionResponse:
+    settings = get_settings()
+    model = model or get_chat_model(settings)
+    timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
+    openai_client = client or get_openai_client()
+    prompt_debug: list[dict[str, Any]] = []
+
+    request_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": build_memory_extraction_messages(payload),
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "user_memory_extraction",
+                "schema": MEMORY_EXTRACTION_SCHEMA,
+                "strict": True,
+            },
+        },
+        "timeout": timeout,
+        **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
+    }
+    prompt_debug.append(log_chat_completion_prompt("pet_reply/memory_extraction", request_kwargs))
+    completion = openai_client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("pet_reply/memory_extraction", completion)
+    operations = _parse_memory_extraction_payload(completion.choices[0].message.content or "{}")
+    debug = None
+    if payload.includeDebug or prompt_debug:
+        debug = LocalChatDebug(
+            usedFallback=False,
+            validationFlags=[],
+            promptDebug=prompt_debug,
+            memoryDebug={"extractionOperations": operations},
+        )
+    return MemoryExtractionResponse(operations=operations, debug=debug)
+
+
+def _normalized_consolidation_operation(value: Any) -> dict[str, Any] | None:
+    if not _is_record(value):
+        return None
+    operation_type = str(value.get("type") or "").strip()
+    learning_id = _compact_spaces(str(value.get("learningId") or ""))
+
+    if operation_type == "promote_learning":
+        memory = _normalized_memory_operation(
+            {
+                "type": "remember_user_fact",
+                **(value.get("memory") if _is_record(value.get("memory")) else {}),
+            }
+        )
+        if not learning_id or not memory:
+            return None
+        return {
+            "type": "promote_learning",
+            "learningId": _truncate_text(learning_id, 120),
+            "memory": {key: val for key, val in memory.items() if key != "type"},
+        }
+
+    if operation_type == "prune_learning":
+        if not learning_id:
+            return None
+        reason = _compact_spaces(str(value.get("reason") or ""))
+        return {
+            "type": "prune_learning",
+            "learningId": _truncate_text(learning_id, 120),
+            **({"reason": _truncate_text(reason, 240)} if reason else {}),
+        }
+
+    if operation_type in {"rewrite_summary", "rewrite_user_profile"}:
+        content = _compact_spaces(str(value.get("content") or ""))
+        if not content:
+            return None
+        return {
+            "type": operation_type,
+            "content": _truncate_text(content, 1000),
+        }
+
+    return None
+
+
+def _parse_consolidation_payload(raw_content: str) -> list[dict[str, Any]]:
+    try:
+        parsed = json.loads(raw_content or "{}")
+    except json.JSONDecodeError:
+        return []
+    if not _is_record(parsed) or not isinstance(parsed.get("operations"), list):
+        return []
+    operations: list[dict[str, Any]] = []
+    for raw_operation in parsed["operations"]:
+        operation = _normalized_consolidation_operation(raw_operation)
+        if operation:
+            operations.append(operation)
+    return operations
+
+
+def build_memory_consolidation_messages(
+    payload: MemoryConsolidationRequest,
+) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Ты фоновый memory consolidator. Не отвечай пользователю. "
+                "Верни только JSON по схеме. Разбери pending learnings: устойчивые "
+                "и полезные факты о пользователе продвигай в memories, слабые и "
+                "одноразовые наблюдения prune. Summary и user profile переписывай "
+                "только если есть реальная польза; они должны быть короткими."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"nowIso: {payload.nowIso or _now_iso()}\n"
+                f"timezone: {payload.timezone or 'Europe/Moscow'}\n\n"
+                f"pendingLearnings:\n{_safe_json_context(payload.pendingLearnings, 9000)}\n\n"
+                f"existingMemories:\n{_safe_json_context(payload.existingMemories, 9000)}\n\n"
+                f"summary:\n{payload.summary or '-'}\n\n"
+                f"userProfile:\n{payload.userProfile or '-'}"
+            ),
+        },
+    ]
+
+
+def consolidate_user_memory(
+    payload: MemoryConsolidationRequest,
+    *,
+    client: Any | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+) -> MemoryConsolidationResponse:
+    settings = get_settings()
+    model = model or get_chat_model(settings)
+    timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
+    openai_client = client or get_openai_client()
+    prompt_debug: list[dict[str, Any]] = []
+
+    request_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": build_memory_consolidation_messages(payload),
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "user_memory_consolidation",
+                "schema": MEMORY_CONSOLIDATION_SCHEMA,
+                "strict": True,
+            },
+        },
+        "timeout": timeout,
+        **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
+    }
+    prompt_debug.append(
+        log_chat_completion_prompt("pet_reply/memory_consolidation", request_kwargs)
+    )
+    completion = openai_client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("pet_reply/memory_consolidation", completion)
+    operations = _parse_consolidation_payload(completion.choices[0].message.content or "{}")
+    debug = None
+    if payload.includeDebug or prompt_debug:
+        debug = LocalChatDebug(
+            usedFallback=False,
+            validationFlags=[],
+            promptDebug=prompt_debug,
+            memoryDebug={"consolidationOperations": operations},
+        )
+    return MemoryConsolidationResponse(operations=operations, debug=debug)
+
+
+def build_proactive_messages(payload: LocalProactiveRequest) -> list[dict[str, str]]:
+    memory_block = _memory_context_block(payload.memoryContext) or "Память пока пустая."
+    reason = (
+        payload.memoryContext.proactiveCandidate.reason
+        if payload.memoryContext.proactiveCandidate
+        else "есть личный повод из памяти пользователя"
+    )
+    return [
+        {
+            "role": "system",
+            "content": (
+                f"Отвечай мне как {_short_pet_description(payload.pet)}. "
+                f"Сейчас ты {_age_role_hint(LocalChatRequest(message='...', pet=payload.pet))}. "
+                f"Ответ максимум {MAX_REPLY_CHARS} символов; можно короче.\n\n"
+                f"{_lite_persona_contract()}\n\n"
+                f"{memory_block}\n\n"
+                "Ты сам решил написать пользователю первым. "
+                f"Повод: {reason}. Напиши одну живую реплику. "
+                "Не объясняй, что это напоминание или автоматическое сообщение."
+            ),
+        }
+    ]
+
+
+def generate_proactive_pet_message(
+    payload: LocalProactiveRequest,
+    *,
+    client: Any | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+) -> LocalProactiveResponse:
+    settings = get_settings()
+    model = model or get_chat_model(settings)
+    timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
+    openai_client = client or get_openai_client()
+    prompt_debug: list[dict[str, Any]] = []
+
+    request_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": build_proactive_messages(payload),
+        "timeout": timeout,
+        **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
+    }
+    prompt_debug.append(log_chat_completion_prompt("pet_reply/proactive", request_kwargs))
+    completion = openai_client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("pet_reply/proactive", completion)
+    reply, inner_thought, face_hint = _extract_hidden_reaction(
+        completion.choices[0].message.content or ""
+    )
+    debug = None
+    if payload.includeDebug or prompt_debug:
+        debug = LocalChatDebug(
+            usedFallback=False,
+            validationFlags=[],
+            promptDebug=prompt_debug,
+            memoryDebug={
+                "proactiveReason": (
+                    payload.memoryContext.proactiveCandidate.reason
+                    if payload.memoryContext.proactiveCandidate
+                    else None
+                ),
+                "selectedMemoryIds": (
+                    payload.memoryContext.proactiveCandidate.memoryIds
+                    if payload.memoryContext.proactiveCandidate
+                    else []
+                ),
+            },
+        )
+    return LocalProactiveResponse(
+        reply=reply,
+        moodHint=None,
+        innerThought=inner_thought,
+        faceHint=face_hint,
+        debug=debug,
+    )

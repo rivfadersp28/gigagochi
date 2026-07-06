@@ -1,22 +1,25 @@
 from __future__ import annotations
 
+import logging
+import time
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.dependencies import get_telegram_user
 from app.main import app
-from app.routers.tma import generation_error_message
-from app.schemas import GeneratePetAssetResponse, LocalChatResponse
-from app.services.pet_memory.models import (
-    DevelopmentPatch,
-    MemoryCandidate,
-    RelationshipPatch,
+from app.routers.tma import generation_error_message, provider_error_details
+from app.schemas import (
+    GeneratePetAssetResponse,
+    LocalChatResponse,
+    LocalProactiveResponse,
+    MemoryConsolidationResponse,
+    MemoryExtractionResponse,
 )
-from app.services.pet_reply_engine.models import PetReplyResult
 from app.services.rate_limit_service import rate_limiter
 from app.services.telegram_auth_service import TelegramUserContext
 
@@ -34,6 +37,17 @@ def override_user() -> TelegramUserContext:
 def tma_client() -> TestClient:
     app.dependency_overrides[get_telegram_user] = override_user
     return TestClient(app)
+
+
+def wait_for_generation_job(client: TestClient, job_id: str) -> dict[str, object]:
+    for _ in range(100):
+        response = client.get(f"/api/generate-pet/jobs/{job_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        if payload["status"] in {"succeeded", "failed"}:
+            return payload
+        time.sleep(0.01)
+    raise AssertionError("generation job did not finish")
 
 
 def test_generate_pet_requires_auth(monkeypatch) -> None:
@@ -90,7 +104,11 @@ def test_chat_requires_auth(monkeypatch) -> None:
 def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
-        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=False,
+            openai_api_key=None,
+            openrouter_api_key="test-openrouter-key",
+        ),
     )
     captured: dict[str, object] = {}
 
@@ -135,54 +153,19 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
 
     response = client.post("/api/generate-pet", json={"description": "маленький дракон"})
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["assetSetId"] == "asset-1"
-    assert payload["characterBible"]["species"] == "small dragon mascot"
+    assert response.status_code == 202
+    job = response.json()
+    assert job["status"] in {"queued", "running", "succeeded"}
+    payload = wait_for_generation_job(client, job["jobId"])
+    assert payload["status"] == "succeeded"
+    result = payload["result"]
+    assert result is not None
+    assert result["assetSetId"] == "asset-1"
+    assert result["characterBible"]["species"] == "small dragon mascot"
     assert captured["description"] == "маленький дракон"
-    assert captured["kwargs"] == {"use_template_presets": False}
+    assert captured["kwargs"] == {}
     for stage in ("baby", "teen", "adult"):
-        assert set(payload["images"][stage]) == {"idle", "happy", "hungry", "sad"}
-
-    app.dependency_overrides.clear()
-
-
-def test_generate_pet_passes_template_preset_flag(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.routers.tma.get_settings",
-        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
-    )
-    captured: dict[str, object] = {}
-
-    def fake_generate_pet_asset_set(description: str, **kwargs):
-        captured["description"] = description
-        captured["kwargs"] = kwargs
-        return {
-            "assetSetId": "asset-1",
-            "generatedAt": datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
-            "images": {
-                stage: {
-                    "idle": f"/static/generated/asset-1/{stage}-idle.png",
-                    "happy": f"/static/generated/asset-1/{stage}-happy.png",
-                    "hungry": f"/static/generated/asset-1/{stage}-hungry.png",
-                    "sad": f"/static/generated/asset-1/{stage}-sad.png",
-                }
-                for stage in ("baby", "teen", "adult")
-            },
-            "characterBible": {"species": "дракон"},
-        }
-
-    monkeypatch.setattr("app.routers.tma.generate_pet_asset_set", fake_generate_pet_asset_set)
-    client = tma_client()
-
-    response = client.post(
-        "/api/generate-pet",
-        json={"description": "я хочу сделать дракона", "useTemplatePresets": True},
-    )
-
-    assert response.status_code == 200
-    assert captured["description"] == "я хочу сделать дракона"
-    assert captured["kwargs"] == {"use_template_presets": True}
+        assert set(result["images"][stage]) == {"idle", "happy", "hungry", "sad"}
 
     app.dependency_overrides.clear()
 
@@ -258,153 +241,18 @@ def test_chat_accepts_local_pet_state(monkeypatch) -> None:
     assert response.json() == {
         "reply": "Я рядом.",
         "moodHint": "happy",
-        "loreMemoriesToSave": [],
     }
     assert captured["lore"] == {"home": {"favorite_spot": "мягкая звездная подушка"}}
 
     app.dependency_overrides.clear()
 
 
-def test_chat_accepts_memory_and_returns_memory_patch(monkeypatch) -> None:
+def test_chat_wraps_unhandled_error_with_cors(monkeypatch, caplog) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
     )
-
-    def fake_generate(_reply_input):
-        return PetReplyResult(
-            reply="Кап будит меня утром тихим звоном. хочешь, расскажу где мы прячемся?",
-            mood_hint="happy",
-            memory_candidates=(
-                MemoryCandidate(
-                    type="friend_fact",
-                    text="У питомца есть друг Кап, маленькая капля росы.",
-                    importance=0.8,
-                    confidence=0.8,
-                ),
-            ),
-            relationship_patch=RelationshipPatch(trustDelta=1, attachmentDelta=1),
-            development_patch=DevelopmentPatch(curiosityDelta=1, confidenceDelta=1),
-        )
-
-    monkeypatch.setattr("app.services.chat_service.generate_pet_reply", fake_generate)
-    client = tma_client()
-
-    response = client.post(
-        "/api/chat",
-        json={
-            "message": "кто твои друзья?",
-            "pet": {
-                "name": "Листик",
-                "description": "серый челик с листом вместо лица",
-                "characterBible": {"species": "leaf mascot"},
-                "stage": "teen",
-                "mood": "idle",
-                "stats": {
-                    "hunger": 80,
-                    "happiness": 70,
-                    "energy": 60,
-                    "cleanliness": 90,
-                },
-                "memory": {
-                    "schemaVersion": 1,
-                    "canon": [],
-                    "relationship": {
-                        "trust": 20,
-                        "attachment": 20,
-                        "familiarity": 0,
-                        "sharedEvents": [],
-                        "userFacts": [],
-                        "boundaries": [],
-                    },
-                    "threads": [],
-                    "reflections": [],
-                    "activeGoals": [],
-                    "development": {
-                        "trust": 20,
-                        "attachment": 20,
-                        "curiosity": 45,
-                        "confidence": 30,
-                        "loneliness": 10,
-                        "playfulness": 50,
-                    },
-                    "events": [],
-                    "rejectedCandidates": [],
-                },
-            },
-            "history": [{"role": "user", "text": "Привет"}],
-        },
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["reply"].startswith("Кап будит")
-    assert payload["moodHint"] == "happy"
-    assert payload["memoryPatch"]["canonUpserts"][0]["type"] == "friend_fact"
-    assert payload["memoryPatch"]["relationshipPatch"]["trust"] == 21
-    assert payload["memoryPatch"]["developmentPatch"]["curiosity"] == 46
-    assert payload["loreMemoriesToSave"] == [
-        "ЛОР: У питомца есть друг Кап, маленькая капля росы."
-    ]
-
-    app.dependency_overrides.clear()
-
-
-def test_chat_returns_fallback_on_openai_error(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.routers.tma.get_settings",
-        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
-    )
-
-    def raise_openai_error():
-        raise RuntimeError("openai down")
-
-    monkeypatch.setattr(
-        "app.services.pet_reply_engine.reply_generator.get_openai_client",
-        raise_openai_error,
-    )
-    client = tma_client()
-
-    response = client.post(
-        "/api/chat",
-        json={
-            "message": "Как ты?",
-            "pet": {
-                "name": "Пушок",
-                "description": "маленький пушистый дракончик с шарфиком",
-                "characterBible": {
-                    "species": "soft dragon mascot",
-                    "signature_features": ["warm scarf", "tiny horns"],
-                    "materials": ["fluffy toy skin"],
-                },
-                "stage": "baby",
-                "mood": "hungry",
-                "stats": {
-                    "hunger": 18,
-                    "happiness": 70,
-                    "energy": 25,
-                    "cleanliness": 90,
-                },
-            },
-            "history": [],
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "reply": "Я устал... спатки хочу...",
-        "moodHint": "hungry",
-        "loreMemoriesToSave": [],
-    }
-
-    app.dependency_overrides.clear()
-
-
-def test_chat_wraps_unhandled_error_with_cors(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.routers.tma.get_settings",
-        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
-    )
+    caplog.set_level(logging.ERROR, logger="app.routers.tma")
 
     def fail_chat(_payload):
         raise RuntimeError("openai rejected chat request")
@@ -417,7 +265,6 @@ def test_chat_wraps_unhandled_error_with_cors(monkeypatch) -> None:
         headers={"Origin": "http://localhost:3000"},
         json={
             "message": "расскажи о своем мире",
-            "replyMode": "lite",
             "pet": {
                 "name": "Громм",
                 "description": "гигантский земляной великан",
@@ -441,6 +288,103 @@ def test_chat_wraps_unhandled_error_with_cors(monkeypatch) -> None:
         "error": "chat_failed",
         "message": "Не удалось получить ответ питомца. Попробуйте еще раз.",
     }
+    assert any(
+        "AI request failed" in record.message
+        and '"endpoint": "/api/chat"' in record.message
+        and '"code": "CHAT_FAILED"' in record.message
+        for record in caplog.records
+    )
+
+    app.dependency_overrides.clear()
+
+
+def test_provider_error_details_extracts_provider_payload() -> None:
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/images")
+    response = httpx.Response(
+        400,
+        json={"error": {"message": "unsupported image size"}},
+        headers={"x-request-id": "req-test"},
+        request=request,
+    )
+    exc = httpx.HTTPStatusError("bad request", request=request, response=response)
+
+    assert provider_error_details(exc) == {
+        "providerStatus": 400,
+        "providerMessage": "unsupported image size",
+        "requestId": "req-test",
+    }
+
+
+def test_provider_error_details_extracts_wrapped_provider_payload() -> None:
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+    response = httpx.Response(
+        400,
+        json={"error": {"message": "unsupported tool_choice"}},
+        headers={"x-request-id": "req-chat"},
+        request=request,
+    )
+    provider_exc = httpx.HTTPStatusError("bad request", request=request, response=response)
+
+    try:
+        raise RuntimeError("chat failed") from provider_exc
+    except RuntimeError as exc:
+        assert provider_error_details(exc) == {
+            "providerStatus": 400,
+            "providerMessage": "unsupported tool_choice",
+            "requestId": "req-chat",
+        }
+
+
+def test_generate_pet_job_records_provider_failure(monkeypatch, caplog, tmp_path) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=False,
+            openai_api_key=None,
+            openrouter_api_key="test-openrouter-key",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.AI_FAILURE_LOG_PATH",
+        tmp_path / "ai-failures.jsonl",
+    )
+    caplog.set_level(logging.ERROR, logger="app.routers.tma")
+
+    def fail_generate(_description: str):
+        request = httpx.Request("POST", "https://openrouter.ai/api/v1/images")
+        response = httpx.Response(
+            400,
+            json={"error": {"message": "unsupported image model"}},
+            headers={"x-request-id": "req-job"},
+            request=request,
+        )
+        raise httpx.HTTPStatusError("bad request", request=request, response=response)
+
+    monkeypatch.setattr("app.routers.tma.generate_pet_asset_set", fail_generate)
+    client = tma_client()
+
+    response = client.post("/api/generate-pet", json={"description": "дракон"})
+
+    assert response.status_code == 202
+    job = wait_for_generation_job(client, response.json()["jobId"])
+    assert job["status"] == "failed"
+    assert job["error"] == {
+        "code": "OPENAI_BAD_REQUEST",
+        "error": "generation_failed",
+        "message": "Не удалось создать питомца. Попробуйте еще раз.",
+        "providerStatus": 400,
+        "providerMessage": "unsupported image model",
+        "requestId": "req-job",
+    }
+    assert any(
+        "AI request failed" in record.message
+        and '"endpoint": "/api/generate-pet"' in record.message
+        and '"requestId": "req-job"' in record.message
+        for record in caplog.records
+    )
+    failure_log = (tmp_path / "ai-failures.jsonl").read_text()
+    assert '"requestId": "req-job"' in failure_log
+    assert f'"jobId": "{response.json()["jobId"]}"' in failure_log
 
     app.dependency_overrides.clear()
 
@@ -514,10 +458,151 @@ def test_extract_lite_facts_returns_overlay_patch(monkeypatch) -> None:
     app.dependency_overrides.clear()
 
 
+def test_memory_extract_endpoint_returns_operations(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+    )
+
+    def fake_extract(_payload):
+        return MemoryExtractionResponse(
+            operations=[
+                {
+                    "type": "remember_user_fact",
+                    "kind": "deadline",
+                    "text": "У пользователя завтра экзамен.",
+                    "normalizedKey": "exam",
+                    "confidence": 0.9,
+                    "importance": 0.9,
+                    "dueAt": "2026-07-07T09:00:00+03:00",
+                }
+            ]
+        )
+
+    monkeypatch.setattr("app.routers.tma.extract_user_memory_operations", fake_extract)
+    client = tma_client()
+
+    response = client.post(
+        "/api/chat/memory-extract",
+        json={
+            "message": "У меня завтра экзамен",
+            "reply": "Я буду рядом.",
+            "pet": {
+                "name": "Громм",
+                "description": "гигантский земляной великан",
+                "stage": "adult",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 70,
+                    "energy": 60,
+                    "cleanliness": 90,
+                },
+            },
+            "history": [],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["operations"][0]["type"] == "remember_user_fact"
+    assert payload["operations"][0]["kind"] == "deadline"
+
+    app.dependency_overrides.clear()
+
+
+def test_memory_consolidate_endpoint_returns_operations(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+    )
+
+    def fake_consolidate(_payload):
+        return MemoryConsolidationResponse(
+            operations=[
+                {
+                    "type": "rewrite_summary",
+                    "content": "Пользователь готовится к экзамену.",
+                }
+            ]
+        )
+
+    monkeypatch.setattr("app.routers.tma.consolidate_user_memory", fake_consolidate)
+    client = tma_client()
+
+    response = client.post(
+        "/api/chat/memory-consolidate",
+        json={
+            "pendingLearnings": [],
+            "existingMemories": [],
+            "summary": "",
+            "userProfile": "",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["operations"][0]["type"] == "rewrite_summary"
+
+    app.dependency_overrides.clear()
+
+
+def test_proactive_endpoint_returns_reply(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+    )
+
+    def fake_proactive(_payload):
+        return LocalProactiveResponse(reply="Ну что, как экзамен?", faceHint="curious")
+
+    monkeypatch.setattr("app.routers.tma.generate_proactive_pet_message", fake_proactive)
+    client = tma_client()
+
+    response = client.post(
+        "/api/chat/proactive",
+        json={
+            "pet": {
+                "name": "Громм",
+                "description": "гигантский земляной великан",
+                "stage": "adult",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 70,
+                    "energy": 60,
+                    "cleanliness": 90,
+                },
+            },
+            "memoryContext": {
+                "relevantMemories": [
+                    {
+                        "id": "m1",
+                        "kind": "deadline",
+                        "text": "У пользователя сегодня экзамен.",
+                    }
+                ],
+                "proactiveCandidate": {
+                    "memoryIds": ["m1"],
+                    "reason": "у пользователя сегодня экзамен",
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"reply": "Ну что, как экзамен?", "faceHint": "curious"}
+
+    app.dependency_overrides.clear()
+
+
 def test_generation_rate_limit(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
-        lambda: SimpleNamespace(enable_in_memory_rate_limit=True),
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=True,
+            openai_api_key=None,
+            openrouter_api_key="test-openrouter-key",
+        ),
     )
     monkeypatch.setattr(
         "app.routers.tma.generate_pet_asset_set",
@@ -552,7 +637,7 @@ def test_generation_rate_limit(monkeypatch) -> None:
     client = tma_client()
 
     for _ in range(3):
-        assert client.post("/api/generate-pet", json={"description": "дракон"}).status_code == 200
+        assert client.post("/api/generate-pet", json={"description": "дракон"}).status_code == 202
 
     response = client.post("/api/generate-pet", json={"description": "дракон"})
 

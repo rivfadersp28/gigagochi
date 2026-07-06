@@ -24,11 +24,9 @@ from openai import (
 from PIL import Image, ImageFilter
 
 from app.config import get_settings
-from app.db import SessionLocal
-from app.models import Pet
 from app.prompts.pet_image_prompts import (
     build_character_bible_prompt,
-    build_pet_single_sprite_prompt,
+    build_pet_state_strip_prompt,
     create_lore_seed,
 )
 from app.prompts.style_direction import CHARACTER_BIBLE_STYLE_DIRECTION
@@ -37,18 +35,28 @@ from app.prompts.world_description_anchors import (
     format_world_description_anchors_for_prompt,
     select_world_description_anchors,
 )
-from app.services.birth_message_service import ensure_birth_message
 from app.services.character_cards import upgrade_character_bible_v2
-from app.services.character_templates import create_character_bible_from_template
 from app.services.external_character_sources import (
     ExternalSourceFragment,
     external_fragments_prompt_block,
     select_external_character_fragments,
 )
-from app.services.game_service import calculate_stage
 from app.services.lite_initial_overlay import attach_lite_initial_overlay
-from app.services.openai_service import MissingOpenAIAPIKey, get_openai_client
-from app.services.pet_service import upsert_pet_image
+from app.services.openai_service import (
+    get_ai_api_key,
+    get_chat_model,
+    get_image_model,
+    get_openai_client,
+    get_openrouter_headers,
+    get_openrouter_image_url,
+    is_openrouter_provider,
+)
+from app.services.prompt_debug import (
+    log_chat_completion_prompt,
+    log_chat_completion_response,
+    log_image_generation_prompt,
+    log_image_generation_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -693,6 +701,7 @@ def character_bible_quality_issues(
 def _character_bible_completion(
     client: Any,
     settings: Any,
+    label: str,
     messages: list[dict[str, str]],
 ) -> dict[str, Any]:
     timeout = getattr(
@@ -700,10 +709,10 @@ def _character_bible_completion(
         "openai_character_timeout_seconds",
         settings.openai_chat_timeout_seconds,
     )
-    completion = client.chat.completions.create(
-        model=settings.openai_chat_model,
-        messages=messages,
-        response_format={
+    request_kwargs = {
+        "model": get_chat_model(settings),
+        "messages": messages,
+        "response_format": {
             "type": "json_schema",
             "json_schema": {
                 "name": "character_bible",
@@ -711,8 +720,11 @@ def _character_bible_completion(
                 "strict": True,
             },
         },
-        timeout=timeout,
-    )
+        "timeout": timeout,
+    }
+    log_chat_completion_prompt(label, request_kwargs)
+    completion = client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response(label, completion)
     content = completion.choices[0].message.content or "{}"
     return json.loads(content)
 
@@ -791,6 +803,17 @@ CURRENT_CHARACTER_BIBLE:
 
 STAGE_ROWS = ("baby", "teen", "adult")
 STATE_COLUMNS = ("idle", "happy", "sad", "hungry")
+FAST_GENERATION_STAGE = "teen"
+FAST_GENERATION_STATES = ("idle", "happy", "sad")
+FAST_GENERATION_SKINS = tuple(
+    (FAST_GENERATION_STAGE, state) for state in FAST_GENERATION_STATES
+)
+FAST_GENERATION_STATE_FALLBACKS = {
+    "idle": ("teen", "idle"),
+    "happy": ("teen", "happy"),
+    "sad": ("teen", "sad"),
+    "hungry": ("teen", "sad"),
+}
 SPRITE_FOREGROUND_DISTANCE = 28
 SPRITE_COMPONENT_DILATION_PX = 25
 SPRITE_SEARCH_PADDING_X_RATIO = 0.2
@@ -984,6 +1007,39 @@ def extract_sprite_cells(image: Image.Image) -> dict[tuple[str, str], Image.Imag
     return cell_images
 
 
+def extract_state_strip_cells(
+    image: Image.Image,
+    *,
+    stage: str = FAST_GENERATION_STAGE,
+) -> dict[tuple[str, str], Image.Image]:
+    normalized = image.convert("RGBA")
+    cell_width = normalized.width // len(FAST_GENERATION_STATES)
+    cell_height = normalized.height
+    output_side = min(cell_width, cell_height)
+    cell_images: dict[tuple[str, str], Image.Image] = {}
+    background_pixel = background_pixel_for(normalized)
+
+    for col, state in enumerate(FAST_GENERATION_STATES):
+        left = col * cell_width
+        right = normalized.width if col == len(FAST_GENERATION_STATES) - 1 else left + cell_width
+        cell_box = (left, 0, right, cell_height)
+        content_bbox = foreground_component_bbox(normalized, cell_box)
+        if content_bbox is None:
+            crop = normalized.crop(cell_box)
+            if crop.size != (output_side, output_side):
+                crop = crop.resize((output_side, output_side), Image.Resampling.LANCZOS)
+        else:
+            crop = normalize_sprite_cell(
+                normalized,
+                content_bbox,
+                (output_side, output_side),
+                background_pixel,
+            )
+        cell_images[(stage, state)] = crop
+
+    return cell_images
+
+
 def _attach_external_source_trace(
     character_bible: dict[str, Any],
     fragments: tuple[ExternalSourceFragment, ...],
@@ -1043,6 +1099,7 @@ def create_character_bible(
     character_bible = _character_bible_completion(
         client,
         settings,
+        "pet_creation/character_bible",
         [
             system_message,
             {
@@ -1075,6 +1132,7 @@ def create_character_bible(
     repaired = _character_bible_completion(
         client,
         settings,
+        "pet_creation/character_bible_repair",
         [
             system_message,
             {
@@ -1103,7 +1161,7 @@ def create_character_bible(
 
 def build_image_generate_kwargs(settings: Any, prompt: str) -> dict[str, Any]:
     return {
-        "model": settings.openai_image_model,
+        "model": get_image_model(settings),
         "prompt": prompt,
         "size": settings.openai_image_size,
         "quality": settings.openai_image_quality,
@@ -1113,23 +1171,71 @@ def build_image_generate_kwargs(settings: Any, prompt: str) -> dict[str, Any]:
     }
 
 
-def generate_image_bytes(prompt: str) -> bytes:
-    settings = get_settings()
-    client = get_openai_client()
-    kwargs = build_image_generate_kwargs(settings, prompt)
-    response = client.images.generate(**kwargs)
-    first = response.data[0]
-    b64_json = getattr(first, "b64_json", None)
+def _image_result_bytes(first: Any) -> bytes:
+    b64_json = (
+        first.get("b64_json")
+        if isinstance(first, dict)
+        else getattr(first, "b64_json", None)
+    )
     if b64_json:
         return base64.b64decode(b64_json)
 
-    image_url = getattr(first, "url", None)
+    image_url = first.get("url") if isinstance(first, dict) else getattr(first, "url", None)
     if image_url:
         download = httpx.get(image_url, timeout=60)
         download.raise_for_status()
         return download.content
 
     raise RuntimeError("IMAGE_RESPONSE_EMPTY")
+
+
+def _generate_openrouter_image_bytes(settings: Any, prompt: str) -> bytes:
+    kwargs = build_image_generate_kwargs(settings, prompt)
+    request_body = {
+        key: value
+        for key, value in kwargs.items()
+        if key != "timeout" and value is not None
+    }
+    headers = {
+        "Authorization": f"Bearer {get_ai_api_key(settings)}",
+        "Content-Type": "application/json",
+        **get_openrouter_headers(settings),
+    }
+    response = httpx.post(
+        get_openrouter_image_url(settings),
+        headers=headers,
+        json=request_body,
+        timeout=settings.openai_image_timeout_seconds,
+    )
+    response.raise_for_status()
+    response_payload = response.json()
+    log_image_generation_response(
+        "pet_creation/image",
+        kwargs,
+        response_payload,
+        headers=getattr(response, "headers", None),
+    )
+    data = response_payload.get("data") or []
+    if not data:
+        raise RuntimeError("IMAGE_RESPONSE_EMPTY")
+    return _image_result_bytes(data[0])
+
+
+def generate_image_bytes(prompt: str) -> bytes:
+    settings = get_settings()
+    log_image_generation_prompt(
+        "pet_creation/image",
+        build_image_generate_kwargs(settings, prompt),
+    )
+    if is_openrouter_provider(settings):
+        return _generate_openrouter_image_bytes(settings, prompt)
+
+    client = get_openai_client()
+    kwargs = build_image_generate_kwargs(settings, prompt)
+    response = client.images.generate(**kwargs)
+    response_payload = response.model_dump() if hasattr(response, "model_dump") else {}
+    log_image_generation_response("pet_creation/image", kwargs, response_payload)
+    return _image_result_bytes(response.data[0])
 
 
 def generate_sprite_sheet_bytes(prompt: str) -> bytes:
@@ -1176,19 +1282,19 @@ def generate_individual_sprite_paths(
     output_dir = generated_dir_for(asset_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_paths: dict[tuple[str, str], tuple[Path, str]] = {}
+    prompt = build_pet_state_strip_prompt(
+        description,
+        character_bible,
+        stage=FAST_GENERATION_STAGE,
+    )
+    strip_bytes = generate_image_bytes(prompt)
+    with Image.open(BytesIO(strip_bytes)) as strip_image:
+        cell_images = extract_state_strip_cells(strip_image, stage=FAST_GENERATION_STAGE)
 
-    for stage in STAGE_ROWS:
-        for state in STATE_COLUMNS:
-            prompt = build_pet_single_sprite_prompt(
-                description,
-                character_bible,
-                stage=stage,
-                state=state,
-            )
-            image_bytes = generate_single_sprite_image_bytes(prompt)
-            path = output_dir / f"{stage}-{state}.png"
-            path.write_bytes(image_bytes)
-            output_paths[(stage, state)] = (path, prompt)
+    for stage, state in FAST_GENERATION_SKINS:
+        path = output_dir / f"{stage}-{state}.png"
+        cell_images[(stage, state)].save(path, format="PNG")
+        output_paths[(stage, state)] = (path, prompt)
 
     return output_paths
 
@@ -1206,19 +1312,10 @@ def crop_sprite_sheet(pet_id: uuid.UUID, sprite_path: Path) -> dict[tuple[str, s
     return output_paths
 
 
-def mark_generation_failed(pet_id: uuid.UUID, code: str) -> None:
-    with SessionLocal() as db:
-        pet = db.get(Pet, pet_id)
-        if pet is None:
-            return
-        pet.status = "failed"
-        pet.generation_error = code
-        db.add(pet)
-        db.commit()
-
-
 def generation_error_code(exc: Exception) -> str:
     if isinstance(exc, APITimeoutError):
+        return "OPENAI_TIMEOUT"
+    if isinstance(exc, httpx.TimeoutException):
         return "OPENAI_TIMEOUT"
     if isinstance(exc, AuthenticationError):
         return "OPENAI_AUTH_FAILED"
@@ -1226,6 +1323,17 @@ def generation_error_code(exc: Exception) -> str:
         return "OPENAI_PERMISSION_DENIED"
     if isinstance(exc, RateLimitError):
         return "OPENAI_RATE_LIMIT"
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        if status_code == 401:
+            return "OPENAI_AUTH_FAILED"
+        if status_code == 403:
+            return "OPENAI_PERMISSION_DENIED"
+        if status_code == 429:
+            return "OPENAI_RATE_LIMIT"
+        if status_code == 400:
+            return "OPENAI_BAD_REQUEST"
+        return f"OPENAI_STATUS_{status_code}"
     if isinstance(exc, BadRequestError):
         message = str(exc).lower()
         if any(term in message for term in ("safety", "policy", "moderation", "rejected")):
@@ -1240,74 +1348,24 @@ def generation_error_code(exc: Exception) -> str:
     return "GENERATION_FAILED"
 
 
-def generate_pet_assets(pet_id: uuid.UUID) -> None:
-    with SessionLocal() as db:
-        pet = db.get(Pet, pet_id)
-        if pet is None:
-            return
-
-        try:
-            character_bible = create_character_bible(pet.original_description)
-            pet.character_profile_json = character_bible
-            pet.current_stage = calculate_stage(pet.created_at)
-            db.add(pet)
-            db.commit()
-
-            generated_paths = generate_individual_sprite_paths(
-                pet.id,
-                pet.original_description,
-                character_bible,
-            )
-
-            for (stage, state), (path, prompt) in generated_paths.items():
-                version = int(path.stat().st_mtime)
-                upsert_pet_image(
-                    db,
-                    pet_id=pet.id,
-                    stage=stage,
-                    state=state,
-                    image_url=f"/static/generated/{pet.id}/{path.name}?v={version}",
-                    generation_prompt=prompt,
-                )
-
-            pet.status = "ready"
-            pet.generation_error = None
-            db.add(pet)
-            ensure_birth_message(db, pet)
-            db.commit()
-        except MissingOpenAIAPIKey:
-            db.rollback()
-            mark_generation_failed(pet_id, "MISSING_OPENAI_API_KEY")
-        except Exception as exc:
-            db.rollback()
-            code = generation_error_code(exc)
-            logger.exception("Pet asset generation failed for %s with %s", pet_id, code)
-            mark_generation_failed(pet_id, code)
-
-
-def generate_pet_asset_set(
-    description: str,
-    *,
-    use_template_presets: bool = False,
-) -> dict[str, Any]:
+def generate_pet_asset_set(description: str) -> dict[str, Any]:
     asset_set_id = uuid.uuid4()
     output_dir = generated_dir_for(asset_set_id)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    character_bible = (
-        attach_lite_initial_overlay(
-            create_character_bible_from_template(description),
-            description,
-        )
-        if use_template_presets
-        else create_character_bible(description)
-    )
+    character_bible = create_character_bible(description)
     generated_paths = generate_individual_sprite_paths(asset_set_id, description, character_bible)
     version = int(datetime.now(UTC).timestamp())
 
+    generated_urls = {
+        key: f"/static/generated/{asset_set_id}/{path.name}?v={version}"
+        for key, (path, _prompt) in generated_paths.items()
+    }
     images: dict[str, dict[str, str]] = {stage: {} for stage in STAGE_ROWS}
-    for (stage, state), (path, _prompt) in generated_paths.items():
-        images[stage][state] = f"/static/generated/{asset_set_id}/{path.name}?v={version}"
+    for stage in STAGE_ROWS:
+        for state in STATE_COLUMNS:
+            source_key = FAST_GENERATION_STATE_FALLBACKS[state]
+            images[stage][state] = generated_urls[source_key]
 
     return {
         "assetSetId": str(asset_set_id),

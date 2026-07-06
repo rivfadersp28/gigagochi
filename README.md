@@ -15,7 +15,7 @@ Telegram Mini App MVP for the AI Tamagotchi core loop:
 - Backend: FastAPI, SQLAlchemy, Alembic
 - Persistence: frontend `localStorage` for MVP
 - Database: PostgreSQL remains for legacy routes and post-MVP persistence
-- AI: OpenAI Chat and Image APIs
+- AI: OpenRouter for chat/image model routing, with optional OpenAI fallback
 
 ## MVP Notes
 
@@ -59,11 +59,17 @@ Fill `backend/.env` with keys before real AI/Telegram checks:
 
 ```env
 BOT_TOKEN=
-OPENAI_API_KEY=
+AI_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-...
+OPENROUTER_CHAT_MODEL=~openai/gpt-latest
+OPENROUTER_IMAGE_MODEL=bytedance-seed/seedream-4.5
 WEBAPP_URL=http://localhost:3000
-BACKEND_PUBLIC_URL=http://127.0.0.1:8000
+BACKEND_PUBLIC_URL=http://localhost:3000
 ALLOW_DEV_TMA_AUTH=true
 ```
+
+To temporarily use direct OpenAI again, set `AI_PROVIDER=openai` and fill `OPENAI_API_KEY`,
+`OPENAI_CHAT_MODEL`, and `OPENAI_IMAGE_MODEL`.
 
 For production, set `ALLOW_DEV_TMA_AUTH=false`.
 
@@ -91,6 +97,31 @@ Open:
 - Frontend: http://localhost:3000
 - Backend health: http://localhost:8000/health
 
+Telegram Mini App local launch uses one HTTPS frontend tunnel. Keep backend local and let Next
+proxy same-origin requests:
+
+```bash
+cd frontend
+NEXT_PUBLIC_API_URL= npm run dev -- --hostname 0.0.0.0
+
+cloudflared tunnel --url http://localhost:3000 --no-autoupdate
+```
+
+Put the generated `https://*.trycloudflare.com` URL in:
+
+```env
+# backend/.env
+WEBAPP_URL=https://your-tunnel.trycloudflare.com
+BACKEND_PUBLIC_URL=https://your-tunnel.trycloudflare.com
+CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000","https://your-tunnel.trycloudflare.com"]
+
+# frontend/.env.local
+NEXT_PUBLIC_API_URL=
+```
+
+Do not point `NEXT_PUBLIC_API_URL` at `127.0.0.1` for Telegram testing: inside Telegram that would
+mean the user's device, not your backend.
+
 ## Telegram Bot
 
 Run the minimal polling bot after `BOT_TOKEN` and `WEBAPP_URL` are set:
@@ -107,8 +138,8 @@ Commands:
 - `/app` sends the Mini App button again.
 - `/help` sends a short help message.
 
-For Telegram WebView development without a domain, expose the frontend through a temporary HTTPS
-tunnel and put that URL in `WEBAPP_URL` and BotFather/menu button settings.
+For Telegram WebView development without a domain, expose the frontend through the temporary HTTPS
+tunnel above and put that URL in `WEBAPP_URL`, BotFather, and/or the bot menu button.
 
 ## Docker Compose
 

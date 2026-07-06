@@ -6,20 +6,24 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-OpenAIReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+AIProvider = Literal["openai", "openrouter"]
+OpenAIReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+psycopg://tamagotchi:tamagotchi@localhost:5432/tamagotchi"
     bot_token: str | None = None
     webapp_url: str | None = None
     backend_public_url: str | None = None
     allow_dev_tma_auth: bool = False
-    enable_admin_generation_lab: bool = False
-    admin_generation_lab_token: str | None = None
     enable_in_memory_rate_limit: bool = True
-    generated_assets_storage: str = "local"
     telegram_init_data_max_age_seconds: int = 60 * 60 * 24
+    ai_provider: AIProvider = "openrouter"
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_chat_model: str = "~openai/gpt-latest"
+    openrouter_image_model: str = "bytedance-seed/seedream-4.5"
+    openrouter_site_url: str | None = None
+    openrouter_app_title: str = "AI Tamagotchi Telegram Mini App"
     openai_api_key: str | None = None
     openai_chat_model: str = "gpt-5.5"
     openai_image_model: str = "gpt-image-2"
@@ -31,10 +35,6 @@ class Settings(BaseSettings):
     openai_chat_timeout_seconds: float = 90
     openai_image_timeout_seconds: float = 180
     openai_max_retries: int = 0
-    hunger_decay_per_min: float = 0.25
-    mood_decay_per_min: float = 0.15
-    baby_duration_hours: float = 24
-    teen_duration_hours: float = 72
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
     )

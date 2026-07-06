@@ -7,8 +7,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.config import get_settings
-from app.services.openai_service import chat_reasoning_effort_kwargs, get_openai_client
-from app.services.prompt_debug import log_chat_completion_prompt
+from app.services.openai_service import (
+    chat_reasoning_effort_kwargs,
+    get_chat_model,
+    get_openai_client,
+)
+from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +60,7 @@ def _completion_text(
         settings.openai_chat_timeout_seconds,
     )
     request_kwargs: dict[str, Any] = {
-        "model": settings.openai_chat_model,
+        "model": get_chat_model(settings),
         "messages": messages,
         "timeout": timeout,
         **chat_reasoning_effort_kwargs(
@@ -65,6 +69,7 @@ def _completion_text(
     }
     log_chat_completion_prompt(label, request_kwargs)
     completion = client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response(label, completion)
     text = _compact_spaces(completion.choices[0].message.content or "")
     return text[:MAX_INITIAL_LITE_TEXT_CHARS]
 

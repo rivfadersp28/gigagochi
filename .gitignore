@@ -20,5 +20,6 @@ build/
 
 public/generated/
 backend/static/generated/
+backend/logs/
 backend/data/calibration/*.jsonl
 /speech_*.wav

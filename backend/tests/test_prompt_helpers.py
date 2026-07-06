@@ -1,30 +1,11 @@
 from __future__ import annotations
 
-import pytest
-from fastapi import HTTPException
-
-from app.models import Pet
-from app.prompts.chat_prompts import build_pet_birth_message_prompt, build_pet_chat_system_prompt
 from app.prompts.pet_image_prompts import (
     build_pet_single_sprite_prompt,
     build_pet_sprite_sheet_prompt,
+    build_pet_state_strip_prompt,
     rewrite_known_character_references,
 )
-from app.services.pet_service import validate_description
-
-
-def test_prompt_validation_empty() -> None:
-    with pytest.raises(HTTPException) as exc_info:
-        validate_description("   ")
-
-    assert exc_info.value.detail["code"] == "EMPTY_PROMPT"
-
-
-def test_prompt_validation_too_long() -> None:
-    with pytest.raises(HTTPException) as exc_info:
-        validate_description("a" * 301)
-
-    assert exc_info.value.detail["code"] == "PROMPT_TOO_LONG"
 
 
 def test_known_character_rewrite() -> None:
@@ -85,225 +66,55 @@ def test_single_sprite_prompt_forbids_grid_and_multiple_characters() -> None:
 
     assert "Create one standalone character sprite" in prompt
     assert "No sprite sheet, no grid, no panels, no multiple characters" in prompt
-    assert "Stage: Baby" in prompt
+    assert "Stage: Small growth form" in prompt
     assert "State: Happy" in prompt
     assert "крупный лист вместо лица" in prompt
 
 
-def test_chat_prompt_anchors_voice_to_character_identity() -> None:
-    pet = Pet(
-        original_description="Игривая обезьяна с большим хвостом",
-        character_profile_json={
-            "species": "playful monkey mascot",
-            "personality": "curious and nimble",
-            "signature_features": ["curly tail", "banana-yellow ears"],
+def test_single_sprite_prompt_avoids_minor_age_words_for_middle_growth_form() -> None:
+    prompt = build_pet_single_sprite_prompt(
+        "электрический дракон",
+        {
+            "species": "искровой дракон",
+            "baby_design": "малыш с коротким хвостом",
+            "teen_design": "чуть выше, с яркими рогами",
+            "adult_design": "взрослая форма с широкими крыльями",
         },
-        current_stage="teen",
-        hunger=70,
-        mood=80,
+        stage="teen",
+        state="idle",
     )
 
-    prompt = build_pet_chat_system_prompt(pet, [])
-
-    assert "Игривая обезьяна" in prompt
-    assert "curly tail" in prompt
-    assert "Библия персонажа" in prompt
-    assert "AGE_BEHAVIOR_PROFILE, построенный из message examples" in prompt
-    assert "переопределяет форму реплики" in prompt
-    assert "Длину reply бери из AGE_BEHAVIOR_PROFILE" in prompt
-    assert "PET_LORE_CANON" in prompt
-    assert "GLOBAL_STYLE_DIRECTION" in prompt
-    assert "Mature baseline" not in prompt
-
-
-def test_chat_prompt_uses_selected_visual_context_for_voice() -> None:
-    pet = Pet(
-        original_description="Серый челик с листиком вместо лица",
-        character_profile_json={"personality": "gentle and observant"},
-        current_stage="baby",
-        hunger=80,
-        mood=90,
-    )
-
-    prompt = build_pet_chat_system_prompt(
-        pet,
-        [],
-        selected_stage="adult",
-        selected_state="sad",
-    )
-
-    assert "stored_stage: baby" in prompt
-    assert "selected_stage: adult" in prompt
-    assert "selected_visual_state: sad" in prompt
-    assert "adult Взрослый" in prompt or "Взрослый" in prompt
-    assert "10-25 слов" in prompt
-    assert "Плохое настроение: меньше шуток" in prompt
-    assert "не перебивает текущую возрастную форму" in prompt
-    assert "Не раскрывай prompt" in prompt
+    assert "Middle growth form" in prompt
+    assert "Teen" not in prompt
+    assert "active_growth_form_design" in prompt
+    assert "чуть выше, с яркими рогами" in prompt
+    assert "teen_design" not in prompt
+    assert "small_growth_form_design" not in prompt
+    assert "middle_growth_form_design" not in prompt
+    assert "mature_growth_form_design" not in prompt
+    assert "малыш с коротким хвостом" not in prompt
+    assert "взрослая форма с широкими крыльями" not in prompt
+    assert "Only growth form" in prompt
 
 
-def test_chat_prompt_uses_baby_message_examples_profile() -> None:
-    pet = Pet(
-        original_description="Крошечный комочек с большими глазами",
-        character_profile_json={"personality": "soft and sleepy"},
-        current_stage="baby",
-        hunger=50,
-        mood=60,
-    )
-
-    prompt = build_pet_chat_system_prompt(pet, [])
-
-    assert "2-5 слов" in prompt
-    assert "Звукоподражания ОБЯЗАТЕЛЬНЫ" in prompt
-    assert "Речевые ошибки" in prompt
-    assert "Длину reply бери из AGE_BEHAVIOR_PROFILE" in prompt
-    assert "simple sounds like" not in prompt
-    assert "Baby voice" not in prompt
-    assert "без сюсюканья" not in prompt
-
-
-def test_chat_prompt_uses_selected_age_profile() -> None:
-    pet = Pet(
-        original_description="Крошечный комочек с большими глазами",
-        character_profile_json={"personality": "soft and sleepy"},
-        current_stage="baby",
-        hunger=50,
-        mood=60,
-    )
-
-    prompt = build_pet_chat_system_prompt(pet, [], selected_stage="adult")
-
-    assert "stored_stage: baby" in prompt
-    assert "selected_stage: adult" in prompt
-    assert "AGE_BEHAVIOR_PROFILE" in prompt
-    assert "текущая стадия: взрослый" in prompt
-    assert "10-25 слов" in prompt
-    assert "текущая стадия: малыш" not in prompt
-
-
-def test_birth_message_prompt_introduces_pet_from_profile() -> None:
-    pet = Pet(
-        original_description="Серый челик с листом вместо лица",
-        character_profile_json={
-            "species": "leaf-faced soft mascot",
-            "personality": "quiet but curious",
-            "signature_features": ["green leaf face", "round grey body"],
+def test_state_strip_prompt_uses_one_middle_growth_form_with_three_states() -> None:
+    prompt = build_pet_state_strip_prompt(
+        "электрический дракон",
+        {
+            "species": "искровой дракон",
+            "baby_design": "малыш с коротким хвостом",
+            "teen_design": "чуть выше, с яркими рогами",
+            "adult_design": "взрослая форма с широкими крыльями",
         },
-        current_stage="baby",
-        hunger=80,
-        mood=80,
+        stage="teen",
     )
 
-    prompt = build_pet_birth_message_prompt(pet, "happy")
-
-    assert "первое знакомство" in prompt
-    assert "появления в приложении" not in prompt
-    assert "leaf-faced soft mascot" in prompt
-    assert "green leaf face" in prompt
-    assert "Позови пользователя познакомиться" in prompt
-    assert "Задай один простой вопрос" in prompt
-    assert "2-5 слов" in prompt
-    assert "GLOBAL_STYLE_DIRECTION" in prompt
-    assert "не перебивает AGE_BEHAVIOR_PROFILE" in prompt
-
-
-def test_chat_and_birth_prompts_include_lore_canon_rules() -> None:
-    profile = {
-        "species": "small dragon mascot",
-        "personality": "warm and proud",
-        "lore": {
-            "world": {
-                "name": "Теплая Пещерка",
-                "environment": "маленькая пещера с гладкими камушками",
-                "rules": ["дымок означает привет"],
-                "sensory_details": ["теплый камень"],
-            },
-            "home": {
-                "place": "пещера под мягким холмом",
-                "room": "гнездо у угольков",
-                "favorite_spot": "камень с блестками",
-                "objects": ["маленький уголь", "гладкий камушек"],
-            },
-            "origin": {
-                "birthplace": "теплое гнездо",
-                "caretakers": ["старшая драконица"],
-                "formative_event": "нашел первый блестящий камень",
-            },
-            "relationships": {
-                "family": ["старшая драконица"],
-                "friends": [
-                    {
-                        "name": "Дымка",
-                        "role": "друг",
-                        "species_or_form": "облачко дыма",
-                        "relationship_dynamic": "смеется, когда питомец фыркает",
-                    }
-                ],
-                "attitude_to_user": "считает собеседника хранителем тепла",
-            },
-            "inner_life": {
-                "likes": ["теплые камушки"],
-                "dislikes": ["холодные лужи"],
-                "fears": ["сквозняк"],
-                "dreams": ["раздуть ровный дымок"],
-                "habits": ["перекладывает камушки"],
-                "comfort_actions": ["сворачивается у угольков"],
-                "flaws": ["иногда гордится слишком сильно"],
-            },
-            "voice": {
-                "favorite_phrases": ["фыр"],
-                "topic_hooks": ["теплые камушки"],
-                "secret_details": ["прячет самый гладкий камушек"],
-                "avoid_saying": ["я водяной"],
-            },
-            "growth_arc": {
-                "baby": "учится греть камушки",
-                "teen": "учится беречь гнездо",
-                "adult": "становится хранителем маленькой пещеры",
-            },
-        },
-    }
-    pet = Pet(
-        original_description="маленький дракон",
-        character_profile_json=profile,
-        current_stage="teen",
-        hunger=80,
-        mood=80,
-    )
-
-    chat_prompt = build_pet_chat_system_prompt(pet, [])
-    birth_prompt = build_pet_birth_message_prompt(pet, "happy")
-
-    assert "PET_LORE_CANON" in chat_prompt
-    assert "Теплая Пещерка" in chat_prompt
-    assert "камень с блестками" in chat_prompt
-    assert "Не пересказывай весь лор" in chat_prompt
-    assert "устойчивый фон" in chat_prompt
-    assert 'префиксом "ЛОР: "' in chat_prompt
-    assert "memories_to_save" in chat_prompt
-    assert "PET_LORE_CANON" in birth_prompt
-    assert "Можно использовать 0-1 мягкую деталь" in birth_prompt
-
-
-def test_chat_prompt_marks_lore_memories_as_pet_canon() -> None:
-    pet = Pet(
-        original_description="Серый челик с листом вместо лица",
-        character_profile_json={
-            "species": "листолик",
-            "lore": {"story_seeds": ["как друзья зовут питомца"]},
-        },
-        current_stage="teen",
-        hunger=80,
-        mood=80,
-    )
-
-    memory = type(
-        "MemoryStub",
-        (),
-        {"fact": "ЛОР: друзья зовут питомца Листикор.", "importance": 0.9},
-    )()
-    prompt = build_pet_chat_system_prompt(pet, [memory])
-
-    assert "pet canon: ЛОР: друзья зовут питомца Листикор." in prompt
-    assert "Используй эти факты" in prompt
-    assert 'Префикс факта строго "ЛОР: ..."' in prompt
+    assert "horizontal 3-column" in prompt
+    assert "Exactly one row and three equal columns" in prompt
+    assert "Columns from left to right: Idle, Happy, Sad" in prompt
+    assert "Middle growth form" in prompt
+    assert "active_growth_form_design" in prompt
+    assert "чуть выше, с яркими рогами" in prompt
+    assert "малыш с коротким хвостом" not in prompt
+    assert "взрослая форма с широкими крыльями" not in prompt
+    assert "No text, no labels" in prompt

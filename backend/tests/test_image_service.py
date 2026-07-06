@@ -4,7 +4,6 @@ import base64
 import json
 from types import SimpleNamespace
 
-import pytest
 from PIL import Image, ImageDraw
 
 from app.prompts.pet_image_prompts import build_character_bible_prompt, create_lore_seed
@@ -21,6 +20,8 @@ from app.services.image_service import (
     character_bible_quality_issues,
     create_character_bible,
     extract_sprite_cells,
+    extract_state_strip_cells,
+    generate_image_bytes,
     generate_pet_asset_set,
     generate_sprite_sheet_bytes,
     generation_error_code,
@@ -41,6 +42,14 @@ def color_bbox(image: Image.Image, color: tuple[int, int, int, int]) -> tuple[in
     xs = [point[0] for point in points]
     ys = [point[1] for point in points]
     return min(xs), min(ys), max(xs) + 1, max(ys) + 1
+
+
+def png_bytes(image: Image.Image) -> bytes:
+    from io import BytesIO
+
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def test_extract_sprite_cells_selects_component_and_aligns_bottom_padding() -> None:
@@ -119,6 +128,26 @@ def test_extract_sprite_cells_preserves_opaque_background_pixels() -> None:
     assert baby_idle.getchannel("A").getextrema() == (255, 255)
 
 
+def test_extract_state_strip_cells_splits_horizontal_three_state_strip() -> None:
+    image = Image.new("RGBA", (300, 100), (255, 255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    idle_color = (20, 140, 70, 255)
+    happy_color = (220, 180, 40, 255)
+    sad_color = (40, 90, 190, 255)
+    draw.rectangle((30, 30, 70, 70), fill=idle_color)
+    draw.rectangle((130, 30, 170, 70), fill=happy_color)
+    draw.rectangle((230, 30, 270, 70), fill=sad_color)
+
+    cells = extract_state_strip_cells(image)
+
+    assert set(cells) == {("teen", "idle"), ("teen", "happy"), ("teen", "sad")}
+    assert cells[("teen", "idle")].size == (100, 100)
+    assert image_contains_color(cells[("teen", "idle")], idle_color)
+    assert image_contains_color(cells[("teen", "happy")], happy_color)
+    assert image_contains_color(cells[("teen", "sad")], sad_color)
+    assert not image_contains_color(cells[("teen", "idle")], happy_color)
+
+
 def test_generate_sprite_sheet_omits_unset_background(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -149,6 +178,113 @@ def test_generate_sprite_sheet_omits_unset_background(monkeypatch) -> None:
     assert result == b"image-bytes"
     assert "background" not in captured
     assert captured["timeout"] == 180
+
+
+def test_generate_image_bytes_uses_openrouter_image_endpoint(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "data": [
+                    {"b64_json": base64.b64encode(b"openrouter-image").decode()},
+                ]
+            }
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            ai_provider="openrouter",
+            openrouter_api_key="sk-or-test",
+            openrouter_base_url="https://openrouter.ai/api/v1",
+            openrouter_image_model="bytedance-seed/seedream-4.5",
+            openrouter_site_url="https://app.example",
+            openrouter_app_title="Test Tamagotchi",
+            backend_public_url=None,
+            webapp_url=None,
+            openai_image_size="1536x1152",
+            openai_image_quality="medium",
+            openai_image_output_format="png",
+            openai_image_timeout_seconds=180,
+        ),
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+
+    result = generate_image_bytes("sprite prompt")
+
+    assert result == b"openrouter-image"
+    assert captured["url"] == "https://openrouter.ai/api/v1/images"
+    assert captured["timeout"] == 180
+    assert captured["headers"] == {
+        "Authorization": "Bearer sk-or-test",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://app.example",
+        "X-OpenRouter-Title": "Test Tamagotchi",
+    }
+    assert captured["json"] == {
+        "model": "bytedance-seed/seedream-4.5",
+        "prompt": "sprite prompt",
+        "size": "1536x1152",
+        "quality": "medium",
+        "n": 1,
+        "output_format": "png",
+    }
+
+
+def test_generate_pet_asset_set_generates_only_three_teen_skins(monkeypatch, tmp_path) -> None:
+    generated_prompts: list[str] = []
+
+    monkeypatch.setattr(
+        "app.services.image_service.generated_dir_for",
+        lambda asset_id: tmp_path / str(asset_id),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.create_character_bible",
+        lambda _description: {"species": "дракончик"},
+    )
+
+    def fake_prompt(_description, _character_bible, *, stage):
+        return f"strip:{stage}"
+
+    def fake_image_bytes(prompt):
+        generated_prompts.append(prompt)
+        image = Image.new("RGBA", (300, 100), (255, 255, 255, 255))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((30, 30, 70, 70), fill=(20, 140, 70, 255))
+        draw.rectangle((130, 30, 170, 70), fill=(220, 180, 40, 255))
+        draw.rectangle((230, 30, 270, 70), fill=(40, 90, 190, 255))
+        return png_bytes(image)
+
+    monkeypatch.setattr("app.services.image_service.build_pet_state_strip_prompt", fake_prompt)
+    monkeypatch.setattr(
+        "app.services.image_service.generate_image_bytes",
+        fake_image_bytes,
+    )
+
+    result = generate_pet_asset_set("электрический дракон")
+
+    assert generated_prompts == ["strip:teen"]
+    assert sorted(path.name for path in next(tmp_path.iterdir()).iterdir()) == [
+        "teen-happy.png",
+        "teen-idle.png",
+        "teen-sad.png",
+    ]
+
+    images = result["images"]
+    for stage in ("baby", "teen", "adult"):
+        assert set(images[stage]) == {"idle", "happy", "hungry", "sad"}
+        assert "/teen-idle.png" in images[stage]["idle"]
+        assert "/teen-happy.png" in images[stage]["happy"]
+        assert "/teen-sad.png" in images[stage]["sad"]
+        assert "/teen-sad.png" in images[stage]["hungry"]
 
 
 def test_create_character_bible_uses_character_timeout(monkeypatch) -> None:
@@ -222,63 +358,6 @@ def test_character_bible_prompt_uses_world_description_anchors() -> None:
     assert "source_text_do_not_copy" in prompt
     assert "Do not copy source_text_do_not_copy" in prompt
     assert "world:waters-edge:" in prompt
-
-
-def test_generate_pet_asset_set_can_use_template_presets(monkeypatch, tmp_path) -> None:
-    captured: dict[str, object] = {"prompt_calls": []}
-
-    def fail_old_character_bible(_description):
-        pytest.fail("create_character_bible should not run in template preset mode")
-
-    def fake_build_single_sprite_prompt(description, character_bible, *, stage, state):
-        captured["prompt_calls"].append((description, character_bible, stage, state))
-        return f"sprite prompt {stage} {state}"
-
-    monkeypatch.setattr(
-        "app.services.image_service.generated_dir_for",
-        lambda asset_id: tmp_path / str(asset_id),
-    )
-    monkeypatch.setattr(
-        "app.services.image_service.create_character_bible",
-        fail_old_character_bible,
-    )
-    monkeypatch.setattr(
-        "app.services.image_service.create_character_bible_from_template",
-        lambda description: {"schema_version": 2, "species": "дракон"},
-    )
-    monkeypatch.setattr(
-        "app.services.image_service.attach_lite_initial_overlay",
-        lambda character_bible, description: character_bible,
-    )
-    monkeypatch.setattr(
-        "app.services.image_service.build_pet_single_sprite_prompt",
-        fake_build_single_sprite_prompt,
-    )
-    monkeypatch.setattr(
-        "app.services.image_service.generate_single_sprite_image_bytes",
-        lambda _prompt: b"png",
-    )
-    monkeypatch.setattr(
-        "app.services.image_service.crop_sprite_sheet",
-        lambda *_args: pytest.fail("sprite sheet crop should not run"),
-    )
-
-    result = generate_pet_asset_set(
-        "я хочу сделать дракона",
-        use_template_presets=True,
-    )
-
-    assert result["characterBible"]["species"] == "дракон"
-    assert result["spriteSheetUrl"] is None
-    assert len(captured["prompt_calls"]) == 12
-    assert captured["prompt_calls"][0] == (
-        "я хочу сделать дракона",
-        {"schema_version": 2, "species": "дракон"},
-        "baby",
-        "idle",
-    )
-    for stage in ("baby", "teen", "adult"):
-        assert set(result["images"][stage]) == {"idle", "happy", "hungry", "sad"}
 
 
 def test_generation_error_code_defaults_to_generic() -> None:

@@ -1,7 +1,21 @@
 import type { NextConfig } from "next";
 
+const backendUrl = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
+
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["obtaining-benchmark-transform-scoop.trycloudflare.com"],
+  allowedDevOrigins: ["*.trycloudflare.com"],
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: `${backendUrl}/api/:path*`,
+      },
+      {
+        source: "/static/:path*",
+        destination: `${backendUrl}/static/:path*`,
+      },
+    ];
+  },
   turbopack: {
     root: process.cwd(),
   },

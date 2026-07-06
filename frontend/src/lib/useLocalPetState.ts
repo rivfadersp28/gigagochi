@@ -5,18 +5,17 @@ import { useCallback, useEffect, useState } from "react";
 import {
   applyOfflineProgress,
   applyLiteOverlayPatch as applyStoredLiteOverlayPatch,
-  applyMemoryPatch,
   calculatePetMood,
   calculatePetStage,
   clearLocalChatHistory,
   createLocalPetState,
-  mergeLoreMemories,
   readLocalPetState,
   resetLocalPetState,
   withPetInteraction,
   writeLocalPetState,
 } from "./localPetStorage";
-import type { LocalPetAssetSet, LocalPetState, PetMemoryPatch, PetMood } from "./types";
+import { resetLocalPetMemory } from "./localPetMemoryStorage";
+import type { LocalPetAssetSet, LocalPetState, PetMood } from "./types";
 
 type LocalPetStateStatus = "loading" | "ready" | "empty" | "error";
 
@@ -31,8 +30,6 @@ type UseLocalPetStateResult = {
   applyGeneratedAssets: (assetSet: LocalPetAssetSet) => LocalPetState | null;
   applyMoodHint: (
     moodHint?: PetMood,
-    loreMemoriesToSave?: string[],
-    memoryPatch?: PetMemoryPatch,
     liteOverlayPatch?: Record<string, unknown>,
   ) => LocalPetState | null;
   applyLiteOverlayPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
@@ -115,11 +112,12 @@ export function useLocalPetState(): UseLocalPetStateResult {
   }, [pet]);
 
   const reset = useCallback(() => {
+    resetLocalPetMemory(pet?.petId);
     resetLocalPetState();
     setPet(null);
     setStatus("empty");
     setError(null);
-  }, []);
+  }, [pet?.petId]);
 
   const applyGeneratedAssets = useCallback((assetSet: LocalPetAssetSet) => {
     if (!pet) {
@@ -138,12 +136,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
     return nextPet;
   }, [pet]);
 
-  const applyMoodHint = useCallback((
-    moodHint?: PetMood,
-    loreMemoriesToSave?: string[],
-    memoryPatch?: PetMemoryPatch,
-    liteOverlayPatch?: Record<string, unknown>,
-  ) => {
+  const applyMoodHint = useCallback((moodHint?: PetMood, liteOverlayPatch?: Record<string, unknown>) => {
     if (!pet) {
       return null;
     }
@@ -160,8 +153,6 @@ export function useLocalPetState(): UseLocalPetStateResult {
       stage: calculatePetStage(pet.createdAt, now),
       mood: moodHint ?? calculatePetMood(stats),
       stats,
-      memory: applyMemoryPatch(pet.memory, memoryPatch),
-      loreMemories: mergeLoreMemories(pet.loreMemories, loreMemoriesToSave),
     };
     const nextPet = saveAndReturn(
       liteOverlayPatch ? applyStoredLiteOverlayPatch(nextState, liteOverlayPatch) : nextState,

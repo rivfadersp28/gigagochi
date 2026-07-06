@@ -1,11 +1,18 @@
 "use client";
 
-import { ArrowLeft, Loader2, Send } from "lucide-react";
+import { ArrowLeft, Bug, Loader2, Send } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiError, extractLocalLiteFacts, sendLocalChatMessage } from "@/lib/api";
+import {
+  ApiError,
+  consolidateLocalUserMemory,
+  extractLocalLiteFacts,
+  extractLocalUserMemory,
+  generateLocalProactiveMessage,
+  sendLocalChatMessage,
+} from "@/lib/api";
 import {
   appendLocalChatMessages,
   createLocalId,
@@ -13,10 +20,32 @@ import {
   readLocalChatHistory,
   readLocalPetSettings,
 } from "@/lib/localPetStorage";
+import {
+  applyMemoryConsolidationOperations,
+  applyMemoryOperations,
+  markMemoryContextUsed,
+  readLocalPetMemory,
+  recordProactiveDelivery,
+  shouldRunDailyConsolidation,
+  writeLocalPetMemory,
+} from "@/lib/localPetMemoryStorage";
+import {
+  buildDailyProactiveMemoryContext,
+  buildMemoryContextForMessage,
+} from "@/lib/localPetMemoryRecall";
+import {
+  recordLiteOverlayPatchDebug,
+  recordMemoryConsolidationDebug,
+  recordMemoryContextDebug,
+  recordMemoryOperationsDebug,
+  recordReplyPromptDebug,
+} from "@/lib/debugPanelStorage";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
 import type { LocalChatMessage } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
+
+import { DebugPanel } from "./DebugPanel";
 
 type ChatViewProps = {
   petId: string;
@@ -29,7 +58,9 @@ export function ChatView({ petId }: ChatViewProps) {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const proactiveAttemptedRef = useRef(false);
   const pet = localPet.pet;
 
   const goBack = useCallback(() => {
@@ -58,6 +89,76 @@ export function ChatView({ petId }: ChatViewProps) {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, isSending]);
 
+  const runMemoryConsolidationIfNeeded = useCallback(
+    async (includePromptDebug: boolean) => {
+      if (!pet) {
+        return;
+      }
+      const memory = readLocalPetMemory(pet.petId);
+      if (!shouldRunDailyConsolidation(memory)) {
+        return;
+      }
+      const consolidation = await consolidateLocalUserMemory(memory, {
+        includeDebug: includePromptDebug,
+      });
+      logBrowserPromptDebug("memory consolidation", consolidation);
+      recordMemoryConsolidationDebug(consolidation.operations);
+      const latestMemory = readLocalPetMemory(pet.petId);
+      writeLocalPetMemory(
+        applyMemoryConsolidationOperations(latestMemory, consolidation.operations),
+      );
+    },
+    [pet],
+  );
+
+  useEffect(() => {
+    if (localPet.status === "loading" || !pet || pet.petId !== petId) {
+      return;
+    }
+    if (proactiveAttemptedRef.current) {
+      return;
+    }
+    proactiveAttemptedRef.current = true;
+
+    const settings = readLocalPetSettings();
+    void runMemoryConsolidationIfNeeded(settings.includePromptDebug).catch(() => undefined);
+
+    const memory = readLocalPetMemory(pet.petId);
+    const history = readLocalChatHistory().messages;
+    const memoryContext = buildDailyProactiveMemoryContext(pet, memory, history);
+    if (!memoryContext) {
+      return;
+    }
+    if (settings.includePromptDebug) {
+      console.log("[memory-debug] proactive candidate", memoryContext);
+    }
+    recordMemoryContextDebug(memoryContext, "Память подставлена в proactive prompt");
+    void generateLocalProactiveMessage(pet, memoryContext, {
+      includeDebug: true,
+    })
+      .then((response) => {
+        logBrowserPromptDebug("proactive chat", response);
+        recordReplyPromptDebug(response);
+        const proactiveMessage: LocalChatMessage = {
+          id: createLocalId("message"),
+          role: "pet",
+          text: response.reply,
+          createdAt: new Date().toISOString(),
+        };
+        setMessages(appendLocalChatMessages([proactiveMessage]).messages);
+        const latestMemory = readLocalPetMemory(pet.petId);
+        writeLocalPetMemory(
+          recordProactiveDelivery(
+            latestMemory,
+            memoryContext.proactiveCandidate?.memoryIds ?? [],
+            response.reply,
+          ),
+        );
+        localPet.applyMoodHint(response.moodHint);
+      })
+      .catch(() => undefined);
+  }, [localPet, pet, petId, runMemoryConsolidationIfNeeded]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const message = input.trim();
@@ -81,16 +182,26 @@ export function ChatView({ petId }: ChatViewProps) {
     setError(null);
     setIsSending(true);
     const historyBeforeMessage = latestChatMessages(12);
+    const memoryBeforeMessage = readLocalPetMemory(pet.petId);
+    const memoryContext = buildMemoryContextForMessage(
+      memoryBeforeMessage,
+      message,
+      new Date(now),
+    );
     setMessages(appendLocalChatMessages([localUserMessage]).messages);
 
     try {
       const settings = readLocalPetSettings();
+      if (settings.includePromptDebug) {
+        console.log("[memory-debug] recall context", memoryContext);
+      }
+      recordMemoryContextDebug(memoryContext);
       const response = await sendLocalChatMessage(message, pet, historyBeforeMessage, {
-        promptLayers: settings.promptLayers,
-        includeDebug: settings.includePromptDebug,
-        replyMode: settings.replyMode,
+        includeDebug: true,
+        memoryContext,
       });
       logBrowserPromptDebug("chat reply", response);
+      recordReplyPromptDebug(response);
       const assistantMessage: LocalChatMessage = {
         id: createLocalId("message"),
         role: "pet",
@@ -98,24 +209,52 @@ export function ChatView({ petId }: ChatViewProps) {
         createdAt: new Date().toISOString(),
       };
       setMessages(appendLocalChatMessages([assistantMessage]).messages);
-      localPet.applyMoodHint(
-        response.moodHint,
-        response.loreMemoriesToSave,
-        response.memoryPatch,
-        response.debug?.liteOverlayPatch,
-      );
-      if (settings.replyMode === "lite") {
-        void extractLocalLiteFacts(message, response.reply, pet, historyBeforeMessage, {
-          includeDebug: settings.includePromptDebug,
-        })
-          .then((extraction) => {
-            logBrowserPromptDebug("lite fact extraction", extraction);
-            if (extraction.liteOverlayPatch) {
-              localPet.applyLiteOverlayPatch(extraction.liteOverlayPatch);
-            }
-          })
-          .catch(() => undefined);
+      recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
+      localPet.applyMoodHint(response.moodHint, response.debug?.liteOverlayPatch);
+      const selectedMemoryIds = memoryContext.relevantMemories.map((item) => item.id);
+      if (selectedMemoryIds.length) {
+        writeLocalPetMemory(
+          markMemoryContextUsed(readLocalPetMemory(pet.petId), selectedMemoryIds),
+        );
       }
+      void extractLocalLiteFacts(message, response.reply, pet, historyBeforeMessage, {
+        includeDebug: settings.includePromptDebug,
+      })
+        .then((extraction) => {
+          logBrowserPromptDebug("lite fact extraction", extraction);
+          if (extraction.liteOverlayPatch) {
+            recordLiteOverlayPatchDebug(extraction.liteOverlayPatch);
+            localPet.applyLiteOverlayPatch(extraction.liteOverlayPatch);
+          }
+        })
+        .catch(() => undefined);
+      void extractLocalUserMemory(
+        message,
+        response.reply,
+        pet,
+        historyBeforeMessage,
+        memoryBeforeMessage,
+        {
+          includeDebug: settings.includePromptDebug,
+          memoryContext,
+        },
+      )
+        .then((extraction) => {
+          logBrowserPromptDebug("memory extraction", extraction);
+          recordMemoryOperationsDebug(extraction.operations);
+          const latestMemory = readLocalPetMemory(pet.petId);
+          const nextMemory = applyMemoryOperations(latestMemory, extraction.operations, [
+            localUserMessage.id,
+            assistantMessage.id,
+          ]);
+          writeLocalPetMemory(nextMemory);
+          if (shouldRunDailyConsolidation(nextMemory)) {
+            void runMemoryConsolidationIfNeeded(settings.includePromptDebug).catch(
+              () => undefined,
+            );
+          }
+        })
+        .catch(() => undefined);
     } catch (caught) {
       if (caught instanceof ApiError) {
         setError(caught.message);
@@ -144,13 +283,27 @@ export function ChatView({ petId }: ChatViewProps) {
             <p className="text-sm font-medium text-[var(--ink-muted)]">AI Tamagotchi</p>
             <h1 className="mt-1 text-2xl font-semibold text-[var(--ink)]">Chat</h1>
           </div>
-          <Link
-            href={`/pet/${petId}`}
-            className="inline-flex h-10 items-center gap-2 rounded-[8px] border border-[var(--line)] px-3 text-sm font-medium text-[var(--ink)] transition-colors hover:bg-[var(--surface)]"
-          >
-            <ArrowLeft className="size-4" aria-hidden="true" />
-            Back
-          </Link>
+          <div className="flex items-center gap-2">
+            {pet ? (
+              <button
+                type="button"
+                aria-controls="debug-panel"
+                aria-expanded={isDebugPanelOpen}
+                aria-label="Открыть debug-панель"
+                onClick={() => setIsDebugPanelOpen(true)}
+                className="grid size-10 place-items-center rounded-[8px] border border-[var(--line)] text-[var(--ink)] transition-colors hover:bg-[var(--surface)] focus:outline-none focus:ring-2 focus:ring-[var(--leaf-soft)]"
+              >
+                <Bug className="size-4" aria-hidden="true" />
+              </button>
+            ) : null}
+            <Link
+              href={`/pet/${petId}`}
+              className="inline-flex h-10 items-center gap-2 rounded-[8px] border border-[var(--line)] px-3 text-sm font-medium text-[var(--ink)] transition-colors hover:bg-[var(--surface)]"
+            >
+              <ArrowLeft className="size-4" aria-hidden="true" />
+              Back
+            </Link>
+          </div>
         </header>
 
         <section className="min-h-0 overflow-y-auto rounded-[8px] border border-[var(--line)] bg-[var(--surface-raised)] p-4">
@@ -213,6 +366,13 @@ export function ChatView({ petId }: ChatViewProps) {
           </div>
         </form>
       </div>
+      {pet ? (
+        <DebugPanel
+          pet={pet}
+          isOpen={isDebugPanelOpen}
+          onClose={() => setIsDebugPanelOpen(false)}
+        />
+      ) : null}
     </main>
   );
 }

@@ -27,16 +27,22 @@ export type TelegramWebApp = {
   initDataUnsafe?: Record<string, unknown>;
   themeParams?: Record<string, string>;
   platform?: string;
+  version?: string;
   viewportHeight?: number;
   stableViewportHeight?: number;
+  isFullscreen?: boolean;
   safeAreaInset?: TelegramSafeArea;
   contentSafeAreaInset?: TelegramSafeArea;
   BackButton?: TelegramBackButton;
   HapticFeedback?: TelegramHapticFeedback;
   ready?: () => void;
   expand?: () => void;
-  onEvent?: (eventType: string, callback: () => void) => void;
-  offEvent?: (eventType: string, callback: () => void) => void;
+  requestFullscreen?: () => void;
+  isVersionAtLeast?: (version: string) => boolean;
+  setHeaderColor?: (color: string) => void;
+  setBackgroundColor?: (color: string) => void;
+  onEvent?: (eventType: string, callback: (event?: unknown) => void) => void;
+  offEvent?: (eventType: string, callback: (event?: unknown) => void) => void;
 };
 
 type TelegramWindow = Window &
@@ -79,6 +85,30 @@ export function readyTelegramWebApp() {
 
 export function expandTelegramWebApp() {
   getTelegramWebApp()?.expand?.();
+}
+
+export function requestTelegramFullscreen() {
+  const webApp = getTelegramWebApp();
+  if (!webApp?.initData) {
+    return;
+  }
+
+  try {
+    webApp.setHeaderColor?.("#ffffff");
+    webApp.setBackgroundColor?.("#ffffff");
+    webApp.expand?.();
+    if (webApp.isFullscreen) {
+      return;
+    }
+    const supportsFullscreen =
+      typeof webApp.requestFullscreen === "function" &&
+      (typeof webApp.isVersionAtLeast !== "function" || webApp.isVersionAtLeast("8.0"));
+    if (supportsFullscreen) {
+      webApp.requestFullscreen?.();
+    }
+  } catch {
+    // Fullscreen is optional and can be rejected on unsupported Telegram clients.
+  }
 }
 
 export function hapticImpact(style: "light" | "medium" | "heavy" | "rigid" | "soft" = "light") {
