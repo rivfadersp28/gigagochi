@@ -133,7 +133,7 @@ class TravelStoryScene(BaseModel):
 
 class TravelStory(BaseModel):
     title: str = Field(min_length=1, max_length=80)
-    summary: str = Field(min_length=1, max_length=260)
+    summary: str = Field(min_length=1, max_length=500)
     scenes: list[TravelStoryScene] = Field(min_length=7, max_length=7)
 
 

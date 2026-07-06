@@ -120,7 +120,7 @@ ADVENTURE_STORY_SCHEMA: dict[str, Any] = {
     ],
     "properties": {
         "adventureTitle": {"type": "string", "minLength": 1, "maxLength": 80},
-        "coreIdea": {"type": "string", "minLength": 1, "maxLength": 260},
+        "coreIdea": {"type": "string", "minLength": 1, "maxLength": 500},
         "world": {"type": "string", "minLength": 1, "maxLength": 700},
         "mainObjective": {"type": "string", "minLength": 1, "maxLength": 360},
         "importantCharacters": {
@@ -187,7 +187,7 @@ LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 
 class AdventureStory(BaseModel):
     adventureTitle: str = Field(min_length=1, max_length=80)
-    coreIdea: str = Field(min_length=1, max_length=260)
+    coreIdea: str = Field(min_length=1, max_length=500)
     world: str = Field(min_length=1, max_length=700)
     mainObjective: str = Field(min_length=1, max_length=360)
     importantCharacters: list[str] = Field(min_length=1, max_length=8)

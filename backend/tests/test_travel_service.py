@@ -165,10 +165,15 @@ def test_adventure_story_prompt_uses_compact_story_context_without_asset_urls() 
 
 
 def test_adventure_story_schema_allows_no_important_objects() -> None:
+    core_idea = (
+        "Листик ищет дорогу домой после того, как тропинку размыло дождем, "
+        "и постепенно понимает, что путь можно восстановить, если внимательно "
+        "читать следы мокрой земли, слушать ветер и не торопиться."
+    )
     story = travel_service.AdventureStory.model_validate(
         {
             "adventureTitle": "Тихая тропа",
-            "coreIdea": "Листик ищет дорогу домой после того, как тропинку размыло дождем.",
+            "coreIdea": core_idea,
             "world": (
                 "Обычный сад после дождя, где все события следуют из мокрой земли, "
                 "луж и ветра."
@@ -186,6 +191,7 @@ def test_adventure_story_schema_allows_no_important_objects() -> None:
     )
 
     assert story.importantObjects == []
+    assert story.coreIdea == core_idea
 
 
 def test_generate_scene_images_generates_every_story_scene(monkeypatch, tmp_path) -> None:
