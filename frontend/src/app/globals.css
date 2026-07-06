@@ -295,11 +295,11 @@ body {
 
 .conversation-input-panel {
   position: absolute;
-  top: 627px;
+  top: 655px;
   right: 19px;
   left: 18px;
   z-index: 45;
-  height: 209px;
+  height: 181px;
   overflow: hidden;
   border: 0;
   border-radius: 32px;
@@ -326,12 +326,12 @@ body {
 }
 
 .main-mobile-scene--keyboard .conversation-input-panel {
-  top: calc(var(--conversation-visible-height, 542px) - 227px);
+  top: calc(var(--conversation-visible-height, 542px) - 199px);
 }
 
 .conversation-input {
   position: absolute;
-  top: 28px;
+  top: 30px;
   right: 29px;
   left: 29px;
   height: 28px;
@@ -379,7 +379,7 @@ body {
 
 .conversation-send-button {
   position: absolute;
-  top: 137px;
+  top: 109px;
   right: 16px;
   display: inline-flex;
   width: 135px;
