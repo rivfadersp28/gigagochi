@@ -39,6 +39,22 @@ def get_chat_model(settings: Any) -> str:
     return _clean_string(getattr(settings, "openai_chat_model", None)) or "gpt-5.5"
 
 
+def get_character_model(settings: Any) -> str:
+    if is_openrouter_provider(settings):
+        return (
+            _clean_string(getattr(settings, "openrouter_character_model", None))
+            or _clean_string(getattr(settings, "openrouter_chat_model", None))
+            or _clean_string(getattr(settings, "openai_character_model", None))
+            or _clean_string(getattr(settings, "openai_chat_model", None))
+            or "~openai/gpt-latest"
+        )
+    return (
+        _clean_string(getattr(settings, "openai_character_model", None))
+        or _clean_string(getattr(settings, "openai_chat_model", None))
+        or "gpt-5.5"
+    )
+
+
 def get_image_model(settings: Any) -> str:
     if is_openrouter_provider(settings):
         return (

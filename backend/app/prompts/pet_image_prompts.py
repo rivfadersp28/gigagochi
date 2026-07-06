@@ -5,7 +5,7 @@ import random
 import re
 from typing import Any
 
-from app.prompts.style_direction import CHARACTER_BIBLE_STYLE_DIRECTION, VISUAL_STYLE_FRAME
+from app.prompts.style_direction import VISUAL_STYLE_FRAME
 
 PROMPT_MAX_LENGTH = 300
 
@@ -122,6 +122,59 @@ _HUMAN_CHARACTER_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
+_IMAGE_PROMPT_TEXT_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bteen(?:age|ager|s)?\b", re.IGNORECASE), "middle growth form"),
+    (re.compile(r"\bbaby\b", re.IGNORECASE), "small growth form"),
+    (re.compile(r"\byoung\b", re.IGNORECASE), "small"),
+    (re.compile(r"\badult\b", re.IGNORECASE), "mature growth form"),
+    (re.compile(r"подрост[а-яё]*", re.IGNORECASE), "средняя форма"),
+    (re.compile(r"малыш[а-яё]*", re.IGNORECASE), "маленькая форма"),
+    (re.compile(r"детеныш[а-яё]*|детёныш[а-яё]*", re.IGNORECASE), "маленькая форма"),
+    (re.compile(r"детск[а-яё]*", re.IGNORECASE), "маленькая форма"),
+    (re.compile(r"взросл[а-яё]*", re.IGNORECASE), "зрелая форма"),
+    (re.compile(r"\bweapons?\b", re.IGNORECASE), "extra props"),
+    (re.compile(r"\barmo[u]?r\b", re.IGNORECASE), "heavy accessories"),
+    (re.compile(r"\bfork(?:ed)? tail\b", re.IGNORECASE), "tail with a rounded split tip"),
+    (re.compile(r"\blightning horns?\b", re.IGNORECASE), "soft zigzag antenna-like horns"),
+    (re.compile(r"\belectric arcs?\b", re.IGNORECASE), "yellow decorative markings"),
+    (re.compile(r"оружи[а-яё]*", re.IGNORECASE), "лишние предметы"),
+    (re.compile(r"брон[а-яё]*", re.IGNORECASE), "тяжёлые аксессуары"),
+    (re.compile(r"рог[а-яё-]*-молни[а-яё]*", re.IGNORECASE), "мягкие зигзагообразные антенны"),
+    (re.compile(r"\bрогами\b", re.IGNORECASE), "мягкими антеннами"),
+    (re.compile(r"\bрогах\b", re.IGNORECASE), "мягких антеннах"),
+    (re.compile(r"\bрогов\b", re.IGNORECASE), "мягких антенн"),
+    (re.compile(r"\bрога\b", re.IGNORECASE), "мягкие антенны"),
+    (re.compile(r"\bрог[а-яё-]*\b", re.IGNORECASE), "мягкие антенны"),
+    (re.compile(r"молни[а-яё]*", re.IGNORECASE), "жёлтые зигзаг-акценты"),
+    (re.compile(r"хвост[а-яё -]*вилк[а-яё]*", re.IGNORECASE), "хвост с округлым раздвоенным кончиком"),
+    (re.compile(r"заземл[а-яё]*", re.IGNORECASE), "устойчивости"),
+    (re.compile(r"заряд[а-яё]*", re.IGNORECASE), "энергетический акцент"),
+    (re.compile(r"гроз[а-яё]*", re.IGNORECASE), "тёплый каменный"),
+    (re.compile(r"остры[а-яё]*", re.IGNORECASE), "выразительные"),
+)
+
+_IMAGE_RETRY_TEXT_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"\belectric dragon\b", re.IGNORECASE),
+        "small rounded fantasy reptile mascot with yellow energy-themed accents",
+    ),
+    (re.compile(r"\bdragon\b", re.IGNORECASE), "rounded fantasy reptile mascot"),
+    (re.compile(r"\belectric\b", re.IGNORECASE), "yellow energy-themed"),
+    (
+        re.compile(r"электрическ[а-яё]* дракон[а-яё]*", re.IGNORECASE),
+        "маленькое округлое фантазийное ящероподобное существо с жёлтыми акцентами",
+    ),
+    (
+        re.compile(r"дракон[а-яё]*", re.IGNORECASE),
+        "округлое фантазийное ящероподобное существо",
+    ),
+    (
+        re.compile(r"электрическ[а-яё]*", re.IGNORECASE),
+        "с жёлтыми энергетическими акцентами",
+    ),
+)
+
+
 def rewrite_known_character_references(user_description: str) -> str:
     safe_description = user_description
 
@@ -132,6 +185,40 @@ def rewrite_known_character_references(user_description: str) -> str:
         safe_description = pattern.sub(replacement, safe_description)
 
     return safe_description
+
+
+def _sanitize_image_prompt_text(value: str) -> str:
+    safe_value = value
+    for pattern, replacement in _IMAGE_PROMPT_TEXT_REWRITES:
+        safe_value = pattern.sub(replacement, safe_value)
+    return re.sub(r"[ \t]{2,}", " ", safe_value).strip()
+
+
+def _sanitize_retry_image_prompt_text(value: str) -> str:
+    safe_value = _sanitize_image_prompt_text(value)
+    for pattern, replacement in _IMAGE_RETRY_TEXT_REWRITES:
+        safe_value = pattern.sub(replacement, safe_value)
+    return re.sub(r"[ \t]{2,}", " ", safe_value).strip()
+
+
+def _sanitize_image_prompt_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _sanitize_image_prompt_text(value)
+    if isinstance(value, list):
+        return [_sanitize_image_prompt_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sanitize_image_prompt_value(item) for key, item in value.items()}
+    return value
+
+
+def _sanitize_retry_image_prompt_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _sanitize_retry_image_prompt_text(value)
+    if isinstance(value, list):
+        return [_sanitize_retry_image_prompt_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sanitize_retry_image_prompt_value(item) for key, item in value.items()}
+    return value
 
 
 def create_lore_seed(rng: random.Random | None = None) -> dict[str, str]:
@@ -203,221 +290,58 @@ def build_character_bible_prompt(
     lore_seed_block = _lore_seed_block(lore_seed)
 
     return f"""
-Create a clean original creature bible for a living Tamagotchi-style companion.
+Create a compact character profile for a living non-human pet companion.
 
-The main output is a compact species-style canon for chat. Build it like an original creature
-description expanded into personality, home, needs, fears, growth, and voice.
-
-STYLE_FRAME:
-{STYLE_FRAME}
-
-CHARACTER_BIBLE_STYLE_DIRECTION:
-{CHARACTER_BIBLE_STYLE_DIRECTION}
-
-CREATURE_DESCRIPTION_STYLE_GUIDE:
-{CREATURE_DESCRIPTION_STYLE_GUIDE}
+Use a tiny persona-file shape inspired by small AI pet projects:
+- identity = who this creature is
+- visual = stable image-generation anchors
+- voice = how it talks
+- inner_state = wants, tension, fears, comfort
+- world = where it lives and what facts can be revealed later
 
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
 
 {lore_seed_block}
 
-EXTERNAL_SOURCE_FRAGMENT_MIX:
-{external_source_fragments or "нет локального внешнего корпуса"}
-
-Use external fragments only as weak dialogue-rhythm references. They must not supply the pet's
-world, job, social setting, props, backstory, or core concept. The user description and
-CREATURE_DESCRIPTION_STYLE_GUIDE are stronger.
-
 WORLD_DESCRIPTION_ANCHORS:
 {world_description_anchors or "нет"}
 
-Use WORLD_DESCRIPTION_ANCHORS as habitat-structure references for world/home/origin only:
-- They are examples from an internal world-description corpus, not canon and not text to copy.
-- Adapt one primary habitat pattern and, if useful, one secondary habitat pressure.
-- Do not copy source_text_do_not_copy or template_do_not_copy verbatim.
-- Replace placeholder words like [существо] with the generated creature premise.
-- Keep the user's creature idea, body mechanism, and visual anchors stronger than the selected
-  habitat examples.
-- The generated lore.world, lore.home, world.home, world.habitat, routines, objects, sensory
-  details, and story_seeds should feel like a transformed answer to these habitat anchors.
-- Do not import random named places, jobs, schools, guilds, bureaucracies, or social systems
-  from an anchor unless the user description directly asks for that kind of premise.
+Use WORLD_DESCRIPTION_ANCHORS only as weak habitat hints. Do not copy them. Do not add jobs,
+schools, guilds, towns, politics, offices, maps, or long backstory unless the user asked for it.
 
-Return JSON only with these fields:
+Return JSON only with these top-level fields:
 - schema_version
 - identity
+- visual
 - voice
 - inner_state
 - world
-- dialogue_moves
 - openings
-- provenance
-- extensions
-- species
-- personality
-- signature
-- dialogue_style
-- opening_scenes
 - lorebook_entries
-- main_colors
-- signature_features
-- materials
-- proportions
-- baby_design
-- teen_design
-- adult_design
-- do_not_change
-- lore
 
 Language rules:
-- Keep JSON keys exactly as listed above, in English.
-- Write every user-facing string value in Russian, using natural Cyrillic Russian.
-- This includes species, personality, signature, colors, signature_features, materials, proportions,
-  baby_design, teen_design, adult_design, do_not_change, and every lore string.
-- Do not write English descriptions like "soft dragon mascot" in values; write phrases like
-  "мягкий дракончик-компаньон".
-- Use English only for unavoidable proper nouns that the user explicitly supplied and should
-  remain unchanged.
+- Keep JSON keys in English exactly as the schema requests.
+- Write every user-facing string value in natural Russian.
+- Keep strings compact. No decorative paragraphs.
 
 Rules:
-- The pet must be non-human, friendly, expressive, and suitable as an affectionate companion.
-- Treat the character as real inside its own world. It must never describe itself as digital,
-  virtual, artificial, located in an app, located in a game, on a screen, in a UI, or created by
-  a prompt.
-- Treat "species" as the core creature premise, not as literal taxonomy. Preserve the user's core
-  idea before adding anything else.
-- Do not copy or name existing characters, franchises, studios, brands, games, Pokemon, or source
-  creature names.
-- Do not invent a random social world. Do not add bureaus, boxes, labels, maps, travel cases,
-  schools, guilds, workshops, relatives, neighbors, or jobs unless the user description directly
-  implies that kind of creature.
-- Before writing JSON, silently derive one chain:
-  physical_anchor -> mechanism -> behavior_trigger -> habitat -> want/conflict -> voice.
-  Every major field must be compatible with that chain, but distribute details across body,
-  habitat, routine, relationship, sensory world, small wants, fears, flaws, and voice. Do not
-  restate one signature ability everywhere.
-- signature must be 2-3 compact sentences:
-  1. what the creature is and its physical anchor;
-  2. how that anchor works;
-  3. how the anchor affects interaction with the user.
-- personality must be 2-4 connected sentences. Personality must grow from the body mechanism and
-  habits, not from an unrelated role.
-- Keep visual support fields compact. main_colors, materials, proportions, baby_design,
-  teen_design, and adult_design exist only to anchor future images. Do not write long production
-  art paragraphs.
-- dialogue_style must be a compact behavior simulator, not a style essay. It should include:
-  voice rules, emotional reactions, initiative style, sample replies, and phrases/patterns to avoid.
-- voice.sample_replies must contain 8-12 short Russian replies the pet could actually say in chat.
-  Cover self-introduction, care/affection, a lore question, preference, why, current feeling,
-  memory/relationship, uncertainty or stress, boundary/no-question request, and playful initiative.
-- In voice.sample_replies, at most 2 replies may directly name the main ability/mechanism.
-  The rest should show character through emotion, relationship, routine, sensory detail,
-  micro-observation, opinion, hesitation, or a small invented-but-compatible detail.
-- dialogue_style.sample_replies may mirror the best 4-6 of voice.sample_replies for backward
-  compatibility, but do not make them generic.
-  They must demonstrate rhythm and personality without using markdown, roleplay actions, or quotes
-  around the whole reply.
-- opening_scenes must contain 2-3 first-message style scenes. Each scene should be 1-2 concise
-  Russian sentences from the pet's perspective, showing a concrete entrance, body cue, emotion, and
-  one small invitation to the user. Keep them suitable for a child-friendly companion setting.
-- lorebook_entries must contain 5-8 compact triggerable facts. Each entry needs keys and content.
-  world.lorebook_entries must contain the same kind of entries with keys, content, priority,
-  constant, and selective fields.
-  Use them like a character-specific lorebook: facts about places, roles, objects, customs, fears,
-  or relationships that should appear only when the user asks a related question.
-- identity must contain name, nickname, species, role, and one_liner. Name and nickname may be empty
-  strings if the user did not provide them, but species, role, and one_liner must be specific.
-- identity.role must be a lived role in the character's own world, not "digital pet", "virtual
-  companion", "AI", "app character", or similar interface language.
-- voice must contain voice_rules, speech_rules, sentence_rhythm, addressing_user, humor_style,
-  uncertainty_style, catchphrases, sample_replies, and avoid_patterns.
-- inner_state must contain core_want, inner_conflict, fears, comfort_actions, and drives with
-  attachment, curiosity, confidence, energy, stress, loneliness, and playfulness from 0 to 100.
-- world must contain home, habitat, objects, routines, relationships, story_seeds, and lorebook_entries.
-- dialogue_moves must contain 3-5 entries. Each entry needs intent, pattern, good_example, and
-  bad_example. Cover at least answer_preference, why, care, continue_thread, and boundary when possible.
-- openings must contain first_message, alternate_greetings, and opening_scenes.
-- provenance.source must be "generated", provenance.source_urls must be [], and license_notes must
-  say this is generated internal profile text using the internal creature-description style guide.
-- The lore must continue the user's creature idea and visual identity. If the user asks for a
-  dragon, make the lore dragon-like; if it is icy, make the body, home, fears, likes and speech
-  follow ice logic; if it is electric, watery, cosmic, mineral, food-like, object-like, or abstract,
-  keep facts compatible with that premise without making every fact a direct ability explanation.
-- world.home must be habitat, not a social institution. Examples by logic, not templates:
-  icy creature -> snow hollow, cold cave, frosted stone, shaded window, chilled bowl;
-  fire creature -> warm rock, ember nest, stove corner, sun patch;
-  water creature -> shallow pool, shell basin, rainy gutter, aquarium nook;
-  electric creature -> charging nook, storm-warmed ledge, copper pebble pile;
-  plant creature -> pot, garden patch, mossy bark, sunny sill.
-- world.story should be 1-2 compact sentences about habitat and daily rhythm. No finished incident.
-- home.story should explain why the home suits the body mechanism.
-- origin.formative_event should be a recurring early condition or biological pressure, not a
-  random completed event.
-- relationships should be sparse by default. Use roles only if useful: older creature of same
-  element, caretaker animal, flock, clutch, school of fish, colony, weather, or no close friends yet.
-- Initial lore is a foundation for future improvisation. It should define body, habitat, routines,
-  limits, needs, and open questions without locking many names or past scenes.
-- Keep one core ability as a reusable fact, plus several softer expression channels: a favorite
-  object/place, a routine, a harmless flaw, a comfort action, a relationship stance, a sensory
-  habit, and 2-4 open story seeds. These channels prevent the pet from repeating the same power
-  in every chat reply.
-- core_want and inner_conflict should be direct and usable in chat, not poetic.
-- Always generate core_want, inner_conflict, comfort_actions, fears, routines, and story_seeds.
-- Forbidden generic reply patterns: "я рядом", "я всегда рядом", "мне просто нравится",
-  "искорка", "сияю", "сияние", "внутри меня стало светлее" unless a concrete world mechanism
-  gives a literal reason. Prefer concrete body, object, room, routine, friend, or limitation details.
-- Also forbidden: "урок", "норма", "правило жизни", "короткие просьбы", "добрые слова",
-  "быть собой", "важно быть", and any preference that describes how the user should talk instead
-  of what the pet likes in its own world.
-- Do not write event-log lore. Avoid patterns like "someone gave me X after my first scare" or
-  "someone once saved me from Y" unless that single fact is essential to the body mechanism.
-- growth_arc baby/teen/adult must each describe a physical, sensory, elemental, or behavior-control
-  change: steadier flame, harder shell, stronger wings, clearer scent, safer frost, better balance.
-- story_seeds must contain 4-6 open hooks for future chat invention. They should name what may
-  be revealed later without deciding it now: a hidden ability limit, why a body feature changes
-  color, what food restores energy fastest, where it hides in bad weather, or what it will control
-  better as an adult.
-- If a future chat invents a small stable detail from story_seeds, it may become an additive
-  canon fact. The initial lore should make those additions easy without requiring the world,
-  home, species, or origin to change.
-- Lists are allowed only when each item is concrete and meaningful. Do not write vague slogans,
-  symbolic abstractions, or lines that sound poetic but explain nothing.
-- Every cause must make literal or storybook sense. Do not join incompatible senses just because
-  it sounds cute: "громкий пар", "мягкий шум пахнет", "тень спорит вкусом", or "цвет устает от
-  разговора" are bad unless the lore clearly explains a real mechanism. Prefer concrete phrasing:
-  "клапан тихо шипит", "пар щекочет нос", "цвет тускнеет, когда батарейка садится".
-- Every inner_life list item must pass the "because test": the pet could naturally say
-  "I like/fear/do this because of my home, role, routine, or background tension." If no
-  background supports the item, do not include it.
-- likes must be objects, places, actions, or sensory details tied to a routine, home zone,
-  relationship role, or background tension. Do not use user-behavior preferences like
-  "короткие просьбы", and do not use loose
-  decorative nouns like "теплый утренний туман" or "синие лейки" unless a story paragraph explains
-  the exact routine or social reason that made them important.
-- habits and comfort_actions must be things the pet physically does, not personality summaries or
-  things other people do for it.
-- BAD world rule: "Лед помогает мне быть полезным в ящике путешественника."
-- GOOD world rule: "Когда дракончик устает, ледяные пластинки на хвосте мутнеют и тают по краям."
-- BAD likes: ["короткие просьбы", "добрые слова", "быть нужным"].
-- GOOD likes: ["гладкие холодные камни", "кусочки инея на стекле", "тихий хруст свежего снега"].
-- BAD world story: "Он распределяет холод по отделениям дорожного ящика и спасает карты от плащей."
-- GOOD world story: "Он живет в неглубокой снежной нише у камня, где лед на хвосте не тает днем.
-  По утрам он выдыхает тонкий морозный пар и проверяет, не появились ли трещинки на крыльях."
-- BAD physical logic: "Он прячет лишний выдох в банку."
-- GOOD physical logic: "Когда он волнуется, дыхание становится слишком холодным, поэтому он
-  отворачивается и выпускает пар в снег."
-- Make lore details reusable in short chat replies: home, favorite spot, objects, caretakers,
-  relationship roles, likes, fears, habits, comfort actions, dreams, flaws, speech hooks, and
-  story_seeds.
-- Avoid epic kingdoms, wars, trauma, death, horror, politics, religion, sexual content, real
-  brands, real franchises, and human jobs.
-- Do not make the pet human or give it a realistic human biography.
-- Use caretakers sparsely for non-human origins, and only when they follow the creature premise:
-  older dragon, parent creature, flock, colony, tide pool group, weather pattern, or no caretaker.
-- Keep the canon stable and internally consistent. It must not contradict the visual support
-  fields or do_not_change anchors.
+- The pet is real in its own world, not an app, AI, game object, screen element, or assistant.
+- Preserve the user's core idea before adding twists.
+- identity.species must be a plain short phrase based on the user's description. Do not add
+  unrelated animal families, slash hybrids, taxonomy jokes, roles, jobs, or proper nouns.
+- identity.name must be a pet name, not a restatement of the whole user description.
+- Use one physical anchor and one simple mechanism: body part/object/element -> behavior trigger.
+- Personality should come from body, habitat, habits, and limits.
+- Visual must be usable for a cute stylized 3D mascot: simple silhouette, 2-4 colors, few details.
+- voice.sample_replies: 5-8 short Russian replies the pet could say in chat. At most 2 should
+  directly mention the core ability; the rest should show routine, feeling, care, or opinion.
+- lorebook_entries: 3-5 triggerable facts with keys/content only.
+- Avoid generic support phrases, morals, assistant tone, "я всегда рядом", "важно быть собой",
+  "урок", "норма", "искорка", "сияние", and long event-log backstory.
+- Do not copy or name existing franchises, Pokemon, brands, studios, games, or characters.
 """.strip()
+
 
 
 def _sprite_bible_view(
@@ -434,7 +358,6 @@ def _sprite_bible_view(
         "baby_design",
         "teen_design",
         "adult_design",
-        "do_not_change",
         "visual_constraints",
     )
     key_aliases = {
@@ -470,22 +393,48 @@ def _sprite_bible_view(
     }
 
 
+def _sprite_bible_text(
+    character_bible: str | dict[str, Any],
+    *,
+    active_stage: str | None = None,
+) -> str:
+    if isinstance(character_bible, str):
+        return _sanitize_image_prompt_text(character_bible)
+    return json.dumps(
+        _sanitize_image_prompt_value(
+            _sprite_bible_view(character_bible, active_stage=active_stage)
+        ),
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _sprite_bible_retry_text(
+    character_bible: str | dict[str, Any],
+    *,
+    active_stage: str | None = None,
+) -> str:
+    if isinstance(character_bible, str):
+        return _sanitize_retry_image_prompt_text(character_bible)
+    return json.dumps(
+        _sanitize_retry_image_prompt_value(
+            _sprite_bible_view(character_bible, active_stage=active_stage)
+        ),
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 def build_pet_sprite_sheet_prompt(
     user_description: str, character_bible: str | dict[str, Any]
 ) -> str:
-    safe_description = rewrite_known_character_references(user_description.strip())
-    bible_text = (
-        character_bible
-        if isinstance(character_bible, str)
-        else json.dumps(
-            _sprite_bible_view(character_bible),
-            ensure_ascii=False,
-            indent=2,
-        )
+    safe_description = _sanitize_image_prompt_text(
+        rewrite_known_character_references(user_description.strip())
     )
+    bible_text = _sprite_bible_text(character_bible)
 
     return f"""
-Create one clean 4-column by 3-row character sprite sheet for an AI Tamagotchi web app.
+Create one clean 4-column by 3-row character sprite sheet for a family-friendly virtual pet web app.
 
 STYLE_FRAME:
 {STYLE_FRAME}
@@ -516,6 +465,11 @@ CONSISTENCY_RULES:
 OUTPUT_REQUIREMENTS:
 - Cute stylized 3D mascot, full body, centered in each cell.
 - Perfectly aligned 4 by 3 grid with equal cell sizes.
+- Each cell must be a square app viewport composition: the complete character fits comfortably
+  inside the square cell with visible padding on all sides.
+- Support very round, very tall, very wide, tailed, eared, winged, or asymmetric silhouettes
+  without cropping any body part, accessory, ear, horn, tail, wing, or shadowless extremity.
+- Keep the character visually centered and grounded inside the square viewport.
 - Flat pure white background across the entire sprite sheet and every cell.
 - Do not use transparency, alpha-channel background, checkerboard pattern, transparency grid, or tiled square backdrop.
 - The character must not cast any shadow outside its body.
@@ -533,16 +487,10 @@ def build_pet_single_sprite_prompt(
     stage: str,
     state: str,
 ) -> str:
-    safe_description = rewrite_known_character_references(user_description.strip())
-    bible_text = (
-        character_bible
-        if isinstance(character_bible, str)
-        else json.dumps(
-            _sprite_bible_view(character_bible, active_stage=stage),
-            ensure_ascii=False,
-            indent=2,
-        )
+    safe_description = _sanitize_image_prompt_text(
+        rewrite_known_character_references(user_description.strip())
     )
+    bible_text = _sprite_bible_text(character_bible, active_stage=stage)
     stage_labels = {
         "baby": "Small growth form: smaller, rounder, simpler, softer proportions",
         "teen": "Middle growth form: slightly taller, more energetic, same creature identity",
@@ -556,7 +504,7 @@ def build_pet_single_sprite_prompt(
     }
 
     return f"""
-Create one standalone character sprite for an AI Tamagotchi web app.
+Create one standalone character sprite for a family-friendly virtual pet web app.
 
 STYLE_FRAME:
 {STYLE_FRAME}
@@ -583,6 +531,11 @@ CONSISTENCY_RULES:
 OUTPUT_REQUIREMENTS:
 - Exactly one full-body character, centered, with comfortable padding around it.
 - No sprite sheet, no grid, no panels, no multiple characters, no alternate poses in the same image.
+- Square app viewport composition: the complete character fits comfortably inside the square image
+  with visible padding on all sides.
+- Support very round, very tall, very wide, tailed, eared, winged, or asymmetric silhouettes
+  without cropping any body part, accessory, ear, horn, tail, wing, or shadowless extremity.
+- Keep the character visually centered and grounded inside the square viewport.
 - Flat pure white background.
 - Do not use transparency, alpha-channel background, checkerboard pattern, transparency grid, or tiled square backdrop.
 - The character must not cast any shadow outside its body.
@@ -598,16 +551,10 @@ def build_pet_state_strip_prompt(
     *,
     stage: str = "teen",
 ) -> str:
-    safe_description = rewrite_known_character_references(user_description.strip())
-    bible_text = (
-        character_bible
-        if isinstance(character_bible, str)
-        else json.dumps(
-            _sprite_bible_view(character_bible, active_stage=stage),
-            ensure_ascii=False,
-            indent=2,
-        )
+    safe_description = _sanitize_image_prompt_text(
+        rewrite_known_character_references(user_description.strip())
     )
+    bible_text = _sprite_bible_text(character_bible, active_stage=stage)
     stage_labels = {
         "baby": "Small growth form: smaller, rounder, simpler, softer proportions",
         "teen": "Middle growth form: slightly taller, more energetic, same creature identity",
@@ -615,7 +562,7 @@ def build_pet_state_strip_prompt(
     }
 
     return f"""
-Create one horizontal 3-column character sprite strip for an AI Tamagotchi web app.
+Create one horizontal 3-column character sprite strip for a family-friendly virtual pet web app.
 
 STYLE_FRAME:
 {STYLE_FRAME}
@@ -644,11 +591,16 @@ CONSISTENCY_RULES:
 STATE_RULES:
 - Idle: calm neutral pose and expression.
 - Happy: clearly happy, lively expression, friendly body language.
-- Sad: sad or tired expression, subdued body language.
+- Sad: sad expression, subdued body language.
 
 OUTPUT_REQUIREMENTS:
 - Cute stylized 3D mascot, full body, centered in each cell.
 - Perfectly aligned 1 by 3 horizontal grid with equal cell sizes.
+- Each cell must be a square app viewport composition: the complete character fits comfortably
+  inside the square cell with visible padding on all sides.
+- Support very round, very tall, very wide, tailed, eared, winged, or asymmetric silhouettes
+  without cropping any body part, accessory, ear, horn, tail, wing, or shadowless extremity.
+- Keep the character visually centered and grounded inside the square viewport.
 - Flat pure white background across the entire strip and every cell.
 - Do not use transparency, alpha-channel background, checkerboard pattern, transparency grid, or tiled square backdrop.
 - The character must not cast any shadow outside its body.
@@ -656,4 +608,59 @@ OUTPUT_REQUIREMENTS:
 - Keep only internal 3D form shading on the character itself; the white background must stay clean and shadow-free.
 - No text, no labels, no UI, no logo, no watermark, no borders.
 - Keep clear padding inside each cell so every character can be cropped safely.
+        """.strip()
+
+
+def build_pet_state_strip_safety_retry_prompt(
+    user_description: str,
+    character_bible: str | dict[str, Any],
+    *,
+    stage: str = "teen",
+) -> str:
+    safe_description = _sanitize_retry_image_prompt_text(
+        rewrite_known_character_references(user_description.strip())
+    )
+    bible_text = _sprite_bible_retry_text(character_bible, active_stage=stage)
+    stage_labels = {
+        "baby": "small rounded form",
+        "teen": "middle rounded form, a little taller but still simple",
+        "adult": "mature rounded form with the same friendly toy identity",
+    }
+
+    return f"""
+Create one horizontal 3-column sprite strip of a harmless rounded collectible toy mascot.
+
+CORE_CONCEPT:
+{safe_description}
+
+STYLE_FRAME:
+{STYLE_FRAME}
+
+VISUAL_ANCHORS:
+{bible_text}
+
+GRID:
+- Exactly one row and three equal square cells.
+- Left cell: calm neutral pose.
+- Middle cell: happy friendly pose.
+- Right cell: mildly sad or sleepy pose.
+- Same character in every cell.
+- Growth form: {stage_labels.get(stage, stage)}
+
+VISUAL_RULES:
+- Rounded stylized 3D vinyl-toy mascot, full body, centered in each cell.
+- Soft simple shapes, oversized head or body, tiny limbs, large clean color areas.
+- All tips and decorative details are rounded and toy-like.
+- Energy or element cues appear only as small yellow markings, material accents, or gentle color
+  details on the character itself.
+- Friendly cute expressions only; no scary creature styling, no action scene, no external effects.
+- Preserve the core colors, silhouette, tiny wings if present, rounded split tail tip if present,
+  and soft zigzag antenna-like horns if present.
+
+OUTPUT_REQUIREMENTS:
+- Perfectly aligned 1 by 3 horizontal grid with equal cell sizes.
+- Complete character fits comfortably inside each square cell with visible padding on all sides.
+- Flat pure white background across the entire strip and every cell.
+- No text, labels, UI, logo, watermark, border, shadow, glow, halo, background scene, or props
+  beyond one tiny harmless decorative object if it is part of the visual anchors.
         """.strip()

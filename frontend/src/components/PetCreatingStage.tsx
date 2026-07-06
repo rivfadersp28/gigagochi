@@ -12,8 +12,8 @@ export function PetCreatingStage({ overlay = false }: PetCreatingStageProps) {
     <section
       className={
         overlay
-          ? "tma-screen fixed inset-0 z-50 w-screen overflow-hidden bg-white"
-          : "tma-screen relative w-screen overflow-hidden bg-white"
+          ? "tma-screen fixed inset-0 z-50 w-screen overflow-hidden bg-[var(--paper)]"
+          : "tma-screen relative w-screen overflow-hidden bg-[var(--paper)]"
       }
       aria-busy="true"
       aria-label="Создаем друга"

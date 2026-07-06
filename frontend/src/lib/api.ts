@@ -40,6 +40,7 @@ type RequestOptions = Omit<RequestInit, "body"> & {
 type LocalChatOptions = {
   includeDebug?: boolean;
   memoryContext?: LocalPetMemoryContext;
+  replyMaxChars?: number;
 };
 
 const REQUIRED_STAGES = ["baby", "teen", "adult"] as const satisfies readonly PetStage[];
@@ -55,6 +56,7 @@ type ApiErrorDetail = {
   providerStatus?: unknown;
   providerMessage?: unknown;
   requestId?: unknown;
+  retryAfterSeconds?: unknown;
 };
 
 export class ApiError extends Error {
@@ -79,6 +81,30 @@ function stringValue(value: unknown): string | undefined {
 
 function numericValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function formatRetryAfter(seconds: number | undefined): string | undefined {
+  if (seconds === undefined || seconds <= 0) {
+    return undefined;
+  }
+
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  if (minutes < 60) {
+    return `${minutes} мин`;
+  }
+
+  const hours = Math.ceil(minutes / 60);
+  if (hours < 24) {
+    return `${hours} ч`;
+  }
+
+  return `${Math.ceil(hours / 24)} дн`;
+}
+
+function rateLimitMessage(detail: ApiErrorDetail, fallbackMessage?: string): string {
+  const base = fallbackMessage ?? "Слишком много запросов.";
+  const retryAfter = formatRetryAfter(numericValue(detail.retryAfterSeconds));
+  return retryAfter ? `${base} Попробуйте через ${retryAfter}.` : base;
 }
 
 function errorDetail(payload: unknown): ApiErrorDetail {
@@ -107,6 +133,10 @@ function errorMessageFromResponse(
   const providerStatus = numericValue(detail.providerStatus);
   const providerMessage = stringValue(detail.providerMessage);
   const requestId = stringValue(detail.requestId);
+
+  if (code === "rate_limited") {
+    return { message: rateLimitMessage(detail, message), code };
+  }
 
   const lines = [message ?? statusLine, `Endpoint: ${path}`, `Status: ${statusLine}`];
   if (code) {
@@ -141,6 +171,10 @@ function errorMessageFromDetail(
   const providerStatus = numericValue(detail.providerStatus);
   const providerMessage = stringValue(detail.providerMessage);
   const requestId = stringValue(detail.requestId);
+
+  if (code === "rate_limited") {
+    return { message: rateLimitMessage(detail, message), code };
+  }
 
   const lines = [message ?? statusLine, `Endpoint: ${path}`, `Status: ${statusLine}`];
   if (code) {
@@ -357,6 +391,7 @@ export async function sendLocalChatMessage(
       message: message.slice(0, MAX_CHAT_INPUT_LENGTH),
       includeDebug: options.includeDebug ?? false,
       memoryContext: options.memoryContext,
+      replyMaxChars: options.replyMaxChars,
       pet: {
         name: pet.name,
         description: pet.description,

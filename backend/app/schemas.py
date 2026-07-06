@@ -109,6 +109,7 @@ class LocalChatRequest(BaseModel):
     pet: LocalPetChatContext
     history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
     memoryContext: LocalPetMemoryContext | None = None
+    replyMaxChars: int | None = Field(default=None, ge=1, le=300)
     includeDebug: bool = False
 
 

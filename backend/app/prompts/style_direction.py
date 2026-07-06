@@ -69,7 +69,7 @@ Global style direction for all pet replies and birth messages.
 """.strip()
 
 VISUAL_STYLE_FRAME = """
-Create a cute stylized 3D mascot character for a Tamagotchi-style companion experience.
+Create a cute stylized 3D mascot character for a virtual pet companion experience.
 
 Every character should look like an original mascot that could become the face of an
 entire game.
@@ -118,8 +118,9 @@ Maintain a consistent visual language across every generation so every character
 like it belongs to the same original game universe.
 
 Avoid generic fantasy creatures, generic mammals, realistic anatomy, excessive
-accessories, busy silhouettes, noisy details, clothing-heavy designs, armor, weapons,
-photorealism, or overdesigned concepts.
+accessories, busy silhouettes, noisy details, clothing-heavy designs, photorealism,
+or overdesigned concepts. Use only harmless decorative props when essential to the
+silhouette.
 
 Do not imitate or reference any existing character, franchise, studio, brand, or game.
 """.strip()

@@ -1,46 +1,56 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
-import { Bug, Loader2, ScrollText, Settings, X } from "lucide-react";
-import Link from "next/link";
+import { Bug, Loader2, Settings } from "lucide-react";
 import { useRouter } from "next/navigation";
-import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
+import type { CSSProperties, FormEvent, MouseEvent, ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { consolidateLocalUserMemory, generateLocalProactiveMessage } from "@/lib/api";
+import {
+  ApiError,
+  consolidateLocalUserMemory,
+  extractLocalLiteFacts,
+  extractLocalUserMemory,
+  generateLocalProactiveMessage,
+  sendLocalChatMessage,
+} from "@/lib/api";
 import {
   appendLocalChatMessages,
   createLocalId,
+  latestChatMessages,
   readLocalChatHistory,
   readLocalPetSettings,
   writeLocalPetSettings,
 } from "@/lib/localPetStorage";
-import { buildDailyProactiveMemoryContext } from "@/lib/localPetMemoryRecall";
+import {
+  buildDailyProactiveMemoryContext,
+  buildMemoryContextForMessage,
+} from "@/lib/localPetMemoryRecall";
 import {
   applyMemoryConsolidationOperations,
+  applyMemoryOperations,
+  markMemoryContextUsed,
   readLocalPetMemory,
   recordProactiveDelivery,
   shouldRunDailyConsolidation,
   writeLocalPetMemory,
 } from "@/lib/localPetMemoryStorage";
-import { playPetSpeechAudioSequence } from "@/lib/petSpeechAudio";
+import { playPetSpeechAudioSequence, primePetSpeechAudio } from "@/lib/petSpeechAudio";
 import {
+  recordLiteOverlayPatchDebug,
   recordMemoryConsolidationDebug,
   recordMemoryContextDebug,
+  recordMemoryOperationsDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
-import { hapticImpact } from "@/lib/telegram";
-import type {
-  LocalChatResponse,
-  LocalPetState,
-  PetLifeStage,
-  PetMood,
-} from "@/lib/types";
+import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
+import { APP_BACKGROUND_COLOR } from "@/lib/theme";
+import type { LocalPetState, PetLifeStage, PetMood } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 
 import { DebugPanel } from "./DebugPanel";
-import { PetQuickChat } from "./PetQuickChat";
 
 type PetDashboardProps = {
   petId: string;
@@ -70,16 +80,26 @@ type IdleRotationStyle = CSSProperties & {
   "--pet-idle-max-rotation": string;
 };
 
+type ConversationSceneStyle = CSSProperties & {
+  "--conversation-visible-height": string;
+};
+
 type PetReplyMessage = {
   id: number;
   text: string;
   playSpeechAudio: boolean;
 };
 
+type ShowPetReplyOptions = {
+  showInConversation?: boolean;
+};
+
 type SelectedSprite = {
   stage: PetStage;
   state: PetState;
 };
+
+type MainBackgroundIcon = "plane" | "cup" | "charity" | "home" | "child" | "cart" | "crown";
 
 const IDLE_ANIMATION_BASE_DURATION_SECONDS = 2.4;
 const IDLE_ROTATION_BASE_DURATION_SECONDS = 3.2;
@@ -91,12 +111,72 @@ const PET_CHARACTER_RISE_STAGGER_MS = 24;
 const PET_CHARACTER_RISE_EASING = "cubic-bezier(0.2, 0.8, 0.2, 1)";
 const DEFAULT_TEXT_TRANSLATE_Y_PX = 12;
 const DEFAULT_SPEECH_END_TRIM_MS = 625;
+const FIGMA_SCREEN_HEIGHT = 874;
+const FIGMA_KEYBOARD_VISIBLE_HEIGHT = 542;
+const KEYBOARD_EAGER_SYNC_MS = 750;
+const INITIAL_PET_DAY_PROMPT = "Расскажи о своем дне";
+const INITIAL_PET_REPLY_MAX_CHARS = 40;
+const INITIAL_PET_REPLY_FALLBACK = "День был ярким.";
+const DASHBOARD_CHAT_REPLY_MAX_CHARS = 120;
+const HARDCODED_STATUS_NAME = "Челепиздрик";
+const HARDCODED_STATUS_LEVEL = "Уровень: 2";
+const ACTION_ICON_CACHE_VERSION = "20260706-action-colors-2";
+const BACKGROUND_ICON_CACHE_VERSION = "20260706-background-colors-2";
+const TOP_STATUS_ASSET_CACHE_VERSION = "20260706-top-status-colors-1";
+const PET_SHADOW_CACHE_VERSION = "20260706-pet-shadow-color-1";
+const mainTopWaveSrc = `/figma/main-top-wave.svg?v=${TOP_STATUS_ASSET_CACHE_VERSION}`;
+const mainStomachSrc = `/figma/main-stomach.svg?v=${TOP_STATUS_ASSET_CACHE_VERSION}`;
+const petShadowSrc = `/figma/pet-shadow.svg?v=${PET_SHADOW_CACHE_VERSION}`;
+const actionIconSrc = {
+  chat: `/figma/action-chat-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
+  feed: `/figma/action-feed-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
+  travel: `/figma/action-travel-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
+} as const;
+
+const mainActionButtonBaseStyle = {
+  height: "58.203px",
+  padding: "14px 17px 16px 13px",
+  color: "#7f7e70",
+  boxShadow: "inset 0 -3.517px 0 rgba(43, 43, 43, 0.4)",
+  lineHeight: "normal",
+} satisfies CSSProperties;
+
+const mainActionButtonStyle = {
+  chat: { ...mainActionButtonBaseStyle, width: 192 },
+  feed: { ...mainActionButtonBaseStyle, width: 198 },
+  travel: { ...mainActionButtonBaseStyle, width: 241 },
+} satisfies Record<"chat" | "feed" | "travel", CSSProperties>;
+
+const mainScreenStyle = {
+  backgroundColor: APP_BACKGROUND_COLOR,
+} satisfies CSSProperties;
+
+const mainBgStripsInnerStyle = {
+  background: "transparent",
+} satisfies CSSProperties;
+
+const topStatusTextStyle = {
+  color: "#ffffff",
+} satisfies CSSProperties;
+
+const topStatusTrackStyle = {
+  backgroundColor: "rgba(255, 255, 255, 0.3)",
+} satisfies CSSProperties;
+
+const topStatusFillStyle = {
+  backgroundColor: "#7f7e70",
+} satisfies CSSProperties;
+
+const speechBubbleStyle = {
+  boxShadow:
+    "inset 0 -3.768px 1.256px rgba(127, 126, 112, 0.4), 0 0 0 2px rgba(0, 0, 0, 0.06)",
+} satisfies CSSProperties;
 
 const petMessageStackStyle: CSSProperties = {
   display: "grid",
-  justifyItems: "center",
+  justifyItems: "start",
   alignItems: "start",
-  height: 21,
+  minHeight: 0,
   overflow: "visible",
 };
 
@@ -161,16 +241,194 @@ const spriteStateOptions = [
   { value: "happy", label: "Счастливый" },
 ] satisfies Array<{ value: PetState; label: string }>;
 
+const mainBackgroundIconSrc: Record<MainBackgroundIcon, string> = {
+  plane: `/figma/bg-icon-plane.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
+  cup: `/figma/bg-icon-cup.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
+  charity: `/figma/bg-icon-charity.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
+  home: `/figma/bg-icon-home.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
+  child: `/figma/bg-icon-child.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
+  cart: `/figma/bg-icon-cart.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
+  crown: `/figma/bg-icon-crown.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
+};
+
+const mainBackgroundColumnNames = [
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+] as const;
+
+const mainBackgroundIconColumns = [
+  [
+    "plane",
+    "cup",
+    "charity",
+    "home",
+    "child",
+    "cart",
+    "crown",
+    "cart",
+    "charity",
+    "crown",
+    "child",
+    "home",
+    "cup",
+    "plane",
+  ],
+  [
+    "cart",
+    "home",
+    "plane",
+    "cart",
+    "child",
+    "cup",
+    "home",
+    "crown",
+    "child",
+    "charity",
+    "cup",
+    "crown",
+    "charity",
+    "plane",
+  ],
+  [
+    "cart",
+    "home",
+    "crown",
+    "cup",
+    "cup",
+    "child",
+    "plane",
+    "plane",
+    "child",
+    "cart",
+    "home",
+    "charity",
+    "charity",
+    "crown",
+  ],
+  [
+    "home",
+    "child",
+    "charity",
+    "cart",
+    "home",
+    "cart",
+    "cup",
+    "plane",
+    "plane",
+    "cup",
+    "crown",
+    "crown",
+    "charity",
+    "child",
+  ],
+  [
+    "charity",
+    "child",
+    "cart",
+    "crown",
+    "home",
+    "child",
+    "crown",
+    "home",
+    "cup",
+    "cart",
+    "plane",
+    "charity",
+    "plane",
+    "cup",
+  ],
+  [
+    "plane",
+    "cart",
+    "child",
+    "charity",
+    "crown",
+    "home",
+    "cart",
+    "child",
+    "cup",
+    "home",
+    "charity",
+    "plane",
+    "cup",
+    "crown",
+  ],
+  [
+    "home",
+    "cart",
+    "plane",
+    "charity",
+    "child",
+    "cup",
+    "crown",
+    "crown",
+    "charity",
+    "home",
+    "cart",
+    "plane",
+    "cup",
+    "child",
+  ],
+  [
+    "cart",
+    "home",
+    "plane",
+    "cart",
+    "child",
+    "cup",
+    "home",
+    "crown",
+    "child",
+    "charity",
+    "cup",
+    "crown",
+    "charity",
+    "plane",
+  ],
+  [
+    "cart",
+    "home",
+    "plane",
+    "cart",
+    "child",
+    "cup",
+    "home",
+    "crown",
+    "child",
+    "charity",
+    "cup",
+    "crown",
+    "charity",
+    "plane",
+  ],
+] satisfies ReadonlyArray<ReadonlyArray<MainBackgroundIcon>>;
+
 function shouldReduceMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function generatedSpriteUrl(pet: LocalPetState, stage: PetStage, state: PetState) {
-  return pet.assetSet?.images[stage]?.[state] || null;
+function estimatedKeyboardVisibleHeight(fullHeight: number) {
+  const ratio = FIGMA_KEYBOARD_VISIBLE_HEIGHT / FIGMA_SCREEN_HEIGHT;
+  return Math.max(320, Math.min(fullHeight, Math.round(fullHeight * ratio)));
 }
 
-function jsonText(value: unknown): string {
-  return JSON.stringify(value, null, 2);
+function shouldEagerlyUseKeyboardLayout() {
+  return (
+    window.innerWidth <= 480 ||
+    navigator.maxTouchPoints > 0 ||
+    window.matchMedia("(pointer: coarse)").matches
+  );
+}
+
+function generatedSpriteUrl(pet: LocalPetState, stage: PetStage, state: PetState) {
+  return pet.assetSet?.images[stage]?.[state] || null;
 }
 
 function finishAnimation(element: HTMLElement, finalStyles: Partial<CSSStyleDeclaration>) {
@@ -225,6 +483,43 @@ function renderPetMessageUnits(text: string, translateY: number): ReactNode[] {
   });
 
   return nodes;
+}
+
+function MainBackgroundIcons() {
+  return (
+    <div className="main-bg-strips" aria-hidden="true">
+      <div className="main-bg-strips__inner" style={mainBgStripsInnerStyle}>
+        <div className="main-bg-icon-grid">
+          {mainBackgroundIconColumns.map((icons, columnIndex) => (
+            <div
+              className={`main-bg-icon-column main-bg-icon-column--${mainBackgroundColumnNames[columnIndex]}`}
+              key={mainBackgroundColumnNames[columnIndex]}
+            >
+              <div className="main-bg-icon-track">
+                {[0, 1].map((repeatIndex) => (
+                  <div className="main-bg-icon-set" key={repeatIndex}>
+                    {icons.map((icon, iconIndex) => (
+                      <span
+                        className="main-bg-icon"
+                        key={`${repeatIndex}-${iconIndex}-${icon}`}
+                      >
+                        <img
+                          src={mainBackgroundIconSrc[icon]}
+                          alt=""
+                          className={`main-bg-icon__asset main-bg-icon__asset--${icon}`}
+                          draggable={false}
+                        />
+                      </span>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function PetMessageText({
@@ -451,7 +746,7 @@ function PetCharacterMessage({
 
   return (
     <div
-      className="w-full text-left text-[17px] font-normal leading-[21px] text-black sm:text-right"
+      className="main-speech-bubble__message text-left text-[20.357px] font-bold leading-[normal] text-[#0e2732]"
       style={petMessageStackStyle}
       aria-live="polite"
     >
@@ -730,108 +1025,19 @@ function IdleAnimationControls({
   );
 }
 
-function characterDataSnapshot(pet: LocalPetState): Record<string, unknown> {
-  return {
-    pet: {
-      version: pet.version,
-      petId: pet.petId,
-      name: pet.name,
-      description: pet.description,
-      createdAt: pet.createdAt,
-      updatedAt: pet.updatedAt,
-      lastInteractionAt: pet.lastInteractionAt,
-      stage: pet.stage,
-      mood: pet.mood,
-      stats: pet.stats,
-    },
-    characterBible: pet.assetSet?.characterBible ?? null,
-    assets: pet.assetSet
-      ? {
-          assetSetId: pet.assetSet.assetSetId,
-          generatedAt: pet.assetSet.generatedAt,
-          images: pet.assetSet.images,
-          spriteSheetUrl: pet.assetSet.spriteSheetUrl,
-        }
-      : null,
-  };
-}
-
-function CharacterProfilePanel({
-  pet,
-  onClose,
-}: {
-  pet: LocalPetState;
-  onClose: () => void;
-}) {
-  const displayName = pet.name?.trim() || "Данные персонажа";
-  const snapshot = characterDataSnapshot(pet);
-
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/[0.16]" role="presentation">
-      <button
-        type="button"
-        aria-label="Закрыть паспорт персонажа"
-        className="absolute inset-0 cursor-default"
-        onClick={onClose}
-      />
-
-      <aside
-        id="character-profile-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="character-profile-title"
-        className="absolute bottom-[max(14px,var(--tma-safe-bottom))] right-[max(12px,var(--tma-safe-right))] top-[max(72px,calc(var(--tma-safe-top)+64px))] flex w-[min(430px,calc(100vw-24px))] flex-col overflow-hidden rounded-[8px] border border-black/10 bg-white text-black shadow-[0_18px_46px_rgba(0,0,0,0.16)]"
-      >
-        <header className="flex items-start justify-between gap-3 border-b border-black/10 px-4 py-4">
-          <div className="min-w-0">
-            <h2
-              id="character-profile-title"
-              className="break-words text-[18px] font-semibold leading-[22px] text-black"
-            >
-              {displayName}
-            </h2>
-            <p className="mt-1 text-[12px] leading-[16px] text-black/45">
-              Актуальное состояние персонажа
-            </p>
-          </div>
-          <button
-            type="button"
-            aria-label="Закрыть"
-            onClick={onClose}
-            className="grid size-8 shrink-0 place-items-center rounded-full text-black/45 transition-colors hover:bg-black/[0.04] hover:text-black/70 focus:outline-none focus:ring-2 focus:ring-black/10"
-          >
-            <X className="size-4" aria-hidden="true" />
-          </button>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-hidden p-4">
-          <pre className="h-full overflow-auto whitespace-pre-wrap break-words rounded-[8px] bg-black/[0.035] p-3 font-mono text-[11px] leading-[15px] text-black/72">
-            {jsonText(snapshot)}
-          </pre>
-        </div>
-      </aside>
-    </div>
-  );
-}
-
 export function PetDashboard({ petId }: PetDashboardProps) {
   const router = useRouter();
   const localPet = useLocalPetState();
   const [isFeeding, setIsFeeding] = useState(false);
   const [isIdleControlsOpen, setIsIdleControlsOpen] = useState(false);
-  const [isCharacterProfileOpen, setIsCharacterProfileOpen] = useState(false);
   const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
+  const [isChatMode, setIsChatMode] = useState(false);
+  const [isKeyboardRaised, setIsKeyboardRaised] = useState(false);
+  const [conversationVisibleHeight, setConversationVisibleHeight] = useState(874);
+  const [chatInput, setChatInput] = useState("");
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [isSendingChat, setIsSendingChat] = useState(false);
+  const [conversationReplyMessageId, setConversationReplyMessageId] = useState<number | null>(null);
   const [selectedSprite, setSelectedSprite] = useState<SelectedSprite | null>(null);
   const [idleAnimationSettings, setIdleAnimationSettings] = useState<IdleAnimationSettings>(
     defaultIdleAnimationSettings,
@@ -839,8 +1045,97 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [promptSettings, setPromptSettings] = useState(() => readLocalPetSettings());
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
   const proactiveAttemptedRef = useRef(false);
+  const petReplyMessageRef = useRef<PetReplyMessage | null>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const isSendingChatRef = useRef(false);
+  const conversationFullHeightRef = useRef(0);
+  const keyboardSyncUntilRef = useRef(0);
   const pet = localPet.pet;
   const includePromptDebug = promptSettings.includePromptDebug;
+
+  const closeChatMode = useCallback(() => {
+    keyboardSyncUntilRef.current = 0;
+    setIsChatMode(false);
+    setIsKeyboardRaised(false);
+    setChatError(null);
+    setConversationReplyMessageId(null);
+    chatInputRef.current?.blur();
+  }, []);
+
+  const showPetReplyMessage = useCallback((
+    text: string,
+    playSpeechAudio: boolean,
+    options: ShowPetReplyOptions = {},
+  ) => {
+    const nextMessage = {
+      id: (petReplyMessageRef.current?.id ?? 0) + 1,
+      text,
+      playSpeechAudio,
+    };
+    petReplyMessageRef.current = nextMessage;
+    setPetReplyMessage(nextMessage);
+    if (options.showInConversation) {
+      setConversationReplyMessageId(nextMessage.id);
+    }
+  }, []);
+
+  useTelegramBackButton(closeChatMode, isChatMode);
+
+  useEffect(() => {
+    petReplyMessageRef.current = petReplyMessage;
+  }, [petReplyMessage]);
+
+  useEffect(() => {
+    if (!isChatMode) {
+      return;
+    }
+
+    const baseHeight = conversationFullHeightRef.current || window.innerHeight || FIGMA_SCREEN_HEIGHT;
+    const estimatedVisibleHeight = estimatedKeyboardVisibleHeight(baseHeight);
+
+    function updateKeyboardState() {
+      const visualViewport = window.visualViewport;
+      const visibleHeight = visualViewport
+        ? visualViewport.height + visualViewport.offsetTop
+        : window.innerHeight;
+      const roundedVisibleHeight = Math.round(visibleHeight);
+      const keyboardIsVisible = baseHeight - visibleHeight > 120;
+      const shouldHoldKeyboardLayout = performance.now() < keyboardSyncUntilRef.current;
+
+      if (keyboardIsVisible) {
+        setConversationVisibleHeight(roundedVisibleHeight);
+        setIsKeyboardRaised(true);
+        return;
+      }
+
+      if (shouldHoldKeyboardLayout) {
+        setConversationVisibleHeight((currentHeight) =>
+          currentHeight >= baseHeight - 1 ? estimatedVisibleHeight : currentHeight,
+        );
+        setIsKeyboardRaised(true);
+        return;
+      }
+
+      setConversationVisibleHeight(roundedVisibleHeight);
+      setIsKeyboardRaised(false);
+    }
+
+    updateKeyboardState();
+    const syncTimeoutId = window.setTimeout(
+      updateKeyboardState,
+      KEYBOARD_EAGER_SYNC_MS + 40,
+    );
+    window.addEventListener("resize", updateKeyboardState);
+    window.visualViewport?.addEventListener("resize", updateKeyboardState);
+    window.visualViewport?.addEventListener("scroll", updateKeyboardState);
+
+    return () => {
+      window.clearTimeout(syncTimeoutId);
+      window.removeEventListener("resize", updateKeyboardState);
+      window.visualViewport?.removeEventListener("resize", updateKeyboardState);
+      window.visualViewport?.removeEventListener("scroll", updateKeyboardState);
+    };
+  }, [isChatMode]);
 
   useEffect(() => {
     if (localPet.status === "loading") {
@@ -858,13 +1153,177 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
     setIsFeeding(true);
     localPet.feed();
-    hapticImpact("light");
     window.setTimeout(() => setIsFeeding(false), 180);
   }
 
   function handlePlay() {
     localPet.play();
-    hapticImpact("light");
+  }
+
+  function focusChatInput() {
+    chatInputRef.current?.focus({ preventScroll: true });
+  }
+
+  function dismissChatKeyboard() {
+    keyboardSyncUntilRef.current = 0;
+    setConversationVisibleHeight(
+      conversationFullHeightRef.current || window.innerHeight || FIGMA_SCREEN_HEIGHT,
+    );
+    setIsKeyboardRaised(false);
+    chatInputRef.current?.blur();
+  }
+
+  function handleOpenChatMode() {
+    setIsIdleControlsOpen(false);
+    setIsDebugPanelOpen(false);
+    setChatError(null);
+    setConversationReplyMessageId(null);
+    const fullHeight = window.innerHeight || FIGMA_SCREEN_HEIGHT;
+    const shouldSyncKeyboard = shouldEagerlyUseKeyboardLayout();
+    conversationFullHeightRef.current = fullHeight;
+    keyboardSyncUntilRef.current = shouldSyncKeyboard
+      ? performance.now() + KEYBOARD_EAGER_SYNC_MS
+      : 0;
+
+    flushSync(() => {
+      setConversationVisibleHeight(
+        shouldSyncKeyboard ? estimatedKeyboardVisibleHeight(fullHeight) : fullHeight,
+      );
+      setIsKeyboardRaised(shouldSyncKeyboard);
+      setIsChatMode(true);
+    });
+    focusChatInput();
+  }
+
+  async function submitChatMessage(options: { dismissKeyboard?: boolean } = {}) {
+    const message = chatInput.trim().slice(0, 1000);
+    if (!message || isSendingChatRef.current || !pet) {
+      if (options.dismissKeyboard) {
+        dismissChatKeyboard();
+      } else {
+        focusChatInput();
+      }
+      return;
+    }
+
+    void primePetSpeechAudio();
+    if (options.dismissKeyboard) {
+      dismissChatKeyboard();
+    } else {
+      keyboardSyncUntilRef.current = performance.now() + KEYBOARD_EAGER_SYNC_MS;
+      setIsKeyboardRaised(true);
+    }
+    setChatInput("");
+    setChatError(null);
+    setConversationReplyMessageId(null);
+    isSendingChatRef.current = true;
+    setIsSendingChat(true);
+
+    const userMessage = {
+      id: createLocalId("message"),
+      role: "user" as const,
+      text: message,
+      createdAt: new Date().toISOString(),
+    };
+    const history = latestChatMessages(12);
+    const memoryBeforeMessage = readLocalPetMemory(pet.petId);
+    const memoryContext = buildMemoryContextForMessage(memoryBeforeMessage, message);
+
+    if (includePromptDebug) {
+      console.log("[memory-debug] dashboard quick chat recall context", memoryContext);
+    }
+    recordMemoryContextDebug(memoryContext);
+    appendLocalChatMessages([userMessage]);
+
+    try {
+      const response = await sendLocalChatMessage(message, pet, history, {
+        includeDebug: true,
+        memoryContext,
+        replyMaxChars: DASHBOARD_CHAT_REPLY_MAX_CHARS,
+      });
+      logBrowserPromptDebug("dashboard quick chat reply", response);
+      recordReplyPromptDebug(response);
+
+      const assistantMessage = {
+        id: createLocalId("message"),
+        role: "pet" as const,
+        text: response.reply,
+        createdAt: new Date().toISOString(),
+      };
+      appendLocalChatMessages([assistantMessage]);
+      recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
+      showPetReplyMessage(response.reply, true, { showInConversation: true });
+      localPet.applyMoodHint(response.moodHint, response.debug?.liteOverlayPatch);
+
+      const selectedMemoryIds = memoryContext.relevantMemories.map((item) => item.id);
+      if (selectedMemoryIds.length) {
+        writeLocalPetMemory(
+          markMemoryContextUsed(readLocalPetMemory(pet.petId), selectedMemoryIds),
+        );
+      }
+
+      void extractLocalLiteFacts(message, response.reply, pet, history, {
+        includeDebug: includePromptDebug,
+      })
+        .then((extraction) => {
+          logBrowserPromptDebug("dashboard quick chat lite fact extraction", extraction);
+          if (extraction.liteOverlayPatch) {
+            recordLiteOverlayPatchDebug(extraction.liteOverlayPatch);
+            localPet.applyLiteOverlayPatch(extraction.liteOverlayPatch);
+          }
+        })
+        .catch(() => undefined);
+
+      void extractLocalUserMemory(message, response.reply, pet, history, memoryBeforeMessage, {
+        includeDebug: includePromptDebug,
+        memoryContext,
+      })
+        .then((extraction) => {
+          logBrowserPromptDebug("dashboard quick chat memory extraction", extraction);
+          recordMemoryOperationsDebug(extraction.operations);
+          const latestMemory = readLocalPetMemory(pet.petId);
+          writeLocalPetMemory(
+            applyMemoryOperations(latestMemory, extraction.operations, [
+              userMessage.id,
+              assistantMessage.id,
+            ]),
+          );
+        })
+        .catch(() => undefined);
+    } catch (caught) {
+      setChatError(
+        caught instanceof ApiError ? caught.message : "Не удалось отправить сообщение.",
+      );
+      hapticNotification("error");
+    } finally {
+      isSendingChatRef.current = false;
+      setIsSendingChat(false);
+      if (!options.dismissKeyboard) {
+        window.requestAnimationFrame(() => {
+          focusChatInput();
+        });
+      }
+    }
+  }
+
+  function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submitChatMessage();
+  }
+
+  function handleSendButtonClick(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    void submitChatMessage({ dismissKeyboard: true });
+  }
+
+  function handleResetPet() {
+    const confirmed = window.confirm("Сбросить персонажа и создать нового? Локальный прогресс будет удален.");
+    if (!confirmed) {
+      return;
+    }
+    setIsDebugPanelOpen(false);
+    localPet.reset();
+    router.push("/");
   }
 
   function handlePromptDebugChange(enabled: boolean) {
@@ -899,68 +1358,72 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     }
 
     const history = readLocalChatHistory().messages;
-    const memoryContext = buildDailyProactiveMemoryContext(pet, memory, history);
-    if (!memoryContext) {
+    const proactiveMemoryContext = buildDailyProactiveMemoryContext(pet, memory, history);
+    if (proactiveMemoryContext) {
+      if (includePromptDebug) {
+        console.log("[memory-debug] dashboard proactive candidate", proactiveMemoryContext);
+      }
+      recordMemoryContextDebug(proactiveMemoryContext, "Память подставлена в proactive prompt");
+      void generateLocalProactiveMessage(pet, proactiveMemoryContext, { includeDebug: true })
+        .then((response) => {
+          logBrowserPromptDebug("dashboard proactive chat", response);
+          recordReplyPromptDebug(response);
+          appendLocalChatMessages([
+            {
+              id: createLocalId("message"),
+              role: "pet",
+              text: response.reply,
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+          const latestMemory = readLocalPetMemory(pet.petId);
+          writeLocalPetMemory(
+            recordProactiveDelivery(
+              latestMemory,
+              proactiveMemoryContext.proactiveCandidate?.memoryIds ?? [],
+              response.reply,
+            ),
+          );
+          showPetReplyMessage(response.reply, true);
+          localPet.applyMoodHint(response.moodHint);
+        })
+        .catch(() => undefined);
       return;
     }
+
+    const initialMemoryContext = buildMemoryContextForMessage(memory, INITIAL_PET_DAY_PROMPT);
     if (includePromptDebug) {
-      console.log("[memory-debug] dashboard proactive candidate", memoryContext);
+      console.log("[memory-debug] dashboard initial bubble context", initialMemoryContext);
     }
-    recordMemoryContextDebug(memoryContext, "Память подставлена в proactive prompt");
-    void generateLocalProactiveMessage(pet, memoryContext, { includeDebug: true })
+    recordMemoryContextDebug(initialMemoryContext, "Память подставлена в стартовый бабл");
+    void sendLocalChatMessage(INITIAL_PET_DAY_PROMPT, pet, history, {
+      includeDebug: true,
+      memoryContext: initialMemoryContext,
+      replyMaxChars: INITIAL_PET_REPLY_MAX_CHARS,
+    })
       .then((response) => {
-        logBrowserPromptDebug("dashboard proactive chat", response);
+        if (petReplyMessageRef.current) {
+          return;
+        }
+        const rawReplyText = response.reply.trim();
+        const replyText = rawReplyText || INITIAL_PET_REPLY_FALLBACK;
+        logBrowserPromptDebug("dashboard initial bubble reply", response);
         recordReplyPromptDebug(response);
-        appendLocalChatMessages([
-          {
-            id: createLocalId("message"),
-            role: "pet",
-            text: response.reply,
-            createdAt: new Date().toISOString(),
-          },
-        ]);
-        const latestMemory = readLocalPetMemory(pet.petId);
-        writeLocalPetMemory(
-          recordProactiveDelivery(
-            latestMemory,
-            memoryContext.proactiveCandidate?.memoryIds ?? [],
-            response.reply,
-          ),
-        );
-        setPetReplyMessage((current) => ({
-          id: (current?.id ?? 0) + 1,
-          text: response.reply,
-          playSpeechAudio: true,
-        }));
-        localPet.applyMoodHint(response.moodHint);
+        recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
+        showPetReplyMessage(replyText, Boolean(rawReplyText));
+        localPet.applyMoodHint(response.moodHint, response.debug?.liteOverlayPatch);
       })
-      .catch(() => undefined);
-  }, [includePromptDebug, localPet, pet, petId]);
-
-  function handleChatResponse(response: LocalChatResponse) {
-    setPetReplyMessage((current) => ({
-      id: (current?.id ?? 0) + 1,
-      text: response.reply,
-      playSpeechAudio: true,
-    }));
-
-    localPet.applyMoodHint(response.moodHint, response.debug?.liteOverlayPatch);
-    hapticImpact("light");
-  }
-
-  function handleReset() {
-    const confirmed = window.confirm("Создать нового друга? Локальный прогресс будет удален.");
-    if (!confirmed) {
-      return;
-    }
-    hapticImpact("medium");
-    localPet.reset();
-    router.push("/");
-  }
+      .catch(() => {
+        if (petReplyMessageRef.current) {
+          return;
+        }
+        showPetReplyMessage(INITIAL_PET_REPLY_FALLBACK, false);
+      });
+  }, [includePromptDebug, localPet, pet, petId, showPetReplyMessage]);
 
   if (localPet.status === "loading") {
     return (
-      <main className="tma-screen grid place-items-center bg-white px-6">
+      <main className="tma-screen grid place-items-center bg-[var(--paper)] px-6">
         <Loader2 className="size-6 animate-spin text-[var(--ink-muted)]" aria-label="Loading" />
       </main>
     );
@@ -973,10 +1436,15 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const animationSettings = { ...defaultIdleAnimationSettings, ...idleAnimationSettings };
   const displayedStage = selectedSprite?.stage ?? pet.stage;
   const displayedState = selectedSprite?.state ?? pet.mood;
-  const previewPet: LocalPetState = selectedSprite
-    ? { ...pet, stage: displayedStage, mood: displayedState }
-    : pet;
-  const visiblePetImage = generatedSpriteUrl(pet, displayedStage, displayedState) ?? "/figma/pet.png";
+  const visiblePetImage =
+    generatedSpriteUrl(pet, displayedStage, displayedState) ?? "/figma/main-pet.png";
+  const displayedReply = petReplyMessage ?? {
+    id: 0,
+    text: INITIAL_PET_REPLY_FALLBACK,
+    playSpeechAudio: false,
+  };
+  const shouldShowConversationReply =
+    isChatMode && conversationReplyMessageId === displayedReply.id;
   const transformOrigin = `${animationSettings.originX}% ${animationSettings.originY}%`;
   const idleStretchStyle: IdleStretchStyle = {
     "--pet-idle-duration": `${(
@@ -992,78 +1460,76 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     "--pet-idle-max-rotation": `${animationSettings.maxRotation}deg`,
     transformOrigin,
   };
+  const conversationSceneStyle: ConversationSceneStyle = {
+    ...mainScreenStyle,
+    "--conversation-visible-height": `${conversationVisibleHeight}px`,
+  };
 
   return (
-    <main className="tma-screen overflow-hidden bg-white text-black">
+    <main className="tma-screen relative overflow-hidden bg-[var(--paper)] text-black" style={mainScreenStyle}>
       {localPet.error ? (
         <div className="fixed left-5 right-5 top-[max(20px,calc(var(--tma-safe-top)+12px))] z-20 rounded-[8px] border border-[var(--danger-line)] bg-white px-4 py-3 text-sm text-[var(--danger)] sm:left-8 sm:right-auto sm:max-w-sm">
           {localPet.error}
         </div>
       ) : null}
 
-      <section className="tma-screen relative w-screen overflow-hidden bg-white" aria-label="AI Tamagotchi">
-        <IdleAnimationControls
-          isOpen={isIdleControlsOpen}
-          pet={pet}
-          selectedStage={displayedStage}
-          selectedState={displayedState}
-          settings={animationSettings}
-          includePromptDebug={includePromptDebug}
-          onChange={setIdleAnimationSettings}
-          onChangeIncludePromptDebug={handlePromptDebugChange}
-          onSelectStage={(stage) =>
-            setSelectedSprite((current) => ({
-              stage,
-              state: current?.state ?? pet.mood,
-            }))
-          }
-          onSelectState={(state) =>
-            setSelectedSprite((current) => ({
-              stage: current?.stage ?? pet.stage,
-              state,
-            }))
-          }
-          onResetSprite={() => setSelectedSprite(null)}
-          onToggle={() => setIsIdleControlsOpen((current) => !current)}
+      <section
+        className={`main-mobile-scene tma-screen relative mx-auto w-full max-w-[402px] overflow-hidden bg-[var(--paper)] ${
+          isChatMode ? "main-mobile-scene--chat" : ""
+        } ${
+          isKeyboardRaised ? "main-mobile-scene--keyboard" : ""
+        } ${
+          shouldShowConversationReply ? "main-mobile-scene--reply" : ""
+        }`}
+        style={conversationSceneStyle}
+        aria-label="AI Tamagotchi"
+      >
+        <MainBackgroundIcons />
+
+        <div className="conversation-appbar" aria-hidden={!isChatMode}>
+          <div className="conversation-appbar__blur" aria-hidden="true" />
+        </div>
+
+        <img
+          src={mainTopWaveSrc}
+          alt=""
+          aria-hidden="true"
+          className="conversation-fade-target absolute left-[-27px] top-[-26px] z-10 h-[304.006px] w-[489.467px] max-w-none"
+          draggable={false}
         />
 
-        <button
-          type="button"
-          aria-controls="character-profile-panel"
-          aria-expanded={isCharacterProfileOpen}
-          aria-label={isCharacterProfileOpen ? "Скрыть параметры персонажа" : "Показать параметры персонажа"}
-          onClick={() => {
-            setIsIdleControlsOpen(false);
-            setIsCharacterProfileOpen(true);
-          }}
-          className="fixed right-5 top-5 z-40 grid size-[42px] place-items-center rounded-full border border-black/10 bg-[#f3f3f3] text-black/45 shadow-[0_8px_22px_rgba(0,0,0,0.08)] transition-colors hover:bg-[#e9e9e9] hover:text-black/60 focus:outline-none focus:ring-2 focus:ring-black/15"
-        >
-          <ScrollText className="size-5" aria-hidden="true" />
-        </button>
-
-        <button
-          type="button"
-          aria-controls="debug-panel"
-          aria-expanded={isDebugPanelOpen}
-          aria-label={isDebugPanelOpen ? "Скрыть debug-панель" : "Показать debug-панель"}
-          onClick={() => {
-            setIsIdleControlsOpen(false);
-            setIsCharacterProfileOpen(false);
-            setIsDebugPanelOpen(true);
-          }}
-          className="fixed right-5 top-[74px] z-40 grid size-[42px] place-items-center rounded-full border border-black/10 bg-[#f3f3f3] text-black/45 shadow-[0_8px_22px_rgba(0,0,0,0.08)] transition-colors hover:bg-[#e9e9e9] hover:text-black/60 focus:outline-none focus:ring-2 focus:ring-black/15"
-        >
-          <Bug className="size-5" aria-hidden="true" />
-        </button>
-
-        {isCharacterProfileOpen ? (
-          <CharacterProfilePanel pet={pet} onClose={() => setIsCharacterProfileOpen(false)} />
-        ) : null}
+        <div className="hidden" aria-hidden="true">
+          <IdleAnimationControls
+            isOpen={isIdleControlsOpen}
+            pet={pet}
+            selectedStage={displayedStage}
+            selectedState={displayedState}
+            settings={animationSettings}
+            includePromptDebug={includePromptDebug}
+            onChange={setIdleAnimationSettings}
+            onChangeIncludePromptDebug={handlePromptDebugChange}
+            onSelectStage={(stage) =>
+              setSelectedSprite((current) => ({
+                stage,
+                state: current?.state ?? pet.mood,
+              }))
+            }
+            onSelectState={(state) =>
+              setSelectedSprite((current) => ({
+                stage: current?.stage ?? pet.stage,
+                state,
+              }))
+            }
+            onResetSprite={() => setSelectedSprite(null)}
+            onToggle={() => setIsIdleControlsOpen((current) => !current)}
+          />
+        </div>
 
         <DebugPanel
           pet={pet}
           isOpen={isDebugPanelOpen}
           onClose={() => setIsDebugPanelOpen(false)}
+          onResetPet={handleResetPet}
         />
 
         <div className="sr-only" aria-live="polite">
@@ -1072,108 +1538,195 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           {pet.stats.energy}/100. Cleanliness {pet.stats.cleanliness}/100.
         </div>
 
-        <div className="absolute inset-x-0 top-[max(86px,calc(var(--tma-safe-top)+56px))] flex justify-center sm:top-[19.7vh]">
-          <div className="relative h-[min(43vh,451px)] w-[min(78vw,501px)]">
-            <div className="absolute bottom-[8%] left-1/2 h-[12%] w-[46%] -translate-x-1/2" aria-hidden="true">
-              <div className="absolute inset-[-51.85%_-12.23%]">
-                <img
-                  src="/figma/pet-shadow.svg"
-                  alt=""
-                  className="block h-full w-full max-w-none"
-                  draggable={false}
-                />
-              </div>
-            </div>
-
-            <div className="pet-idle-rotation absolute inset-0" style={idleRotationStyle}>
-              <img
-                src={visiblePetImage}
-                alt={`AI Tamagotchi ${stageLabels[displayedStage]} ${stateLabels[displayedState]}`}
-                className="pet-idle-y-animation h-full w-full max-w-none object-contain"
-                style={idleStretchStyle}
-                width={501}
-                height={451}
-                draggable={false}
-              />
-            </div>
+        <div className="conversation-fade-target absolute left-[31px] top-[106px] z-20">
+          <div className="text-[17px] font-[800] leading-none text-white" style={topStatusTextStyle}>
+            {HARDCODED_STATUS_NAME}
+          </div>
+          <div
+            className="mt-[6px] text-[32.073px] font-[800] leading-none text-white"
+            style={topStatusTextStyle}
+          >
+            {HARDCODED_STATUS_LEVEL}
+          </div>
+          <div className="relative mt-[15px] h-[27px] w-[237px]">
+            <div
+              className="absolute left-0 top-[-1px] h-[28px] w-[237px] rounded-[10px] bg-white/30"
+              style={topStatusTrackStyle}
+            />
+            <div
+              className="absolute left-[4px] top-[3px] h-[20px] w-[73px] rounded-[7px] bg-[#7f7e70]"
+              style={topStatusFillStyle}
+            />
           </div>
         </div>
 
-        {petReplyMessage ? (
-          <div className="pointer-events-none absolute right-5 top-[max(76px,calc(var(--tma-safe-top)+70px))] z-30 w-[min(680px,calc(100vw-40px))] sm:right-8 sm:top-[max(82px,calc(var(--tma-safe-top)+78px))]">
+        <img
+          src={mainStomachSrc}
+          alt=""
+          aria-hidden="true"
+          className="conversation-fade-target absolute left-[315px] top-[138px] z-20 h-[57.933px] w-[58.601px] max-w-none"
+          draggable={false}
+        />
+
+        <div
+          className={`absolute left-1/2 top-[238px] z-30 -translate-x-1/2 ${
+            shouldShowConversationReply
+              ? "conversation-reply-bubble"
+              : "conversation-fade-target"
+          }`}
+        >
+          <div className="main-speech-bubble" style={speechBubbleStyle}>
             <PetCharacterMessage
-              message={petReplyMessage}
+              message={displayedReply}
               textTranslateY={animationSettings.textTranslateY}
               speechEndTrimMs={animationSettings.speechEndTrimMs}
             />
           </div>
-        ) : null}
+        </div>
 
-        <div className="absolute bottom-[max(26px,calc(var(--tma-safe-bottom)+16px))] left-1/2 z-10 flex w-[min(405px,calc(100vw-40px))] -translate-x-1/2 flex-col items-center gap-[30px] sm:gap-[38px]">
-          <div className="flex w-full max-w-[405px] flex-col items-end gap-2">
-            <PetQuickChat
-              pet={previewPet}
-              includePromptDebug={includePromptDebug}
-              onChatResponse={handleChatResponse}
-              onLiteOverlayPatch={localPet.applyLiteOverlayPatch}
+        <img
+          src={petShadowSrc}
+          alt=""
+          aria-hidden="true"
+          className="main-pet-shadow absolute left-[90.87px] top-[609.32px] z-10 h-[78.996px] w-[210.268px] max-w-none"
+          draggable={false}
+        />
+
+        <div className="main-pet-stage absolute left-0 top-[327px] z-20 size-[402px]">
+          <div className="pet-idle-rotation absolute inset-0" style={idleRotationStyle}>
+            <img
+              src={visiblePetImage}
+              alt={`AI Tamagotchi ${stageLabels[displayedStage]} ${stateLabels[displayedState]}`}
+              className="pet-idle-y-animation absolute left-0 top-[6.89%] h-[90.02%] w-full max-w-none object-contain"
+              style={idleStretchStyle}
+              width={402}
+              height={362}
+              draggable={false}
             />
-          </div>
-
-          <div className="flex items-center gap-[20px] sm:gap-[28px]">
-            <button
-              type="button"
-              onClick={handleFeed}
-              disabled={isFeeding}
-              className="inline-flex h-[55px] items-center justify-center gap-[10px] rounded-[40px] bg-white p-[17px] text-[17px] font-normal leading-none text-black drop-shadow-[0_4px_14px_rgba(0,0,0,0.1)] transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-black/10 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isFeeding ? (
-                <Loader2 className="size-[17px] animate-spin" aria-hidden="true" />
-              ) : (
-                <img
-                  src="/figma/feed-icon.svg"
-                  alt=""
-                  aria-hidden="true"
-                  className="h-[21.411px] w-[12.684px] max-w-none"
-                  draggable={false}
-                />
-              )}
-              <span className="whitespace-nowrap">Покормить</span>
-            </button>
-
-            <Link
-              onClick={handlePlay}
-              href={`/pet/${pet.petId}/chat`}
-              className="inline-flex h-[55px] items-center justify-center gap-[10px] rounded-[40px] bg-white p-[17px] text-[17px] font-normal leading-none text-black drop-shadow-[0_4px_14px_rgba(0,0,0,0.1)] transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-black/10"
-            >
-              <img
-                src="/figma/play-icon.svg"
-                alt=""
-                aria-hidden="true"
-                className="h-[15.041px] w-[23.964px] max-w-none"
-                draggable={false}
-              />
-              <span className="whitespace-nowrap">Поиграть</span>
-            </Link>
           </div>
         </div>
 
+        <form
+          onSubmit={handleChatSubmit}
+          className="conversation-input-panel"
+          aria-hidden={!isChatMode}
+          aria-busy={isSendingChat}
+        >
+          <input
+            ref={chatInputRef}
+            value={chatInput}
+            onChange={(event) => {
+              setChatInput(event.currentTarget.value);
+              if (chatError) {
+                setChatError(null);
+              }
+            }}
+            maxLength={1000}
+            disabled={!isChatMode}
+            tabIndex={isChatMode ? 0 : -1}
+            className="conversation-input"
+            placeholder="Как у тебя прошел день?"
+            aria-label="Сообщение персонажу"
+            autoComplete="off"
+            autoCapitalize="sentences"
+            enterKeyHint="send"
+            inputMode="text"
+          />
+
+          {chatError ? (
+            <p className="conversation-input-error" aria-live="polite">
+              {chatError}
+            </p>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={handleSendButtonClick}
+            disabled={isSendingChat}
+            tabIndex={isChatMode ? 0 : -1}
+            className="conversation-send-button"
+          >
+            {isSendingChat ? (
+              <Loader2 className="size-[18px] animate-spin" aria-hidden="true" />
+            ) : null}
+            <span>Отправить</span>
+          </button>
+        </form>
+
         <button
           type="button"
-          aria-label="Создать нового друга"
-          onClick={handleReset}
-          className="absolute right-[max(20px,var(--tma-safe-right))] top-[max(74px,calc(var(--tma-safe-top)+66px))] z-10 grid size-[42px] place-items-center rounded-full border border-black/10 bg-[#f3f3f3] text-[17px] font-normal leading-none text-black/30 shadow-[0_8px_22px_rgba(0,0,0,0.08)] transition-colors hover:bg-[#e9e9e9] hover:text-black/50 focus:outline-none focus:ring-2 focus:ring-black/10 sm:bottom-[max(32px,calc(var(--tma-safe-bottom)+32px))] sm:right-[clamp(24px,4.86vw,70px)] sm:top-auto sm:inline-flex sm:h-[21px] sm:w-auto sm:gap-[12px] sm:rounded-none sm:border-0 sm:bg-transparent sm:shadow-none sm:hover:bg-transparent"
+          aria-controls="debug-panel"
+          aria-expanded={isDebugPanelOpen}
+          aria-label={isDebugPanelOpen ? "Скрыть debug-панель" : "Показать debug-панель"}
+          onClick={() => {
+            setIsIdleControlsOpen(false);
+            setIsDebugPanelOpen(true);
+          }}
+          className="conversation-fade-target absolute left-[339px] top-[669px] z-40 grid size-[54px] place-items-center overflow-hidden rounded-[32px] bg-[rgba(253,253,253,0.4)] text-black/30 transition-colors hover:bg-white/55 hover:text-black/40 focus:outline-none focus:ring-2 focus:ring-black/10"
         >
-          <span
-            aria-hidden="true"
-            className="h-[16.925px] w-[13.92px] bg-current"
-            style={{
-              WebkitMask: "url('/figma/new-pet-icon.svg') center / contain no-repeat",
-              mask: "url('/figma/new-pet-icon.svg') center / contain no-repeat",
-            }}
-          />
-          <span className="hidden whitespace-nowrap sm:inline">Создать нового друга</span>
+          <Bug className="size-[22px]" aria-hidden="true" />
         </button>
       </section>
+
+      <div
+        className={`main-actions-scroll conversation-fade-target absolute top-[762px] z-30 ${
+          isChatMode ? "conversation-fade-target--hidden" : ""
+        }`}
+      >
+        <div className="flex w-max gap-[19px] pr-[29px]">
+          <button
+            type="button"
+            className="main-action-button main-action-button--chat"
+            style={mainActionButtonStyle.chat}
+            onClick={handleOpenChatMode}
+          >
+            <img
+              src={actionIconSrc.chat}
+              alt=""
+              aria-hidden="true"
+              className="main-action-button__icon"
+              draggable={false}
+            />
+            <span>Поболтать</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleFeed}
+            disabled={isFeeding}
+            className="main-action-button main-action-button--feed disabled:cursor-not-allowed disabled:opacity-70"
+            style={mainActionButtonStyle.feed}
+          >
+            {isFeeding ? (
+              <Loader2 className="size-[24px] animate-spin" aria-hidden="true" />
+            ) : (
+              <img
+                src={actionIconSrc.feed}
+                alt=""
+                aria-hidden="true"
+                className="main-action-button__icon"
+                draggable={false}
+              />
+            )}
+            <span>Покормить</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handlePlay}
+            className="main-action-button main-action-button--travel"
+            style={mainActionButtonStyle.travel}
+          >
+            <img
+              src={actionIconSrc.travel}
+              alt=""
+              aria-hidden="true"
+              className="main-action-button__icon"
+              draggable={false}
+            />
+            <span>В путешествие</span>
+          </button>
+        </div>
+      </div>
     </main>
   );
 }

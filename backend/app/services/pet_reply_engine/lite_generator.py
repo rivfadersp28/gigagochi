@@ -513,6 +513,7 @@ def _history_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
 
 
 def build_lite_chat_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
+    reply_limit = payload.replyMaxChars or MAX_REPLY_CHARS
     system_content = (
         f"Отвечай мне как {_short_character_description(payload)}. "
         f"Сейчас ты {_age_role_hint(payload)}."
@@ -521,9 +522,14 @@ def build_lite_chat_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     if state_modifier:
         system_content = f"{system_content} Ты сейчас {state_modifier}."
     system_content = (
-        f"{system_content} Ответ максимум {MAX_REPLY_CHARS} символов; "
+        f"{system_content} Ответ максимум {reply_limit} символов; "
         "можно короче, даже одной фразой."
     )
+    if payload.replyMaxChars is not None:
+        system_content = (
+            f"{system_content} Сгенерируй законченную реплику сразу в этом лимите; "
+            "не сокращай ее многоточием."
+        )
     system_content = f"{system_content}\n\n{_lite_persona_contract()}"
     memory_block = _memory_context_block(payload.memoryContext)
     if memory_block:

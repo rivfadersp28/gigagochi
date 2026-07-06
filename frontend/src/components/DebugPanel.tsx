@@ -1,6 +1,6 @@
 "use client";
 
-import { Bug, Database, MessageSquareText, Trash2, X } from "lucide-react";
+import { Bug, Database, MessageSquareText, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import {
@@ -17,6 +17,7 @@ type DebugPanelProps = {
   pet: LocalPetState;
   isOpen: boolean;
   onClose: () => void;
+  onResetPet?: () => void;
 };
 
 type DebugTab = "feed" | "prompts" | "character";
@@ -184,7 +185,7 @@ function CharacterInfo({ pet, memory }: { pet: LocalPetState; memory: LocalPetMe
   );
 }
 
-export function DebugPanel({ pet, isOpen, onClose }: DebugPanelProps) {
+export function DebugPanel({ pet, isOpen, onClose, onResetPet }: DebugPanelProps) {
   const [activeTab, setActiveTab] = useState<DebugTab>("feed");
   const [events, setEvents] = useState<DebugPanelEvent[]>(() =>
     [...readDebugPanelEvents()].reverse(),
@@ -252,6 +253,16 @@ export function DebugPanel({ pet, isOpen, onClose }: DebugPanelProps) {
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
+              {onResetPet ? (
+                <button
+                  type="button"
+                  aria-label="Сбросить персонажа и создать нового"
+                  onClick={onResetPet}
+                  className="grid size-8 place-items-center rounded-full text-black/45 transition-colors hover:bg-black/[0.04] hover:text-black/70 focus:outline-none focus:ring-2 focus:ring-black/10"
+                >
+                  <RotateCcw className="size-4" aria-hidden="true" />
+                </button>
+              ) : null}
               <button
                 type="button"
                 aria-label="Очистить debug-ленту"

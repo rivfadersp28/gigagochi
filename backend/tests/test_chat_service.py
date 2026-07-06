@@ -102,6 +102,14 @@ def test_lite_prompt_includes_age_role_hint() -> None:
     )
 
 
+def test_lite_prompt_uses_request_reply_limit() -> None:
+    system_message = build_lite_chat_messages(lite_payload(replyMaxChars=40))[0]["content"]
+
+    assert "Ответ максимум 40 символов" in system_message
+    assert "Сгенерируй законченную реплику сразу в этом лимите" in system_message
+    assert "не сокращай ее многоточием" in system_message
+
+
 def test_lite_prompt_includes_state_modifier() -> None:
     payload = lite_payload()
     happy = payload.model_copy(update={"pet": payload.pet.model_copy(update={"mood": "happy"})})

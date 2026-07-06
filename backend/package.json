@@ -1,0 +1,9 @@
+{
+  "name": "ai-tamagotchi-backend-image-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@imgly/background-removal-node": "1.4.5"
+  }
+}

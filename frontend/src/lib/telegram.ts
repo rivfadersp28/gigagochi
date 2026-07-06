@@ -2,6 +2,8 @@
 
 import { useEffect } from "react";
 
+import { APP_BACKGROUND_COLOR } from "@/lib/theme";
+
 type TelegramBackButton = {
   isVisible?: boolean;
   show: () => void;
@@ -41,6 +43,7 @@ export type TelegramWebApp = {
   isVersionAtLeast?: (version: string) => boolean;
   setHeaderColor?: (color: string) => void;
   setBackgroundColor?: (color: string) => void;
+  setBottomBarColor?: (color: string) => void;
   onEvent?: (eventType: string, callback: (event?: unknown) => void) => void;
   offEvent?: (eventType: string, callback: (event?: unknown) => void) => void;
 };
@@ -94,8 +97,9 @@ export function requestTelegramFullscreen() {
   }
 
   try {
-    webApp.setHeaderColor?.("#ffffff");
-    webApp.setBackgroundColor?.("#ffffff");
+    webApp.setHeaderColor?.(APP_BACKGROUND_COLOR);
+    webApp.setBackgroundColor?.(APP_BACKGROUND_COLOR);
+    webApp.setBottomBarColor?.(APP_BACKGROUND_COLOR);
     webApp.expand?.();
     if (webApp.isFullscreen) {
       return;

@@ -56,6 +56,10 @@ GENERATION_JOB_TTL = timedelta(hours=1)
 AI_FAILURE_LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "ai-failures.jsonl"
 logger = logging.getLogger(__name__)
 generation_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pet-generation")
+DEFAULT_GENERATION_RATE_LIMIT_PER_DAY = 0
+DEFAULT_CHAT_RATE_LIMIT_PER_HOUR = 0
+DEFAULT_LITE_FACTS_RATE_LIMIT_PER_HOUR = 0
+DEFAULT_MEMORY_RATE_LIMIT_PER_HOUR = 0
 
 
 @dataclass
@@ -73,11 +77,40 @@ def check_rate_limit(bucket: str, user: TelegramUserContext) -> None:
     if not settings.enable_in_memory_rate_limit:
         return
     if bucket == "generation":
-        rate_limiter.check(bucket, user.telegram_id, limit=3, window=timedelta(days=1))
+        rate_limiter.check(
+            bucket,
+            user.telegram_id,
+            limit=getattr(
+                settings,
+                "generation_rate_limit_per_day",
+                DEFAULT_GENERATION_RATE_LIMIT_PER_DAY,
+            ),
+            window=timedelta(days=1),
+        )
     elif bucket == "chat":
-        rate_limiter.check(bucket, user.telegram_id, limit=30, window=timedelta(hours=1))
+        rate_limiter.check(
+            bucket,
+            user.telegram_id,
+            limit=getattr(settings, "chat_rate_limit_per_hour", DEFAULT_CHAT_RATE_LIMIT_PER_HOUR),
+            window=timedelta(hours=1),
+        )
     elif bucket in {"lite_facts", "memory"}:
-        rate_limiter.check(bucket, user.telegram_id, limit=60, window=timedelta(hours=1))
+        setting_name = (
+            "lite_facts_rate_limit_per_hour"
+            if bucket == "lite_facts"
+            else "memory_rate_limit_per_hour"
+        )
+        default_limit = (
+            DEFAULT_LITE_FACTS_RATE_LIMIT_PER_HOUR
+            if bucket == "lite_facts"
+            else DEFAULT_MEMORY_RATE_LIMIT_PER_HOUR
+        )
+        rate_limiter.check(
+            bucket,
+            user.telegram_id,
+            limit=getattr(settings, setting_name, default_limit),
+            window=timedelta(hours=1),
+        )
 
 
 def generation_error_message(code: str) -> str:
@@ -89,6 +122,8 @@ def generation_error_message(code: str) -> str:
         return "API key AI-провайдера не принят сервером. Проверьте настройки backend."
     if code == "MISSING_OPENAI_API_KEY":
         return "На сервере не настроен API key AI-провайдера."
+    if code == "IMAGE_POSTPROCESS_FAILED":
+        return "Картинка сгенерировалась, но backend не смог подготовить ее для питомца."
     return "Не удалось создать питомца. Попробуйте еще раз."
 
 
@@ -242,6 +277,7 @@ def log_ai_request_failure(
         "providerMessage": detail.get("providerMessage"),
         "requestId": detail.get("requestId"),
         "exceptionType": type(exc).__name__,
+        "exceptionMessage": _compact_error_text(str(exc)) if str(exc) else None,
     }
     try:
         write_ai_failure_log_line(log_payload)

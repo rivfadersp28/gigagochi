@@ -192,6 +192,13 @@ def test_generation_error_message_handles_openai_timeout() -> None:
     )
 
 
+def test_generation_error_message_handles_image_postprocess_failure() -> None:
+    assert (
+        generation_error_message("IMAGE_POSTPROCESS_FAILED")
+        == "Картинка сгенерировалась, но backend не смог подготовить ее для питомца."
+    )
+
+
 def test_chat_accepts_local_pet_state(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
@@ -600,6 +607,7 @@ def test_generation_rate_limit(monkeypatch) -> None:
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(
             enable_in_memory_rate_limit=True,
+            generation_rate_limit_per_day=3,
             openai_api_key=None,
             openrouter_api_key="test-openrouter-key",
         ),
@@ -643,6 +651,7 @@ def test_generation_rate_limit(monkeypatch) -> None:
 
     assert response.status_code == 429
     assert response.json()["detail"]["code"] == "rate_limited"
+    assert response.json()["detail"]["retryAfterSeconds"] > 0
 
     app.dependency_overrides.clear()
 
@@ -650,7 +659,10 @@ def test_generation_rate_limit(monkeypatch) -> None:
 def test_chat_rate_limit(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
-        lambda: SimpleNamespace(enable_in_memory_rate_limit=True),
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=True,
+            chat_rate_limit_per_hour=30,
+        ),
     )
     monkeypatch.setattr(
         "app.routers.tma.chat_with_local_pet",
