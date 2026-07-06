@@ -3,8 +3,9 @@
 /* eslint-disable @next/next/no-img-element */
 import { Bug, Loader2, Settings, X } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useReward, type AnimationConfig } from "partycles";
 import { flushSync } from "react-dom";
-import type { CSSProperties, FormEvent, MouseEvent, ReactNode } from "react";
+import type { CSSProperties, FormEvent, MouseEvent, ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -87,6 +88,11 @@ type IdleRotationStyle = CSSProperties & {
   "--pet-idle-max-rotation": string;
 };
 
+type PetTapTargetStyle = CSSProperties & {
+  "--pet-tap-scale-duration": string;
+  "--pet-tap-scale-easing": string;
+};
+
 type ConversationSceneStyle = CSSProperties & {
   "--conversation-visible-height": string;
 };
@@ -119,6 +125,8 @@ const PET_REPLY_CROSS_EXIT_EASING = "cubic-bezier(0.55, 0, 1, 0.45)";
 const PET_CHARACTER_RISE_DURATION_MS = 700;
 const PET_CHARACTER_RISE_STAGGER_MS = 24;
 const PET_CHARACTER_RISE_EASING = "cubic-bezier(0.2, 0.8, 0.2, 1)";
+const PET_TAP_SCALE_DURATION_MS = 240;
+const PET_TAP_SCALE_EASING = "cubic-bezier(0.34, 1.56, 0.64, 1)";
 const DEFAULT_TEXT_TRANSLATE_Y_PX = 12;
 const DEFAULT_SPEECH_END_TRIM_MS = 625;
 const FIGMA_SCREEN_HEIGHT = 874;
@@ -174,6 +182,28 @@ const speechBubbleGlassStyle = {
   backdropFilter: "blur(20px)",
   WebkitBackdropFilter: "blur(20px)",
 } satisfies CSSProperties;
+
+const petTapParticleConfig = {
+  particleCount: 24,
+  spread: 92,
+  startVelocity: 16,
+  elementSize: 28,
+  lifetime: 170,
+  colors: [
+    "rgba(255, 255, 255, 0.78)",
+    "rgba(129, 212, 250, 0.58)",
+    "rgba(41, 182, 246, 0.48)",
+    "rgba(255, 241, 118, 0.5)",
+  ],
+  physics: {
+    gravity: -0.04,
+    wind: 0,
+    friction: 0.985,
+  },
+  effects: {
+    wobble: true,
+  },
+} satisfies AnimationConfig;
 
 function buildSpeechBubbleClipPath({ width, height }: SpeechBubbleSize) {
   const w = Math.max(SPEECH_BUBBLE_MIN_WIDTH, width);
@@ -940,6 +970,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [travelResult, setTravelResult] = useState<GenerateTravelResponse | null>(null);
   const [travelError, setTravelError] = useState<string | null>(null);
   const [conversationReplyMessageId, setConversationReplyMessageId] = useState<number | null>(null);
+  const [petTapPulseId, setPetTapPulseId] = useState(0);
   const [selectedSprite, setSelectedSprite] = useState<SelectedSprite | null>(null);
   const [idleAnimationSettings, setIdleAnimationSettings] = useState<IdleAnimationSettings>(
     defaultIdleAnimationSettings,
@@ -954,12 +985,18 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const petReplyMessageRef = useRef<PetReplyMessage | null>(null);
   const speechBubbleRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
+  const petTapTargetRef = useRef<HTMLButtonElement>(null);
   const isSendingChatRef = useRef(false);
   const isTravelGeneratingRef = useRef(false);
   const conversationFullHeightRef = useRef(0);
   const keyboardSyncUntilRef = useRef(0);
   const pet = localPet.pet;
   const includePromptDebug = promptSettings.includePromptDebug;
+  const { replay: replayPetTapParticles } = useReward(
+    petTapTargetRef as RefObject<HTMLElement>,
+    "bubbles",
+    petTapParticleConfig,
+  );
 
   const showPetReplyMessage = useCallback((
     text: string,
@@ -989,6 +1026,14 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [showPetReplyMessage]);
 
   useTelegramBackButton(closeChatMode, isChatMode);
+
+  const handlePetTap = useCallback(() => {
+    if (shouldReduceMotion()) {
+      return;
+    }
+    void replayPetTapParticles();
+    setPetTapPulseId((currentId) => currentId + 1);
+  }, [replayPetTapParticles]);
 
   useEffect(() => {
     const node = speechBubbleRef.current;
@@ -1468,6 +1513,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     "--pet-idle-max-rotation": `${animationSettings.maxRotation}deg`,
     transformOrigin,
   };
+  const petTapTargetStyle: PetTapTargetStyle = {
+    "--pet-tap-scale-duration": `${PET_TAP_SCALE_DURATION_MS}ms`,
+    "--pet-tap-scale-easing": PET_TAP_SCALE_EASING,
+    transformOrigin,
+  };
   const conversationSceneStyle: ConversationSceneStyle = {
     ...mainScreenStyle,
     "--conversation-visible-height": `${conversationVisibleHeight}px`,
@@ -1589,15 +1639,28 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
         <div className="main-pet-stage absolute left-0 top-[277px] z-20 h-[372px] w-[402px]">
           <div className="pet-idle-rotation absolute left-0 top-0 h-[357px] w-[402px]" style={idleRotationStyle}>
-            <img
-              src={visiblePetImage}
-              alt={`AI Tamagotchi ${stageLabels[displayedStage]} ${stateLabels[displayedState]}`}
-              className="pet-idle-y-animation absolute left-0 top-[7.76%] h-[101.37%] w-full max-w-none object-contain"
-              style={idleStretchStyle}
-              width={402}
-              height={362}
-              draggable={false}
-            />
+            <button
+              key={petTapPulseId}
+              ref={petTapTargetRef}
+              type="button"
+              className={`pet-tap-target absolute left-0 top-[7.76%] h-[101.37%] w-full ${
+                petTapPulseId > 0 ? "pet-tap-target--pulse" : ""
+              }`}
+              style={petTapTargetStyle}
+              onClick={handlePetTap}
+              aria-label="Погладить персонажа"
+            >
+              <img
+                src={visiblePetImage}
+                alt=""
+                aria-hidden="true"
+                className="pet-idle-y-animation h-full w-full max-w-none object-contain"
+                style={idleStretchStyle}
+                width={402}
+                height={362}
+                draggable={false}
+              />
+            </button>
           </div>
         </div>
 
