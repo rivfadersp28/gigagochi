@@ -40,6 +40,7 @@ import {
   writeLocalPetMemory,
 } from "@/lib/localPetMemoryStorage";
 import { playPetSpeechAudioSequence, primePetSpeechAudio } from "@/lib/petSpeechAudio";
+import { playPetTapSound } from "@/lib/petTapAudio";
 import {
   recordLiteOverlayPatchDebug,
   recordMemoryConsolidationDebug,
@@ -1029,6 +1030,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   useTelegramBackButton(closeChatMode, isChatMode);
 
   const handlePetTap = useCallback(() => {
+    playPetTapSound();
     if (shouldReduceMotion()) {
       return;
     }
@@ -1649,6 +1651,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               }`}
               style={petTapTargetStyle}
               onClick={handlePetTap}
+              data-button-press-sound="off"
               aria-label="Погладить персонажа"
             >
               <img

@@ -32,7 +32,11 @@ function getFeedbackButton(target: EventTarget | null): HTMLButtonElement | null
   return button;
 }
 
-function playButtonPressSound() {
+function playButtonPressSound(button: HTMLButtonElement) {
+  if (button.dataset.buttonPressSound === "off") {
+    return;
+  }
+
   if (typeof Audio === "undefined") {
     return;
   }
@@ -50,9 +54,9 @@ function playButtonPressSound() {
   }
 }
 
-function runButtonPressFeedback() {
+function runButtonPressFeedback(button: HTMLButtonElement) {
   hapticImpact("light");
-  playButtonPressSound();
+  playButtonPressSound(button);
 }
 
 export function TelegramBootstrap() {
@@ -73,11 +77,12 @@ export function TelegramBootstrap() {
     webApp?.onEvent?.("fullscreenFailed", updateViewport);
 
     const handleClick = (event: MouseEvent) => {
-      if (!event.isTrusted || event.button !== 0 || !getFeedbackButton(event.target)) {
+      const button = getFeedbackButton(event.target);
+      if (!event.isTrusted || event.button !== 0 || !button) {
         return;
       }
 
-      runButtonPressFeedback();
+      runButtonPressFeedback(button);
     };
 
     document.addEventListener("click", handleClick, { capture: true });
