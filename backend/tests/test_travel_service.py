@@ -158,6 +158,34 @@ def test_adventure_story_prompt_uses_compact_story_context_without_asset_urls() 
     assert "assetReferenceImages" not in user_content
     assert "https://cdn.example.test/assets/baby-happy.png" in user_content
     assert "https://cdn.example.test/assets/baby-idle.png" not in user_content
+    assert "one central\n  problem focused from beginning to end" in user_content
+    assert "chapter from a children's adventure book" in user_content
+    assert "Introduce at most one magical idea" in user_content
+    assert "If an event can be removed without changing the story" in user_content
+
+
+def test_adventure_story_schema_allows_no_important_objects() -> None:
+    story = travel_service.AdventureStory.model_validate(
+        {
+            "adventureTitle": "Тихая тропа",
+            "coreIdea": "Листик ищет дорогу домой после того, как тропинку размыло дождем.",
+            "world": (
+                "Обычный сад после дождя, где все события следуют из мокрой земли, "
+                "луж и ветра."
+            ),
+            "mainObjective": "Найти сухой путь обратно к дому под листом.",
+            "importantCharacters": ["Листик — маленький листолицый питомец."],
+            "importantLocations": [
+                "Мокрая грядка",
+                "Лужайка у камня",
+                "Дом под листом",
+            ],
+            "importantObjects": [],
+            "fullStory": [f"Абзац {index}." for index in range(1, 9)],
+        }
+    )
+
+    assert story.importantObjects == []
 
 
 def test_generate_scene_images_generates_every_story_scene(monkeypatch, tmp_path) -> None:

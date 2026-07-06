@@ -135,8 +135,8 @@ ADVENTURE_STORY_SCHEMA: dict[str, Any] = {
         },
         "importantObjects": {
             "type": "array",
-            "minItems": 1,
-            "maxItems": 8,
+            "minItems": 0,
+            "maxItems": 3,
             "items": {"type": "string", "minLength": 1, "maxLength": 260},
         },
         "fullStory": {
@@ -190,7 +190,7 @@ class AdventureStory(BaseModel):
     mainObjective: str = Field(min_length=1, max_length=360)
     importantCharacters: list[str] = Field(min_length=1, max_length=8)
     importantLocations: list[str] = Field(min_length=3, max_length=9)
-    importantObjects: list[str] = Field(min_length=1, max_length=8)
+    importantObjects: list[str] = Field(min_length=0, max_length=3)
     fullStory: list[str] = Field(min_length=8, max_length=12)
 
 
@@ -504,20 +504,33 @@ Required output:
 - mainObjective
 - importantCharacters
 - importantLocations
-- importantObjects
+- importantObjects: 0-3 ordinary or magical objects, only if each directly moves the plot
 - fullStory: 8-12 paragraphs
 
 Story requirements:
-- Use the selected framework exactly as the narrative backbone.
-- Keep everything internally consistent.
-- Every character must have a purpose in the plot.
-- Every location must matter to the objective or reveal.
-- Every important object must return later.
-- Build cause-and-effect storytelling with continuous escalation.
+- Use the selected framework as the narrative backbone, but keep one central
+  problem focused from beginning to end.
+- The story should read like a chapter from a children's adventure book.
+- The reader should always understand where the pet is, what the pet wants,
+  what is preventing the pet, what the pet decides to do next, and why the next
+  event happens.
+- Every paragraph must naturally lead to the next one through cause and effect.
+- Avoid introducing magical objects, characters or locations unless they
+  directly move the story forward.
+- Do not introduce concepts that exist only for one paragraph or one storyboard
+  scene.
+- Every event must either reveal new information, create a new obstacle, solve
+  part of the problem, or move the pet closer to the goal.
+- If an event can be removed without changing the story, do not include it.
+- Introduce at most one magical idea. Everything else should be an ordinary
+  consequence of that idea.
+- Do not invent multiple magical artifacts, mysterious characters or fantasy
+  rules unless they are absolutely necessary.
+- Keep all characters, locations and objects internally consistent and reusable
+  across the plot when they appear.
 - Include one memorable climax and an emotionally satisfying ending.
 - The pet succeeds through curiosity, creativity, courage, or kindness.
 - Never solve conflict through violence, threats, weapons, or cruelty.
-- Avoid filler, repeated beats, passive observation, and random disconnected magic.
 - Keep the pet's species, personality, home logic, visual identity and age stage
   consistent with PET_CONTEXT_JSON.
 """.strip(),
