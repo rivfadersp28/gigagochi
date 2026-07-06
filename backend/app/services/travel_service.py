@@ -56,16 +56,16 @@ STORY_FRAMEWORKS: tuple[StoryFramework, ...] = (
         "chase_the_impossible",
         "Chase the Impossible",
         (
-            "The pet notices something extraordinary and decides to chase it. "
+            "The character notices something extraordinary and decides to chase it. "
             "The journey continuously becomes bigger and more surprising. "
-            "The final discovery is different from what the pet originally expected."
+            "The final discovery is different from what the character originally expected."
         ),
     ),
     StoryFramework(
         "expedition",
         "Expedition",
         (
-            "The pet discovers an unknown place. Each new location reveals something "
+            "The character discovers an unknown place. Each new location reveals something "
             "more mysterious. The story ends with solving the world's central mystery."
         ),
     ),
@@ -73,16 +73,16 @@ STORY_FRAMEWORKS: tuple[StoryFramework, ...] = (
         "great_event",
         "Great Event",
         (
-            "The pet becomes part of a massive event such as a festival, race, "
+            "The character becomes part of a massive event such as a festival, race, "
             "celebration, migration, tournament, giant machine activation, seasonal "
-            "phenomenon or magical phenomenon. The pet actively participates."
+            "phenomenon or magical phenomenon. The character actively participates."
         ),
     ),
     StoryFramework(
         "world_transformation",
         "World Transformation",
         (
-            "The rules of the world suddenly change. The pet explores these new "
+            "The rules of the world suddenly change. The character explores these new "
             "rules, discovers why the world changed, and helps complete the "
             "transformation."
         ),
@@ -91,7 +91,7 @@ STORY_FRAMEWORKS: tuple[StoryFramework, ...] = (
         "grand_mission",
         "Grand Mission",
         (
-            "The pet receives an important objective. The adventure consists of "
+            "The character receives an important objective. The adventure consists of "
             "multiple increasingly exciting steps leading toward that goal."
         ),
     ),
@@ -341,7 +341,7 @@ def _asset_reference_text(payload: GenerateTravelRequest) -> str:
         return "No sprite asset URLs were provided. Follow the text visual identity exactly."
 
     lines = [
-        "Use only this current on-screen pet sprite as the character reference "
+        "Use only this current on-screen character sprite as the character reference "
         "when the image model can inspect URLs.",
     ]
     for stage, mood, image_url in entries:
@@ -520,8 +520,8 @@ def _build_adventure_story_messages(
         {
             "role": "system",
             "content": (
-                "You are a senior story artist for a family-friendly animated short. "
-                "Create one complete adventure for a non-human AI pet. Return JSON only. "
+                "You are a senior story artist for animated short. "
+                "Create one complete adventure for a non-human character. Return JSON only. "
                 "All story-facing text must be in Russian. Do not create scenes, panels, "
                 "storyboards, image prompts, captions, UI copy, or camera instructions."
             ),
@@ -532,9 +532,9 @@ def _build_adventure_story_messages(
 Generate a complete adventure from this input.
 
 USER_PROMPT:
-No explicit user prompt is available yet. Derive the adventure from PET_CONTEXT_JSON.
+No explicit user prompt is available yet. Derive the adventure from CHARACTER_CONTEXT_JSON.
 
-PET_CONTEXT_JSON:
+CHARACTER_CONTEXT_JSON:
 {_compact_json(_story_pet_context(payload), max_chars=4500)}
 
 SELECTED_STORY_FRAMEWORK_JSON:
@@ -553,9 +553,9 @@ Required output:
 Story requirements:
 - Use the selected framework as the narrative backbone, but keep one central
   problem focused from beginning to end.
-- The story should read like a chapter from a children's adventure book.
-- The reader should always understand where the pet is, what the pet wants,
-  what is preventing the pet, what the pet decides to do next, and why the next
+- The story should read like a chapter from an adventure book.
+- The reader should always understand where the character is, what the character wants,
+  what is preventing the character, what the character decides to do next, and why the next
   event happens.
 - Every paragraph must naturally lead to the next one through cause and effect.
 - Avoid introducing magical objects, characters or locations unless they
@@ -563,7 +563,7 @@ Story requirements:
 - Do not introduce concepts that exist only for one paragraph or one storyboard
   scene.
 - Every event must either reveal new information, create a new obstacle, solve
-  part of the problem, or move the pet closer to the goal.
+  part of the problem, or move the character closer to the goal.
 - If an event can be removed without changing the story, do not include it.
 - Introduce at most one magical idea. Everything else should be an ordinary
   consequence of that idea.
@@ -572,10 +572,10 @@ Story requirements:
 - Keep all characters, locations and objects internally consistent and reusable
   across the plot when they appear.
 - Include one memorable climax and an emotionally satisfying ending.
-- The pet succeeds through curiosity, creativity, courage, or kindness.
+- The character succeeds through curiosity, creativity, courage, agility or strength.
 - Never solve conflict through violence, threats, weapons, or cruelty.
-- Keep the pet's species, personality, home logic, visual identity and age stage
-  consistent with PET_CONTEXT_JSON.
+- Keep the character's species, personality, home logic, visual identity and age stage
+  consistent with CHARACTER_CONTEXT_JSON.
 """.strip(),
         },
     ]
@@ -694,8 +694,8 @@ def _stage_design_for(payload: GenerateTravelRequest) -> str:
 def _visual_identity_text(payload: GenerateTravelRequest) -> str:
     pet = payload.pet
     visual_parts: list[str] = [
-        f"Pet name: {pet.name or 'unnamed pet'}",
-        f"Pet description: {pet.description}",
+        f"Character name: {pet.name or 'unnamed character'}",
+        f"Character description: {pet.description}",
         f"Simple character description: {_simple_character_description(payload)}",
         f"Life stage: {pet.stage}",
         f"Current mood reference: {pet.mood}",
@@ -849,18 +849,19 @@ SHARED ART STYLE:
 CHARACTER APPEARANCE TO PRESERVE EXACTLY:
 {_visual_identity_text(payload)}
 
-PET REFERENCE ASSETS:
+CHARACTER REFERENCE ASSETS:
 {_asset_reference_text(payload)}
 
 Character consistency rules:
-- Base the pet on the provided sprite/reference asset visuals first, then translate
+- Base the character on the provided sprite/reference asset visuals first, then translate
   that same character into the shared illustration style.
-- The pet must look like the same character as the current {payload.pet.stage}/{payload.pet.mood}
+- The character must look like the same character as the current
+  {payload.pet.stage}/{payload.pet.mood}
   sprite: preserve species, silhouette, body proportions, face placement, colors,
   markings, materials, clothing, accessories and age.
 - Only pose, expression and action may change.
 - Do not redesign the species, swap the palette, add new dominant features,
-  age up/down the pet, hide the pet behind props, or replace it with another creature.
+  age up/down the character, hide the character behind props, or replace it with another creature.
 - If reference URLs are inaccessible to the image model, follow CHARACTER APPEARANCE text exactly.
 
 Composition rules:
@@ -868,7 +869,7 @@ Composition rules:
   speech bubbles, watermarks, split panels or collage layouts.
 - Strong readable silhouette, clear foreground/midground/background, cinematic depth,
   dynamic movement, and instantly understandable emotional action.
-- Keep the pet clearly visible as the main character while showing the environment
+- Keep the character clearly visible as the main character while showing the environment
   and the story beat.
 - No violence, weapons, threats, horror, adult themes or copyrighted characters.
 """.strip()

@@ -78,14 +78,14 @@ def sample_png_bytes() -> bytes:
     return buffer.getvalue()
 
 
-def test_travel_image_prompt_includes_pet_asset_references() -> None:
+def test_travel_image_prompt_includes_character_asset_references() -> None:
     prompt = travel_service.build_travel_scene_image_prompt(
         travel_payload(),
         travel_story(),
         0,
     )
 
-    assert "PET REFERENCE ASSETS:" in prompt
+    assert "CHARACTER REFERENCE ASSETS:" in prompt
     assert "PRIMARY CURRENT SPRITE baby/happy" in prompt
     assert "https://cdn.example.test/assets/baby-happy.png" in prompt
     assert "reference sprite baby/idle" not in prompt
@@ -147,9 +147,14 @@ def test_asset_input_references_use_public_urls(monkeypatch) -> None:
 def test_adventure_story_prompt_uses_compact_story_context_without_asset_urls() -> None:
     framework = travel_service.STORY_FRAMEWORKS[0]
     messages = travel_service._build_adventure_story_messages(travel_payload(), framework)
+    system_content = messages[0]["content"]
     user_content = messages[1]["content"]
 
-    assert "PET_CONTEXT_JSON:" in user_content
+    assert "You are a senior story artist for animated short." in system_content
+    assert "non-human character" in system_content
+    assert "non-human AI pet" not in system_content
+    assert "CHARACTER_CONTEXT_JSON:" in user_content
+    assert "PET_CONTEXT_JSON:" not in user_content
     assert "маленький листолицый питомец" in user_content
     assert "simpleCharacterDescription" in user_content
     assert "leaf-shaped face" in user_content
@@ -159,9 +164,12 @@ def test_adventure_story_prompt_uses_compact_story_context_without_asset_urls() 
     assert "https://cdn.example.test/assets/baby-happy.png" in user_content
     assert "https://cdn.example.test/assets/baby-idle.png" not in user_content
     assert "one central\n  problem focused from beginning to end" in user_content
-    assert "chapter from a children's adventure book" in user_content
+    assert "chapter from an adventure book" in user_content
     assert "Introduce at most one magical idea" in user_content
     assert "If an event can be removed without changing the story" in user_content
+    assert "where the pet is" not in user_content
+    assert "where the character is" in user_content
+    assert "agility or strength" in user_content
 
 
 def test_adventure_story_schema_allows_no_important_objects() -> None:
