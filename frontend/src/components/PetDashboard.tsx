@@ -1121,7 +1121,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     showPetReplyMessage("Собираю путешествие...", false);
     const travelStatusTimeoutId = window.setTimeout(() => {
       if (isTravelGeneratingRef.current) {
-        showPetReplyMessage("Рисую первый кадр...", false);
+        showPetReplyMessage("Рисую кадры путешествия...", false);
       }
     }, 2200);
 

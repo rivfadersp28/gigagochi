@@ -262,6 +262,57 @@ def test_generate_image_bytes_uses_openrouter_image_endpoint(monkeypatch) -> Non
     }
 
 
+def test_generate_image_bytes_passes_openrouter_input_references(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "data": [
+                    {"b64_json": base64.b64encode(b"openrouter-image").decode()},
+                ]
+            }
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            ai_provider="openrouter",
+            openrouter_api_key="sk-or-test",
+            openrouter_base_url="https://openrouter.ai/api/v1",
+            openrouter_image_model="bytedance-seed/seedream-4.5",
+            openrouter_site_url=None,
+            openrouter_app_title="Test Tamagotchi",
+            backend_public_url=None,
+            webapp_url=None,
+            openai_image_size="1536x1152",
+            openai_image_quality="medium",
+            openai_image_output_format="png",
+            openai_image_timeout_seconds=180,
+        ),
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+
+    references = [
+        {
+            "type": "image_url",
+            "image_url": {"url": "https://cdn.example.test/assets/baby-happy.png"},
+        }
+    ]
+
+    result = generate_image_bytes("travel prompt", input_references=references)
+
+    assert result == b"openrouter-image"
+    assert captured["json"]["input_references"] == references
+
+
 def test_generate_pet_asset_set_generates_only_three_teen_skins(monkeypatch, tmp_path) -> None:
     generated_prompts: list[str] = []
 

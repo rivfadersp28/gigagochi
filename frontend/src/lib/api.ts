@@ -1,6 +1,7 @@
 import type {
   GeneratePetResponse,
   GenerateTravelResponse,
+  LocalPetAssetSet,
   LiteFactExtractionResponse,
   LocalChatMessage,
   LocalChatResponse,
@@ -273,6 +274,46 @@ function publicImageUrl(imageUrl: string): string {
   return resolveImageUrl(imageUrl) ?? imageUrl;
 }
 
+function absolutePublicImageUrl(imageUrl: string): string {
+  const resolved = publicImageUrl(imageUrl);
+  if (resolved.startsWith("http://") || resolved.startsWith("https://")) {
+    return resolved;
+  }
+  if (typeof window === "undefined") {
+    return resolved;
+  }
+  return new URL(resolved, window.location.origin).toString();
+}
+
+function publicAssetImagesForApi(
+  images: LocalPetAssetSet["images"] | undefined,
+): LocalPetAssetSet["images"] | undefined {
+  if (!images) {
+    return undefined;
+  }
+
+  return {
+    baby: {
+      idle: absolutePublicImageUrl(images.baby.idle),
+      happy: absolutePublicImageUrl(images.baby.happy),
+      hungry: absolutePublicImageUrl(images.baby.hungry),
+      sad: absolutePublicImageUrl(images.baby.sad),
+    },
+    teen: {
+      idle: absolutePublicImageUrl(images.teen.idle),
+      happy: absolutePublicImageUrl(images.teen.happy),
+      hungry: absolutePublicImageUrl(images.teen.hungry),
+      sad: absolutePublicImageUrl(images.teen.sad),
+    },
+    adult: {
+      idle: absolutePublicImageUrl(images.adult.idle),
+      happy: absolutePublicImageUrl(images.adult.happy),
+      hungry: absolutePublicImageUrl(images.adult.hungry),
+      sad: absolutePublicImageUrl(images.adult.sad),
+    },
+  };
+}
+
 function requiredGeneratedImage(
   response: GeneratePetApiResponse,
   stage: PetStage,
@@ -351,6 +392,7 @@ export async function generatePetTravel(
         name: pet.name,
         description: pet.description,
         characterBible: pet.assetSet?.characterBible,
+        assetImages: publicAssetImagesForApi(pet.assetSet?.images),
         stage: pet.stage,
         mood: pet.mood,
         stats: pet.stats,

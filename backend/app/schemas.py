@@ -78,6 +78,7 @@ class LocalPetChatContext(BaseModel):
     mood: PetStateValue
     stats: LocalPetStats
     characterBible: dict[str, Any] | None = None
+    assetImages: dict[PetStageValue, dict[PetStateValue, str]] | None = None
 
 
 class LocalChatHistoryItem(BaseModel):

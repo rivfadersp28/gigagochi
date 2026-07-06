@@ -312,6 +312,12 @@ def test_travel_accepts_local_pet_state(monkeypatch) -> None:
                     "identity": {"name": "Листик"},
                     "main_colors": ["green", "cream"],
                 },
+                "assetImages": {
+                    "baby": {
+                        "happy": "https://cdn.example.test/assets/baby-happy.png",
+                        "idle": "https://cdn.example.test/assets/baby-idle.png",
+                    }
+                },
                 "stage": "baby",
                 "mood": "happy",
                 "stats": {
@@ -339,6 +345,12 @@ def test_travel_accepts_local_pet_state(monkeypatch) -> None:
     assert captured["pet"]["characterBible"] == {
         "identity": {"name": "Листик"},
         "main_colors": ["green", "cream"],
+    }
+    assert captured["pet"]["assetImages"] == {
+        "baby": {
+            "happy": "https://cdn.example.test/assets/baby-happy.png",
+            "idle": "https://cdn.example.test/assets/baby-idle.png",
+        }
     }
 
     app.dependency_overrides.clear()
