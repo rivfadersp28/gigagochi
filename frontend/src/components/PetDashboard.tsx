@@ -46,7 +46,6 @@ import {
 } from "@/lib/debugPanelStorage";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
-import { APP_BACKGROUND_COLOR } from "@/lib/theme";
 import type { LocalPetState, PetLifeStage, PetMood } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 
@@ -84,6 +83,11 @@ type ConversationSceneStyle = CSSProperties & {
   "--conversation-visible-height": string;
 };
 
+type SpeechBubbleSize = {
+  width: number;
+  height: number;
+};
+
 type PetReplyMessage = {
   id: number;
   text: string;
@@ -98,8 +102,6 @@ type SelectedSprite = {
   stage: PetStage;
   state: PetState;
 };
-
-type MainBackgroundIcon = "plane" | "cup" | "charity" | "home" | "child" | "cart" | "crown";
 
 const IDLE_ANIMATION_BASE_DURATION_SECONDS = 2.4;
 const IDLE_ROTATION_BASE_DURATION_SECONDS = 3.2;
@@ -120,57 +122,79 @@ const INITIAL_PET_REPLY_FALLBACK = "День был ярким.";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 120;
 const HARDCODED_STATUS_NAME = "Челепиздрик";
 const HARDCODED_STATUS_LEVEL = "Уровень: 2";
-const ACTION_ICON_CACHE_VERSION = "20260706-action-colors-2";
-const BACKGROUND_ICON_CACHE_VERSION = "20260706-background-colors-2";
-const TOP_STATUS_ASSET_CACHE_VERSION = "20260706-top-status-colors-1";
-const PET_SHADOW_CACHE_VERSION = "20260706-pet-shadow-color-1";
-const mainTopWaveSrc = `/figma/main-top-wave.svg?v=${TOP_STATUS_ASSET_CACHE_VERSION}`;
+const SPEECH_BUBBLE_MIN_WIDTH = 190;
+const SPEECH_BUBBLE_MIN_HEIGHT = 86;
+const SPEECH_BUBBLE_RADIUS = 43;
+const SPEECH_BUBBLE_TAIL_HEIGHT = 21;
+const SPEECH_BUBBLE_TAIL_HALF_WIDTH = 22;
+const ACTION_ICON_CACHE_VERSION = "20260706-action-colors-4";
+const TOP_STATUS_ASSET_CACHE_VERSION = "20260706-top-status-colors-2";
+const MAIN_PET_BACKDROP_CACHE_VERSION = "20260706-main-pet-bg-1";
 const mainStomachSrc = `/figma/main-stomach.svg?v=${TOP_STATUS_ASSET_CACHE_VERSION}`;
-const petShadowSrc = `/figma/pet-shadow.svg?v=${PET_SHADOW_CACHE_VERSION}`;
+const mainPetBackdropSrc = `/figma/main-pet-bg.png?v=${MAIN_PET_BACKDROP_CACHE_VERSION}`;
 const actionIconSrc = {
   chat: `/figma/action-chat-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
   feed: `/figma/action-feed-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
   travel: `/figma/action-travel-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
 } as const;
 
-const mainActionButtonBaseStyle = {
+const mainActionButtonGlassStyle = {
   height: "58.203px",
   padding: "14px 17px 16px 13px",
-  color: "#7f7e70",
-  boxShadow: "inset 0 -3.517px 0 rgba(43, 43, 43, 0.4)",
+  borderRadius: "24px",
+  backgroundColor: "rgba(41, 41, 41, 0.4)",
+  color: "#ffffff",
+  boxShadow: "inset 0 2px 4px rgba(255, 255, 255, 0.09)",
+  backdropFilter: "blur(20px)",
+  WebkitBackdropFilter: "blur(20px)",
   lineHeight: "normal",
 } satisfies CSSProperties;
 
 const mainActionButtonStyle = {
-  chat: { ...mainActionButtonBaseStyle, width: 192 },
-  feed: { ...mainActionButtonBaseStyle, width: 198 },
-  travel: { ...mainActionButtonBaseStyle, width: 241 },
+  chat: { ...mainActionButtonGlassStyle, width: 192 },
+  feed: { ...mainActionButtonGlassStyle, width: 198 },
+  travel: { ...mainActionButtonGlassStyle, width: 241 },
 } satisfies Record<"chat" | "feed" | "travel", CSSProperties>;
 
 const mainScreenStyle = {
-  backgroundColor: APP_BACKGROUND_COLOR,
+  backgroundColor: "#000000",
 } satisfies CSSProperties;
 
-const mainBgStripsInnerStyle = {
-  background: "transparent",
+const speechBubbleGlassStyle = {
+  backgroundColor: "rgba(41, 41, 41, 0.4)",
+  boxShadow: "inset 0 2px 4px rgba(255, 255, 255, 0.09)",
+  backdropFilter: "blur(20px)",
+  WebkitBackdropFilter: "blur(20px)",
 } satisfies CSSProperties;
 
-const topStatusTextStyle = {
-  color: "#ffffff",
-} satisfies CSSProperties;
+function buildSpeechBubbleClipPath({ width, height }: SpeechBubbleSize) {
+  const w = Math.max(SPEECH_BUBBLE_MIN_WIDTH, width);
+  const h = Math.max(SPEECH_BUBBLE_MIN_HEIGHT, height);
+  const r = Math.min(SPEECH_BUBBLE_RADIUS, w / 2, h / 2);
+  const cx = w / 2;
+  const tailBottom = h + SPEECH_BUBBLE_TAIL_HEIGHT;
+  const tailShoulder = SPEECH_BUBBLE_TAIL_HALF_WIDTH;
+  const tailNeck = 11;
+  const tailPoint = 4;
 
-const topStatusTrackStyle = {
-  backgroundColor: "rgba(255, 255, 255, 0.3)",
-} satisfies CSSProperties;
-
-const topStatusFillStyle = {
-  backgroundColor: "#7f7e70",
-} satisfies CSSProperties;
-
-const speechBubbleStyle = {
-  boxShadow:
-    "inset 0 -3.768px 1.256px rgba(127, 126, 112, 0.4), 0 0 0 2px rgba(0, 0, 0, 0.06)",
-} satisfies CSSProperties;
+  return [
+    `M ${r} 0`,
+    `H ${w - r}`,
+    `C ${w - r / 2} 0 ${w} ${r / 2} ${w} ${r}`,
+    `V ${h - r}`,
+    `C ${w} ${h - r / 2} ${w - r / 2} ${h} ${w - r} ${h}`,
+    `H ${cx + tailShoulder}`,
+    `C ${cx + tailNeck} ${h} ${cx + 8} ${h + 7} ${cx + 5} ${h + 14}`,
+    `C ${cx + tailPoint} ${h + 17} ${cx + 2} ${tailBottom} ${cx} ${tailBottom}`,
+    `C ${cx - 2} ${tailBottom} ${cx - tailPoint} ${h + 17} ${cx - 5} ${h + 14}`,
+    `C ${cx - 8} ${h + 7} ${cx - tailNeck} ${h} ${cx - tailShoulder} ${h}`,
+    `H ${r}`,
+    `C ${r / 2} ${h} 0 ${h - r / 2} 0 ${h - r}`,
+    `V ${r}`,
+    `C 0 ${r / 2} ${r / 2} 0 ${r} 0`,
+    "Z",
+  ].join(" ");
+}
 
 const petMessageStackStyle: CSSProperties = {
   display: "grid",
@@ -206,7 +230,7 @@ const petMessageUnitStyle: CSSProperties = {
 
 const defaultIdleAnimationSettings: IdleAnimationSettings = {
   speed: 1.5,
-  maxScale: 1.15,
+  maxScale: 1.12,
   originX: 62,
   originY: 100,
   rotationSpeed: 1.2,
@@ -240,175 +264,6 @@ const spriteStateOptions = [
   { value: "sad", label: "Грустный" },
   { value: "happy", label: "Счастливый" },
 ] satisfies Array<{ value: PetState; label: string }>;
-
-const mainBackgroundIconSrc: Record<MainBackgroundIcon, string> = {
-  plane: `/figma/bg-icon-plane.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
-  cup: `/figma/bg-icon-cup.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
-  charity: `/figma/bg-icon-charity.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
-  home: `/figma/bg-icon-home.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
-  child: `/figma/bg-icon-child.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
-  cart: `/figma/bg-icon-cart.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
-  crown: `/figma/bg-icon-crown.svg?v=${BACKGROUND_ICON_CACHE_VERSION}`,
-};
-
-const mainBackgroundColumnNames = [
-  "one",
-  "two",
-  "three",
-  "four",
-  "five",
-  "six",
-  "seven",
-  "eight",
-  "nine",
-] as const;
-
-const mainBackgroundIconColumns = [
-  [
-    "plane",
-    "cup",
-    "charity",
-    "home",
-    "child",
-    "cart",
-    "crown",
-    "cart",
-    "charity",
-    "crown",
-    "child",
-    "home",
-    "cup",
-    "plane",
-  ],
-  [
-    "cart",
-    "home",
-    "plane",
-    "cart",
-    "child",
-    "cup",
-    "home",
-    "crown",
-    "child",
-    "charity",
-    "cup",
-    "crown",
-    "charity",
-    "plane",
-  ],
-  [
-    "cart",
-    "home",
-    "crown",
-    "cup",
-    "cup",
-    "child",
-    "plane",
-    "plane",
-    "child",
-    "cart",
-    "home",
-    "charity",
-    "charity",
-    "crown",
-  ],
-  [
-    "home",
-    "child",
-    "charity",
-    "cart",
-    "home",
-    "cart",
-    "cup",
-    "plane",
-    "plane",
-    "cup",
-    "crown",
-    "crown",
-    "charity",
-    "child",
-  ],
-  [
-    "charity",
-    "child",
-    "cart",
-    "crown",
-    "home",
-    "child",
-    "crown",
-    "home",
-    "cup",
-    "cart",
-    "plane",
-    "charity",
-    "plane",
-    "cup",
-  ],
-  [
-    "plane",
-    "cart",
-    "child",
-    "charity",
-    "crown",
-    "home",
-    "cart",
-    "child",
-    "cup",
-    "home",
-    "charity",
-    "plane",
-    "cup",
-    "crown",
-  ],
-  [
-    "home",
-    "cart",
-    "plane",
-    "charity",
-    "child",
-    "cup",
-    "crown",
-    "crown",
-    "charity",
-    "home",
-    "cart",
-    "plane",
-    "cup",
-    "child",
-  ],
-  [
-    "cart",
-    "home",
-    "plane",
-    "cart",
-    "child",
-    "cup",
-    "home",
-    "crown",
-    "child",
-    "charity",
-    "cup",
-    "crown",
-    "charity",
-    "plane",
-  ],
-  [
-    "cart",
-    "home",
-    "plane",
-    "cart",
-    "child",
-    "cup",
-    "home",
-    "crown",
-    "child",
-    "charity",
-    "cup",
-    "crown",
-    "charity",
-    "plane",
-  ],
-] satisfies ReadonlyArray<ReadonlyArray<MainBackgroundIcon>>;
 
 function shouldReduceMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -485,39 +340,10 @@ function renderPetMessageUnits(text: string, translateY: number): ReactNode[] {
   return nodes;
 }
 
-function MainBackgroundIcons() {
+function MainPetBackdrop({ src }: { src: string }) {
   return (
-    <div className="main-bg-strips" aria-hidden="true">
-      <div className="main-bg-strips__inner" style={mainBgStripsInnerStyle}>
-        <div className="main-bg-icon-grid">
-          {mainBackgroundIconColumns.map((icons, columnIndex) => (
-            <div
-              className={`main-bg-icon-column main-bg-icon-column--${mainBackgroundColumnNames[columnIndex]}`}
-              key={mainBackgroundColumnNames[columnIndex]}
-            >
-              <div className="main-bg-icon-track">
-                {[0, 1].map((repeatIndex) => (
-                  <div className="main-bg-icon-set" key={repeatIndex}>
-                    {icons.map((icon, iconIndex) => (
-                      <span
-                        className="main-bg-icon"
-                        key={`${repeatIndex}-${iconIndex}-${icon}`}
-                      >
-                        <img
-                          src={mainBackgroundIconSrc[icon]}
-                          alt=""
-                          className={`main-bg-icon__asset main-bg-icon__asset--${icon}`}
-                          draggable={false}
-                        />
-                      </span>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+    <div className="main-pet-backdrop" aria-hidden="true">
+      <img src={src} alt="" draggable={false} />
     </div>
   );
 }
@@ -746,7 +572,7 @@ function PetCharacterMessage({
 
   return (
     <div
-      className="main-speech-bubble__message text-left text-[20.357px] font-bold leading-[normal] text-[#0e2732]"
+      className="main-speech-bubble__message text-center text-[20.357px] font-bold leading-[normal] text-white"
       style={petMessageStackStyle}
       aria-live="polite"
     >
@@ -1044,8 +870,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   );
   const [promptSettings, setPromptSettings] = useState(() => readLocalPetSettings());
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
+  const [speechBubbleSize, setSpeechBubbleSize] = useState<SpeechBubbleSize>({
+    width: SPEECH_BUBBLE_MIN_WIDTH,
+    height: SPEECH_BUBBLE_MIN_HEIGHT,
+  });
   const proactiveAttemptedRef = useRef(false);
   const petReplyMessageRef = useRef<PetReplyMessage | null>(null);
+  const speechBubbleRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const isSendingChatRef = useRef(false);
   const conversationFullHeightRef = useRef(0);
@@ -1080,6 +911,48 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, []);
 
   useTelegramBackButton(closeChatMode, isChatMode);
+
+  useEffect(() => {
+    const node = speechBubbleRef.current;
+    if (!node) {
+      return undefined;
+    }
+
+    const updateSpeechBubbleSize = () => {
+      const rect = node.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return;
+      }
+
+      const nextSize = {
+        width: Math.round(rect.width * 2) / 2,
+        height: Math.round(rect.height * 2) / 2,
+      };
+
+      setSpeechBubbleSize((currentSize) => {
+        if (
+          Math.abs(currentSize.width - nextSize.width) < 0.5 &&
+          Math.abs(currentSize.height - nextSize.height) < 0.5
+        ) {
+          return currentSize;
+        }
+
+        return nextSize;
+      });
+    };
+
+    updateSpeechBubbleSize();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateSpeechBubbleSize);
+      return () => window.removeEventListener("resize", updateSpeechBubbleSize);
+    }
+
+    const resizeObserver = new ResizeObserver(updateSpeechBubbleSize);
+    resizeObserver.observe(node);
+
+    return () => resizeObserver.disconnect();
+  }, [localPet.status]);
 
   useEffect(() => {
     petReplyMessageRef.current = petReplyMessage;
@@ -1438,6 +1311,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const displayedState = selectedSprite?.state ?? pet.mood;
   const visiblePetImage =
     generatedSpriteUrl(pet, displayedStage, displayedState) ?? "/figma/main-pet.png";
+  const visiblePetBackdropImage =
+    visiblePetImage === "/figma/main-pet.png" ? mainPetBackdropSrc : visiblePetImage;
   const displayedReply = petReplyMessage ?? {
     id: 0,
     text: INITIAL_PET_REPLY_FALLBACK,
@@ -1464,9 +1339,15 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     ...mainScreenStyle,
     "--conversation-visible-height": `${conversationVisibleHeight}px`,
   };
+  const speechBubbleClipPath = buildSpeechBubbleClipPath(speechBubbleSize);
+  const speechBubbleShapeStyle = {
+    ...speechBubbleGlassStyle,
+    clipPath: `path("${speechBubbleClipPath}")`,
+    WebkitClipPath: `path("${speechBubbleClipPath}")`,
+  } satisfies CSSProperties;
 
   return (
-    <main className="tma-screen relative overflow-hidden bg-[var(--paper)] text-black" style={mainScreenStyle}>
+    <main className="tma-screen relative overflow-hidden bg-black text-white" style={mainScreenStyle}>
       {localPet.error ? (
         <div className="fixed left-5 right-5 top-[max(20px,calc(var(--tma-safe-top)+12px))] z-20 rounded-[8px] border border-[var(--danger-line)] bg-white px-4 py-3 text-sm text-[var(--danger)] sm:left-8 sm:right-auto sm:max-w-sm">
           {localPet.error}
@@ -1474,7 +1355,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       ) : null}
 
       <section
-        className={`main-mobile-scene tma-screen relative mx-auto w-full max-w-[402px] overflow-hidden bg-[var(--paper)] ${
+        className={`main-mobile-scene tma-screen relative mx-auto w-full max-w-[402px] overflow-hidden bg-black ${
           isChatMode ? "main-mobile-scene--chat" : ""
         } ${
           isKeyboardRaised ? "main-mobile-scene--keyboard" : ""
@@ -1484,19 +1365,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         style={conversationSceneStyle}
         aria-label="AI Tamagotchi"
       >
-        <MainBackgroundIcons />
-
         <div className="conversation-appbar" aria-hidden={!isChatMode}>
           <div className="conversation-appbar__blur" aria-hidden="true" />
         </div>
 
-        <img
-          src={mainTopWaveSrc}
-          alt=""
-          aria-hidden="true"
-          className="conversation-fade-target absolute left-[-27px] top-[-26px] z-10 h-[304.006px] w-[489.467px] max-w-none"
-          draggable={false}
-        />
+        <MainPetBackdrop src={visiblePetBackdropImage} />
 
         <div className="hidden" aria-hidden="true">
           <IdleAnimationControls
@@ -1538,25 +1411,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           {pet.stats.energy}/100. Cleanliness {pet.stats.cleanliness}/100.
         </div>
 
-        <div className="conversation-fade-target absolute left-[31px] top-[106px] z-20">
-          <div className="text-[17px] font-[800] leading-none text-white" style={topStatusTextStyle}>
+        <div className="conversation-fade-target absolute left-[31px] top-[98px] z-20">
+          <div className="text-[17px] font-[800] leading-[normal] text-white">
             {HARDCODED_STATUS_NAME}
           </div>
-          <div
-            className="mt-[6px] text-[32.073px] font-[800] leading-none text-white"
-            style={topStatusTextStyle}
-          >
+          <div className="mt-[2px] text-[32.073px] font-[800] leading-[normal] text-white">
             {HARDCODED_STATUS_LEVEL}
-          </div>
-          <div className="relative mt-[15px] h-[27px] w-[237px]">
-            <div
-              className="absolute left-0 top-[-1px] h-[28px] w-[237px] rounded-[10px] bg-white/30"
-              style={topStatusTrackStyle}
-            />
-            <div
-              className="absolute left-[4px] top-[3px] h-[20px] w-[73px] rounded-[7px] bg-[#7f7e70]"
-              style={topStatusFillStyle}
-            />
           </div>
         </div>
 
@@ -1564,18 +1424,23 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           src={mainStomachSrc}
           alt=""
           aria-hidden="true"
-          className="conversation-fade-target absolute left-[315px] top-[138px] z-20 h-[57.933px] w-[58.601px] max-w-none"
+          className="conversation-fade-target absolute left-[315px] top-[98px] z-20 h-[57.933px] w-[58.601px] max-w-none"
           draggable={false}
         />
 
         <div
-          className={`absolute left-1/2 top-[238px] z-30 -translate-x-1/2 ${
+          className={`absolute left-1/2 top-[226px] z-30 -translate-x-1/2 ${
             shouldShowConversationReply
               ? "conversation-reply-bubble"
               : "conversation-fade-target"
           }`}
         >
-          <div className="main-speech-bubble" style={speechBubbleStyle}>
+          <div className="main-speech-bubble" ref={speechBubbleRef}>
+            <span
+              className="main-speech-bubble__shape"
+              style={speechBubbleShapeStyle}
+              aria-hidden="true"
+            />
             <PetCharacterMessage
               message={displayedReply}
               textTranslateY={animationSettings.textTranslateY}
@@ -1584,20 +1449,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           </div>
         </div>
 
-        <img
-          src={petShadowSrc}
-          alt=""
-          aria-hidden="true"
-          className="main-pet-shadow absolute left-[90.87px] top-[609.32px] z-10 h-[78.996px] w-[210.268px] max-w-none"
-          draggable={false}
-        />
-
-        <div className="main-pet-stage absolute left-0 top-[327px] z-20 size-[402px]">
-          <div className="pet-idle-rotation absolute inset-0" style={idleRotationStyle}>
+        <div className="main-pet-stage absolute left-0 top-[277px] z-20 h-[372px] w-[402px]">
+          <div className="pet-idle-rotation absolute left-0 top-0 h-[357px] w-[402px]" style={idleRotationStyle}>
             <img
               src={visiblePetImage}
               alt={`AI Tamagotchi ${stageLabels[displayedStage]} ${stateLabels[displayedState]}`}
-              className="pet-idle-y-animation absolute left-0 top-[6.89%] h-[90.02%] w-full max-w-none object-contain"
+              className="pet-idle-y-animation absolute left-0 top-[7.76%] h-[101.37%] w-full max-w-none object-contain"
               style={idleStretchStyle}
               width={402}
               height={362}
@@ -1622,7 +1479,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               }
             }}
             maxLength={1000}
-            disabled={!isChatMode}
+            disabled={!isChatMode || isSendingChat}
             tabIndex={isChatMode ? 0 : -1}
             className="conversation-input"
             placeholder="Как у тебя прошел день?"
@@ -1662,7 +1519,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             setIsIdleControlsOpen(false);
             setIsDebugPanelOpen(true);
           }}
-          className="conversation-fade-target absolute left-[339px] top-[669px] z-40 grid size-[54px] place-items-center overflow-hidden rounded-[32px] bg-[rgba(253,253,253,0.4)] text-black/30 transition-colors hover:bg-white/55 hover:text-black/40 focus:outline-none focus:ring-2 focus:ring-black/10"
+          className="conversation-fade-target absolute left-[327px] top-[685px] z-40 grid size-[58.203px] place-items-center overflow-hidden rounded-[24px] bg-[rgba(41,41,41,0.4)] text-white/90 shadow-[inset_0_2px_4px_rgba(255,255,255,0.09)] transition-colors hover:bg-[rgba(55,55,55,0.5)] focus:outline-none focus:ring-2 focus:ring-white/20"
         >
           <Bug className="size-[22px]" aria-hidden="true" />
         </button>

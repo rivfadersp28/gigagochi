@@ -2,9 +2,13 @@
 .env.*
 !.env.example
 .venv
+node_modules
 __pycache__
 *.pyc
 .pytest_cache
 .ruff_cache
 *.egg-info
+logs
 static/generated
+npm-debug.log*
+.DS_Store

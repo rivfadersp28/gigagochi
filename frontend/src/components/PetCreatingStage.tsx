@@ -69,7 +69,7 @@ export function PetCreatingStage({ overlay = false }: PetCreatingStageProps) {
 
       <Link
         href="/"
-        className="absolute right-[max(20px,var(--tma-safe-right))] top-[max(24px,calc(var(--tma-safe-top)+16px))] z-10 inline-flex h-[21px] items-center justify-center gap-[12px] text-[17px] font-normal leading-none text-black/30 transition-colors hover:text-black/50 focus:outline-none focus:ring-2 focus:ring-black/10 sm:bottom-[max(32px,calc(var(--tma-safe-bottom)+32px))] sm:right-[clamp(24px,4.86vw,70px)] sm:top-auto"
+        className="absolute right-[max(20px,var(--tma-safe-right))] top-[max(24px,calc(var(--tma-safe-top)+16px))] z-10 inline-flex h-[21px] items-center justify-center gap-[12px] text-[17px] font-normal leading-none text-white/30 transition-colors hover:text-white/50 focus:outline-none focus:ring-2 focus:ring-white/10 sm:bottom-[max(32px,calc(var(--tma-safe-bottom)+32px))] sm:right-[clamp(24px,4.86vw,70px)] sm:top-auto"
       >
         <span
           aria-hidden="true"

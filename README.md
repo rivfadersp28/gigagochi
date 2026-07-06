@@ -150,18 +150,22 @@ docker compose up --build
 The compose setup includes frontend, backend, PostgreSQL, and a persistent `generated_assets`
 volume for `/app/static/generated`.
 
-## Hetzner Reverse Proxy
+## Hetzner Production Deploy
 
-The selected production proxy is Caddy. Use `deploy/Caddyfile.example` as the starting point after
-you buy/connect a stable domain:
+The selected production proxy is Caddy. Production deployment files live in:
 
-```env
-WEBAPP_HOST=your-domain.example
-```
+- `docker-compose.prod.yml`
+- `deploy/Caddyfile`
+- `deploy/Caddyfile.host.example`
+- `deploy/HETZNER.md`
+- `deploy/backend.env.production.example`
+- `deploy/compose.env.production.example`
 
-Caddy should terminate HTTPS and route `/api/*` plus `/static/*` to the backend, with the remaining
-traffic going to the frontend. Keep the production origin stable because local pet progress is tied
-to the browser origin.
+For the current Hetzner server, use `gigagochi.serega.works` as the stable production origin.
+Caddy terminates HTTPS and routes `/api/*`, `/static/*`, and `/health` to the backend, with the
+remaining traffic going to the frontend. If the server already has host Caddy, use
+`deploy/Caddyfile.host.example`; the compose Caddy service is opt-in through the `container-caddy`
+profile. Keep the production origin stable because local pet progress is tied to the browser origin.
 
 ## Verification
 

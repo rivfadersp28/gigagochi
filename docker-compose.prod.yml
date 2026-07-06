@@ -1,0 +1,121 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    profiles:
+      - container-caddy
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    environment:
+      WEBAPP_HOST: ${WEBAPP_HOST:?Set WEBAPP_HOST in .env.production}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  backend:
+    image: gigagochi-backend:latest
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    ports:
+      - "127.0.0.1:18080:8000"
+    expose:
+      - "8000"
+    networks:
+      default:
+      public_proxy:
+        aliases:
+          - gigagochi-backend
+    volumes:
+      - generated_assets:/app/static/generated
+      - backend_logs:/app/logs
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  bot:
+    image: gigagochi-backend:latest
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    env_file:
+      - ./backend/.env
+    command: ["python", "-m", "app.bot"]
+    volumes:
+      - backend_logs:/app/logs
+
+  frontend:
+    image: gigagochi-frontend:latest
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ""
+        NEXT_PUBLIC_ENABLE_TMA_DEV_FALLBACK: "false"
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "127.0.0.1:13000:3000"
+    expose:
+      - "3000"
+    networks:
+      default:
+      public_proxy:
+        aliases:
+          - gigagochi-frontend
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  postgres:
+    image: postgres:16
+    profiles:
+      - legacy-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tamagotchi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tamagotchi}
+      POSTGRES_DB: ${POSTGRES_DB:-tamagotchi}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  caddy_data:
+  caddy_config:
+  generated_assets:
+  backend_logs:
+  postgres_data:
+
+networks:
+  public_proxy:
+    external: true
+    name: ${PUBLIC_PROXY_NETWORK:-bizzy-radio_default}

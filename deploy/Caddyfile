@@ -1,5 +1,5 @@
 {$WEBAPP_HOST} {
-  encode gzip zstd
+  encode zstd gzip
 
   handle /api/* {
     reverse_proxy backend:8000
