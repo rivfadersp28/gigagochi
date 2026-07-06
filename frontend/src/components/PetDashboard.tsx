@@ -1411,7 +1411,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           {pet.stats.energy}/100. Cleanliness {pet.stats.cleanliness}/100.
         </div>
 
-        <div className="conversation-fade-target absolute left-[31px] top-[98px] z-20">
+        <div className="conversation-fade-target absolute left-[31px] top-[118px] z-20">
           <div className="text-[17px] font-[800] leading-[normal] text-white">
             {HARDCODED_STATUS_NAME}
           </div>
@@ -1424,7 +1424,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           src={mainStomachSrc}
           alt=""
           aria-hidden="true"
-          className="conversation-fade-target absolute left-[315px] top-[98px] z-20 h-[57.933px] w-[58.601px] max-w-none"
+          className="conversation-fade-target absolute left-[315px] top-[118px] z-20 h-[57.933px] w-[58.601px] max-w-none"
           draggable={false}
         />
 
