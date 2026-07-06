@@ -72,26 +72,15 @@ export function TelegramBootstrap() {
     webApp?.onEvent?.("fullscreenChanged", updateViewport);
     webApp?.onEvent?.("fullscreenFailed", updateViewport);
 
-    const handlePointerDown = (event: PointerEvent) => {
-      if (event.button !== 0 || !getFeedbackButton(event.target)) {
+    const handleClick = (event: MouseEvent) => {
+      if (!event.isTrusted || event.button !== 0 || !getFeedbackButton(event.target)) {
         return;
       }
 
       runButtonPressFeedback();
     };
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat || (event.key !== "Enter" && event.key !== " ")) {
-        return;
-      }
-
-      if (getFeedbackButton(event.target)) {
-        runButtonPressFeedback();
-      }
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown, { capture: true });
-    document.addEventListener("keydown", handleKeyDown, { capture: true });
+    document.addEventListener("click", handleClick, { capture: true });
 
     return () => {
       window.removeEventListener("resize", updateViewport);
@@ -100,8 +89,7 @@ export function TelegramBootstrap() {
       webApp?.offEvent?.("contentSafeAreaChanged", updateViewport);
       webApp?.offEvent?.("fullscreenChanged", updateViewport);
       webApp?.offEvent?.("fullscreenFailed", updateViewport);
-      document.removeEventListener("pointerdown", handlePointerDown, { capture: true });
-      document.removeEventListener("keydown", handleKeyDown, { capture: true });
+      document.removeEventListener("click", handleClick, { capture: true });
     };
   }, []);
 
