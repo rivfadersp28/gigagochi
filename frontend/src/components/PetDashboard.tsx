@@ -5,7 +5,14 @@ import { Bug, Loader2, Settings, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useReward, type AnimationConfig } from "partycles";
 import { flushSync } from "react-dom";
-import type { CSSProperties, FormEvent, MouseEvent, ReactNode, RefObject } from "react";
+import type {
+  CSSProperties,
+  FormEvent,
+  MouseEvent,
+  PointerEvent,
+  ReactNode,
+  RefObject,
+} from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -40,7 +47,7 @@ import {
   writeLocalPetMemory,
 } from "@/lib/localPetMemoryStorage";
 import { playPetSpeechAudioSequence, primePetSpeechAudio } from "@/lib/petSpeechAudio";
-import { playPetTapSound } from "@/lib/petTapAudio";
+import { playPetTapSound, primePetTapSound } from "@/lib/petTapAudio";
 import {
   recordLiteOverlayPatchDebug,
   recordMemoryConsolidationDebug,
@@ -988,6 +995,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const speechBubbleRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const petTapTargetRef = useRef<HTMLButtonElement>(null);
+  const petTapSoundStartedOnPointerRef = useRef(false);
   const isSendingChatRef = useRef(false);
   const isTravelGeneratingRef = useRef(false);
   const conversationFullHeightRef = useRef(0);
@@ -1030,13 +1038,31 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   useTelegramBackButton(closeChatMode, isChatMode);
 
   const handlePetTap = useCallback(() => {
-    playPetTapSound();
+    if (petTapSoundStartedOnPointerRef.current) {
+      petTapSoundStartedOnPointerRef.current = false;
+    } else {
+      playPetTapSound();
+    }
+
     if (shouldReduceMotion()) {
       return;
     }
     void replayPetTapParticles();
     setPetTapPulseId((currentId) => currentId + 1);
   }, [replayPetTapParticles]);
+
+  const handlePetTapPointerDown = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    petTapSoundStartedOnPointerRef.current = true;
+    playPetTapSound();
+  }, []);
+
+  useEffect(() => {
+    primePetTapSound();
+  }, []);
 
   useEffect(() => {
     const node = speechBubbleRef.current;
@@ -1651,6 +1677,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               }`}
               style={petTapTargetStyle}
               onClick={handlePetTap}
+              onPointerDown={handlePetTapPointerDown}
               data-button-press-sound="off"
               aria-label="Погладить персонажа"
             >
