@@ -287,7 +287,9 @@ def test_travel_accepts_local_pet_state(monkeypatch) -> None:
                         (2, "exploration"),
                         (3, "discovery"),
                         (4, "discovery"),
-                        (5, "final"),
+                        (5, "reward"),
+                        (6, "reward"),
+                        (7, "final"),
                     ]
                 ],
             },

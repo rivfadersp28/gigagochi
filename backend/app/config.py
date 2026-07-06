@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     openai_image_quality: str = "medium"
     openai_image_size: str = "1536x1152"
     openai_image_output_format: str = "png"
+    image_aspect_ratio: str = "322:540"
     openai_character_reasoning_effort: OpenAIReasoningEffort | None = "minimal"
     openai_chat_reasoning_effort: OpenAIReasoningEffort | None = "low"
     openai_character_timeout_seconds: float = 180

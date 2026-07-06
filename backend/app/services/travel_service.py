@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import random
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from typing import Any
 from urllib.parse import urlparse
 
 from PIL import Image, ImageOps
+from pydantic import BaseModel, Field, model_validator
 
 from app.config import get_settings
 from app.schemas import (
@@ -25,84 +28,189 @@ from app.services.openai_service import (
     get_chat_model,
     get_openai_client,
 )
-from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
+from app.services.prompt_debug import (
+    log_chat_completion_prompt,
+    log_chat_completion_response,
+    write_prompt_log_line,
+)
 
-TRAVEL_STORY_STRUCTURE = """
-# Story Structure
-Generate 5-7 scenes. Follow this narrative arc:
+ADVENTURE_SCENE_COUNT = 7
+TRAVEL_CARD_OUTPUT_HEIGHT = 1080
+DEFAULT_IMAGE_ASPECT_RATIO = "322:540"
 
-## 1. Beginning
-The pet discovers something unusual that sparks its curiosity. It decides to go on an adventure.
 
-## 2. Exploration
-The pet enters a new place and experiences its first wonder.
-Introduce the world through the pet's emotions.
+@dataclass(frozen=True)
+class StoryFramework:
+    framework_id: str
+    name: str
+    description: str
 
-## 3-4. Discovery
-The pet explores, meets friendly creatures, finds magical places or interesting objects.
-Optionally introduce one small playful challenge that is solved through curiosity,
-kindness or creativity.
 
-## 5-6. Reward
-The pet experiences the emotional highlight of the journey. Examples:
-- finding a magical object
-- making a new friend
-- discovering a hidden place
-- helping someone
-- learning something surprising
-
-## Final Scene
-The pet returns home (or finishes the journey) feeling happier, wiser or inspired.
-End with a warm emotional moment that naturally suggests future adventures.
-""".strip()
+STORY_FRAMEWORKS: tuple[StoryFramework, ...] = (
+    StoryFramework(
+        "chase_the_impossible",
+        "Chase the Impossible",
+        (
+            "The pet notices something extraordinary and decides to chase it. "
+            "The journey continuously becomes bigger and more surprising. "
+            "The final discovery is different from what the pet originally expected."
+        ),
+    ),
+    StoryFramework(
+        "expedition",
+        "Expedition",
+        (
+            "The pet discovers an unknown place. Each new location reveals something "
+            "more mysterious. The story ends with solving the world's central mystery."
+        ),
+    ),
+    StoryFramework(
+        "great_event",
+        "Great Event",
+        (
+            "The pet becomes part of a massive event such as a festival, race, "
+            "celebration, migration, tournament, giant machine activation, seasonal "
+            "phenomenon or magical phenomenon. The pet actively participates."
+        ),
+    ),
+    StoryFramework(
+        "world_transformation",
+        "World Transformation",
+        (
+            "The rules of the world suddenly change. The pet explores these new "
+            "rules, discovers why the world changed, and helps complete the "
+            "transformation."
+        ),
+    ),
+    StoryFramework(
+        "grand_mission",
+        "Grand Mission",
+        (
+            "The pet receives an important objective. The adventure consists of "
+            "multiple increasingly exciting steps leading toward that goal."
+        ),
+    ),
+)
 
 TRAVEL_IMAGE_STYLE_PROMPT = """
-mid-century children's book illustration meets contemporary layered paper diorama,
-visible cut-paper edges, soft shadows between layers, muted moss green, pumpkin orange,
-cream, and ink-blue palette. First glance: a cozy glowing market silhouette.
-Second glance: many small vendor stories. Third glance: handmade paper texture,
-tiny signage, and playful animal gestures. No photorealism, no 3D plastic look,
-no cluttered unreadable faces.
+warm cinematic family-animation illustration, handcrafted storybook texture,
+soft volumetric light, clean readable silhouettes, expressive non-human mascot acting,
+rich but controlled color palette with moss green, pumpkin orange, cream, ink blue
+and warm gold accents, painterly cut-paper depth, charming tactile details,
+high emotional readability, no photorealism, no 3D plastic toy look, no clutter.
 """.strip()
 
-TRAVEL_STORY_SCHEMA: dict[str, Any] = {
+ADVENTURE_STORY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["title", "summary", "scenes"],
+    "required": [
+        "adventureTitle",
+        "coreIdea",
+        "world",
+        "mainObjective",
+        "importantCharacters",
+        "importantLocations",
+        "importantObjects",
+        "fullStory",
+    ],
     "properties": {
-        "title": {"type": "string", "maxLength": 80},
-        "summary": {"type": "string", "maxLength": 260},
-        "scenes": {
+        "adventureTitle": {"type": "string", "minLength": 1, "maxLength": 80},
+        "coreIdea": {"type": "string", "minLength": 1, "maxLength": 260},
+        "world": {"type": "string", "minLength": 1, "maxLength": 700},
+        "mainObjective": {"type": "string", "minLength": 1, "maxLength": 360},
+        "importantCharacters": {
             "type": "array",
-            "minItems": 5,
-            "maxItems": 7,
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["index", "arc", "title", "text", "visualBrief"],
-                "properties": {
-                    "index": {"type": "integer", "minimum": 1, "maximum": 7},
-                    "arc": {
-                        "type": "string",
-                        "enum": [
-                            "beginning",
-                            "exploration",
-                            "discovery",
-                            "reward",
-                            "final",
-                        ],
-                    },
-                    "title": {"type": "string", "maxLength": 70},
-                    "text": {"type": "string", "maxLength": 260},
-                    "visualBrief": {"type": "string", "maxLength": 900},
-                },
-            },
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {"type": "string", "minLength": 1, "maxLength": 260},
+        },
+        "importantLocations": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 9,
+            "items": {"type": "string", "minLength": 1, "maxLength": 260},
+        },
+        "importantObjects": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {"type": "string", "minLength": 1, "maxLength": 260},
+        },
+        "fullStory": {
+            "type": "array",
+            "minItems": 8,
+            "maxItems": 12,
+            "items": {"type": "string", "minLength": 1, "maxLength": 900},
         },
     },
 }
 
-TRAVEL_CARD_OUTPUT_SIZE = (644, 1080)
+STORYBOARD_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["panels"],
+    "properties": {
+        "panels": {
+            "type": "array",
+            "minItems": ADVENTURE_SCENE_COUNT,
+            "maxItems": ADVENTURE_SCENE_COUNT,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["sceneNumber", "title", "story", "imagePrompt"],
+                "properties": {
+                    "sceneNumber": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": ADVENTURE_SCENE_COUNT,
+                    },
+                    "title": {"type": "string", "minLength": 1, "maxLength": 70},
+                    "story": {"type": "string", "minLength": 1, "maxLength": 260},
+                    "imagePrompt": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1800,
+                    },
+                },
+            },
+        }
+    },
+}
+
 LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+
+class AdventureStory(BaseModel):
+    adventureTitle: str = Field(min_length=1, max_length=80)
+    coreIdea: str = Field(min_length=1, max_length=260)
+    world: str = Field(min_length=1, max_length=700)
+    mainObjective: str = Field(min_length=1, max_length=360)
+    importantCharacters: list[str] = Field(min_length=1, max_length=8)
+    importantLocations: list[str] = Field(min_length=3, max_length=9)
+    importantObjects: list[str] = Field(min_length=1, max_length=8)
+    fullStory: list[str] = Field(min_length=8, max_length=12)
+
+
+class StoryboardPanel(BaseModel):
+    sceneNumber: int = Field(ge=1, le=ADVENTURE_SCENE_COUNT)
+    title: str = Field(min_length=1, max_length=70)
+    story: str = Field(min_length=1, max_length=260)
+    imagePrompt: str = Field(min_length=1, max_length=1800)
+
+
+class Storyboard(BaseModel):
+    panels: list[StoryboardPanel] = Field(
+        min_length=ADVENTURE_SCENE_COUNT,
+        max_length=ADVENTURE_SCENE_COUNT,
+    )
+
+    @model_validator(mode="after")
+    def require_sequential_panels(self) -> Storyboard:
+        scene_numbers = [panel.sceneNumber for panel in self.panels]
+        expected = list(range(1, ADVENTURE_SCENE_COUNT + 1))
+        if scene_numbers != expected:
+            raise ValueError(f"storyboard panels must be sequential: {expected}")
+        return self
 
 
 def _string_value(value: Any) -> str:
@@ -258,71 +366,183 @@ def _pet_context(payload: GenerateTravelRequest) -> dict[str, Any]:
     }
 
 
-def _build_story_messages(payload: GenerateTravelRequest) -> list[dict[str, str]]:
+def _select_story_framework() -> StoryFramework:
+    return random.choice(STORY_FRAMEWORKS)
+
+
+def _log_framework_selection(framework: StoryFramework) -> dict[str, Any]:
+    payload = {
+        "event": "travel_stage",
+        "promptType": "internal_selection",
+        "label": "travel/story_framework",
+        "selectedFramework": {
+            "id": framework.framework_id,
+            "name": framework.name,
+            "description": framework.description,
+        },
+    }
+    return write_prompt_log_line(payload)
+
+
+def _story_reasoning_kwargs(settings: Any) -> dict[str, str]:
+    return chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort)
+
+
+def _framework_context(framework: StoryFramework) -> dict[str, str]:
+    return {
+        "id": framework.framework_id,
+        "name": framework.name,
+        "description": framework.description,
+    }
+
+
+def _build_adventure_story_messages(
+    payload: GenerateTravelRequest,
+    framework: StoryFramework,
+) -> list[dict[str, str]]:
     return [
         {
             "role": "system",
             "content": (
-                "You generate compact, warm adventure storyboards for a non-human virtual pet. "
-                "Return JSON only. User-facing text must be in Russian. visualBrief must be "
-                "in English and concrete enough for an image model."
+                "You are a senior story artist for a family-friendly animated short. "
+                "Create one complete adventure for a non-human AI pet. Return JSON only. "
+                "All story-facing text must be in Russian. Do not create scenes, panels, "
+                "storyboards, image prompts, captions, UI copy, or camera instructions."
             ),
         },
         {
             "role": "user",
             "content": f"""
-Create one travel storyboard for this pet.
+Generate a complete adventure from this input.
+
+USER_PROMPT:
+No explicit user prompt is available yet. Derive the adventure from PET_CONTEXT_JSON.
 
 PET_CONTEXT_JSON:
-{_compact_json(_pet_context(payload))}
+{_compact_json(_pet_context(payload), max_chars=9000)}
 
-NARRATIVE_TEMPLATE:
-{TRAVEL_STORY_STRUCTURE}
+SELECTED_STORY_FRAMEWORK_JSON:
+{_compact_json(_framework_context(framework))}
 
-Rules:
-- Generate 5-7 scenes total.
-- Keep scene indexes sequential starting from 1.
-- Scene text is shown in a mobile pet app: 1-2 short Russian sentences, warm and concrete.
-- Do not mention prompts, image generation, cameras, panels, or UI.
-- Keep the pet visually and emotionally consistent with PET_CONTEXT_JSON.
-- The pet's species, silhouette, palette, proportions, materials and signature features
-  must remain the same in every visualBrief.
-- Use assetReferenceImages as continuity references when available; do not invent
-  a different pet design.
-- Avoid danger, fear, violence, adult themes, and copyrighted characters.
-- visualBrief should describe what should be visible in the image, not the prose.
+Required output:
+- adventureTitle
+- coreIdea
+- world
+- mainObjective
+- importantCharacters
+- importantLocations
+- importantObjects
+- fullStory: 8-12 paragraphs
+
+Story requirements:
+- Use the selected framework exactly as the narrative backbone.
+- Keep everything internally consistent.
+- Every character must have a purpose in the plot.
+- Every location must matter to the objective or reveal.
+- Every important object must return later.
+- Build cause-and-effect storytelling with continuous escalation.
+- Include one memorable climax and an emotionally satisfying ending.
+- The pet succeeds through curiosity, creativity, courage, or kindness.
+- Never solve conflict through violence, threats, weapons, or cruelty.
+- Avoid filler, repeated beats, passive observation, and random disconnected magic.
+- Keep the pet's species, personality, home logic, visual identity and age stage
+  consistent with PET_CONTEXT_JSON.
 """.strip(),
         },
     ]
 
 
-def _travel_reasoning_kwargs(settings: Any) -> dict[str, str]:
-    return chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort)
-
-
-def _generate_story(payload: GenerateTravelRequest) -> tuple[TravelStory, list[dict[str, Any]]]:
+def _generate_complete_story(
+    payload: GenerateTravelRequest,
+    framework: StoryFramework,
+) -> tuple[AdventureStory, dict[str, Any]]:
     settings = get_settings()
     client = get_openai_client()
-    model = get_chat_model(settings)
     request_kwargs: dict[str, Any] = {
-        "model": model,
-        "messages": _build_story_messages(payload),
+        "model": get_chat_model(settings),
+        "messages": _build_adventure_story_messages(payload, framework),
         "response_format": {
             "type": "json_schema",
             "json_schema": {
-                "name": "travel_story",
-                "schema": TRAVEL_STORY_SCHEMA,
+                "name": "adventure_complete_story",
+                "schema": ADVENTURE_STORY_SCHEMA,
                 "strict": True,
             },
         },
         "timeout": settings.openai_chat_timeout_seconds,
-        **_travel_reasoning_kwargs(settings),
+        **_story_reasoning_kwargs(settings),
     }
-    prompt_debug = [log_chat_completion_prompt("travel/story", request_kwargs)]
+    prompt_debug = log_chat_completion_prompt("travel/full_story", request_kwargs)
     completion = client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("travel/story", completion)
+    log_chat_completion_response("travel/full_story", completion)
     content = completion.choices[0].message.content or "{}"
-    return TravelStory.model_validate(json.loads(content)), prompt_debug
+    return AdventureStory.model_validate(json.loads(content)), prompt_debug
+
+
+def _build_storyboard_messages(story: AdventureStory) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a storyboard artist. Convert one complete adventure into exactly "
+                "7 visually distinct storyboard panels. Return JSON only. Russian fields "
+                "are user-facing; imagePrompt must be English. Do not invent a new plot."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"""
+Convert this complete adventure into exactly 7 storyboard panels.
+
+COMPLETE_ADVENTURE_JSON:
+{story.model_dump_json(indent=2)}
+
+Storyboard rules:
+- Exactly 7 panels, sceneNumber 1 through 7.
+- Each panel must show a unique visual moment.
+- Every panel must move the story forward through clear cause and effect.
+- Avoid repeated environments, repeated actions, standing conversations, filler travel,
+  and generic walking.
+- Vary scale, location, movement, reveal size, emotional temperature and composition.
+- The sequence should feel like a short premium animated film, not a list of incidents.
+- Panel 1 is a clear beginning.
+- Panels 2-5 escalate with new discoveries.
+- Panel 6 is the memorable climax.
+- Panel 7 is the emotional resolution.
+
+Panel fields:
+- title: short Russian scene title.
+- story: 1-2 short Russian sentences describing the visible event.
+- imagePrompt: English visual prompt for this panel only. Include event, environment,
+  mood, movement, foreground/background, strong silhouette, and readable composition.
+  Do not include character design details; the image stage will add them.
+""".strip(),
+        },
+    ]
+
+
+def _generate_storyboard(story: AdventureStory) -> tuple[Storyboard, dict[str, Any]]:
+    settings = get_settings()
+    client = get_openai_client()
+    request_kwargs: dict[str, Any] = {
+        "model": get_chat_model(settings),
+        "messages": _build_storyboard_messages(story),
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "adventure_storyboard",
+                "schema": STORYBOARD_SCHEMA,
+                "strict": True,
+            },
+        },
+        "timeout": settings.openai_chat_timeout_seconds,
+        **_story_reasoning_kwargs(settings),
+    }
+    prompt_debug = log_chat_completion_prompt("travel/storyboard", request_kwargs)
+    completion = client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("travel/storyboard", completion)
+    content = completion.choices[0].message.content or "{}"
+    return Storyboard.model_validate(json.loads(content)), prompt_debug
 
 
 def _stage_design_for(payload: GenerateTravelRequest) -> str:
@@ -349,6 +569,7 @@ def _visual_identity_text(payload: GenerateTravelRequest) -> str:
         f"Pet name: {pet.name or 'unnamed pet'}",
         f"Pet description: {pet.description}",
         f"Life stage: {pet.stage}",
+        f"Current mood reference: {pet.mood}",
     ]
 
     stage_design = _stage_design_for(payload)
@@ -367,46 +588,140 @@ def _visual_identity_text(payload: GenerateTravelRequest) -> str:
     return "\n".join(visual_parts)
 
 
+def _parse_image_aspect_ratio(value: str | None) -> tuple[float, str]:
+    raw = _string_value(value) or DEFAULT_IMAGE_ASPECT_RATIO
+    cleaned = raw.lower().replace(" ", "")
+    for separator in (":", "/", "x"):
+        if separator not in cleaned:
+            continue
+        left, right = cleaned.split(separator, maxsplit=1)
+        try:
+            width = float(left)
+            height = float(right)
+        except ValueError as exc:
+            raise ValueError(f"Invalid IMAGE_ASPECT_RATIO: {raw}") from exc
+        if width <= 0 or height <= 0:
+            raise ValueError(f"Invalid IMAGE_ASPECT_RATIO: {raw}")
+        return width / height, f"{left}:{right}"
+
+    try:
+        ratio = float(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"Invalid IMAGE_ASPECT_RATIO: {raw}") from exc
+    if ratio <= 0:
+        raise ValueError(f"Invalid IMAGE_ASPECT_RATIO: {raw}")
+    return ratio, raw
+
+
+def _travel_card_output_size(settings: Any | None = None) -> tuple[int, int]:
+    resolved_settings = settings or get_settings()
+    ratio, _ = _parse_image_aspect_ratio(
+        getattr(resolved_settings, "image_aspect_ratio", DEFAULT_IMAGE_ASPECT_RATIO)
+    )
+    height = TRAVEL_CARD_OUTPUT_HEIGHT
+    width = max(1, round(height * ratio))
+    return width, height
+
+
+def _travel_image_size(settings: Any | None = None) -> str:
+    width, height = _travel_card_output_size(settings)
+    return f"{width}x{height}"
+
+
+def _travel_aspect_ratio_label(settings: Any | None = None) -> str:
+    resolved_settings = settings or get_settings()
+    _, label = _parse_image_aspect_ratio(
+        getattr(resolved_settings, "image_aspect_ratio", DEFAULT_IMAGE_ASPECT_RATIO)
+    )
+    return label
+
+
+def _arc_for_scene_number(scene_number: int) -> str:
+    if scene_number == 1:
+        return "beginning"
+    if scene_number == 2:
+        return "exploration"
+    if scene_number in {3, 4}:
+        return "discovery"
+    if scene_number in {5, 6}:
+        return "reward"
+    return "final"
+
+
+def _travel_story_from_pipeline(story: AdventureStory, storyboard: Storyboard) -> TravelStory:
+    return TravelStory.model_validate(
+        {
+            "title": story.adventureTitle,
+            "summary": story.coreIdea,
+            "scenes": [
+                {
+                    "index": panel.sceneNumber,
+                    "arc": _arc_for_scene_number(panel.sceneNumber),
+                    "title": panel.title,
+                    "text": panel.story,
+                    "visualBrief": panel.imagePrompt,
+                }
+                for panel in storyboard.panels
+            ],
+        }
+    )
+
+
 def build_travel_scene_image_prompt(
     payload: GenerateTravelRequest,
     story: TravelStory,
     scene_index: int,
 ) -> str:
+    settings = get_settings()
     scene = story.scenes[scene_index]
     return f"""
-Create one vertical story card illustration for a virtual pet travel scene.
+Create one illustration for scene {scene.index} of a 7-image adventure slideshow.
+The image must work as an independent render and still match the same character,
+art direction, lighting, rendering style and color palette as every other scene.
 
-STYLE:
+ASPECT RATIO:
+{_travel_aspect_ratio_label(settings)}
+
+OUTPUT SIZE:
+{_travel_image_size(settings)}
+
+SCENE DESCRIPTION:
+{scene.visualBrief}
+
+SCENE TITLE:
+{scene.title}
+
+SCENE STORY:
+{scene.text}
+
+SHARED ART STYLE:
 {TRAVEL_IMAGE_STYLE_PROMPT}
 
-PET VISUAL IDENTITY:
+CHARACTER APPEARANCE TO PRESERVE EXACTLY:
 {_visual_identity_text(payload)}
 
 PET REFERENCE ASSETS:
 {_asset_reference_text(payload)}
 
-STORY TITLE:
-{story.title}
-
-SCENE {scene.index}: {scene.title}
-{scene.visualBrief}
-
-Consistency rules:
+Character consistency rules:
 - Base the pet on the provided sprite/reference asset visuals first, then translate
-  that same character into the requested illustration style.
+  that same character into the shared illustration style.
 - The pet must look like the same character as the current {payload.pet.stage}/{payload.pet.mood}
-  sprite: preserve silhouette, colors, body proportions, face placement, materials,
-  markings and signature accessories.
-- Do not redesign the species, swap the color palette, add new dominant features,
-  or hide the pet behind props.
-- Outfit, pose and expression may change only if the character remains immediately recognizable.
-- If reference URLs are inaccessible to the image model, follow PET VISUAL IDENTITY text exactly.
+  sprite: preserve species, silhouette, body proportions, face placement, colors,
+  markings, materials, clothing, accessories and age.
+- Only pose, expression and action may change.
+- Do not redesign the species, swap the palette, add new dominant features,
+  age up/down the pet, hide the pet behind props, or replace it with another creature.
+- If reference URLs are inaccessible to the image model, follow CHARACTER APPEARANCE text exactly.
 
 Composition rules:
-- Tall portrait card composition, important subject centered with generous safe margins.
-- Show the pet clearly as the main character, keeping its visual identity consistent.
-- One finished illustration, no frames, no borders, no captions, no UI, no speech bubbles.
-- Keep faces readable and simple; small background details are allowed but must not clutter.
+- Fill the requested aspect ratio; no extra borders, frames, cards, UI, text, captions,
+  speech bubbles, watermarks, split panels or collage layouts.
+- Strong readable silhouette, clear foreground/midground/background, cinematic depth,
+  dynamic movement, and instantly understandable emotional action.
+- Keep the pet clearly visible as the main character while showing the environment
+  and the story beat.
+- No violence, weapons, threats, horror, adult themes or copyrighted characters.
 """.strip()
 
 
@@ -415,7 +730,7 @@ def _normalize_travel_card_image(image_bytes: bytes) -> bytes:
         normalized = ImageOps.exif_transpose(image).convert("RGB")
         fitted = ImageOps.fit(
             normalized,
-            TRAVEL_CARD_OUTPUT_SIZE,
+            _travel_card_output_size(),
             method=Image.Resampling.LANCZOS,
             centering=(0.5, 0.5),
         )
@@ -435,6 +750,7 @@ def _generate_scene_image(
     raw_image_bytes = generate_image_bytes(
         prompt,
         label=f"travel/scene_{scene.index:02d}_image",
+        size=_travel_image_size(),
         input_references=_asset_input_references(payload),
     )
     image_bytes = _normalize_travel_card_image(raw_image_bytes)
@@ -463,7 +779,12 @@ def _generate_scene_images(
 
 def generate_travel(payload: GenerateTravelRequest) -> GenerateTravelResponse:
     travel_id = uuid.uuid4()
-    story, prompt_debug = _generate_story(payload)
+    framework = _select_story_framework()
+    prompt_debug = [_log_framework_selection(framework)]
+    complete_story, story_prompt_debug = _generate_complete_story(payload, framework)
+    storyboard, storyboard_prompt_debug = _generate_storyboard(complete_story)
+    prompt_debug.extend([story_prompt_debug, storyboard_prompt_debug])
+    story = _travel_story_from_pipeline(complete_story, storyboard)
     images = _generate_scene_images(travel_id, payload, story)
     debug = (
         LocalChatDebug(

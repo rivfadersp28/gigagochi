@@ -61,8 +61,10 @@ def travel_story() -> TravelStory:
                     (1, "beginning"),
                     (2, "exploration"),
                     (3, "discovery"),
-                    (4, "reward"),
-                    (5, "final"),
+                    (4, "discovery"),
+                    (5, "reward"),
+                    (6, "reward"),
+                    (7, "final"),
                 ]
             ],
         }
@@ -87,7 +89,11 @@ def test_travel_image_prompt_includes_pet_asset_references() -> None:
     assert "PRIMARY CURRENT SPRITE baby/happy" in prompt
     assert "https://cdn.example.test/assets/baby-happy.png" in prompt
     assert "reference sprite baby/idle" in prompt
-    assert "preserve silhouette, colors, body proportions" in prompt
+    assert "preserve species, silhouette, body proportions" in prompt
+    assert "face placement, colors" in prompt
+    assert "ASPECT RATIO:" in prompt
+    assert "OUTPUT SIZE:" in prompt
+    assert "644x1080" in prompt
     assert prompt.index("PRIMARY CURRENT SPRITE baby/happy") < prompt.index(
         "reference sprite baby/idle"
     )
@@ -150,12 +156,14 @@ def test_generate_scene_images_generates_every_story_scene(monkeypatch, tmp_path
         prompt: str,
         *,
         label: str,
+        size: str | None = None,
         input_references: list[dict[str, object]] | None = None,
     ) -> bytes:
         calls.append(
             {
                 "prompt": prompt,
                 "label": label,
+                "size": size,
                 "inputReferences": input_references or [],
             }
         )
@@ -171,15 +179,18 @@ def test_generate_scene_images_generates_every_story_scene(monkeypatch, tmp_path
     travel_id = uuid.UUID("00000000-0000-4000-8000-000000000001")
     images = travel_service._generate_scene_images(travel_id, travel_payload(), travel_story())
 
-    assert [image.sceneIndex for image in images] == [1, 2, 3, 4, 5]
+    assert [image.sceneIndex for image in images] == [1, 2, 3, 4, 5, 6, 7]
     assert [call["label"] for call in calls] == [
         "travel/scene_01_image",
         "travel/scene_02_image",
         "travel/scene_03_image",
         "travel/scene_04_image",
         "travel/scene_05_image",
+        "travel/scene_06_image",
+        "travel/scene_07_image",
     ]
-    assert "SCENE 5: Сцена 5" in calls[-1]["prompt"]
+    assert [call["size"] for call in calls] == ["644x1080"] * 7
+    assert "SCENE STORY:\nКороткая теплая сцена 7." in calls[-1]["prompt"]
     assert calls[0]["inputReferences"] == [
         {
             "type": "image_url",
@@ -201,4 +212,11 @@ def test_generate_scene_images_generates_every_story_scene(monkeypatch, tmp_path
         path = tmp_path / "generated" / str(travel_id) / filename
         assert path.exists()
         with Image.open(path) as saved_image:
-            assert saved_image.size == travel_service.TRAVEL_CARD_OUTPUT_SIZE
+            assert saved_image.size == travel_service._travel_card_output_size()
+
+
+def test_travel_image_size_uses_configured_aspect_ratio() -> None:
+    settings = SimpleNamespace(image_aspect_ratio="1:2")
+
+    assert travel_service._travel_card_output_size(settings) == (540, 1080)
+    assert travel_service._travel_image_size(settings) == "540x1080"

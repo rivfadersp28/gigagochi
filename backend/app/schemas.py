@@ -128,13 +128,13 @@ class TravelStoryScene(BaseModel):
     arc: Literal["beginning", "exploration", "discovery", "reward", "final"]
     title: str = Field(min_length=1, max_length=70)
     text: str = Field(min_length=1, max_length=260)
-    visualBrief: str = Field(min_length=1, max_length=900)
+    visualBrief: str = Field(min_length=1, max_length=1800)
 
 
 class TravelStory(BaseModel):
     title: str = Field(min_length=1, max_length=80)
     summary: str = Field(min_length=1, max_length=260)
-    scenes: list[TravelStoryScene] = Field(min_length=5, max_length=7)
+    scenes: list[TravelStoryScene] = Field(min_length=7, max_length=7)
 
 
 class TravelSceneImage(BaseModel):
