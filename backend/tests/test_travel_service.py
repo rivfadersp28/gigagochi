@@ -246,6 +246,47 @@ def test_generate_scene_images_generates_every_story_scene(monkeypatch, tmp_path
             assert saved_image.size == travel_service._travel_card_output_size()
 
 
+def test_generate_scene_image_retries_retryable_image_error(monkeypatch, tmp_path) -> None:
+    attempts = 0
+    sleeps: list[float] = []
+
+    def fake_generate_image_bytes(
+        prompt: str,
+        *,
+        label: str,
+        size: str | None = None,
+        input_references: list[dict[str, object]] | None = None,
+    ) -> bytes:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary image 502")
+        return sample_png_bytes()
+
+    monkeypatch.setattr(travel_service, "generate_image_bytes", fake_generate_image_bytes)
+    monkeypatch.setattr(travel_service, "_is_retryable_image_error", lambda exc: True)
+    monkeypatch.setattr(travel_service.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(
+        travel_service,
+        "generated_dir_for",
+        lambda travel_id: tmp_path / "generated" / str(travel_id),
+    )
+
+    travel_id = uuid.UUID("00000000-0000-4000-8000-000000000002")
+    image = travel_service._generate_scene_image(
+        travel_id,
+        travel_payload(),
+        travel_story(),
+        0,
+    )
+
+    assert attempts == 2
+    assert sleeps == [60.0]
+    assert image.sceneIndex == 1
+    path = tmp_path / "generated" / str(travel_id) / "travel-scene-01.png"
+    assert path.exists()
+
+
 def test_travel_image_size_uses_configured_aspect_ratio_and_provider_multiple() -> None:
     settings = SimpleNamespace(image_aspect_ratio="1:2")
 

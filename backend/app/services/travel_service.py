@@ -40,6 +40,8 @@ IMAGE_PROVIDER_SIZE_MULTIPLE = 16
 DEFAULT_IMAGE_ASPECT_RATIO = "322:540"
 TRAVEL_CHAT_MAX_ATTEMPTS = 3
 TRAVEL_CHAT_RETRY_SECONDS = (3.0, 8.0)
+TRAVEL_IMAGE_MAX_ATTEMPTS = 3
+TRAVEL_IMAGE_RETRY_SECONDS = (60.0, 90.0)
 
 
 @dataclass(frozen=True)
@@ -446,6 +448,10 @@ def _is_retryable_chat_error(exc: Exception) -> bool:
     return isinstance(exc, APIConnectionError | APITimeoutError)
 
 
+def _is_retryable_image_error(exc: Exception) -> bool:
+    return _is_retryable_chat_error(exc)
+
+
 def _chat_completion_with_retry(client: Any, request_kwargs: dict[str, Any]) -> Any:
     for attempt_index in range(TRAVEL_CHAT_MAX_ATTEMPTS):
         try:
@@ -459,6 +465,43 @@ def _chat_completion_with_retry(client: Any, request_kwargs: dict[str, Any]) -> 
             ]
             time.sleep(retry_delay)
     raise RuntimeError("unreachable travel chat retry state")
+
+
+def _generate_image_bytes_with_retry(
+    *,
+    prompt: str,
+    label: str,
+    size: str,
+    input_references: list[dict[str, object]],
+) -> bytes:
+    for attempt_index in range(TRAVEL_IMAGE_MAX_ATTEMPTS):
+        try:
+            return generate_image_bytes(
+                prompt,
+                label=label,
+                size=size,
+                input_references=input_references,
+            )
+        except Exception as exc:
+            is_last_attempt = attempt_index == TRAVEL_IMAGE_MAX_ATTEMPTS - 1
+            if is_last_attempt or not _is_retryable_image_error(exc):
+                raise
+            retry_delay = TRAVEL_IMAGE_RETRY_SECONDS[
+                min(attempt_index, len(TRAVEL_IMAGE_RETRY_SECONDS) - 1)
+            ]
+            write_prompt_log_line(
+                {
+                    "event": "travel_image_retry",
+                    "label": label,
+                    "attempt": attempt_index + 1,
+                    "maxAttempts": TRAVEL_IMAGE_MAX_ATTEMPTS,
+                    "retryDelaySeconds": retry_delay,
+                    "errorType": type(exc).__name__,
+                    "error": str(exc),
+                }
+            )
+            time.sleep(retry_delay)
+    raise RuntimeError("unreachable travel image retry state")
 
 
 def _framework_context(framework: StoryFramework) -> dict[str, str]:
@@ -853,8 +896,8 @@ def _generate_scene_image(
 ) -> TravelSceneImage:
     scene = story.scenes[scene_index]
     prompt = build_travel_scene_image_prompt(payload, story, scene_index)
-    raw_image_bytes = generate_image_bytes(
-        prompt,
+    raw_image_bytes = _generate_image_bytes_with_retry(
+        prompt=prompt,
         label=f"travel/scene_{scene.index:02d}_image",
         size=_travel_image_size(),
         input_references=_asset_input_references(payload),
