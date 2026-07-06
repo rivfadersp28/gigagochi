@@ -1,7 +1,7 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
-import { Bug, Loader2, Settings } from "lucide-react";
+import { Bug, Loader2, Settings, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { flushSync } from "react-dom";
 import type { CSSProperties, FormEvent, MouseEvent, ReactNode } from "react";
@@ -12,11 +12,13 @@ import {
   consolidateLocalUserMemory,
   extractLocalLiteFacts,
   extractLocalUserMemory,
+  generatePetTravel,
   generateLocalProactiveMessage,
   sendLocalChatMessage,
 } from "@/lib/api";
 import {
   appendLocalChatMessages,
+  consumePendingMainPetReply,
   createLocalId,
   latestChatMessages,
   readLocalChatHistory,
@@ -44,9 +46,15 @@ import {
   recordMemoryOperationsDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
+import { CHAT_RETURN_PET_REPLY } from "@/lib/petReplyPrompts";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
-import type { LocalPetState, PetLifeStage, PetMood } from "@/lib/types";
+import type {
+  GenerateTravelResponse,
+  LocalPetState,
+  PetLifeStage,
+  PetMood,
+} from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 
 import { DebugPanel } from "./DebugPanel";
@@ -851,6 +859,71 @@ function IdleAnimationControls({
   );
 }
 
+type TravelSceneCardStyle = CSSProperties & {
+  "--travel-card-rotation": string;
+  "--travel-card-offset-x": string;
+};
+
+type TravelStoryOverlayProps = {
+  result: GenerateTravelResponse;
+  onClose: () => void;
+};
+
+const TRAVEL_CARD_ROTATIONS = [5, -5, 4, -4, 3, -3, 5] as const;
+
+function TravelStoryOverlay({ result, onClose }: TravelStoryOverlayProps) {
+  const imagesBySceneIndex = new Map(
+    result.images.map((image) => [image.sceneIndex, image.imageUrl]),
+  );
+  const visibleScenes = result.story.scenes
+    .map((scene) => ({
+      scene,
+      imageUrl: imagesBySceneIndex.get(scene.index),
+    }))
+    .filter((item): item is { scene: typeof item.scene; imageUrl: string } =>
+      Boolean(item.imageUrl),
+    );
+
+  return (
+    <section className="travel-story-overlay" aria-label={result.story.title}>
+      <div className="travel-story-phone">
+        <button
+          type="button"
+          className="travel-story-close"
+          aria-label="Закрыть путешествие"
+          onClick={onClose}
+        >
+          <X className="size-[22px]" aria-hidden="true" />
+        </button>
+
+        <div className="travel-story-stack">
+          {visibleScenes.map(({ scene, imageUrl }, index) => {
+            const slotStyle: TravelSceneCardStyle = {
+              "--travel-card-rotation": `${
+                TRAVEL_CARD_ROTATIONS[index % TRAVEL_CARD_ROTATIONS.length]
+              }deg`,
+              "--travel-card-offset-x": index % 2 === 0 ? "17.08px" : "28.02px",
+            };
+
+            return (
+              <article
+                key={`${result.travelId}-${scene.index}`}
+                className="travel-scene-card-slot"
+                style={slotStyle}
+                aria-label={`${scene.title}. ${scene.text}`}
+              >
+                <div className="travel-scene-card">
+                  <img src={imageUrl} alt={scene.title} draggable={false} />
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function PetDashboard({ petId }: PetDashboardProps) {
   const router = useRouter();
   const localPet = useLocalPetState();
@@ -863,6 +936,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [chatInput, setChatInput] = useState("");
   const [chatError, setChatError] = useState<string | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
+  const [isTravelGenerating, setIsTravelGenerating] = useState(false);
+  const [travelResult, setTravelResult] = useState<GenerateTravelResponse | null>(null);
+  const [travelError, setTravelError] = useState<string | null>(null);
   const [conversationReplyMessageId, setConversationReplyMessageId] = useState<number | null>(null);
   const [selectedSprite, setSelectedSprite] = useState<SelectedSprite | null>(null);
   const [idleAnimationSettings, setIdleAnimationSettings] = useState<IdleAnimationSettings>(
@@ -879,19 +955,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const speechBubbleRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const isSendingChatRef = useRef(false);
+  const isTravelGeneratingRef = useRef(false);
   const conversationFullHeightRef = useRef(0);
   const keyboardSyncUntilRef = useRef(0);
   const pet = localPet.pet;
   const includePromptDebug = promptSettings.includePromptDebug;
-
-  const closeChatMode = useCallback(() => {
-    keyboardSyncUntilRef.current = 0;
-    setIsChatMode(false);
-    setIsKeyboardRaised(false);
-    setChatError(null);
-    setConversationReplyMessageId(null);
-    chatInputRef.current?.blur();
-  }, []);
 
   const showPetReplyMessage = useCallback((
     text: string,
@@ -909,6 +977,16 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       setConversationReplyMessageId(nextMessage.id);
     }
   }, []);
+
+  const closeChatMode = useCallback(() => {
+    keyboardSyncUntilRef.current = 0;
+    setIsChatMode(false);
+    setIsKeyboardRaised(false);
+    setChatError(null);
+    setConversationReplyMessageId(null);
+    showPetReplyMessage(CHAT_RETURN_PET_REPLY, true);
+    chatInputRef.current?.blur();
+  }, [showPetReplyMessage]);
 
   useTelegramBackButton(closeChatMode, isChatMode);
 
@@ -1029,8 +1107,43 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     window.setTimeout(() => setIsFeeding(false), 180);
   }
 
-  function handlePlay() {
-    localPet.play();
+  async function handleTravel() {
+    if (!pet || isTravelGeneratingRef.current) {
+      return;
+    }
+
+    void primePetSpeechAudio();
+    isTravelGeneratingRef.current = true;
+    setIsTravelGenerating(true);
+    setTravelError(null);
+    setIsIdleControlsOpen(false);
+    setIsDebugPanelOpen(false);
+    showPetReplyMessage("Собираю путешествие...", false);
+    const travelStatusTimeoutId = window.setTimeout(() => {
+      if (isTravelGeneratingRef.current) {
+        showPetReplyMessage("Рисую первый кадр...", false);
+      }
+    }, 2200);
+
+    try {
+      const response = await generatePetTravel(pet, { includeDebug: includePromptDebug });
+      logBrowserPromptDebug("dashboard travel", response);
+      setTravelResult(response);
+      localPet.play();
+
+      const firstSceneText = response.story.scenes[0]?.text.trim();
+      showPetReplyMessage(firstSceneText || "Я вернулся с теплой находкой!", true);
+    } catch (caught) {
+      const message =
+        caught instanceof ApiError ? caught.message : "Не удалось создать путешествие.";
+      setTravelError(message);
+      showPetReplyMessage("Путешествие не собралось. Попробуем позже.", false);
+      hapticNotification("error");
+    } finally {
+      window.clearTimeout(travelStatusTimeoutId);
+      isTravelGeneratingRef.current = false;
+      setIsTravelGenerating(false);
+    }
   }
 
   function focusChatInput() {
@@ -1211,7 +1324,24 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     if (localPet.status === "loading" || !pet || pet.petId !== petId) {
       return;
     }
+
+    const pendingReply = consumePendingMainPetReply(pet.petId);
+    if (!pendingReply) {
+      return;
+    }
+
+    showPetReplyMessage(pendingReply.text, true);
+  }, [localPet.status, pet, petId, showPetReplyMessage]);
+
+  useEffect(() => {
+    if (localPet.status === "loading" || !pet || pet.petId !== petId) {
+      return;
+    }
     if (proactiveAttemptedRef.current) {
+      return;
+    }
+    if (petReplyMessageRef.current) {
+      proactiveAttemptedRef.current = true;
       return;
     }
     proactiveAttemptedRef.current = true;
@@ -1239,6 +1369,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       recordMemoryContextDebug(proactiveMemoryContext, "Память подставлена в proactive prompt");
       void generateLocalProactiveMessage(pet, proactiveMemoryContext, { includeDebug: true })
         .then((response) => {
+          if (petReplyMessageRef.current) {
+            return;
+          }
           logBrowserPromptDebug("dashboard proactive chat", response);
           recordReplyPromptDebug(response);
           appendLocalChatMessages([
@@ -1351,6 +1484,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       {localPet.error ? (
         <div className="fixed left-5 right-5 top-[max(20px,calc(var(--tma-safe-top)+12px))] z-20 rounded-[8px] border border-[var(--danger-line)] bg-white px-4 py-3 text-sm text-[var(--danger)] sm:left-8 sm:right-auto sm:max-w-sm">
           {localPet.error}
+        </div>
+      ) : null}
+      {travelError ? (
+        <div className="fixed left-5 right-5 top-[max(20px,calc(var(--tma-safe-top)+12px))] z-40 rounded-[8px] border border-[var(--danger-line)] bg-white px-4 py-3 text-sm text-[var(--danger)] sm:left-8 sm:right-auto sm:max-w-sm">
+          {travelError}
         </div>
       ) : null}
 
@@ -1569,21 +1707,29 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
           <button
             type="button"
-            onClick={handlePlay}
-            className="main-action-button main-action-button--travel"
+            onClick={handleTravel}
+            disabled={isTravelGenerating}
+            className="main-action-button main-action-button--travel disabled:cursor-not-allowed disabled:opacity-70"
             style={mainActionButtonStyle.travel}
           >
-            <img
-              src={actionIconSrc.travel}
-              alt=""
-              aria-hidden="true"
-              className="main-action-button__icon"
-              draggable={false}
-            />
+            {isTravelGenerating ? (
+              <Loader2 className="size-[24px] animate-spin" aria-hidden="true" />
+            ) : (
+              <img
+                src={actionIconSrc.travel}
+                alt=""
+                aria-hidden="true"
+                className="main-action-button__icon"
+                draggable={false}
+              />
+            )}
             <span>В путешествие</span>
           </button>
         </div>
       </div>
+      {travelResult ? (
+        <TravelStoryOverlay result={travelResult} onClose={() => setTravelResult(null)} />
+      ) : null}
     </main>
   );
 }

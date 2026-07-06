@@ -122,6 +122,38 @@ class LocalChatDebug(BaseModel):
     memoryDebug: dict[str, Any] | None = None
 
 
+class TravelStoryScene(BaseModel):
+    index: int = Field(ge=1, le=7)
+    arc: Literal["beginning", "exploration", "discovery", "reward", "final"]
+    title: str = Field(min_length=1, max_length=70)
+    text: str = Field(min_length=1, max_length=260)
+    visualBrief: str = Field(min_length=1, max_length=900)
+
+
+class TravelStory(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+    summary: str = Field(min_length=1, max_length=260)
+    scenes: list[TravelStoryScene] = Field(min_length=5, max_length=7)
+
+
+class TravelSceneImage(BaseModel):
+    sceneIndex: int = Field(ge=1, le=7)
+    imageUrl: str = Field(min_length=1)
+
+
+class GenerateTravelRequest(BaseModel):
+    pet: LocalPetChatContext
+    includeDebug: bool = False
+
+
+class GenerateTravelResponse(BaseModel):
+    travelId: str
+    generatedAt: datetime
+    story: TravelStory
+    images: list[TravelSceneImage] = Field(default_factory=list, max_length=7)
+    debug: LocalChatDebug | None = None
+
+
 class LocalChatResponse(BaseModel):
     reply: str
     moodHint: PetStateValue | None = None

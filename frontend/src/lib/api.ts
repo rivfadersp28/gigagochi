@@ -1,5 +1,6 @@
 import type {
   GeneratePetResponse,
+  GenerateTravelResponse,
   LiteFactExtractionResponse,
   LocalChatMessage,
   LocalChatResponse,
@@ -334,6 +335,35 @@ export async function generatePetAssets(description: string): Promise<GeneratePe
     characterBible: response.characterBible ?? undefined,
     images: completeGeneratedImages(response),
     spriteSheetUrl: response.spriteSheetUrl ? publicImageUrl(response.spriteSheetUrl) : undefined,
+  };
+}
+
+export async function generatePetTravel(
+  pet: LocalPetState,
+  options: { includeDebug?: boolean } = {},
+): Promise<GenerateTravelResponse> {
+  const response = await request<GenerateTravelResponse>("/api/travel", {
+    method: "POST",
+    headers: tmaAuthHeaders(),
+    body: {
+      includeDebug: options.includeDebug ?? false,
+      pet: {
+        name: pet.name,
+        description: pet.description,
+        characterBible: pet.assetSet?.characterBible,
+        stage: pet.stage,
+        mood: pet.mood,
+        stats: pet.stats,
+      },
+    },
+  });
+
+  return {
+    ...response,
+    images: response.images.map((image) => ({
+      ...image,
+      imageUrl: publicImageUrl(image.imageUrl),
+    })),
   };
 }
 

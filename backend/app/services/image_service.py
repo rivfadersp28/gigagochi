@@ -878,11 +878,16 @@ def create_character_bible(
     return character_bible
 
 
-def build_image_generate_kwargs(settings: Any, prompt: str) -> dict[str, Any]:
+def build_image_generate_kwargs(
+    settings: Any,
+    prompt: str,
+    *,
+    size: str | None = None,
+) -> dict[str, Any]:
     return {
         "model": get_image_model(settings),
         "prompt": prompt,
-        "size": settings.openai_image_size,
+        "size": size or settings.openai_image_size,
         "quality": settings.openai_image_quality,
         "n": 1,
         "output_format": settings.openai_image_output_format,
@@ -908,8 +913,14 @@ def _image_result_bytes(first: Any) -> bytes:
     raise RuntimeError("IMAGE_RESPONSE_EMPTY")
 
 
-def _generate_openrouter_image_bytes(settings: Any, prompt: str) -> bytes:
-    kwargs = build_image_generate_kwargs(settings, prompt)
+def _generate_openrouter_image_bytes(
+    settings: Any,
+    prompt: str,
+    *,
+    label: str,
+    size: str | None = None,
+) -> bytes:
+    kwargs = build_image_generate_kwargs(settings, prompt, size=size)
     request_body = {
         key: value
         for key, value in kwargs.items()
@@ -929,7 +940,7 @@ def _generate_openrouter_image_bytes(settings: Any, prompt: str) -> bytes:
     response.raise_for_status()
     response_payload = response.json()
     log_image_generation_response(
-        "pet_creation/image",
+        label,
         kwargs,
         response_payload,
         headers=getattr(response, "headers", None),
@@ -940,20 +951,25 @@ def _generate_openrouter_image_bytes(settings: Any, prompt: str) -> bytes:
     return _image_result_bytes(data[0])
 
 
-def generate_image_bytes(prompt: str) -> bytes:
+def generate_image_bytes(
+    prompt: str,
+    *,
+    label: str = "pet_creation/image",
+    size: str | None = None,
+) -> bytes:
     settings = get_settings()
     log_image_generation_prompt(
-        "pet_creation/image",
-        build_image_generate_kwargs(settings, prompt),
+        label,
+        build_image_generate_kwargs(settings, prompt, size=size),
     )
     if is_openrouter_provider(settings):
-        return _generate_openrouter_image_bytes(settings, prompt)
+        return _generate_openrouter_image_bytes(settings, prompt, label=label, size=size)
 
     client = get_openai_client()
-    kwargs = build_image_generate_kwargs(settings, prompt)
+    kwargs = build_image_generate_kwargs(settings, prompt, size=size)
     response = client.images.generate(**kwargs)
     response_payload = response.model_dump() if hasattr(response, "model_dump") else {}
-    log_image_generation_response("pet_creation/image", kwargs, response_payload)
+    log_image_generation_response(label, kwargs, response_payload)
     return _image_result_bytes(response.data[0])
 
 

@@ -15,6 +15,7 @@ from app.main import app
 from app.routers.tma import generation_error_message, provider_error_details
 from app.schemas import (
     GeneratePetAssetResponse,
+    GenerateTravelResponse,
     LocalChatResponse,
     LocalProactiveResponse,
     MemoryConsolidationResponse,
@@ -250,6 +251,95 @@ def test_chat_accepts_local_pet_state(monkeypatch) -> None:
         "moodHint": "happy",
     }
     assert captured["lore"] == {"home": {"favorite_spot": "мягкая звездная подушка"}}
+
+    app.dependency_overrides.clear()
+
+
+def test_travel_accepts_local_pet_state(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=False,
+            openai_api_key=None,
+            openrouter_api_key="test-openrouter-key",
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_generate_travel(payload):
+        captured["pet"] = payload.pet.model_dump()
+        return GenerateTravelResponse(
+            travelId="travel-1",
+            generatedAt=datetime(2026, 7, 6, 12, 0, tzinfo=UTC),
+            story={
+                "title": "Лунная ярмарка",
+                "summary": "Питомец нашел теплый огонек и вернулся довольным.",
+                "scenes": [
+                    {
+                        "index": index,
+                        "arc": arc,
+                        "title": f"Сцена {index}",
+                        "text": f"Короткая теплая сцена {index}.",
+                        "visualBrief": f"Pet in scene {index}.",
+                    }
+                    for index, arc in [
+                        (1, "beginning"),
+                        (2, "exploration"),
+                        (3, "discovery"),
+                        (4, "discovery"),
+                        (5, "final"),
+                    ]
+                ],
+            },
+            images=[
+                {
+                    "sceneIndex": 1,
+                    "imageUrl": "/static/generated/travel-1/travel-scene-01.png",
+                }
+            ],
+        )
+
+    monkeypatch.setattr("app.routers.tma.generate_travel", fake_generate_travel)
+    client = tma_client()
+
+    response = client.post(
+        "/api/travel",
+        json={
+            "pet": {
+                "name": "Листик",
+                "description": "маленький листолицый питомец",
+                "characterBible": {
+                    "identity": {"name": "Листик"},
+                    "main_colors": ["green", "cream"],
+                },
+                "stage": "baby",
+                "mood": "happy",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 90,
+                    "energy": 75,
+                    "cleanliness": 85,
+                },
+            },
+            "includeDebug": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["travelId"] == "travel-1"
+    assert payload["story"]["title"] == "Лунная ярмарка"
+    assert payload["story"]["scenes"][0]["index"] == 1
+    assert payload["images"] == [
+        {
+            "sceneIndex": 1,
+            "imageUrl": "/static/generated/travel-1/travel-scene-01.png",
+        }
+    ]
+    assert captured["pet"]["characterBible"] == {
+        "identity": {"name": "Листик"},
+        "main_colors": ["green", "cream"],
+    }
 
     app.dependency_overrides.clear()
 

@@ -21,6 +21,8 @@ from app.schemas import (
     GeneratePetAssetResponse,
     GeneratePetJobResponse,
     GeneratePetRequest,
+    GenerateTravelRequest,
+    GenerateTravelResponse,
     LiteFactExtractionRequest,
     LiteFactExtractionResponse,
     LocalChatRequest,
@@ -48,6 +50,7 @@ from app.services.prompt_debug import (
 )
 from app.services.rate_limit_service import rate_limiter
 from app.services.telegram_auth_service import TelegramUserContext
+from app.services.travel_service import generate_travel
 
 router = APIRouter(prefix="/api", tags=["telegram-mini-app"])
 TelegramUser = Annotated[TelegramUserContext, Depends(get_telegram_user)]
@@ -150,6 +153,28 @@ def chat_error_message(code: str) -> str:
     if code == "OPENAI_CONNECTION_FAILED":
         return "Backend не смог подключиться к AI-провайдеру. Попробуйте позже."
     return "Не удалось получить ответ питомца. Попробуйте еще раз."
+
+
+def travel_error_message(code: str) -> str:
+    if code == "OPENAI_TIMEOUT":
+        return "Путешествие заняло больше времени, чем ожидалось. Попробуйте еще раз."
+    if code == "OPENAI_RATE_LIMIT":
+        return "AI-провайдер временно ограничил генерацию путешествий. Попробуйте позже."
+    if code in {"OPENAI_AUTH_FAILED", "OPENAI_PERMISSION_DENIED"}:
+        return "API key AI-провайдера не принят сервером. Проверьте настройки backend."
+    if code == "MISSING_OPENAI_API_KEY":
+        return "На сервере не настроен API key AI-провайдера."
+    if code == "OPENAI_BAD_REQUEST":
+        return "AI-провайдер отклонил параметры travel-запроса. Проверьте настройки backend."
+    if code.startswith("OPENAI_STATUS_"):
+        return "AI-провайдер вернул ошибку при генерации путешествия. Попробуйте позже."
+    if code == "OPENAI_CONNECTION_FAILED":
+        return "Backend не смог подключиться к AI-провайдеру. Попробуйте позже."
+    if code == "IMAGE_SAVE_FAILED":
+        return "Картинка путешествия сгенерировалась, но backend не смог ее сохранить."
+    if code == "IMAGE_PROMPT_REJECTED":
+        return "AI-провайдер отклонил описание картинки путешествия. Попробуйте еще раз."
+    return "Не удалось создать путешествие. Попробуйте еще раз."
 
 
 def _compact_error_text(value: str) -> str:
@@ -444,6 +469,43 @@ def chat(payload: LocalChatRequest, user: TelegramUser) -> LocalChatResponse:
             "chat_failed",
             code,
             chat_error_message(code),
+            exc,
+        ) from exc
+    finally:
+        reset_prompt_log_context(prompt_log_token)
+
+
+@router.post("/travel", response_model=GenerateTravelResponse, response_model_exclude_none=True)
+def travel(payload: GenerateTravelRequest, user: TelegramUser) -> GenerateTravelResponse:
+    check_rate_limit("generation", user)
+    settings = get_settings()
+    has_ai_key = bool(
+        getattr(settings, "openai_api_key", None)
+        or getattr(settings, "openrouter_api_key", None)
+    )
+    if not has_ai_key:
+        raise public_error(
+            "MISSING_OPENAI_API_KEY",
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+        ) from None
+
+    prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel"})
+    try:
+        return generate_travel(payload)
+    except MissingOpenAIAPIKey:
+        raise public_error(
+            "MISSING_OPENAI_API_KEY",
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+        ) from None
+    except HTTPException:
+        raise
+    except Exception as exc:
+        code = chat_error_code(exc)
+        raise ai_failure_http_exception(
+            "/api/travel",
+            "travel_failed",
+            code,
+            travel_error_message(code),
             exc,
         ) from exc
     finally:
