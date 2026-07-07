@@ -55,6 +55,7 @@ import {
   recordMemoryOperationsDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
+import { playPetFeedSound, primePetFeedSound } from "@/lib/petFeedAudio";
 import { applyPetVoice, type PetVoiceMode } from "@/lib/petVoice";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
@@ -1374,6 +1375,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
   useEffect(() => {
     primePetTapSound();
+    primePetFeedSound();
   }, []);
 
   useEffect(() => {
@@ -1508,6 +1510,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
     setFeedSuccessId((currentId) => currentId + 1);
     triggerPetTapVisualFeedback();
+    void playPetFeedSound();
     hapticNotification("success");
     window.setTimeout(() => setIsFeeding(false), 420);
     return true;
