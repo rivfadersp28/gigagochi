@@ -154,7 +154,59 @@ def test_telegram_send_error_is_sanitized(monkeypatch, tmp_path) -> None:
     with pytest.raises(telegram_push_service.TelegramPushError) as exc_info:
         telegram_push_service.send_manual_push(telegram_id=42)
 
-    assert exc_info.value.code == "TELEGRAM_SEND_FAILED"
-    assert "chat not found" in exc_info.value.message
+    assert exc_info.value.code == "TELEGRAM_CHAT_NOT_FOUND"
+    assert "/start" in exc_info.value.message
     assert "secret-token" not in exc_info.value.message
     assert "api.telegram.org" not in exc_info.value.message
+    latest = telegram_push_service.push_status()["latest"]
+    assert latest["lastPushErrorCode"] == "TELEGRAM_CHAT_NOT_FOUND"
+    assert latest["lastPushAttemptAt"] is not None
+
+
+def test_failed_daily_attempt_delays_next_due_push(monkeypatch, tmp_path) -> None:
+    now = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
+    settings = SimpleNamespace(
+        bot_token="secret-token",
+        webapp_url="https://example.com/app",
+        telegram_push_store_path=str(tmp_path / "push.json"),
+        telegram_daily_push_enabled=True,
+        telegram_daily_push_min_interval_hours=24,
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: now)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_push_pet_message",
+        lambda payload: LocalProactiveResponse(reply="Привет!"),
+    )
+
+    def fake_send_message(client, chat_id, text, reply_markup):
+        request = httpx.Request(
+            "POST",
+            "https://api.telegram.org/botsecret-token/sendMessage",
+        )
+        response = httpx.Response(
+            400,
+            request=request,
+            json={
+                "ok": False,
+                "error_code": 400,
+                "description": "Bad Request: chat not found",
+            },
+        )
+        raise TelegramAPIError("sendMessage", response)
+
+    monkeypatch.setattr(telegram_push_service, "send_message", fake_send_message)
+
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    store = telegram_push_service._read_store()
+    record = store["records"]["42"]
+    record["registeredAt"] = (now - timedelta(hours=25)).isoformat().replace("+00:00", "Z")
+    telegram_push_service._save_record(record)
+
+    assert telegram_push_service.send_due_pushes() == []
+
+    latest = telegram_push_service.push_status()["latest"]
+    assert latest["lastPushErrorCode"] == "TELEGRAM_CHAT_NOT_FOUND"
+    assert latest["lastPushAttemptAt"] == now.isoformat().replace("+00:00", "Z")
+    assert telegram_push_service._due_records(now) == []

@@ -94,8 +94,10 @@ export type AdminPushRecord = {
   petId: string;
   registeredAt: string;
   lastPushAt?: string | null;
+  lastPushAttemptAt?: string | null;
   lastDebugPushAt?: string | null;
   lastPushError?: string | null;
+  lastPushErrorCode?: string | null;
   lastPushErrorAt?: string | null;
 };
 

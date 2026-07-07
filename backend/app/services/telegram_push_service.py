@@ -57,6 +57,12 @@ def _parse_iso(value: Any) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def _latest_time(*values: Any) -> datetime | None:
+    parsed_values = [_parse_iso(value) for value in values]
+    valid_values = [value for value in parsed_values if value is not None]
+    return max(valid_values) if valid_values else None
+
+
 def _store_path() -> Path:
     path = Path(get_settings().telegram_push_store_path).expanduser()
     if not path.is_absolute():
@@ -177,8 +183,10 @@ def _record_summary(record: dict[str, Any]) -> dict[str, Any]:
         "petId": record.get("petId"),
         "registeredAt": record.get("registeredAt"),
         "lastPushAt": record.get("lastPushAt"),
+        "lastPushAttemptAt": record.get("lastPushAttemptAt"),
         "lastDebugPushAt": record.get("lastDebugPushAt"),
         "lastPushError": record.get("lastPushError"),
+        "lastPushErrorCode": record.get("lastPushErrorCode"),
         "lastPushErrorAt": record.get("lastPushErrorAt"),
     }
 
@@ -275,10 +283,16 @@ def _send_push_record(
                 mini_app_keyboard(settings.webapp_url),
             )
         except TelegramAPIError as exc:
-            raise TelegramPushError(
+            push_error = _telegram_push_error(exc)
+            _save_push_failure(record, push_error)
+            raise push_error from exc
+        except httpx.HTTPError as exc:
+            push_error = TelegramPushError(
                 "TELEGRAM_SEND_FAILED",
-                f"Telegram sendMessage failed: HTTP {exc.status_code}: {exc.description}",
-            ) from exc
+                f"Telegram sendMessage failed: {exc.__class__.__name__}",
+            )
+            _save_push_failure(record, push_error)
+            raise push_error from exc
 
     now_iso = _iso()
     next_record = {
@@ -287,6 +301,9 @@ def _send_push_record(
         "lastStatsTickAt": now_iso,
         "lastPushReply": response.reply,
         "lastPushError": None,
+        "lastPushErrorCode": None,
+        "lastPushErrorAt": None,
+        "lastPushAttemptAt": now_iso,
     }
     if manual:
         next_record["lastDebugPushAt"] = now_iso
@@ -302,6 +319,40 @@ def _send_push_record(
         "sentAt": now_iso,
         "debug": response.debug.model_dump(mode="json") if response.debug else None,
     }
+
+
+def _telegram_push_error(exc: TelegramAPIError) -> TelegramPushError:
+    description = exc.description.strip()
+    if "chat not found" in description.lower():
+        return TelegramPushError(
+            "TELEGRAM_CHAT_NOT_FOUND",
+            (
+                "Telegram не нашел чат с этим пользователем. Пользователь должен "
+                "открыть диалог с ботом и нажать /start, затем повтори debug push."
+            ),
+        )
+    return TelegramPushError(
+        "TELEGRAM_SEND_FAILED",
+        f"Telegram sendMessage failed: HTTP {exc.status_code}: {description}",
+    )
+
+
+def _save_push_failure(record: dict[str, Any], exc: Exception) -> None:
+    now_iso = _iso()
+    if isinstance(exc, TelegramPushError):
+        error_code = exc.code
+        message = exc.message
+    else:
+        error_code = "PUSH_SEND_FAILED"
+        message = str(exc)
+    failed = {
+        **record,
+        "lastPushError": message,
+        "lastPushErrorCode": error_code,
+        "lastPushErrorAt": now_iso,
+        "lastPushAttemptAt": now_iso,
+    }
+    _save_record(failed)
 
 
 def send_manual_push(
@@ -327,7 +378,9 @@ def _due_records(now: datetime) -> list[dict[str, Any]]:
     for record in records.values():
         if not isinstance(record, dict):
             continue
-        base_time = _parse_iso(record.get("lastPushAt")) or _parse_iso(record.get("registeredAt"))
+        base_time = _latest_time(record.get("lastPushAt"), record.get("lastPushAttemptAt"))
+        if base_time is None:
+            base_time = _parse_iso(record.get("registeredAt"))
         if base_time and base_time <= cutoff:
             due.append(record)
     return due
@@ -349,8 +402,7 @@ def send_due_pushes() -> list[dict[str, Any]]:
                 )
             )
         except Exception as exc:
-            failed = {**record, "lastPushError": str(exc), "lastPushErrorAt": _iso()}
-            _save_record(failed)
+            _save_push_failure(record, exc)
     return results
 
 
