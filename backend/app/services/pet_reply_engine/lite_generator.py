@@ -63,7 +63,11 @@ from app.services.pet_reply_engine.speech_runtime import (
     user_memory_extraction_system_prompt,
     world_seed_system_prompt,
 )
-from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
+from app.services.prompt_debug import (
+    log_ambient_reply_diagnostic,
+    log_chat_completion_prompt,
+    log_chat_completion_response,
+)
 from app.services.story_library import story_library_patch_for_new_brick
 
 MAX_LITE_TOOL_ROUNDS = 3
@@ -2368,8 +2372,13 @@ def generate_ambient_pet_message(
     prompt_debug.append(log_chat_completion_prompt("pet_reply/ambient", request_kwargs))
     completion = openai_client.chat.completions.create(**request_kwargs)
     log_chat_completion_response("pet_reply/ambient", completion)
-    reply, inner_thought, face_hint = _extract_hidden_reaction(
-        completion.choices[0].message.content or ""
+    raw_reply = completion.choices[0].message.content or ""
+    reply, inner_thought, face_hint = _extract_hidden_reaction(raw_reply)
+    log_ambient_reply_diagnostic(
+        "pet_reply/ambient",
+        request_kwargs,
+        raw_reply=raw_reply,
+        visible_reply=reply,
     )
     debug = None
     if payload.includeDebug or prompt_debug:

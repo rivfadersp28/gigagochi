@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from contextvars import ContextVar
@@ -125,6 +126,62 @@ def log_chat_completion_response(label: str, completion: Any) -> dict[str, Any]:
         "usage": _usage_summary(_object_value(completion, "usage")),
     }
     return write_response_log_line(payload)
+
+
+def _message_content_length(messages: Any) -> int:
+    if not isinstance(messages, list):
+        return 0
+    total = 0
+    for message in messages:
+        if not isinstance(message, Mapping):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            total += len(content)
+    return total
+
+
+def _prompt_hash(messages: Any) -> str:
+    encoded = json.dumps(
+        messages if isinstance(messages, list) else [],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _truncate_log_text(value: str, limit: int = 1000) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: limit - 1].rstrip() + "…"
+
+
+def log_ambient_reply_diagnostic(
+    label: str,
+    request_kwargs: Mapping[str, Any],
+    *,
+    raw_reply: str,
+    visible_reply: str,
+) -> dict[str, Any]:
+    messages = request_kwargs.get("messages", [])
+    payload = {
+        "event": "ambient_reply_diagnostic",
+        "promptType": "chat_completion",
+        "label": label,
+        "model": request_kwargs.get("model"),
+        "promptHash": _prompt_hash(messages),
+        "promptMessageCount": len(messages) if isinstance(messages, list) else 0,
+        "promptContentChars": _message_content_length(messages),
+        "rawReply": _truncate_log_text(raw_reply),
+        "visibleReply": _truncate_log_text(visible_reply),
+    }
+    line_payload = write_response_log_line(payload)
+    print("\n=== AI ambient diagnostic ===", flush=True)
+    print(json.dumps(line_payload, ensure_ascii=False, default=str), flush=True)
+    print("=== End AI ambient diagnostic ===\n", flush=True)
+    return line_payload
 
 
 def _response_id_from_payload(payload: Mapping[str, Any]) -> str | None:
