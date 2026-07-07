@@ -18,29 +18,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   consolidateLocalUserMemory,
-  extractLocalLiteFacts,
-  extractLocalUserMemory,
   generateLocalAmbientMessage,
   generatePetTravel,
   generateLocalProactiveMessage,
-  sendLocalChatMessage,
 } from "@/lib/api";
 import {
   appendLocalChatMessages,
   createLocalId,
-  latestChatMessages,
   readLocalChatHistory,
   readLocalPetSettings,
   writeLocalPetSettings,
 } from "@/lib/localPetStorage";
-import {
-  buildDailyProactiveMemoryContext,
-  buildMemoryContextForMessage,
-} from "@/lib/localPetMemoryRecall";
+import { buildDailyProactiveMemoryContext } from "@/lib/localPetMemoryRecall";
 import {
   applyMemoryConsolidationOperations,
-  applyMemoryOperations,
-  markMemoryContextUsed,
   readLocalPetMemory,
   recordProactiveDelivery,
   shouldRunDailyConsolidation,
@@ -49,12 +40,11 @@ import {
 import { playPetSpeechAudioSequence, primePetSpeechAudio } from "@/lib/petSpeechAudio";
 import { playPetTapSound, primePetTapSound } from "@/lib/petTapAudio";
 import {
-  recordLiteOverlayPatchDebug,
   recordMemoryConsolidationDebug,
   recordMemoryContextDebug,
-  recordMemoryOperationsDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
+import { runLocalPetChatTurn } from "@/lib/localPetChatTurn";
 import { playPetFeedSound, primePetFeedSound } from "@/lib/petFeedAudio";
 import { applyPetVoice, type PetVoiceMode } from "@/lib/petVoice";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
@@ -1648,44 +1638,30 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           createdAt: new Date().toISOString(),
         }
       : null;
-    const userMessage = {
-      id: createLocalId("message"),
-      role: "user" as const,
-      text: message,
-      createdAt: new Date().toISOString(),
-    };
-    const history = latestChatMessages(12);
-    const historyWithDialogueHook = dialogueHookMessage
-      ? [...history, dialogueHookMessage].slice(-12)
-      : history;
-    const memoryBeforeMessage = readLocalPetMemory(pet.petId);
-    const memoryContext = buildMemoryContextForMessage(memoryBeforeMessage, message);
-
-    if (includePromptDebug) {
-      console.log("[memory-debug] dashboard quick chat recall context", memoryContext);
-    }
-    recordMemoryContextDebug(memoryContext);
-    appendLocalChatMessages(
-      dialogueHookMessage ? [dialogueHookMessage, userMessage] : [userMessage],
-    );
 
     try {
-      const response = await sendLocalChatMessage(message, pet, historyWithDialogueHook, {
-        includeDebug: includePromptDebug,
-        memoryContext,
+      const { response } = await runLocalPetChatTurn({
+        pet,
+        message,
+        includePromptDebug,
         replyMaxChars: DASHBOARD_CHAT_REPLY_MAX_CHARS,
+        dialogueHookMessage,
+        logLabel: "dashboard quick chat",
+        onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
+        onMemoryConsolidationNeeded: () => {
+          const memory = readLocalPetMemory(pet.petId);
+          void consolidateLocalUserMemory(memory, { includeDebug: includePromptDebug })
+            .then((consolidation) => {
+              logBrowserPromptDebug("dashboard memory consolidation", consolidation);
+              recordMemoryConsolidationDebug(consolidation.operations);
+              const latestMemory = readLocalPetMemory(pet.petId);
+              writeLocalPetMemory(
+                applyMemoryConsolidationOperations(latestMemory, consolidation.operations),
+              );
+            })
+            .catch(() => undefined);
+        },
       });
-      logBrowserPromptDebug("dashboard quick chat reply", response);
-      recordReplyPromptDebug(response);
-
-      const assistantMessage = {
-        id: createLocalId("message"),
-        role: "pet" as const,
-        text: response.reply,
-        createdAt: new Date().toISOString(),
-      };
-      appendLocalChatMessages([assistantMessage]);
-      recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
       showPetReplyMessage(response.reply, true, { showInConversation: true });
       localPet.applyMoodHint(
         response.moodHint,
@@ -1695,49 +1671,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       if (response.petPatch?.name) {
         localPet.updateName(response.petPatch.name);
       }
-
-      const selectedMemoryIds = memoryContext.relevantMemories.map((item) => item.id);
-      if (selectedMemoryIds.length) {
-        writeLocalPetMemory(
-          markMemoryContextUsed(readLocalPetMemory(pet.petId), selectedMemoryIds),
-        );
-      }
-
-      void extractLocalLiteFacts(message, response.reply, pet, historyWithDialogueHook, {
-        includeDebug: includePromptDebug,
-      })
-        .then((extraction) => {
-          logBrowserPromptDebug("dashboard quick chat lite fact extraction", extraction);
-          if (extraction.liteOverlayPatch) {
-            recordLiteOverlayPatchDebug(extraction.liteOverlayPatch);
-            localPet.applyLiteOverlayPatch(extraction.liteOverlayPatch);
-          }
-        })
-        .catch(() => undefined);
-
-      void extractLocalUserMemory(
-        message,
-        response.reply,
-        pet,
-        historyWithDialogueHook,
-        memoryBeforeMessage,
-        {
-          includeDebug: includePromptDebug,
-          memoryContext,
-        },
-      )
-        .then((extraction) => {
-          logBrowserPromptDebug("dashboard quick chat memory extraction", extraction);
-          recordMemoryOperationsDebug(extraction.operations);
-          const latestMemory = readLocalPetMemory(pet.petId);
-          writeLocalPetMemory(
-            applyMemoryOperations(latestMemory, extraction.operations, [
-              userMessage.id,
-              assistantMessage.id,
-            ]),
-          );
-        })
-        .catch(() => undefined);
     } catch (caught) {
       setChatError(
         caught instanceof ApiError ? caught.message : "Не удалось отправить сообщение.",

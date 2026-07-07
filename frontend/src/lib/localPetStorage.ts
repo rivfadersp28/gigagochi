@@ -7,6 +7,10 @@ import type {
   PetLifeStage,
   PetMood,
 } from "./types";
+import {
+  characterNameFromAssetSet,
+  normalizeCharacterAssetSet,
+} from "./localPetCharacter";
 
 export const PET_STATE_STORAGE_KEY = "tamagochi:v1:pet-state";
 export const CHAT_HISTORY_STORAGE_KEY = "tamagochi:v1:chat-history";
@@ -131,13 +135,14 @@ function normalizeAssetSet(value: unknown): LocalPetAssetSet | undefined {
     },
   );
 
-  return {
+  return normalizeCharacterAssetSet({
     assetSetId: value.assetSetId,
     generatedAt: isIsoDate(value.generatedAt) ? value.generatedAt : new Date().toISOString(),
+    characterTemplate: isRecord(value.characterTemplate) ? value.characterTemplate : undefined,
     characterBible: isRecord(value.characterBible) ? value.characterBible : undefined,
     images: normalizedImages,
     spriteSheetUrl: typeof value.spriteSheetUrl === "string" ? value.spriteSheetUrl : undefined,
-  };
+  });
 }
 
 function normalizeLiteFact(value: unknown): Record<string, unknown> | null {
@@ -412,11 +417,15 @@ function normalizePetState(value: unknown): LocalPetStateV2 | null {
   const createdAt = isIsoDate(value.createdAt) ? value.createdAt : now;
   const updatedAt = isIsoDate(value.updatedAt) ? value.updatedAt : createdAt;
   const stats = normalizeStats(value.stats);
+  const assetSet = normalizeAssetSet(value.assetSet);
 
   return {
     version: 2,
     petId: value.petId,
-    name: typeof value.name === "string" && value.name.trim() ? value.name : undefined,
+    name:
+      typeof value.name === "string" && value.name.trim()
+        ? value.name
+        : characterNameFromAssetSet(assetSet),
     description: value.description.trim(),
     createdAt,
     updatedAt,
@@ -424,7 +433,7 @@ function normalizePetState(value: unknown): LocalPetStateV2 | null {
     stage: normalizeStage(value.stage),
     mood: normalizeMood(value.mood ?? calculatePetMood(stats)),
     stats,
-    assetSet: normalizeAssetSet(value.assetSet),
+    assetSet,
   };
 }
 
@@ -442,8 +451,10 @@ export function readLocalPetState(): LocalPetState | null {
   }
 }
 
-export function writeLocalPetState(state: LocalPetState) {
-  storage()?.setItem(PET_STATE_STORAGE_KEY, JSON.stringify(normalizePetState(state) ?? state));
+export function writeLocalPetState(state: LocalPetState): LocalPetState {
+  const normalizedState = normalizePetState(state) ?? state;
+  storage()?.setItem(PET_STATE_STORAGE_KEY, JSON.stringify(normalizedState));
+  return normalizedState;
 }
 
 export function resetLocalPetState() {
@@ -472,9 +483,11 @@ export function createLocalPetState(
   assetSet?: LocalPetAssetSet,
 ): LocalPetState {
   const now = new Date().toISOString();
+  const characterAssetSet = assetSet ? normalizeCharacterAssetSet(assetSet, now) : undefined;
   return {
     version: 2,
     petId: createLocalId("pet"),
+    name: characterNameFromAssetSet(characterAssetSet),
     description: description.trim(),
     createdAt: now,
     updatedAt: now,
@@ -487,7 +500,7 @@ export function createLocalPetState(
       energy: 80,
       cleanliness: 80,
     },
-    assetSet,
+    assetSet: characterAssetSet,
   };
 }
 

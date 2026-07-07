@@ -76,7 +76,7 @@ export default function RootLayout({
   return (
     <html
       lang="ru"
-      className={`${openRunde.variable} h-full antialiased`}
+      className={`${openRunde.variable} dark h-full antialiased`}
       style={{ backgroundColor: APP_BACKGROUND_COLOR }}
       suppressHydrationWarning
     >

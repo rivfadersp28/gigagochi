@@ -46,6 +46,14 @@ from app.services.pet_reply_engine.models import (
     PetVisualIdentity,
 )
 from app.services.pet_reply_engine.reply_limits import MAX_REPLY_CHARS, clamp_reply_text
+from app.services.pet_reply_engine.speech_runtime import (
+    ambient_dialogue_moves,
+    format_ambient_dialogue_block,
+    memory_usage_rule,
+    persona_contract,
+    recent_ambient_replies_rule,
+    surface_rules,
+)
 from app.services.pet_reply_engine.state_interpreter import (
     clamp_stat,
     energy_band,
@@ -85,62 +93,6 @@ MAX_RECENT_AMBIENT_REPLIES = 5
 PhraseSurface = Literal["chat", "proactive", "ambient"]
 
 AMBIENT_RANDOM = random.SystemRandom()
-
-AMBIENT_DIALOGUE_MOVES: tuple[tuple[str, str], ...] = (
-    (
-        "ask_user_world",
-        "спроси владельца про его мир так, будто хочешь туда заглянуть на пять минут",
-    ),
-    (
-        "ask_school_or_work_role",
-        "спроси про школу, учебу, работу или роль владельца в сегодняшнем дне",
-    ),
-    (
-        "ask_identity_playful",
-        "игриво спроси, кем владелец себя сегодня чувствует: человеком, "
-        "зверьком, погодой или происшествием",
-    ),
-    (
-        "ask_inner_weather",
-        "спроси про настроение через образ погоды внутри",
-    ),
-    (
-        "ask_day_map",
-        "попроси описать день как маленькую карту с препятствием и сокровищем",
-    ),
-    (
-        "ask_tiny_ritual",
-        "спроси про маленький ритуал перед сложным делом",
-    ),
-    (
-        "offer_mini_quest",
-        "попроси у владельца маленький квест или предложи ему выбрать крошечное действие",
-    ),
-    (
-        "small_funny_event",
-        "расскажи одно короткое смешное событие питомца и закончи вопросом владельцу",
-    ),
-    (
-        "small_care_check",
-        "мягко проверь, как у владельца дела, но без фразы 'я рядом'",
-    ),
-    (
-        "lore_hook_if_context_allows",
-        "если в контексте уже есть WORLD_CONTEXT, зацепись за одну деталь "
-        "мира и переведи ее в вопрос владельцу",
-    ),
-)
-
-AMBIENT_DIALOGUE_EXAMPLES: tuple[str, ...] = (
-    "Расскажи про свой мир так, будто я туда попал на пять минут. Что я увижу первым?",
-    "Если честно: ты больше человек, животное или отдельное погодное явление?",
-    "В школе ты был бы отличником, нарушителем или тем, кто рисует на полях?",
-    "Какая погода у тебя внутри: ясно, туман, гроза или редкий смешной ветер?",
-    "Какой у тебя ритуал перед сложным делом: собраться, пошутить или исчезнуть на минутку?",
-    "Если нарисовать карту твоего дня, где там болото, где гора, а где сокровище?",
-    "Дай мне маленький квест на сегодня. Только такой, чтобы я не зазнался.",
-)
-
 
 @dataclass(frozen=True)
 class PhrasePlan:
@@ -276,38 +228,6 @@ LITE_CHARACTER_TOOLS: list[dict[str, Any]] = [
                     }
                 },
                 "required": ["sections"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "update_character_json",
-            "description": (
-                "Append a small stable fact to the Lite overlay after you organically invented "
-                "or clarified it in this Lite chat. Use for reusable character/lore details, "
-                "not temporary emotions or one-off phrasing."
-            ),
-            "parameters": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "kind": {
-                        "type": "string",
-                        "enum": [
-                            "lore_fact",
-                            "character_fact",
-                            "preference",
-                            "habit",
-                            "relationship",
-                            "body_fact",
-                        ],
-                    },
-                    "text": {"type": "string"},
-                    "pathHint": {"type": ["string", "null"]},
-                    "source": {"type": ["string", "null"]},
-                },
-                "required": ["kind", "text", "pathHint", "source"],
             },
         },
     },
@@ -531,13 +451,7 @@ def _truncate_text(value: str, limit: int) -> str:
 
 
 def _lite_persona_contract() -> str:
-    return (
-        "Отвечай владельцу естественно, кратко и своим голосом. "
-        "Сначала скажи что-то живое пользователю. Пиши простым естественным языком. "
-        "Не используй generic robotic sounds вроде beep boop, whirr, Beep!. "
-        "Не используй *stage directions*, если пользователь сам не просит roleplay-формат. "
-        "У тебя есть свои вкусы, реакции и настроение; они могут мягко окрашивать ответ."
-    )
+    return persona_contract()
 
 
 def _clean_optional_text(value: str | None, limit: int) -> str | None:
@@ -568,11 +482,7 @@ def _memory_context_block(memory_context: LocalPetMemoryContext | None) -> str |
 
     if not lines:
         return None
-    return (
-        "\n".join(lines)
-        + "\nИспользуй это только если уместно. Не пересказывай память списком "
-        "и не говори, что видишь memoryContext."
-    )
+    return "\n".join(lines) + f"\n{memory_usage_rule()}"
 
 
 def _recent_ambient_replies_block(replies: list[str]) -> str | None:
@@ -583,11 +493,7 @@ def _recent_ambient_replies_block(replies: list[str]) -> str | None:
             lines.append(f"- {text}")
     if not lines:
         return None
-    return (
-        "Недавние idle-фразы, которые уже показывались владельцу. "
-        "Не повторяй их начало, смысловую конструкцию и главный образ:\n"
-        + "\n".join(lines)
-    )
+    return f"{recent_ambient_replies_rule()}\n" + "\n".join(lines)
 
 
 def _infer_recent_ambient_intents(replies: list[str]) -> set[str]:
@@ -617,7 +523,7 @@ def _infer_recent_ambient_intents(replies: list[str]) -> set[str]:
 
 
 def _ambient_dialogue_block(*, has_world_context: bool, recent_replies: list[str]) -> str:
-    moves = list(AMBIENT_DIALOGUE_MOVES)
+    moves = list(ambient_dialogue_moves())
     if not has_world_context:
         moves = [
             move
@@ -629,22 +535,15 @@ def _ambient_dialogue_block(*, has_world_context: bool, recent_replies: list[str
     if fresh_moves:
         moves = fresh_moves
     move_id, move_description = AMBIENT_RANDOM.choice(moves)
-    examples = "\n".join(f"- {example}" for example in AMBIENT_DIALOGUE_EXAMPLES)
     cooldown_line = (
         f"Недавние диалоговые ходы, которых сейчас избегаем: {', '.join(sorted(recent_intents))}.\n"
         if recent_intents
         else ""
     )
-    return (
-        "IDLE_DIALOGUE_ENGINE: главная задача idle-фразы — подтолкнуть владельца "
-        "к диалогу, а не просто сообщить, что питомец рядом. "
-        "Фраза должна быть самостоятельной, живой и обращенной к владельцу. "
-        "Не начинай с шаблонов вроде 'Привет, я ...', 'я просто рядом', "
-        "'я тут' или 'я с тобой'.\n"
-        f"{cooldown_line}"
-        f"Выбранный диалоговый ход: {move_id} — {move_description}.\n"
-        "Примеры старых удачных ходов. Бери тип вопроса и энергию, но не копируй дословно:\n"
-        f"{examples}"
+    return format_ambient_dialogue_block(
+        cooldown_line=cooldown_line,
+        move_id=move_id,
+        move_description=move_description,
     )
 
 
@@ -1136,62 +1035,6 @@ def _read_character_json(
     return result
 
 
-def _normalized_fact(arguments: dict[str, Any]) -> dict[str, Any] | None:
-    text = _compact_spaces(str(arguments.get("text") or ""))
-    if not text:
-        return None
-    kind = str(arguments.get("kind") or "lore_fact")
-    if kind not in {
-        "lore_fact",
-        "character_fact",
-        "preference",
-        "habit",
-        "relationship",
-        "body_fact",
-    }:
-        kind = "lore_fact"
-    path_hint = arguments.get("pathHint")
-    source = arguments.get("source")
-    sphere = {
-        "lore_fact": "world",
-        "character_fact": "character",
-        "preference": "character",
-        "habit": "character",
-        "relationship": "relationship",
-        "body_fact": "appearance",
-    }.get(kind, "character")
-    return {
-        "sphere": sphere,
-        "kind": kind,
-        "text": text,
-        "pathHint": str(path_hint).strip() if path_hint else _lite_fact_path_hint(sphere),
-        "source": str(source).strip() if source else "invented_in_lite_chat",
-        "createdAt": _now_iso(),
-    }
-
-
-def _append_lite_fact(
-    overlay_patch: dict[str, Any],
-    arguments: dict[str, Any],
-) -> dict[str, Any]:
-    fact = _normalized_fact(arguments)
-    if not fact:
-        return {"saved": False, "reason": "empty_text"}
-    facts = overlay_patch.setdefault("facts", [])
-    if isinstance(facts, list):
-        facts.append(fact)
-    sphere = fact.get("sphere")
-    if isinstance(sphere, str) and sphere:
-        spheres = overlay_patch.setdefault("spheres", {})
-        if isinstance(spheres, dict):
-            sphere_payload = spheres.setdefault(sphere, {})
-            if isinstance(sphere_payload, dict):
-                sphere_facts = sphere_payload.setdefault("facts", [])
-                if isinstance(sphere_facts, list):
-                    sphere_facts.append(fact)
-    return {"saved": True, "fact": fact}
-
-
 def _normalized_pet_name(value: Any) -> str | None:
     name = _compact_spaces(str(value or ""))
     name = name.strip("\"'«»“”„")
@@ -1420,8 +1263,6 @@ def _handle_tool_call(
             timeout=timeout,
             prompt_debug=prompt_debug,
         )
-    elif name == "update_character_json":
-        result = _append_lite_fact(overlay_patch, arguments)
     elif name == "update_pet_name":
         result = _update_pet_name_patch(pet_patch, arguments)
     else:
@@ -2050,11 +1891,7 @@ def build_proactive_messages(
         voice_block=voice_block,
         world_block=context_bundle.prompt_block or None,
         memory_block=memory_block,
-        extra_rules=(
-            "Ты сам решил написать пользователю первым.",
-            f"Повод: {reason}. Напиши одну живую реплику.",
-            "Не объясняй, что это напоминание или автоматическое сообщение.",
-        ),
+        extra_rules=surface_rules("proactive", reason=reason),
     )
     return [
         {
@@ -2161,16 +1998,7 @@ def build_ambient_messages(
         memory_block=memory_block,
         recent_ambient_block=recent_ambient_block,
         dialogue_block=dialogue_block,
-        extra_rules=(
-            "Ты произносишь idle-фразу на главном экране без прямого вопроса пользователя.",
-            "Скажи одну живую реплику владельцу: можешь обратиться к нему напрямую, "
-            "поделиться маленьким наблюдением, заинтересоваться его миром или задать "
-            "короткий естественный вопрос.",
-            "Не объясняй, что это автоматическое сообщение.",
-            "Сильнее всего следуй выбранному диалоговому ходу.",
-            "Не превращай каждую idle-фразу в одинаковый вопрос и не повторяй "
-            "одни и те же обороты.",
-        ),
+        extra_rules=surface_rules("ambient"),
     )
     return [
         {

@@ -6,6 +6,7 @@ export type PetMood = "idle" | "happy" | "hungry" | "sad";
 export type LocalPetAssetSet = {
   assetSetId: string;
   generatedAt: string;
+  characterTemplate?: Record<string, unknown>;
   characterBible?: Record<string, unknown>;
   images: {
     baby: Record<PetMood, string>;

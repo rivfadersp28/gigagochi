@@ -516,7 +516,7 @@ def test_ambient_generation_returns_story_context_debug() -> None:
     assert response.debug.storyLibraryDebug["injectedSpheres"] == []
 
 
-def test_lite_tools_read_and_append_overlay_fact() -> None:
+def test_lite_tools_read_character_json_without_direct_mutation() -> None:
     read_call = SimpleNamespace(
         id="call_read",
         function=SimpleNamespace(
@@ -524,22 +524,8 @@ def test_lite_tools_read_and_append_overlay_fact() -> None:
             arguments=json.dumps({"sections": ["characterBible", "liteOverlay"]}),
         ),
     )
-    update_call = SimpleNamespace(
-        id="call_update",
-        function=SimpleNamespace(
-            name="update_character_json",
-            arguments=json.dumps(
-                {
-                    "kind": "preference",
-                    "text": "Громм ест мокрую глину после дождя.",
-                    "pathHint": "lore.inner_life.likes",
-                    "source": "invented_in_lite_chat",
-                }
-            ),
-        ),
-    )
     client, completions = fake_lite_client(
-        SimpleNamespace(content="", tool_calls=[read_call, update_call]),
+        SimpleNamespace(content="", tool_calls=[read_call]),
         SimpleNamespace(content="Я ем мокрую глину после дождя.", tool_calls=None),
     )
 
@@ -557,16 +543,11 @@ def test_lite_tools_read_and_append_overlay_fact() -> None:
     assert [tool["function"]["name"] for tool in completions.calls[0]["tools"]] == [
         "update_pet_name",
         "read_character_json",
-        "update_character_json",
     ]
-    assert [call["name"] for call in response.debug.liteToolCalls] == [
-        "read_character_json",
-        "update_character_json",
-    ]
+    assert [call["name"] for call in response.debug.liteToolCalls] == ["read_character_json"]
     read_result = response.debug.liteToolCalls[0]["result"]
     assert read_result["characterBible"]["lore"]["home"]["story"] == "каменная балка"
-    assert response.debug.liteOverlayPatch is not None
-    assert response.debug.liteOverlayPatch["facts"][0]["kind"] == "preference"
+    assert response.debug.liteOverlayPatch is None
 
 
 def test_lite_story_library_context_is_preselected_without_story_tools() -> None:

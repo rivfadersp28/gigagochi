@@ -10,10 +10,9 @@ Production host:
 Use an `A` record for `167.233.103.46`. If you want IPv6 too, add an `AAAA` record for the
 server's concrete IPv6 address, not the `/64` prefix.
 
-Current observation from outside: `http://gigagochi.serega.works` already reaches a host Caddy that
-proxies to Icecast, while `https://gigagochi.serega.works` is not open yet. Do not start the
-container Caddy profile until the existing host Caddy configuration is reviewed, otherwise ports
-`80` and `443` can conflict.
+Current observation from outside: `https://gigagochi.serega.works/health` responds with the
+backend health check through Caddy. Do not start the container Caddy profile unless the existing
+host Caddy configuration is intentionally replaced, otherwise ports `80` and `443` can conflict.
 
 The existing public Docker network is `bizzy-radio_default`. The app compose joins backend/frontend
 to that network with these aliases:

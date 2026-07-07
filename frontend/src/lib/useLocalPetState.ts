@@ -41,8 +41,7 @@ type UseLocalPetStateResult = {
 };
 
 function saveAndReturn(state: LocalPetState) {
-  writeLocalPetState(state);
-  return state;
+  return writeLocalPetState(state);
 }
 
 export function useLocalPetState(): UseLocalPetStateResult {

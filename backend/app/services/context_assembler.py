@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
+from app.services.pet_reply_engine.speech_runtime import (
+    format_world_context_block,
+    world_context_mode_rule,
+)
 from app.services.story_library import search_story_library
 
 ContextMode = Literal["chat", "proactive", "ambient"]
@@ -269,20 +273,7 @@ def _prompt_block(bricks: list[dict[str, Any]], mode: ContextMode) -> str:
     lines = "\n".join(line for brick in bricks if (line := _render_brick(brick)))
     if not lines:
         return ""
-    mode_rule = (
-        "Для idle/proactive реплики можно взять одну деталь как повод для живого наблюдения."
-        if mode in {"ambient", "proactive"}
-        else "Используй эти детали только если они помогают ответить пользователю."
-    )
-    return (
-        "WORLD_CONTEXT: ниже уже выбранные кирпичики мира для этой реплики. "
-        "Не перечисляй их списком и не говори, что видишь контекст. "
-        "Собери из 1-3 кирпичиков связанный смысл; можно умеренно фантазировать "
-        "только как вариацию на эти референсы. Tone of voice меняет форму, "
-        "но не факты и не смысл.\n"
-        f"{mode_rule}\n"
-        f"{lines}"
-    )
+    return format_world_context_block(mode_rule=world_context_mode_rule(mode), lines=lines)
 
 
 def assemble_pet_context(

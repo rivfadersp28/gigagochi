@@ -4,28 +4,9 @@
 import { Loader2 } from "lucide-react";
 import { FormEvent, useState } from "react";
 
-import {
-  ApiError,
-  extractLocalLiteFacts,
-  extractLocalUserMemory,
-  sendLocalChatMessage,
-} from "@/lib/api";
-import { appendLocalChatMessages, createLocalId, latestChatMessages } from "@/lib/localPetStorage";
-import { buildMemoryContextForMessage } from "@/lib/localPetMemoryRecall";
-import {
-  applyMemoryOperations,
-  markMemoryContextUsed,
-  readLocalPetMemory,
-  writeLocalPetMemory,
-} from "@/lib/localPetMemoryStorage";
+import { ApiError } from "@/lib/api";
 import { primePetSpeechAudio } from "@/lib/petSpeechAudio";
-import {
-  recordLiteOverlayPatchDebug,
-  recordMemoryContextDebug,
-  recordMemoryOperationsDebug,
-  recordReplyPromptDebug,
-} from "@/lib/debugPanelStorage";
-import { logBrowserPromptDebug } from "@/lib/promptDebug";
+import { runLocalPetChatTurn } from "@/lib/localPetChatTurn";
 import { hapticNotification } from "@/lib/telegram";
 import type { LocalChatPetPatch, LocalChatResponse, LocalPetState } from "@/lib/types";
 
@@ -68,70 +49,16 @@ export function PetQuickChat({
     setIsSending(true);
 
     try {
-      const userMessage = {
-        id: createLocalId("message"),
-        role: "user" as const,
-        text: message,
-        createdAt: new Date().toISOString(),
-      };
-      const history = latestChatMessages(12);
-      const memoryBeforeMessage = readLocalPetMemory(pet.petId);
-      const memoryContext = buildMemoryContextForMessage(memoryBeforeMessage, message);
-      if (includePromptDebug) {
-        console.log("[memory-debug] quick chat recall context", memoryContext);
-      }
-      recordMemoryContextDebug(memoryContext);
-      appendLocalChatMessages([userMessage]);
-      const response = await sendLocalChatMessage(message, pet, history, {
-        includeDebug: includePromptDebug,
-        memoryContext,
+      const { response } = await runLocalPetChatTurn({
+        pet,
+        message,
+        includePromptDebug,
+        logLabel: "quick chat",
+        onLiteOverlayPatch,
       });
-      logBrowserPromptDebug("quick chat reply", response);
-      recordReplyPromptDebug(response);
-      const assistantMessage = {
-        id: createLocalId("message"),
-        role: "pet" as const,
-        text: response.reply,
-        createdAt: new Date().toISOString(),
-      };
-      appendLocalChatMessages([assistantMessage]);
       onChatResponse(response);
       onPetPatch?.(response.petPatch);
       onStoryLibraryPatch?.(response.debug?.storyLibraryPatch);
-      recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
-      const selectedMemoryIds = memoryContext.relevantMemories.map((item) => item.id);
-      if (selectedMemoryIds.length) {
-        writeLocalPetMemory(
-          markMemoryContextUsed(readLocalPetMemory(pet.petId), selectedMemoryIds),
-        );
-      }
-      void extractLocalLiteFacts(message, response.reply, pet, history, {
-        includeDebug: includePromptDebug,
-      })
-        .then((extraction) => {
-          logBrowserPromptDebug("quick chat lite fact extraction", extraction);
-          if (extraction.liteOverlayPatch) {
-            recordLiteOverlayPatchDebug(extraction.liteOverlayPatch);
-            onLiteOverlayPatch?.(extraction.liteOverlayPatch);
-          }
-        })
-        .catch(() => undefined);
-      void extractLocalUserMemory(message, response.reply, pet, history, memoryBeforeMessage, {
-        includeDebug: includePromptDebug,
-        memoryContext,
-      })
-        .then((extraction) => {
-          logBrowserPromptDebug("quick chat memory extraction", extraction);
-          recordMemoryOperationsDebug(extraction.operations);
-          const latestMemory = readLocalPetMemory(pet.petId);
-          writeLocalPetMemory(
-            applyMemoryOperations(latestMemory, extraction.operations, [
-              userMessage.id,
-              assistantMessage.id,
-            ]),
-          );
-        })
-        .catch(() => undefined);
     } catch (caught) {
       setError(errorMessage(caught, "Не удалось отправить сообщение."));
       hapticNotification("error");
