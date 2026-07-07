@@ -63,6 +63,7 @@ services:
     command: ["python", "-m", "app.bot"]
     volumes:
       - backend_logs:/app/logs
+      - push_data:/app/data/push
 
   frontend:
     image: gigagochi-frontend:latest
