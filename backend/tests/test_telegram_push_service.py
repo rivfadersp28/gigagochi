@@ -3,6 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import httpx
+import pytest
+
+from app.bot import TelegramAPIError
 from app.schemas import LocalPetPushSnapshotRequest, LocalProactiveResponse
 from app.services import telegram_push_service
 from app.services.telegram_auth_service import TelegramUserContext
@@ -112,3 +116,45 @@ def test_current_pet_record_decays_stats_and_recomputes_stage() -> None:
         "energy": 0,
         "cleanliness": 90,
     }
+
+
+def test_telegram_send_error_is_sanitized(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(
+        bot_token="secret-token",
+        webapp_url="https://example.com/app",
+        telegram_push_store_path=str(tmp_path / "push.json"),
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_push_pet_message",
+        lambda payload: LocalProactiveResponse(reply="Привет!"),
+    )
+
+    def fake_send_message(client, chat_id, text, reply_markup):
+        request = httpx.Request(
+            "POST",
+            "https://api.telegram.org/botsecret-token/sendMessage",
+        )
+        response = httpx.Response(
+            400,
+            request=request,
+            json={
+                "ok": False,
+                "error_code": 400,
+                "description": "Bad Request: chat not found",
+            },
+        )
+        raise TelegramAPIError("sendMessage", response)
+
+    monkeypatch.setattr(telegram_push_service, "send_message", fake_send_message)
+
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+
+    with pytest.raises(telegram_push_service.TelegramPushError) as exc_info:
+        telegram_push_service.send_manual_push(telegram_id=42)
+
+    assert exc_info.value.code == "TELEGRAM_SEND_FAILED"
+    assert "chat not found" in exc_info.value.message
+    assert "secret-token" not in exc_info.value.message
+    assert "api.telegram.org" not in exc_info.value.message

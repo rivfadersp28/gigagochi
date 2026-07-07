@@ -83,13 +83,20 @@ export type AdminSpeechPublishJob = {
 
 export type AdminPushStatus = {
   count: number;
-  latest: {
-    telegramId: number;
-    petId: string;
-    registeredAt: string;
-    lastPushAt?: string | null;
-    lastDebugPushAt?: string | null;
-  } | null;
+  latest: AdminPushRecord | null;
+  records: AdminPushRecord[];
+};
+
+export type AdminPushRecord = {
+  telegramId: number;
+  username?: string | null;
+  firstName?: string | null;
+  petId: string;
+  registeredAt: string;
+  lastPushAt?: string | null;
+  lastDebugPushAt?: string | null;
+  lastPushError?: string | null;
+  lastPushErrorAt?: string | null;
 };
 
 export type AdminPushSendResponse = {
@@ -166,9 +173,12 @@ export function fetchAdminPushStatus(): Promise<AdminPushStatus> {
   return adminRequest<AdminPushStatus>("/api/admin/push/status");
 }
 
-export function sendAdminPush(reason?: string): Promise<AdminPushSendResponse> {
+export function sendAdminPush(
+  reason?: string,
+  telegramId?: number,
+): Promise<AdminPushSendResponse> {
   return adminRequest<AdminPushSendResponse>("/api/admin/push/send", {
     method: "POST",
-    body: JSON.stringify({ reason, includeDebug: true }),
+    body: JSON.stringify({ reason, telegramId, includeDebug: true }),
   });
 }

@@ -824,6 +824,7 @@ export function SpeechAdmin() {
   const [isSendingPush, setIsSendingPush] = useState(false);
   const [publishJob, setPublishJob] = useState<AdminSpeechPublishJob | null>(null);
   const [pushStatus, setPushStatus] = useState<AdminPushStatus | null>(null);
+  const [selectedPushTelegramId, setSelectedPushTelegramId] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -838,6 +839,10 @@ export function SpeechAdmin() {
       ]);
       setManifest(nextManifest);
       setPushStatus(nextPushStatus);
+      setSelectedPushTelegramId((current) =>
+        current ||
+        String(nextPushStatus?.records[0]?.telegramId ?? nextPushStatus?.latest?.telegramId ?? ""),
+      );
       setDrafts(Object.fromEntries(nextManifest.files.map((file) => [file.id, file.content])));
       setValidation({});
       setSelectedAuxId((current) => {
@@ -873,6 +878,9 @@ export function SpeechAdmin() {
         }
         setManifest(nextManifest);
         setPushStatus(nextPushStatus);
+        setSelectedPushTelegramId(
+          String(nextPushStatus?.records[0]?.telegramId ?? nextPushStatus?.latest?.telegramId ?? ""),
+        );
         setDrafts(
           Object.fromEntries(nextManifest.files.map((file) => [file.id, file.content])),
         );
@@ -985,7 +993,12 @@ export function SpeechAdmin() {
       if (!saved) {
         return;
       }
-      const result = await sendAdminPush();
+      const telegramId = Number.parseInt(selectedPushTelegramId, 10);
+      if (!Number.isFinite(telegramId)) {
+        setError("Выбери Telegram ID для debug push.");
+        return;
+      }
+      const result = await sendAdminPush(undefined, telegramId);
       setNotice(`Push отправлен: ${result.reply}`);
       setPushStatus(await fetchAdminPushStatus().catch(() => null));
     } catch (caught) {
@@ -1050,6 +1063,9 @@ export function SpeechAdmin() {
     hasValidationError ||
     isBusy;
   const pushDisabled = hasValidationError || isBusy;
+  const selectedPushRecord = pushStatus?.records.find(
+    (record) => String(record.telegramId) === selectedPushTelegramId,
+  );
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -1104,7 +1120,7 @@ export function SpeechAdmin() {
                 type="button"
                 variant="outline"
                 onClick={() => void sendDebugPush()}
-                disabled={pushDisabled}
+                disabled={pushDisabled || !selectedPushTelegramId}
               >
                 {isSendingPush ? (
                   <RefreshCw className="size-4 animate-spin" />
@@ -1230,16 +1246,42 @@ export function SpeechAdmin() {
                     <span>Снапшоты</span>
                     <Badge variant="outline">{pushStatus?.count ?? "?"}</Badge>
                   </div>
+                  {pushStatus?.records.length ? (
+                    <div className="grid gap-2">
+                      <Label className="text-xs text-muted-foreground">Кому отправить</Label>
+                      <select
+                        value={selectedPushTelegramId}
+                        onChange={(event) => setSelectedPushTelegramId(event.target.value)}
+                        className="h-10 rounded-md border border-border/70 bg-background px-3 text-sm text-foreground"
+                        disabled={isBusy}
+                      >
+                        {pushStatus.records.map((record) => {
+                          const title =
+                            record.firstName || record.username || String(record.telegramId);
+                          return (
+                            <option key={record.telegramId} value={record.telegramId}>
+                              {title} · {record.telegramId}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                  ) : null}
                   {pushStatus?.latest ? (
                     <>
-                      <div className="truncate">
-                        Последний pet: {pushStatus.latest.petId}
-                      </div>
-                      <div>Telegram ID: {pushStatus.latest.telegramId}</div>
-                      <div>Обновлен: {formatDate(pushStatus.latest.registeredAt)}</div>
+                      <div className="truncate">Pet: {selectedPushRecord?.petId ?? "-"}</div>
+                      <div>Telegram ID: {selectedPushTelegramId || "-"}</div>
                       <div>
-                        Debug push: {formatDate(pushStatus.latest.lastDebugPushAt ?? null)}
+                        Обновлен: {formatDate(selectedPushRecord?.registeredAt ?? null)}
                       </div>
+                      <div>
+                        Debug push: {formatDate(selectedPushRecord?.lastDebugPushAt ?? null)}
+                      </div>
+                      {selectedPushRecord?.lastPushError ? (
+                        <div className="rounded-md border border-destructive/30 p-2 text-destructive">
+                          {selectedPushRecord.lastPushError}
+                        </div>
+                      ) : null}
                     </>
                   ) : (
                     <p className="leading-5">

@@ -321,13 +321,13 @@ def test_local_admin_sends_manual_push(monkeypatch) -> None:
 
     response = TestClient(app).post(
         "/api/admin/push/send",
-        json={"reason": "debug reason", "includeDebug": True},
+        json={"telegramId": 42, "reason": "debug reason", "includeDebug": True},
     )
 
     assert response.status_code == 200
     assert response.json()["reply"] == "Я тут."
     assert captured == {
-        "telegram_id": None,
+        "telegram_id": 42,
         "reason": "debug reason",
         "include_debug": True,
     }

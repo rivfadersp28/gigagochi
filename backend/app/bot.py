@@ -11,6 +11,28 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 
+class TelegramAPIError(RuntimeError):
+    def __init__(self, method: str, response: httpx.Response) -> None:
+        self.method = method
+        self.status_code = response.status_code
+        self.description = _telegram_error_description(response)
+        super().__init__(
+            f"Telegram {method} failed: HTTP {self.status_code}: {self.description}"
+        )
+
+
+def _telegram_error_description(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text[:500] or response.reason_phrase
+    if isinstance(payload, dict):
+        description = payload.get("description")
+        if isinstance(description, str) and description.strip():
+            return description.strip()
+    return response.reason_phrase
+
+
 def telegram_api_url(method: str, bot_token: str) -> str:
     return f"https://api.telegram.org/bot{bot_token}/{method}"
 
@@ -38,8 +60,9 @@ def send_message(
     if not settings.bot_token:
         raise RuntimeError("BOT_TOKEN is not configured")
 
+    method = "sendMessage"
     response = client.post(
-        telegram_api_url("sendMessage", settings.bot_token),
+        telegram_api_url(method, settings.bot_token),
         json={
             "chat_id": chat_id,
             "text": text,
@@ -47,7 +70,8 @@ def send_message(
         },
         timeout=20,
     )
-    response.raise_for_status()
+    if not response.is_success:
+        raise TelegramAPIError(method, response)
 
 
 def handle_update(client: httpx.Client, update: dict[str, Any]) -> None:

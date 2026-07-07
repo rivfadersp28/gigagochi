@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from app.bot import mini_app_keyboard, send_message
+from app.bot import TelegramAPIError, mini_app_keyboard, send_message
 from app.config import get_settings
 from app.schemas import (
     LocalPetChatContext,
@@ -169,29 +169,32 @@ def register_push_snapshot(
     )
 
 
+def _record_summary(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "telegramId": record.get("telegramId"),
+        "username": record.get("username"),
+        "firstName": record.get("firstName"),
+        "petId": record.get("petId"),
+        "registeredAt": record.get("registeredAt"),
+        "lastPushAt": record.get("lastPushAt"),
+        "lastDebugPushAt": record.get("lastDebugPushAt"),
+        "lastPushError": record.get("lastPushError"),
+        "lastPushErrorAt": record.get("lastPushErrorAt"),
+    }
+
+
 def push_status() -> dict[str, Any]:
     records = _read_store().get("records", {})
-    latest = None
+    summaries: list[dict[str, Any]] = []
     for record in records.values():
         if not isinstance(record, dict):
             continue
-        if latest is None or str(record.get("registeredAt", "")) > str(
-            latest.get("registeredAt", "")
-        ):
-            latest = record
+        summaries.append(_record_summary(record))
+    summaries.sort(key=lambda item: str(item.get("registeredAt", "")), reverse=True)
     return {
         "count": len(records),
-        "latest": (
-            {
-                "telegramId": latest.get("telegramId"),
-                "petId": latest.get("petId"),
-                "registeredAt": latest.get("registeredAt"),
-                "lastPushAt": latest.get("lastPushAt"),
-                "lastDebugPushAt": latest.get("lastDebugPushAt"),
-            }
-            if latest
-            else None
-        ),
+        "latest": summaries[0] if summaries else None,
+        "records": summaries,
     }
 
 
@@ -264,12 +267,18 @@ def _send_push_record(
         raise TelegramPushError("PUSH_CHAT_ID_MISSING", "chat_id для Telegram push не найден.")
 
     with httpx.Client() as client:
-        send_message(
-            client,
-            chat_id,
-            response.reply,
-            mini_app_keyboard(settings.webapp_url),
-        )
+        try:
+            send_message(
+                client,
+                chat_id,
+                response.reply,
+                mini_app_keyboard(settings.webapp_url),
+            )
+        except TelegramAPIError as exc:
+            raise TelegramPushError(
+                "TELEGRAM_SEND_FAILED",
+                f"Telegram sendMessage failed: HTTP {exc.status_code}: {exc.description}",
+            ) from exc
 
     now_iso = _iso()
     next_record = {
