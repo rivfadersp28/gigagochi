@@ -41,7 +41,7 @@ import {
   recordMemoryOperationsDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
-import { CHAT_RETURN_PET_REPLY } from "@/lib/petReplyPrompts";
+import { buildChatReturnPetReply } from "@/lib/petReplyPrompts";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
 import type { LocalChatMessage } from "@/lib/types";
@@ -66,8 +66,8 @@ export function ChatView({ petId }: ChatViewProps) {
   const pet = localPet.pet;
 
   const rememberChatReturnReply = useCallback(() => {
-    writePendingMainPetReply(petId, CHAT_RETURN_PET_REPLY);
-  }, [petId]);
+    writePendingMainPetReply(petId, buildChatReturnPetReply(pet));
+  }, [pet, petId]);
 
   const goBack = useCallback(() => {
     rememberChatReturnReply();

@@ -15,7 +15,7 @@ export const PENDING_MAIN_REPLY_STORAGE_KEY = "tamagochi:v1:pending-main-reply";
 
 const MAX_CHAT_MESSAGES = 50;
 const MAX_CHAT_MESSAGE_TEXT = 8000;
-const MAX_PENDING_MAIN_REPLY_TEXT = 160;
+const MAX_PENDING_MAIN_REPLY_TEXT = 260;
 const PENDING_MAIN_REPLY_MAX_AGE_MS = 5 * 60 * 1000;
 const MIN_STAT = 0;
 const MAX_STAT = 100;

@@ -55,7 +55,7 @@ import {
   recordMemoryOperationsDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
-import { CHAT_RETURN_PET_REPLY } from "@/lib/petReplyPrompts";
+import { buildChatReturnPetReply } from "@/lib/petReplyPrompts";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
 import type {
@@ -124,6 +124,7 @@ type PetTapParticleBurstProps = {
 
 type ShowPetReplyOptions = {
   showInConversation?: boolean;
+  dialogueHook?: boolean;
 };
 
 type SelectedSprite = {
@@ -1029,6 +1030,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   });
   const proactiveAttemptedRef = useRef(false);
   const petReplyMessageRef = useRef<PetReplyMessage | null>(null);
+  const activeDialogueHookRef = useRef<string | null>(null);
   const speechBubbleRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const petTapTargetRef = useRef<HTMLButtonElement>(null);
@@ -1052,6 +1054,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       playSpeechAudio,
     };
     petReplyMessageRef.current = nextMessage;
+    activeDialogueHookRef.current = options.dialogueHook ? text : null;
     setPetReplyMessage(nextMessage);
     if (options.showInConversation) {
       setConversationReplyMessageId(nextMessage.id);
@@ -1064,9 +1067,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     setIsKeyboardRaised(false);
     setChatError(null);
     setConversationReplyMessageId(null);
-    showPetReplyMessage(CHAT_RETURN_PET_REPLY, true);
+    showPetReplyMessage(buildChatReturnPetReply(pet), true, { dialogueHook: true });
     chatInputRef.current?.blur();
-  }, [showPetReplyMessage]);
+  }, [pet, showPetReplyMessage]);
 
   useTelegramBackButton(closeChatMode, isChatMode);
 
@@ -1320,6 +1323,16 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     isSendingChatRef.current = true;
     setIsSendingChat(true);
 
+    const activeDialogueHook = activeDialogueHookRef.current;
+    activeDialogueHookRef.current = null;
+    const dialogueHookMessage = activeDialogueHook
+      ? {
+          id: createLocalId("message"),
+          role: "pet" as const,
+          text: activeDialogueHook,
+          createdAt: new Date().toISOString(),
+        }
+      : null;
     const userMessage = {
       id: createLocalId("message"),
       role: "user" as const,
@@ -1327,6 +1340,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       createdAt: new Date().toISOString(),
     };
     const history = latestChatMessages(12);
+    const historyWithDialogueHook = dialogueHookMessage
+      ? [...history, dialogueHookMessage].slice(-12)
+      : history;
     const memoryBeforeMessage = readLocalPetMemory(pet.petId);
     const memoryContext = buildMemoryContextForMessage(memoryBeforeMessage, message);
 
@@ -1334,10 +1350,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       console.log("[memory-debug] dashboard quick chat recall context", memoryContext);
     }
     recordMemoryContextDebug(memoryContext);
-    appendLocalChatMessages([userMessage]);
+    appendLocalChatMessages(
+      dialogueHookMessage ? [dialogueHookMessage, userMessage] : [userMessage],
+    );
 
     try {
-      const response = await sendLocalChatMessage(message, pet, history, {
+      const response = await sendLocalChatMessage(message, pet, historyWithDialogueHook, {
         includeDebug: true,
         memoryContext,
         replyMaxChars: DASHBOARD_CHAT_REPLY_MAX_CHARS,
@@ -1366,7 +1384,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         );
       }
 
-      void extractLocalLiteFacts(message, response.reply, pet, history, {
+      void extractLocalLiteFacts(message, response.reply, pet, historyWithDialogueHook, {
         includeDebug: includePromptDebug,
       })
         .then((extraction) => {
@@ -1378,10 +1396,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         })
         .catch(() => undefined);
 
-      void extractLocalUserMemory(message, response.reply, pet, history, memoryBeforeMessage, {
-        includeDebug: includePromptDebug,
-        memoryContext,
-      })
+      void extractLocalUserMemory(
+        message,
+        response.reply,
+        pet,
+        historyWithDialogueHook,
+        memoryBeforeMessage,
+        {
+          includeDebug: includePromptDebug,
+          memoryContext,
+        },
+      )
         .then((extraction) => {
           logBrowserPromptDebug("dashboard quick chat memory extraction", extraction);
           recordMemoryOperationsDebug(extraction.operations);
@@ -1448,7 +1473,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
 
-    showPetReplyMessage(pendingReply.text, true);
+    showPetReplyMessage(pendingReply.text, true, { dialogueHook: true });
   }, [localPet.status, pet, petId, showPetReplyMessage]);
 
   useEffect(() => {
