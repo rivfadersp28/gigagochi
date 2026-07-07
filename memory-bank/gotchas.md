@@ -24,6 +24,10 @@
 - `speech_runtime.json` must keep `meta.format=tamagochi-speech-runtime-v1`.
   If it starts with story-library keys like `pools`, it was overwritten with
   the wrong admin file and should be restored before publishing.
+- `speech_runtime.json` `ambientDialogue.blockTemplate` must keep the
+  `{cooldown_line}`, `{move_id}`, `{move_description}`, and `{examples}`
+  placeholders; otherwise the selected idle dialogue move is computed but never
+  shown to the model.
 - Admin publish is local-only and opt-in. Keep `ADMIN_PUBLISH_ENABLED=false` on
   Hetzner; the publish job must stage only `managed_admin_git_paths()` and never
   `.admin-backups/` or unrelated dirty/untracked files.
