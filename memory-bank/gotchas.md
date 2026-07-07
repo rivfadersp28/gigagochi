@@ -1,7 +1,12 @@
 # Gotchas
 
-- Do not send the whole story dataset in every reply prompt. Use `assemble_pet_context` to select a small `WORLD_CONTEXT` only when the current request/history/memory has story-sphere signals.
-- Do not force story retrieval for every ambient phrase. Idle phrases should stay varied and dialogue-oriented; retrieval is only for relevant context.
+- Do not send the whole story dataset in every reply prompt. Use
+  `contextRouting.worldContext` to decide whether `assemble_pet_context` should
+  select a small `WORLD_CONTEXT`.
+- Do not force story retrieval for every ambient phrase. Idle phrases should
+  stay varied and dialogue-oriented; retrieval is only for relevant context.
+  Generic wording like `фан-факт`, `вопрос`, or `скажи что-нибудь` must not be a
+  hidden world-context trigger.
 - Do not add a post-check/regenerate loop for replies unless explicitly requested. The current architecture avoids point 5 and keeps generation single-pass, with optional background extraction only for new story entities.
 - `storyLibraryPatch` is returned under `debug`, but frontend uses it as data, not just debug UI. Removing debug payload can break local story-library persistence.
 - The worktree may contain unrelated dirty frontend/deploy files. Do not stage or revert them unless the task explicitly targets them.
@@ -22,17 +27,17 @@
   the wrong admin file and should be restored before publishing.
 - Main-screen ambient must not reintroduce fixed dialogue moves or prompt
   examples such as inner weather/day map/mini quest. Use the open
-  `ambientSelfPrompt` plus recent idle replies as anti-repeat context.
+  `surfacePrompts.idle` plus `contextRouting.recentReplies` as anti-repeat
+  context.
 - Do not reintroduce `surfaceRules` in `speech_runtime.json` or Python
   defaults. Proactive keeps only a neutral reason context line; ambient is
-  steered by `ambientSelfPrompt`, visible reply rules, state, memory and
-  optional world context.
+  steered by `surfacePrompts.idle`, visible reply rules, state, memory and
+  optional routed context.
 - Empty rule arrays in `speech_runtime.json` are intentional overrides, not a
   signal to use Python fallback defaults. This matters for admin-cleared
   `visibleReply.ambientRules`.
-- `speech_runtime.json` `worldContext.blockTemplate` must keep `{mode_rule}`
-  and `{lines}`. Without them, selected story bricks are computed but not shown
-  to the model.
+- `speech_runtime.json` `worldContext.template` must keep `{lines}`. Without it,
+  selected story bricks are computed but not shown to the model.
 - Avoid putting literal `WORLD_CONTEXT` into generic visible reply rules. Tests
   use that marker to distinguish actual injected world context from normal
   speech instructions.

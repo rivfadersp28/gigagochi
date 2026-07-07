@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -8,13 +10,14 @@ from app.main import app
 from app.services import local_admin_store
 from app.services.local_admin_publish import AdminPublishError, unexpected_publish_paths
 
+DATA_FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "data"
+
 
 def _seed_admin_files(root) -> None:
     (root / "age_speech_examples").mkdir(parents=True)
     (root / "world_descriptions").mkdir(parents=True)
     (root / "external_character_sources").mkdir(parents=True)
     for path in (
-        "speech_runtime.json",
         "story_library.json",
         "story_constructor.json",
         "travel_story_templates.json",
@@ -26,6 +29,11 @@ def _seed_admin_files(root) -> None:
         '{"id":"a","text":"seed","source_url":"https://example.com"}\n',
         encoding="utf-8",
     )
+    for path in ("speech_runtime.json", "character_bible_template.json"):
+        (root / path).write_text(
+            (DATA_FIXTURE_ROOT / path).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
 
 
 def test_local_admin_disabled_without_dev_auth(monkeypatch, tmp_path) -> None:
@@ -135,7 +143,9 @@ def test_local_admin_reads_production_manifest(monkeypatch) -> None:
     assert "Hetzner" in captured["deploy_message"]
 
 
-def test_local_admin_sync_conflict_returns_409(monkeypatch) -> None:
+def test_local_admin_sync_conflict_returns_local_manifest(monkeypatch, tmp_path) -> None:
+    _seed_admin_files(tmp_path)
+    monkeypatch.setattr(local_admin_store, "DATA_ROOT", tmp_path)
     monkeypatch.setattr(
         "app.routers.local_admin.get_settings",
         lambda: SimpleNamespace(
@@ -154,11 +164,12 @@ def test_local_admin_sync_conflict_returns_409(monkeypatch) -> None:
 
     response = TestClient(app).get("/api/admin/speech")
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == {
-        "code": "ADMIN_SYNC_LOCAL_DIRTY",
-        "message": "dirty",
-    }
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "local"
+    assert payload["files"]
+    assert payload["sync"]["status"] == "local_dirty"
+    assert "незадеплоенные изменения" in payload["sync"]["message"]
 
 
 def test_local_admin_saves_json_and_makes_backup(monkeypatch, tmp_path) -> None:
@@ -169,13 +180,16 @@ def test_local_admin_saves_json_and_makes_backup(monkeypatch, tmp_path) -> None:
         lambda: SimpleNamespace(allow_dev_tma_auth=True),
     )
 
+    runtime = json.loads((tmp_path / "speech_runtime.json").read_text(encoding="utf-8"))
+    runtime["surfacePrompts"]["chat"] = "Пиши короче."
+
     response = TestClient(app).put(
         "/api/admin/speech",
         json={
             "files": [
                 {
                     "id": "speech_runtime",
-                    "content": '{"personaContract":"Пиши короче."}',
+                    "content": json.dumps(runtime, ensure_ascii=False),
                 }
             ]
         },
@@ -186,7 +200,7 @@ def test_local_admin_saves_json_and_makes_backup(monkeypatch, tmp_path) -> None:
     assert payload["saved"] is True
     assert payload["files"][0]["backupPath"].startswith(".admin-backups/")
     saved = (tmp_path / "speech_runtime.json").read_text(encoding="utf-8")
-    assert '"personaContract": "Пиши короче."' in saved
+    assert '"chat": "Пиши короче."' in saved
 
 
 def test_local_admin_rejects_direct_production_save(monkeypatch) -> None:

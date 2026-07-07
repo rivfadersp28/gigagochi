@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from app.prompts.style_direction import VISUAL_STYLE_FRAME
+from app.services.character_bible_template import character_bible_prompt_config
 
 PROMPT_MAX_LENGTH = 300
 
@@ -288,16 +289,17 @@ def build_character_bible_prompt(
 ) -> str:
     safe_description = rewrite_known_character_references(user_description.strip())
     lore_seed_block = _lore_seed_block(lore_seed)
+    template = character_bible_prompt_config()
+    persona_shape = "\n".join(f"- {item}" for item in template["personaShape"])
+    top_level_fields = "\n".join(f"- {item}" for item in template["topLevelFields"])
+    language_rules = "\n".join(f"- {item}" for item in template["languageRules"])
+    rules = "\n".join(f"- {item}" for item in template["rules"])
 
     return f"""
-Create a compact character profile for a living non-human pet companion.
+{template["intro"]}
 
 Use a tiny persona-file shape inspired by small AI pet projects:
-- identity = who this creature is
-- visual = stable image-generation anchors
-- voice = how it talks
-- inner_state = wants, tension, fears, comfort
-- world = where it lives and what facts can be revealed later
+{persona_shape}
 
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
@@ -307,39 +309,16 @@ USER_CHARACTER_DESCRIPTION:
 WORLD_DESCRIPTION_ANCHORS:
 {world_description_anchors or "нет"}
 
-Use WORLD_DESCRIPTION_ANCHORS only as weak habitat hints. Do not copy them. Do not add jobs,
-schools, guilds, towns, politics, offices, maps, or long backstory unless the user asked for it.
+{template["worldAnchorsRule"]}
 
 Return JSON only with these top-level fields:
-- schema_version
-- identity
-- visual
-- voice
-- inner_state
-- world
-- openings
-- lorebook_entries
+{top_level_fields}
 
 Language rules:
-- Keep JSON keys in English exactly as the schema requests.
-- Write every user-facing string value in natural Russian.
-- Keep strings compact. No decorative paragraphs.
+{language_rules}
 
 Rules:
-- The pet is real in its own world, not an app, AI, game object, screen element, or assistant.
-- Preserve the user's core idea before adding twists.
-- identity.species must be a plain short phrase based on the user's description. Do not add
-  unrelated animal families, slash hybrids, taxonomy jokes, roles, jobs, or proper nouns.
-- identity.name must be a pet name, not a restatement of the whole user description.
-- Use one physical anchor and one simple mechanism: body part/object/element -> behavior trigger.
-- Personality should come from body, habitat, habits, and limits.
-- Visual must be usable for a cute stylized 3D mascot: simple silhouette, 2-4 colors, few details.
-- voice.sample_replies: 5-8 short Russian replies the pet could say in chat. At most 2 should
-  directly mention the core ability; the rest should show routine, feeling, care, or opinion.
-- lorebook_entries: 3-5 triggerable facts with keys/content only.
-- Avoid generic support phrases, morals, assistant tone, "я всегда рядом", "важно быть собой",
-  "урок", "норма", "искорка", "сияние", and long event-log backstory.
-- Do not copy or name existing franchises, Pokemon, brands, studios, games, or characters.
+{rules}
 """.strip()
 
 

@@ -281,6 +281,39 @@ def _brick_score(brick: dict[str, Any], query_tokens: set[str], hint_tokens: set
     return score
 
 
+def _sort_scored_bricks(
+    scored: list[tuple[int, dict[str, Any]]],
+) -> list[tuple[int, dict[str, Any]]]:
+    return sorted(
+        scored,
+        key=lambda item: (-item[0], item[1].get("source") != "pet_overlay", item[1]["id"]),
+    )
+
+
+def _diverse_pool_slice(
+    scored: list[tuple[int, dict[str, Any]]],
+    limit: int,
+) -> list[tuple[int, dict[str, Any]]]:
+    grouped: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    for score, brick in _sort_scored_bricks(scored):
+        grouped.setdefault(str(brick.get("pool") or ""), []).append((score, brick))
+
+    result: list[tuple[int, dict[str, Any]]] = []
+    while len(result) < limit:
+        added = False
+        for pool in sorted(grouped):
+            group = grouped[pool]
+            if not group:
+                continue
+            result.append(group.pop(0))
+            added = True
+            if len(result) >= limit:
+                break
+        if not added:
+            break
+    return result
+
+
 def search_story_library(
     *,
     query: str,
@@ -288,6 +321,7 @@ def search_story_library(
     limit: int = 3,
     character_bible: Any = None,
     story_library_patch: dict[str, Any] | None = None,
+    diverse_pools: bool = False,
 ) -> dict[str, Any]:
     query_text = _text_value(query, limit=300)
     query_tokens = _tokens(query_text)
@@ -300,7 +334,11 @@ def search_story_library(
         if score > 0:
             scored.append((score, brick))
 
-    scored.sort(key=lambda item: (-item[0], item[1].get("source") != "pet_overlay", item[1]["id"]))
+    selected = (
+        _diverse_pool_slice(scored, effective_limit)
+        if diverse_pools
+        else _sort_scored_bricks(scored)[:effective_limit]
+    )
     bricks = [
         {
             "id": brick["id"],
@@ -312,7 +350,7 @@ def search_story_library(
             "attributes": brick.get("attributes", {}),
             "score": score,
         }
-        for score, brick in scored[:effective_limit]
+        for score, brick in selected
     ]
     return {
         "query": query_text,

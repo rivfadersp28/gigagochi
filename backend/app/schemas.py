@@ -122,6 +122,7 @@ class LocalChatDebug(BaseModel):
     liteOverlayPatch: dict[str, Any] | None = None
     storyLibraryPatch: dict[str, Any] | None = None
     storyLibraryDebug: dict[str, Any] | None = None
+    contextRoutingDebug: dict[str, Any] | None = None
     memoryDebug: dict[str, Any] | None = None
 
 

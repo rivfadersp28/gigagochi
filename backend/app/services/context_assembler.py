@@ -7,7 +7,7 @@ from typing import Any, Literal
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
 from app.services.pet_reply_engine.speech_runtime import (
     format_world_context_block,
-    world_context_mode_rule,
+    story_context_default_query,
 )
 from app.services.story_library import search_story_library
 
@@ -15,15 +15,6 @@ ContextMode = Literal["chat", "proactive", "ambient"]
 
 MAX_CONTEXT_BRICKS = 5
 WORD_PATTERN = re.compile(r"[0-9A-Za-zА-Яа-яЁё-]+")
-
-GENERIC_DIALOGUE_PATTERNS: tuple[str, ...] = (
-    "привет",
-    "как дела",
-    "что делаешь",
-    "скуча",
-    "я рядом",
-    "обними",
-)
 
 POOL_KEYWORDS: dict[str, tuple[str, ...]] = {
     "items": (
@@ -35,7 +26,6 @@ POOL_KEYWORDS: dict[str, tuple[str, ...]] = {
         "подар",
         "сокров",
         "камень",
-        "крош",
         "ключ",
         "лента",
     ),
@@ -91,6 +81,8 @@ POOL_KEYWORDS: dict[str, tuple[str, ...]] = {
         "дух",
     ),
 }
+
+ALL_POOL_HINTS: tuple[str, ...] = tuple(POOL_KEYWORDS.keys())
 
 
 @dataclass(frozen=True)
@@ -163,34 +155,6 @@ def _pool_hints(text: str) -> list[str]:
     return result[:5]
 
 
-def _has_strong_story_signal(text: str, hints: list[str]) -> bool:
-    if not hints:
-        return False
-    lowered = text.casefold()
-    if any(pattern in lowered for pattern in GENERIC_DIALOGUE_PATTERNS):
-        non_generic_words = _tokens(lowered) - _tokens(" ".join(GENERIC_DIALOGUE_PATTERNS))
-        return bool(non_generic_words & _tokens(" ".join(sum(POOL_KEYWORDS.values(), ()))))
-    return True
-
-
-def _retrieval_signal_text(
-    *,
-    user_message: str,
-    history: list[LocalChatHistoryItem],
-    memory_context: LocalPetMemoryContext | None,
-) -> str:
-    return _text_value(
-        " ".join(
-            [
-                user_message,
-                _history_text(history),
-                _memory_text(memory_context),
-            ]
-        ),
-        limit=1500,
-    )
-
-
 def _query_text(
     *,
     mode: ContextMode,
@@ -211,11 +175,7 @@ def _query_text(
     query = _text_value(" ".join(parts), limit=1500)
     if query:
         return query
-    if mode == "ambient":
-        return "короткая фоновая реплика питомца о его мире, находке, месте или существе"
-    if mode == "proactive":
-        return "личная проактивная реплика питомца с конкретной деталью мира"
-    return "короткая реплика питомца"
+    return story_context_default_query(mode)
 
 
 def _retrieval_plan(
@@ -225,34 +185,60 @@ def _retrieval_plan(
     user_message: str,
     history: list[LocalChatHistoryItem],
     memory_context: LocalPetMemoryContext | None,
+    force_context: bool = False,
+    forced_query: str | None = None,
+    forced_pool_hints: list[str] | None = None,
+    forced_reason: str = "context_routing",
+    routing_applied: bool = False,
 ) -> StoryRetrievalPlan:
-    query = _query_text(
-        mode=mode,
-        pet=pet,
-        user_message=user_message,
-        history=history,
-        memory_context=memory_context,
-    )
-    signal_text = _retrieval_signal_text(
-        user_message=user_message,
-        history=history,
-        memory_context=memory_context,
-    )
-    hints = _pool_hints(signal_text)
-    if not _has_strong_story_signal(signal_text, hints):
+    if force_context:
+        query = _text_value(forced_query or user_message, limit=1500)
+        if not query:
+            query = _query_text(
+                mode=mode,
+                pet=pet,
+                user_message=user_message,
+                history=history,
+                memory_context=memory_context,
+            )
+        return StoryRetrievalPlan(
+            needs_context=True,
+            query=query,
+            signal_text=_text_value(user_message, limit=1500),
+            pool_hints=forced_pool_hints or _pool_hints(query) or list(ALL_POOL_HINTS),
+            reason=forced_reason,
+        )
+
+    if routing_applied:
+        query = _query_text(
+            mode=mode,
+            pet=pet,
+            user_message=user_message,
+            history=history,
+            memory_context=memory_context,
+        )
         return StoryRetrievalPlan(
             needs_context=False,
             query=query,
-            signal_text=signal_text,
+            signal_text=_text_value(user_message, limit=1500),
             pool_hints=[],
-            reason="no_story_signal",
+            reason="disabled_by_context_routing",
         )
+
+    signal_text = _text_value(user_message, limit=1500)
+    query = _query_text(
+        mode=mode,
+        pet=pet,
+        user_message=signal_text,
+        history=[] if mode == "ambient" else history,
+        memory_context=None if mode == "ambient" else memory_context,
+    )
     return StoryRetrievalPlan(
-        needs_context=True,
+        needs_context=False,
         query=query,
         signal_text=signal_text,
-        pool_hints=hints,
-        reason="matched_story_spheres",
+        pool_hints=[],
+        reason="no_context_routing_request",
     )
 
 
@@ -273,7 +259,7 @@ def _prompt_block(bricks: list[dict[str, Any]], mode: ContextMode) -> str:
     lines = "\n".join(line for brick in bricks if (line := _render_brick(brick)))
     if not lines:
         return ""
-    return format_world_context_block(mode_rule=world_context_mode_rule(mode), lines=lines)
+    return format_world_context_block(lines=lines)
 
 
 def assemble_pet_context(
@@ -284,14 +270,24 @@ def assemble_pet_context(
     history: list[LocalChatHistoryItem] | None = None,
     memory_context: LocalPetMemoryContext | None = None,
     limit: int = MAX_CONTEXT_BRICKS,
+    force_context: bool = False,
+    forced_query: str | None = None,
+    forced_pool_hints: list[str] | None = None,
+    forced_reason: str = "context_routing",
+    routing_applied: bool = False,
 ) -> AssembledPetContext:
-    active_history = history or []
+    active_history = [] if mode == "ambient" else history or []
     plan = _retrieval_plan(
         mode=mode,
         pet=pet,
         user_message=user_message,
         history=active_history,
         memory_context=memory_context,
+        force_context=force_context,
+        forced_query=forced_query,
+        forced_pool_hints=forced_pool_hints,
+        forced_reason=forced_reason,
+        routing_applied=routing_applied,
     )
     if not plan.needs_context:
         return AssembledPetContext(
@@ -312,6 +308,7 @@ def assemble_pet_context(
         pool_hints=plan.pool_hints,
         limit=limit,
         character_bible=pet.characterBible,
+        diverse_pools=mode == "ambient",
     )
     bricks = result.get("bricks") if isinstance(result.get("bricks"), list) else []
     prompt_block = _prompt_block(bricks, mode)

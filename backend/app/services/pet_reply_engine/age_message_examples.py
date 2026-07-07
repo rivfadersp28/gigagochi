@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from app.services.pet_reply_engine.models import PetAgeStage, PetReplyInput
+from app.services.pet_reply_engine.speech_runtime import age_example_placeholder_defaults
 
 DATA_PATH = (
     Path(__file__).resolve().parents[3]
@@ -14,17 +15,6 @@ DATA_PATH = (
     / "age_speech_examples"
     / "creature_phrases_dataset.json"
 )
-
-DEFAULT_STAGE_SOUND: dict[PetAgeStage, str] = {
-    "baby": "пи",
-    "teen": "хм",
-    "adult": "хм",
-}
-DEFAULT_STAGE_BODY_PART: dict[PetAgeStage, str] = {
-    "baby": "бок",
-    "teen": "край",
-    "adult": "край",
-}
 
 MOOD_CATEGORIES = {
     "idle": ("greeting", "curious"),
@@ -54,9 +44,6 @@ INTENT_CATEGORIES = {
     "continue_thread": ("curious",),
 }
 FALLBACK_CATEGORIES = ("curious", "loving", "greeting")
-PLACEHOLDER_PATTERN = re.compile(
-    r"\[(?:звук|имя|часть тела|часть_тела|еда|страх|Болшой|способность)\]"
-)
 WORD_PATTERN = re.compile(r"[A-Za-zА-Яа-яЁё0-9-]+")
 
 
@@ -146,9 +133,9 @@ def _short_phrase(value: str | None, *, max_words: int = 3) -> str | None:
 
 def placeholder_values(reply_input: PetReplyInput) -> dict[str, str]:
     pet = reply_input.pet
-    age_stage = pet.age_stage
     visual = pet.visual_identity
     personality = pet.personality
+    defaults = age_example_placeholder_defaults()
 
     sound = _short_phrase(_first_string(visual.chat_cues.sound_words), max_words=1)
     if not sound:
@@ -167,14 +154,14 @@ def placeholder_values(reply_input: PetReplyInput) -> dict[str, str]:
     )
 
     return {
-        "[звук]": sound or DEFAULT_STAGE_SOUND[age_stage],
-        "[имя]": pet.name or "я",
-        "[часть тела]": body_part or DEFAULT_STAGE_BODY_PART[age_stage],
-        "[часть_тела]": body_part or DEFAULT_STAGE_BODY_PART[age_stage],
-        "[еда]": food or "вкусняшку",
-        "[страх]": fear or "темноту",
-        "[Болшой]": "ты",
-        "[способность]": ability or "особая штука",
+        "[звук]": sound or "",
+        "[имя]": pet.name or defaults["petName"],
+        "[часть тела]": body_part or "",
+        "[часть_тела]": body_part or "",
+        "[еда]": food or defaults["food"],
+        "[страх]": fear or defaults["fear"],
+        "[Болшой]": defaults["secondPerson"],
+        "[способность]": ability or defaults["ability"],
     }
 
 
@@ -268,32 +255,6 @@ Use these examples as style references, not as fixed replies:
 Examples:
 {example_lines}
 """.strip()
-
-
-def fallback_phrase_for(
-    reply_input: PetReplyInput,
-    *,
-    detected_intent: str | None = None,
-    recent_pet_replies: tuple[str, ...] = (),
-) -> str | None:
-    categories = categories_for_reply(reply_input, detected_intent)
-    examples = phrases_for_categories(
-        reply_input,
-        categories,
-        per_category=10,
-        max_examples=30,
-    )
-    recent_keys = {_repeat_key(item) for item in recent_pet_replies[-4:]}
-    for _, phrase in examples:
-        if PLACEHOLDER_PATTERN.search(phrase):
-            continue
-        if _repeat_key(phrase) not in recent_keys:
-            return phrase
-    return examples[0][1] if examples else None
-
-
-def _repeat_key(text: str) -> str:
-    return re.sub(r"(?:\s|[).:(!?…])+$", "", text.strip().casefold())
 
 
 def normalize_age_stage(value: str | None) -> PetAgeStage:

@@ -4,17 +4,28 @@
 
 - Backend phrase generation lives in `backend/app/services/pet_reply_engine/lite_generator.py`.
 - Chat, proactive and ambient replies are assembled through the same `PhrasePlan` structure: identity, persona contract, optional world context, memory and surface-specific rules.
-- `backend/app/services/context_assembler.py` decides whether story context is needed before the model call. It returns selected `WORLD_CONTEXT` bricks plus debug metadata instead of embedding the full story dataset.
-- Story retrieval is heuristic-gated by story-sphere signals. Generic small talk should not retrieve world bricks.
-- Ambient replies use an open `IDLE_SELF_PROMPT` inside the same phrase engine. There is no selected dialogue move and no extra `surfaceRules` layer; the model can choose a natural micro-moment, observation, check-in, or question. Recent idle replies are still passed as anti-repeat context.
+- Before visible chat/proactive/ambient generation, `lite_generator.py` calls a
+  `contextRouting` LLM gate configured in `backend/data/speech_runtime.json`.
+  The gate returns enabled sources for `worldContext`, `characterProfile`,
+  `userMemory`, and `recentReplies`.
+- `backend/app/services/context_assembler.py` no longer decides whether story
+  context is needed from keywords. It only retrieves selected `WORLD_CONTEXT`
+  bricks when `contextRouting.worldContext` enables it, then returns prompt text
+  plus debug metadata.
+- Ambient replies use the open `surfacePrompts.idle` field inside the same
+  phrase engine. There is no selected dialogue move and no extra `surfaceRules`
+  layer; the model can choose a natural micro-moment, observation, check-in, or
+  question. Recent idle replies are passed only when `contextRouting.recentReplies`
+  enables the anti-repeat context.
 - New durable story entities can be extracted after a chat reply by `story_library_extraction` and returned as `debug.storyLibraryPatch`. Frontend applies that patch into the local per-pet story-library overlay.
 - Runtime speech regulator text that used to be hardcoded in the reply engine now lives in
   `backend/data/speech_runtime.json` and is read by
   `backend/app/services/pet_reply_engine/speech_runtime.py`. It covers persona
   contract, memory usage rule, ambient self-prompt, visible reply rules,
   character/user memory extractor prompts, world seeding,
-  `WORLD_CONTEXT` prompt framing, and the visible age/mood/hunger/energy
-  `stateLayer` used by chat/proactive/ambient identity lines.
+  `WORLD_CONTEXT` prompt framing, unified `contextRouting`, and the visible
+  age/mood/hunger/energy `stateLayer` used by chat/proactive/ambient identity
+  lines.
 - Proactive replies keep their memory-derived reason as a neutral context line
   inside the phrase plan. The old configurable `surfaceRules` layer was removed
   so proactive/ambient behavior is shaped by visible reply rules, state, memory,
@@ -46,9 +57,9 @@
 - Local speech admin UI lives at `frontend/src/app/admin/speech/page.tsx` and
   `frontend/src/components/admin/SpeechAdmin.tsx`.
 - The speech admin has a structured "Настройка" tab for `speech_runtime.json`
-  so visible reply rules, idle self-prompt, memory extractor
-  prompts, and `WORLD_CONTEXT` templates can be edited without touching Python
-  code. Other managed datasets remain raw JSON/JSONL editors.
+  so visible reply rules, idle prompt, context routing, memory extractor prompts,
+  and `WORLD_CONTEXT` templates can be edited without touching Python code. Other
+  managed datasets remain raw JSON/JSONL editors.
 - The UI talks to `backend/app/routers/local_admin.py` at `/api/admin/speech`.
   The router is local-dev only: it requires `ALLOW_DEV_TMA_AUTH=true` and a
   local client host.
@@ -66,7 +77,7 @@
 - The admin manifest also exposes a dialogue influence map with prompt
   modifiers and RAG/memory/dataset collections, including runtime-only sources
   such as character profile overlays, recent history, proactive reason, tool
-  definitions, reply limits and WORLD_CONTEXT gating. The `/admin/speech` UI has a
-  `Local / Production` switch: local mode edits current `backend/data`, while
-  production mode reads current Hetzner `backend/data` over SSH and applies
-  changes only through the publish/deploy pipeline.
+  definitions, reply limits and `contextRouting`.
+- The `/admin/speech` UI edits local managed data and shows separate `Save` and
+  `Deploy` actions. Local diffs from the server are a normal `local_dirty` state,
+  not an error; deploy is the explicit production apply step.

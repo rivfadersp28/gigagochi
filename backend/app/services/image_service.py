@@ -37,6 +37,11 @@ from app.prompts.world_description_anchors import (
     format_world_description_anchors_for_prompt,
     select_world_description_anchors,
 )
+from app.services.character_bible_template import (
+    character_bible_legacy_defaults,
+    character_bible_schema,
+    character_bible_system_prompt,
+)
 from app.services.character_cards import upgrade_character_bible_v2
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
@@ -84,125 +89,7 @@ WEAK_LIFE_LESSON_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-CHARACTER_BIBLE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": [
-        "schema_version",
-        "identity",
-        "visual",
-        "voice",
-        "inner_state",
-        "world",
-        "openings",
-        "lorebook_entries",
-    ],
-    "properties": {
-        "schema_version": {"type": "integer", "enum": [2]},
-        "identity": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["name", "species", "role", "one_liner"],
-            "properties": {
-                "name": {"type": "string"},
-                "species": {"type": "string"},
-                "role": {"type": "string"},
-                "one_liner": {"type": "string"},
-            },
-        },
-        "visual": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "colors",
-                "features",
-                "materials",
-                "proportions",
-                "growth_forms",
-                "anchors",
-            ],
-            "properties": {
-                "colors": {"type": "array", "items": {"type": "string"}},
-                "features": {"type": "array", "items": {"type": "string"}},
-                "materials": {"type": "array", "items": {"type": "string"}},
-                "proportions": {"type": "string"},
-                "growth_forms": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["baby", "teen", "adult"],
-                    "properties": {
-                        "baby": {"type": "string"},
-                        "teen": {"type": "string"},
-                        "adult": {"type": "string"},
-                    },
-                },
-                "anchors": {"type": "array", "items": {"type": "string"}},
-            },
-        },
-        "voice": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["rules", "rhythm", "catchphrases", "sample_replies", "avoid"],
-            "properties": {
-                "rules": {"type": "array", "items": {"type": "string"}},
-                "rhythm": {"type": "string"},
-                "catchphrases": {"type": "array", "items": {"type": "string"}},
-                "sample_replies": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "5-8 short Russian replies that demonstrate the pet voice.",
-                },
-                "avoid": {"type": "array", "items": {"type": "string"}},
-            },
-        },
-        "inner_state": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["core_want", "inner_conflict", "fears", "comfort_actions"],
-            "properties": {
-                "core_want": {"type": "string"},
-                "inner_conflict": {"type": "string"},
-                "fears": {"type": "array", "items": {"type": "string"}},
-                "comfort_actions": {"type": "array", "items": {"type": "string"}},
-            },
-        },
-        "world": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["home", "habitat", "objects", "routines", "relationships", "story_seeds"],
-            "properties": {
-                "home": {"type": "string"},
-                "habitat": {"type": "string"},
-                "objects": {"type": "array", "items": {"type": "string"}},
-                "routines": {"type": "array", "items": {"type": "string"}},
-                "relationships": {"type": "array", "items": {"type": "string"}},
-                "story_seeds": {"type": "array", "items": {"type": "string"}},
-            },
-        },
-        "openings": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["first_message", "alternate_greetings"],
-            "properties": {
-                "first_message": {"type": "string"},
-                "alternate_greetings": {"type": "array", "items": {"type": "string"}},
-            },
-        },
-        "lorebook_entries": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["keys", "content"],
-                "properties": {
-                    "keys": {"type": "array", "items": {"type": "string"}},
-                    "content": {"type": "string"},
-                },
-            },
-            "description": "3-5 compact triggerable facts.",
-        },
-    },
-}
+CHARACTER_BIBLE_SCHEMA: dict[str, Any] = character_bible_schema()
 
 
 def _collect_character_bible_text(value: Any) -> str:
@@ -258,12 +145,12 @@ def _character_bible_completion(
         "messages": messages,
         "response_format": {
             "type": "json_schema",
-            "json_schema": {
-                "name": "character_bible",
-                "schema": CHARACTER_BIBLE_SCHEMA,
-                "strict": True,
+                "json_schema": {
+                    "name": "character_bible",
+                    "schema": character_bible_schema(),
+                    "strict": True,
+                },
             },
-        },
         "timeout": timeout,
         **_character_reasoning_effort_kwargs(settings, model),
     }
@@ -679,6 +566,7 @@ def expand_compact_character_bible(
     openings = _dict_value(bible.get("openings"))
     growth_forms = _dict_value(visual.get("growth_forms"))
     lorebook_entries = _lorebook_entries(bible.get("lorebook_entries"))
+    legacy_defaults = character_bible_legacy_defaults()
 
     species = _string_value(identity.get("species")) or raw_description
     one_liner = _string_value(identity.get("one_liner")) or species
@@ -686,7 +574,7 @@ def expand_compact_character_bible(
     sample_replies = _string_list(compact_voice.get("sample_replies"), limit=8)
     avoid_patterns = _string_list(compact_voice.get("avoid"), limit=8)
     catchphrases = _string_list(compact_voice.get("catchphrases"), limit=5)
-    rhythm = _string_value(compact_voice.get("rhythm")) or "короткие живые фразы"
+    rhythm = _string_value(compact_voice.get("rhythm")) or legacy_defaults["voiceRhythm"]
     objects = _string_list(world.get("objects"), limit=6)
     routines = _string_list(world.get("routines"), limit=6)
     relationships = _string_list(world.get("relationships"), limit=6)
@@ -703,7 +591,7 @@ def expand_compact_character_bible(
         "name": _string_value(identity.get("name")),
         "nickname": _string_value(identity.get("nickname")),
         "species": species,
-        "role": _string_value(identity.get("role")) or "живой питомец-компаньон",
+        "role": _string_value(identity.get("role")) or legacy_defaults["identityRole"],
         "one_liner": one_liner,
     }
     bible["species"] = _string_value(bible.get("species")) or species
@@ -728,9 +616,9 @@ def expand_compact_character_bible(
         "voice_rules": voice_rules,
         "speech_rules": voice_rules,
         "sentence_rhythm": rhythm,
-        "addressing_user": "обращается на ты, как живой компаньон",
-        "humor_style": "маленький характерный юмор без ассистентского тона",
-        "uncertainty_style": "признает неуверенность коротко и через конкретное действие",
+        "addressing_user": legacy_defaults["addressingUser"],
+        "humor_style": legacy_defaults["humorStyle"],
+        "uncertainty_style": legacy_defaults["uncertaintyStyle"],
         "catchphrases": catchphrases,
         "sample_replies": sample_replies,
         "avoid_patterns": avoid_patterns,
@@ -738,9 +626,7 @@ def expand_compact_character_bible(
     bible["dialogue_style"] = {
         "voice_rules": voice_rules,
         "emotional_reactions": comfort_actions,
-        "initiative_style": (
-            "Продолжает разговор одним маленьким наблюдением, находкой или предложением."
-        ),
+        "initiative_style": legacy_defaults["initiativeStyle"],
         "sample_replies": sample_replies[:6],
         "avoid_patterns": avoid_patterns,
     }
@@ -792,7 +678,7 @@ def expand_compact_character_bible(
         "relationships": {
             "family": [],
             "friends": [],
-            "attitude_to_user": "осторожно сближается через общие маленькие ритуалы",
+            "attitude_to_user": legacy_defaults["attitudeToUser"],
             "story": "; ".join(relationships),
         },
         "inner_life": {
@@ -823,9 +709,7 @@ def expand_compact_character_bible(
     bible["provenance"] = {
         "source": "generated",
         "source_urls": [],
-        "license_notes": (
-            "generated compact pet profile inspired by a small persona-file architecture"
-        ),
+        "license_notes": legacy_defaults["provenanceLicenseNotes"],
     }
     bible.setdefault("extensions", {})
     return bible
@@ -842,10 +726,7 @@ def create_character_bible(
     world_anchor_block = format_world_description_anchors_for_prompt(world_anchors)
     system_message = {
         "role": "system",
-        "content": (
-            "Create compact JSON persona files for a non-human virtual pet. "
-            "Keep the profile small, concrete, and usable for chat plus image generation."
-        ),
+        "content": character_bible_system_prompt(),
     }
     character_bible = _character_bible_completion(
         client,

@@ -14,6 +14,7 @@ from app.schemas import (
 from app.services.chat_service import chat_with_local_pet
 from app.services.pet_reply_engine import speech_runtime
 from app.services.pet_reply_engine.lite_generator import (
+    ContextRoutingDecision,
     build_ambient_messages,
     build_lite_chat_messages,
     build_lite_fact_extraction_messages,
@@ -36,6 +37,12 @@ class FakeLiteCompletions:
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
+        if _is_context_routing_call(kwargs):
+            message = SimpleNamespace(
+                content=_fake_context_routing_response(kwargs),
+                tool_calls=None,
+            )
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
         message = self._messages.pop(0)
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
@@ -44,6 +51,100 @@ def fake_lite_client(*messages):
     completions = FakeLiteCompletions(messages)
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     return client, completions
+
+
+def _is_context_routing_call(kwargs: dict) -> bool:
+    messages = kwargs.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return False
+    content = messages[0].get("content") if isinstance(messages[0], dict) else ""
+    return isinstance(content, str) and content.startswith("CONTEXT_ROUTING:")
+
+
+def _fake_context_routing_response(kwargs: dict) -> str:
+    messages = kwargs.get("messages") if isinstance(kwargs.get("messages"), list) else []
+    try:
+        payload = json.loads(messages[1]["content"])
+    except (IndexError, KeyError, TypeError, json.JSONDecodeError):
+        payload = {}
+
+    surface = payload.get("surface") if isinstance(payload, dict) else ""
+    surface_prompt = str(payload.get("surfacePrompt") or "") if isinstance(payload, dict) else ""
+    user_message = str(payload.get("userMessage") or "") if isinstance(payload, dict) else ""
+    proactive_reason = (
+        str(payload.get("proactiveReason") or "") if isinstance(payload, dict) else ""
+    )
+    recent_replies = payload.get("recentReplies") if isinstance(payload, dict) else []
+    memory_brief = payload.get("memoryBrief") if isinstance(payload, dict) else {}
+    decision_text = f"{user_message} {proactive_reason}".casefold()
+    surface_text = surface_prompt.casefold()
+
+    world_context = any(
+        marker in decision_text
+        for marker in (
+            "мир",
+            "монстр",
+            "существ",
+            "предмет",
+            "сокров",
+            "локац",
+            "лес",
+            "дом",
+            "где твой",
+        )
+    ) or any(
+        marker in surface_text
+        for marker in ("опереться на мир", "основываться на world context")
+    )
+    if "фан-факт" in surface_text and not any(
+        marker in decision_text for marker in ("мир", "монстр", "существ", "предмет", "дом")
+    ):
+        world_context = False
+    character_profile = any(
+        marker in decision_text
+        for marker in (
+            "что ты ешь",
+            "чем пита",
+            "где твой дом",
+            "любим",
+            "характер",
+            "о себе",
+        )
+    )
+    has_memory = False
+    if isinstance(memory_brief, dict):
+        memories = memory_brief.get("relevantMemories")
+        has_memory = bool(
+            memory_brief.get("summary")
+            or memory_brief.get("userProfile")
+            or (isinstance(memories, list) and memories)
+        )
+    recent_replies_enabled = surface == "ambient" and isinstance(recent_replies, list) and bool(
+        recent_replies
+    )
+
+    result = {
+        "sources": {
+            "worldContext": {
+                "enabled": world_context,
+                "query": decision_text if world_context else "",
+            },
+            "characterProfile": {
+                "enabled": character_profile,
+                "query": decision_text if character_profile else "",
+            },
+            "userMemory": {
+                "enabled": has_memory,
+                "query": decision_text if has_memory else "",
+            },
+            "recentReplies": {
+                "enabled": recent_replies_enabled,
+                "query": "anti-repeat" if recent_replies_enabled else "",
+            },
+        },
+        "reason": "fake routing for tests",
+    }
+    return json.dumps(result, ensure_ascii=False)
 
 
 def lite_payload(**overrides) -> LocalChatRequest:
@@ -81,8 +182,8 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
 
     assert response.reply == "Я стою и слушаю. Говори."
     assert response.debug is not None
-    assert len(completions.calls) == 1
-    request = completions.calls[0]
+    assert len(completions.calls) == 2
+    request = completions.calls[1]
     system_message = request["messages"][0]["content"]
     assert system_message.startswith(
         "Отвечай мне как Громм, гигантский земляной великан. "
@@ -252,45 +353,33 @@ def test_speech_runtime_config_controls_reply_and_extractor_prompts(
     tmp_path,
 ) -> None:
     runtime_path = tmp_path / "speech_runtime.json"
+    runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))
+    runtime["surfacePrompts"]["chat"] = "CUSTOM_VISIBLE_RULE\nCUSTOM_CHAT_RULE"
+    runtime["surfacePrompts"]["idle"] = "CUSTOM_IDLE_PROMPT\n{recent_replies}"
+    runtime["characterMemory"]["factExtractionSystem"] = "CUSTOM_FACT_EXTRACTION_PROMPT"
+    runtime["stateLayer"]["surfaces"]["chat"] = {
+        "age": True,
+        "mood": False,
+        "hunger": True,
+        "energy": False,
+    }
+    runtime["stateLayer"]["surfaces"]["proactive"] = {
+        "age": True,
+        "mood": False,
+        "hunger": False,
+        "energy": False,
+    }
+    runtime["stateLayer"]["surfaces"]["ambient"] = {
+        "age": True,
+        "mood": False,
+        "hunger": False,
+        "energy": False,
+    }
+    runtime["stateLayer"]["ageRoleHints"]["adult"] = "CUSTOM_ADULT_AGE"
+    runtime["stateLayer"]["thresholds"]["hungerLowMax"] = 90
+    runtime["stateLayer"]["stateModifiers"]["hungry"] = "CUSTOM_HUNGRY_STATE"
     runtime_path.write_text(
-        json.dumps(
-            {
-                "visibleReply": {
-                    "globalRules": ["CUSTOM_VISIBLE_RULE"],
-                    "chatRules": ["CUSTOM_CHAT_RULE"],
-                    "ambientRules": [],
-                },
-                "characterMemory": {
-                    "factExtractionSystem": "CUSTOM_FACT_EXTRACTION_PROMPT",
-                },
-                "stateLayer": {
-                    "surfaces": {
-                        "chat": {
-                            "age": True,
-                            "mood": False,
-                            "hunger": True,
-                            "energy": False,
-                        },
-                        "proactive": {
-                            "age": True,
-                            "mood": False,
-                            "hunger": False,
-                            "energy": False,
-                        },
-                        "ambient": {
-                            "age": True,
-                            "mood": False,
-                            "hunger": False,
-                            "energy": False,
-                        },
-                    },
-                    "ageRoleHints": {"adult": "CUSTOM_ADULT_AGE"},
-                    "thresholds": {"hungerLowMax": 90},
-                    "stateModifiers": {"hungry": "CUSTOM_HUNGRY_STATE"},
-                },
-            },
-            ensure_ascii=False,
-        ),
+        json.dumps(runtime, ensure_ascii=False),
         encoding="utf-8",
     )
     monkeypatch.setattr(speech_runtime, "DATA_PATH", runtime_path)
@@ -324,7 +413,7 @@ def test_speech_runtime_config_controls_reply_and_extractor_prompts(
     assert "CUSTOM_CHAT_RULE" in system_message
     assert "CUSTOM_ADULT_AGE" in system_message
     assert "CUSTOM_HUNGRY_STATE" in system_message
-    assert "Idle-фраза должна давать владельцу вход в диалог" not in ambient_system_message
+    assert "CUSTOM_IDLE_PROMPT" in ambient_system_message
     assert extraction_messages[0]["content"] == "CUSTOM_FACT_EXTRACTION_PROMPT"
 
 
@@ -368,7 +457,12 @@ def test_lite_prompt_uses_baby_dataset_phrases_only_for_baby() -> None:
 
 def test_lite_prompt_includes_preselected_world_context_for_story_query() -> None:
     system_message = build_lite_chat_messages(
-        lite_payload(message="есть ли в твоем мире монстры?")
+        lite_payload(message="есть ли в твоем мире монстры?"),
+        context_routing=ContextRoutingDecision(
+            surface="chat",
+            enabled_sources=frozenset({"worldContext"}),
+            queries={"worldContext": "монстры в мире питомца"},
+        ),
     )[0]["content"]
 
     assert "WORLD_CONTEXT" in system_message
@@ -413,7 +507,7 @@ def test_proactive_prompt_does_not_include_character_voice_control() -> None:
     assert "VOICE_CONTROL" not in system_message
     assert "говорит через маленькие бытовые детали" not in system_message
     assert "нос подсказывает" not in system_message
-    assert "Повод для самостоятельной реплики: пользователь обещал вернуться вечером" in system_message
+    assert "Повод: пользователь обещал вернуться вечером" in system_message
     assert "Ты сам решил написать пользователю первым" not in system_message
     assert "Напиши одну живую реплику" not in system_message
     assert "автоматическое сообщение" not in system_message
@@ -477,13 +571,35 @@ def test_proactive_prompt_uses_preselected_world_context_when_needed() -> None:
         }
     )
 
-    system_message = build_proactive_messages(payload)[0]["content"]
+    system_message = build_proactive_messages(
+        payload,
+        context_routing=ContextRoutingDecision(
+            surface="proactive",
+            enabled_sources=frozenset({"worldContext"}),
+            queries={"worldContext": "монстры в мире питомца"},
+        ),
+    )[0]["content"]
 
     assert "WORLD_CONTEXT" in system_message
     assert "STORY_LIBRARY" not in system_message
 
 
-def test_ambient_prompt_uses_same_phrase_engine_without_forced_world_context() -> None:
+def test_ambient_prompt_uses_idle_field_without_forced_world_context(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runtime_path = tmp_path / "speech_runtime.json"
+    runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))
+    runtime["surfacePrompts"][
+        "idle"
+    ] = "Скажи одну короткую самостоятельную idle-реплику.\n{recent_replies}"
+    runtime_path.write_text(
+        json.dumps(runtime, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(speech_runtime, "DATA_PATH", runtime_path)
+    speech_runtime.speech_runtime_config.cache_clear()
+
     payload = LocalAmbientRequest.model_validate(
         {
             "pet": {
@@ -504,7 +620,16 @@ def test_ambient_prompt_uses_same_phrase_engine_without_forced_world_context() -
                     }
                 },
             },
-            "history": [],
+            "history": [
+                {
+                    "role": "user",
+                    "text": "Есть ли в твоем мире монстры?",
+                },
+                {
+                    "role": "pet",
+                    "text": "Я нашел крошечный ключ от Врат Забвения.",
+                },
+            ],
             "recentAmbientReplies": [
                 "Привет, я Листик. Я просто рядом.",
                 "В школе ты был бы отличником или тем, кто рисует на полях?",
@@ -530,32 +655,36 @@ def test_ambient_prompt_uses_same_phrase_engine_without_forced_world_context() -
         }
     )
 
-    messages = build_ambient_messages(payload)
+    try:
+        messages = build_ambient_messages(payload)
+    finally:
+        speech_runtime.speech_runtime_config.cache_clear()
     system_message = messages[0]["content"]
 
-    assert "IDLE_SELF_PROMPT" in system_message
+    assert len(messages) == 1
+    assert "Скажи одну короткую самостоятельную idle-реплику." in system_message
     assert "IDLE_DIALOGUE_ENGINE" not in system_message
     assert "Спроси меня что-нибудь" not in system_message
     assert "пять минут" not in system_message
     assert "Привет, я Листик. Я просто рядом." in system_message
     assert "Я просто рядом" in system_message
+    assert "Есть ли в твоем мире монстры?" not in system_message
+    assert "Я нашел крошечный ключ от Врат Забвения." not in system_message
     assert "ask_school_or_work_role" not in system_message
     assert "У пользователя завтра экзамен." not in system_message
     assert "Пользователь готовится к экзамену." not in system_message
     assert "Пользователь любит короткие ответы." in system_message
     assert "VOICE_CONTROL" not in system_message
-    assert "WORLD_CONTEXT" not in system_message
+    assert "WORLD_CONTEXT: ниже" not in system_message
     assert "лист шепчет" not in system_message
     assert "Idle-фраза должна давать владельцу вход в диалог" not in system_message
     assert "заинтересоваться его миром" not in system_message
     assert "автоматическое сообщение" not in system_message
     assert "STORY_LIBRARY" not in system_message
-    assert messages[-1]["content"] != "Скажи одну короткую idle-фразу сейчас."
-    assert "выбранному диалоговому ходу" not in messages[-1]["content"]
-    assert "самостоятельную idle-реплику" in messages[-1]["content"]
+    assert "выбранному диалоговому ходу" not in system_message
 
 
-def test_ambient_prompt_uses_world_context_when_history_needs_it() -> None:
+def test_ambient_prompt_uses_world_context_when_router_enables_it() -> None:
     payload = LocalAmbientRequest.model_validate(
         {
             "pet": {
@@ -575,15 +704,29 @@ def test_ambient_prompt_uses_world_context_when_history_needs_it() -> None:
                 {
                     "role": "user",
                     "text": "Есть ли в твоем мире монстры?",
-                }
+                },
+                {
+                    "role": "pet",
+                    "text": "У меня есть крошечный ключ от Врат Забвения.",
+                },
             ],
             "replyMaxChars": 120,
         }
     )
 
-    system_message = build_ambient_messages(payload)[0]["content"]
+    system_message = build_ambient_messages(
+        payload,
+        context_routing=ContextRoutingDecision(
+            surface="ambient",
+            enabled_sources=frozenset({"worldContext"}),
+            queries={"worldContext": "монстры в мире питомца"},
+        ),
+    )[0]["content"]
 
-    assert "WORLD_CONTEXT" in system_message
+    assert "WORLD_CONTEXT: ниже" in system_message
+    assert "Есть ли в твоем мире монстры?" not in system_message
+    assert "У меня есть крошечный ключ от Врат Забвения." not in system_message
+    assert "ржавый ключ от Врат Забвения" not in system_message
     assert "STORY_LIBRARY" not in system_message
 
 
@@ -618,12 +761,15 @@ def test_ambient_generation_returns_story_context_debug() -> None:
         timeout=10,
     )
 
-    assert len(completions.calls) == 1
+    assert len(completions.calls) == 2
     assert response.reply == "Лист шепчет: крошка сегодня светится."
     assert response.debug is not None
     assert response.debug.storyLibraryDebug is not None
     assert response.debug.storyLibraryDebug["mode"] == "ambient"
+    assert response.debug.storyLibraryDebug["reason"] == "disabled_by_context_routing"
     assert response.debug.storyLibraryDebug["injectedSpheres"] == []
+    assert response.debug.contextRoutingDebug is not None
+    assert "worldContext" not in response.debug.contextRoutingDebug["enabledSources"]
 
 
 def test_lite_tools_read_character_json_without_direct_mutation() -> None:
@@ -647,10 +793,10 @@ def test_lite_tools_read_character_json_without_direct_mutation() -> None:
     )
 
     assert response.reply == "Я ем мокрую глину после дождя."
-    assert len(completions.calls) == 2
-    assert "tools" in completions.calls[0]
+    assert len(completions.calls) == 3
+    assert "tools" in completions.calls[1]
     assert response.debug is not None
-    assert [tool["function"]["name"] for tool in completions.calls[0]["tools"]] == [
+    assert [tool["function"]["name"] for tool in completions.calls[1]["tools"]] == [
         "update_pet_name",
         "read_character_json",
     ]
@@ -672,9 +818,9 @@ def test_lite_story_library_context_is_preselected_without_story_tools() -> None
         timeout=10,
     )
 
-    assert len(completions.calls) == 1
+    assert len(completions.calls) == 2
     assert response.reply == "Да, но они чаще странные, чем злые."
-    request = completions.calls[0]
+    request = completions.calls[1]
     system_message = request["messages"][0]["content"]
     assert "WORLD_CONTEXT" in system_message
     assert "search_story_library" not in [tool["function"]["name"] for tool in request["tools"]]
@@ -721,8 +867,8 @@ def test_lite_story_library_extraction_returns_personal_patch() -> None:
         timeout=10,
     )
 
-    assert len(completions.calls) == 2
-    assert completions.calls[1]["response_format"]["json_schema"]["name"] == (
+    assert len(completions.calls) == 3
+    assert completions.calls[2]["response_format"]["json_schema"]["name"] == (
         "story_library_extraction"
     )
     assert response.debug is not None
@@ -784,7 +930,7 @@ def test_lite_tool_updates_pet_name() -> None:
         timeout=10,
     )
 
-    assert len(completions.calls) == 2
+    assert len(completions.calls) == 3
     assert response.reply == "Дружок звучит тепло."
     assert response.petPatch is not None
     assert response.petPatch.name == "Дружок"
@@ -871,11 +1017,12 @@ def test_lite_world_tool_bootstraps_missing_world_from_chatgpt() -> None:
     assert world_facts[0]["sphere"] == "world"
     assert world_facts[0]["source"] == "chatgpt_world_seed"
     assert [item["label"] for item in response.debug.promptDebug] == [
+        "pet_reply/context_routing",
         "pet_reply/lite round 1",
         "pet_reply/lite_world_seed",
         "pet_reply/lite round 2",
     ]
-    tool_response = completions.calls[2]["messages"][-1]["content"]
+    tool_response = completions.calls[3]["messages"][-1]["content"]
     assert "Home/habitat details must be inferred" not in tool_response
     assert "chatgpt_world_seed" in tool_response
 

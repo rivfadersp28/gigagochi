@@ -1,0 +1,335 @@
+{
+  "meta": {
+    "version": 1,
+    "format": "tamagochi-character-bible-template-v1",
+    "description": "Шаблон compact character bible для новых питомцев. Содержит JSON schema, system prompt и правила user prompt."
+  },
+  "systemPrompt": "Create compact JSON persona files for a non-human virtual pet. Keep the profile small, concrete, and usable for chat plus image generation.",
+  "prompt": {
+    "intro": "Create a compact character profile for a living non-human pet companion.",
+    "personaShape": [
+      "identity = who this creature is",
+      "visual = stable image-generation anchors",
+      "voice = how it talks",
+      "inner_state = wants, tension, fears, comfort",
+      "world = where it lives and what facts can be revealed later"
+    ],
+    "worldAnchorsRule": "Use WORLD_DESCRIPTION_ANCHORS only as weak habitat hints. Do not copy them. Do not add jobs, schools, guilds, towns, politics, offices, maps, or long backstory unless the user asked for it.",
+    "topLevelFields": [
+      "schema_version",
+      "identity",
+      "visual",
+      "voice",
+      "inner_state",
+      "world",
+      "openings",
+      "lorebook_entries"
+    ],
+    "languageRules": [
+      "Keep JSON keys in English exactly as the schema requests.",
+      "Write every user-facing string value in natural Russian.",
+      "Keep strings compact. No decorative paragraphs."
+    ],
+    "rules": [
+      "The pet is real in its own world, not an app, AI, game object, screen element, or assistant.",
+      "Preserve the user's core idea before adding twists.",
+      "identity.species must be a plain short phrase based on the user's description. Do not add unrelated animal families, slash hybrids, taxonomy jokes, roles, jobs, or proper nouns.",
+      "identity.name must be a pet name, not a restatement of the whole user description.",
+      "Use one physical anchor and one simple mechanism: body part/object/element -> behavior trigger.",
+      "Personality should come from body, habitat, habits, and limits.",
+      "Visual must be usable for a cute stylized 3D mascot: simple silhouette, 2-4 colors, few details.",
+      "voice.catchphrases: 2-5 short favorite phrases or signature sounds. These are mirrored into lore.voice.favorite_phrases for compatibility.",
+      "voice.sample_replies: 5-8 short Russian replies the pet could say in chat. At most 2 should directly mention the core ability; the rest should show routine, feeling, care, or opinion.",
+      "lorebook_entries: 3-5 triggerable facts with keys/content only.",
+      "Avoid generic support phrases, morals, assistant tone, \"я всегда рядом\", \"важно быть собой\", \"урок\", \"норма\", \"искорка\", \"сияние\", and long event-log backstory.",
+      "Do not copy or name existing franchises, Pokemon, brands, studios, games, or characters."
+    ]
+  },
+  "runtimeMappings": [
+    {
+      "from": "voice.catchphrases",
+      "to": "voice.catchphrases + lore.voice.favorite_phrases",
+      "description": "Любимые фразы генерируются в compact voice.catchphrases и при расширении копируются в legacy lore.voice.favorite_phrases."
+    },
+    {
+      "from": "voice.sample_replies",
+      "to": "voice.sample_replies + dialogue_style.sample_replies",
+      "description": "Примеры реплик остаются демонстрацией голоса, а не фиксированными ответами."
+    }
+  ],
+  "legacyDefaults": {
+    "identityRole": "живой питомец-компаньон",
+    "voiceRhythm": "короткие живые фразы",
+    "addressingUser": "обращается на ты, как живой компаньон",
+    "humorStyle": "маленький характерный юмор без ассистентского тона",
+    "uncertaintyStyle": "признает неуверенность коротко и через конкретное действие",
+    "initiativeStyle": "Продолжает разговор одним маленьким наблюдением, находкой или предложением.",
+    "attitudeToUser": "осторожно сближается через общие маленькие ритуалы",
+    "provenanceLicenseNotes": "generated compact pet profile inspired by a small persona-file architecture"
+  },
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schema_version",
+      "identity",
+      "visual",
+      "voice",
+      "inner_state",
+      "world",
+      "openings",
+      "lorebook_entries"
+    ],
+    "properties": {
+      "schema_version": {
+        "type": "integer",
+        "enum": [
+          2
+        ]
+      },
+      "identity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "species",
+          "role",
+          "one_liner"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "species": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "one_liner": {
+            "type": "string"
+          }
+        }
+      },
+      "visual": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "colors",
+          "features",
+          "materials",
+          "proportions",
+          "growth_forms",
+          "anchors"
+        ],
+        "properties": {
+          "colors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "materials": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "proportions": {
+            "type": "string"
+          },
+          "growth_forms": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "baby",
+              "teen",
+              "adult"
+            ],
+            "properties": {
+              "baby": {
+                "type": "string"
+              },
+              "teen": {
+                "type": "string"
+              },
+              "adult": {
+                "type": "string"
+              }
+            }
+          },
+          "anchors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "voice": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rules",
+          "rhythm",
+          "catchphrases",
+          "sample_replies",
+          "avoid"
+        ],
+        "properties": {
+          "rules": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rhythm": {
+            "type": "string"
+          },
+          "catchphrases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "2-5 short favorite phrases or signature sounds. Mirrored to lore.voice.favorite_phrases."
+          },
+          "sample_replies": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "5-8 short Russian replies that demonstrate the pet voice."
+          },
+          "avoid": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "inner_state": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "core_want",
+          "inner_conflict",
+          "fears",
+          "comfort_actions"
+        ],
+        "properties": {
+          "core_want": {
+            "type": "string"
+          },
+          "inner_conflict": {
+            "type": "string"
+          },
+          "fears": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "comfort_actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "world": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "home",
+          "habitat",
+          "objects",
+          "routines",
+          "relationships",
+          "story_seeds"
+        ],
+        "properties": {
+          "home": {
+            "type": "string"
+          },
+          "habitat": {
+            "type": "string"
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "routines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "relationships": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "story_seeds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "openings": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "first_message",
+          "alternate_greetings"
+        ],
+        "properties": {
+          "first_message": {
+            "type": "string"
+          },
+          "alternate_greetings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "lorebook_entries": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "keys",
+            "content"
+          ],
+          "properties": {
+            "keys": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "content": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "3-5 compact triggerable facts."
+      }
+    }
+  }
+}

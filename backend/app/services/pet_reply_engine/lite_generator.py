@@ -47,18 +47,19 @@ from app.services.pet_reply_engine.models import (
 from app.services.pet_reply_engine.reply_limits import MAX_REPLY_CHARS, clamp_reply_text
 from app.services.pet_reply_engine.speech_runtime import (
     age_role_hint,
-    ambient_self_prompt,
     baby_examples_intro,
     character_fact_extraction_system_prompt,
+    context_routing_sources,
+    context_routing_system_prompt,
     dialogue_state_modifier,
+    identity_prompt,
     memory_usage_rule,
-    persona_contract,
-    recent_ambient_replies_rule,
-    story_library_extraction_system_prompt,
+    speech_template,
     state_layer_surface_flags,
+    story_library_extraction_system_prompt,
+    surface_prompt,
     user_memory_consolidation_system_prompt,
     user_memory_extraction_system_prompt,
-    visible_reply_rules,
     world_seed_system_prompt,
 )
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
@@ -101,6 +102,7 @@ class PhrasePlan:
     reply_limit: int
     identity_line: str
     persona_contract: str
+    character_block: str | None = None
     memory_block: str | None = None
     voice_block: str | None = None
     world_block: str | None = None
@@ -111,34 +113,37 @@ class PhrasePlan:
     def system_content(self) -> str:
         sections = [
             self.identity_line,
-            self.persona_contract,
+            self.character_block,
             self.voice_block,
             self.world_block,
             self.memory_block,
             self.recent_ambient_block,
             self.dialogue_block,
             "\n".join(self.extra_rules),
+            self.persona_contract,
         ]
         return "\n\n".join(section for section in sections if section)
 
 
-LITE_RAG_REQUEST_PATTERN = re.compile(
-    r"("
-    r"\bлор\b|канон|мир|дом|жив[её]шь|где\s+ты|откуда|прошл|истори|"
-    r"что\s+ты\s+е[шс]|чем\s+пита|любим|нравит|боишь|страх|друг|семь|"
-    r"родствен|знаком|тело|выгляд|из\s+чего|устроен|механик|способност|"
-    r"умеешь|сила|привыч|секрет|почему\s+ты|кто\s+ты|как\s+тебя"
-    r")",
-    re.IGNORECASE,
-)
+CONTEXT_SOURCE_IDS = ("worldContext", "characterProfile", "userMemory", "recentReplies")
 
-LITE_WORLD_REQUEST_PATTERN = re.compile(
-    r"("
-    r"\bмир\b|мире|дом|жив[её]шь|где\s+ты|где\s+твой|откуда|место|"
-    r"habitat|home|world|where\s+do\s+you\s+live"
-    r")",
-    re.IGNORECASE,
-)
+
+@dataclass(frozen=True)
+class ContextRoutingDecision:
+    surface: PhraseSurface
+    enabled_sources: frozenset[str] = frozenset()
+    queries: dict[str, str] = field(default_factory=dict)
+    reason: str = ""
+    raw: dict[str, Any] | None = None
+
+    def enabled(self, source: str, *, default: bool = False) -> bool:
+        if source not in CONTEXT_SOURCE_IDS:
+            return default
+        return source in self.enabled_sources
+
+    def query(self, source: str) -> str:
+        return self.queries.get(source, "")
+
 
 STORY_LIBRARY_QUERY_PATTERN = re.compile(
     r"("
@@ -318,6 +323,32 @@ LITE_WORLD_SEED_SCHEMA: dict[str, Any] = {
     "required": ["worldText"],
 }
 
+CONTEXT_ROUTING_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "sources": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                source: {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "enabled": {"type": "boolean"},
+                        "query": {"type": "string", "maxLength": 500},
+                    },
+                    "required": ["enabled", "query"],
+                }
+                for source in CONTEXT_SOURCE_IDS
+            },
+            "required": list(CONTEXT_SOURCE_IDS),
+        },
+        "reason": {"type": "string", "maxLength": 500},
+    },
+    "required": ["sources", "reason"],
+}
+
 MEMORY_EXTRACTION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -445,10 +476,6 @@ def _truncate_text(value: str, limit: int) -> str:
     return f"{value[:limit].rstrip()}…"
 
 
-def _lite_persona_contract() -> str:
-    return persona_contract()
-
-
 def _clean_optional_text(value: str | None, limit: int) -> str | None:
     text = _compact_spaces(value or "")
     return _truncate_text(text, limit) if text else None
@@ -462,9 +489,9 @@ def _memory_context_block(memory_context: LocalPetMemoryContext | None) -> str |
     user_profile = _clean_optional_text(memory_context.userProfile, 500)
     summary = _clean_optional_text(memory_context.summary, 500)
     if user_profile:
-        lines.append(f"Профиль пользователя: {user_profile}")
+        lines.append(speech_template("memoryProfileLine", {"user_profile": user_profile}))
     if summary:
-        lines.append(f"Краткий контекст: {summary}")
+        lines.append(speech_template("memorySummaryLine", {"summary": summary}))
 
     memory_lines = []
     for memory in memory_context.relevantMemories[:MAX_MEMORY_CONTEXT_ITEMS]:
@@ -472,7 +499,7 @@ def _memory_context_block(memory_context: LocalPetMemoryContext | None) -> str |
         if text:
             memory_lines.append(f"- {text}")
     if memory_lines:
-        lines.append("Ты помнишь о пользователе:")
+        lines.append(speech_template("memoryItemsHeader"))
         lines.extend(memory_lines)
 
     if not lines:
@@ -499,20 +526,208 @@ def _ambient_memory_context_block(memory_context: LocalPetMemoryContext | None) 
     return _memory_context_block(soft_context)
 
 
-def _recent_ambient_replies_block(replies: list[str]) -> str | None:
+def _recent_ambient_replies_text(replies: list[str]) -> str:
     lines: list[str] = []
     for reply in replies[-MAX_RECENT_AMBIENT_REPLIES:]:
         text = _clean_optional_text(reply, 180)
         if text:
             lines.append(f"- {text}")
-    if not lines:
+    return "\n".join(lines)
+
+
+def _ambient_context_prompt() -> str:
+    return surface_prompt("ambient", {"recent_replies": ""})
+
+
+def _json_record_from_text(value: str) -> dict[str, Any]:
+    text = (value or "").strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            return {}
+        try:
+            parsed = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return {}
+    return parsed if _is_record(parsed) else {}
+
+
+def _parse_context_routing_decision(
+    *,
+    surface: PhraseSurface,
+    raw_content: str,
+) -> ContextRoutingDecision:
+    parsed = _json_record_from_text(raw_content)
+    raw_sources = parsed.get("sources") if _is_record(parsed.get("sources")) else {}
+    enabled: set[str] = set()
+    queries: dict[str, str] = {}
+    for source in CONTEXT_SOURCE_IDS:
+        value = raw_sources.get(source)
+        source_enabled = False
+        query = ""
+        if isinstance(value, bool):
+            source_enabled = value
+        elif _is_record(value):
+            source_enabled = bool(value.get("enabled"))
+            query_value = value.get("query")
+            if isinstance(query_value, str):
+                query = _compact_spaces(query_value)[:500].rstrip()
+        if source_enabled:
+            enabled.add(source)
+        if query:
+            queries[source] = query
+    reason = parsed.get("reason")
+    return ContextRoutingDecision(
+        surface=surface,
+        enabled_sources=frozenset(enabled),
+        queries=queries,
+        reason=_compact_spaces(reason)[:500].rstrip() if isinstance(reason, str) else "",
+        raw=parsed or {"parseError": True, "raw": raw_content[:1000]},
+    )
+
+
+def _context_routing_user_payload(
+    *,
+    surface: PhraseSurface,
+    payload: Any,
+    surface_prompt_text: str,
+) -> dict[str, Any]:
+    memory_context = getattr(payload, "memoryContext", None)
+    proactive_reason = ""
+    if memory_context and getattr(memory_context, "proactiveCandidate", None):
+        proactive_reason = memory_context.proactiveCandidate.reason
+    return {
+        "surface": surface,
+        "surfacePrompt": surface_prompt_text,
+        "userMessage": getattr(payload, "message", ""),
+        "proactiveReason": proactive_reason,
+        "pet": _lite_pet_context_payload(payload),
+        "sources": context_routing_sources(),
+        "memoryBrief": {
+            "summary": getattr(memory_context, "summary", None) if memory_context else None,
+            "userProfile": getattr(memory_context, "userProfile", None) if memory_context else None,
+            "relevantMemories": [
+                {
+                    "kind": item.kind,
+                    "text": item.text,
+                    "dueAt": item.dueAt,
+                }
+                for item in (memory_context.relevantMemories if memory_context else [])
+            ],
+        },
+        "recentReplies": getattr(payload, "recentAmbientReplies", []),
+    }
+
+
+def _route_contexts_for_visible_reply(
+    *,
+    surface: PhraseSurface,
+    payload: Any,
+    client: Any,
+    model: str,
+    timeout: float,
+) -> tuple[ContextRoutingDecision, dict[str, Any]]:
+    surface_prompt_text = (
+        _ambient_context_prompt() if surface == "ambient" else surface_prompt(surface)
+    )
+    request_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": context_routing_system_prompt()},
+            {
+                "role": "user",
+                "content": _safe_json_context(
+                    _context_routing_user_payload(
+                        surface=surface,
+                        payload=payload,
+                        surface_prompt_text=surface_prompt_text,
+                    ),
+                    6000,
+                ),
+            },
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "context_routing",
+                "schema": CONTEXT_ROUTING_SCHEMA,
+                "strict": True,
+            },
+        },
+        "timeout": timeout,
+        **chat_reasoning_effort_kwargs("none"),
+    }
+    prompt_debug = log_chat_completion_prompt("pet_reply/context_routing", request_kwargs)
+    completion = client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("pet_reply/context_routing", completion)
+    content = completion.choices[0].message.content or "{}"
+    return _parse_context_routing_decision(surface=surface, raw_content=content), prompt_debug
+
+
+def _routing_enabled(
+    routing: ContextRoutingDecision | None,
+    source: str,
+    *,
+    default: bool,
+) -> bool:
+    if routing is None:
+        return default
+    return routing.enabled(source)
+
+
+def _character_context_block(
+    pet: Any,
+    routing: ContextRoutingDecision | None,
+) -> str | None:
+    if not _routing_enabled(routing, "characterProfile", default=False):
         return None
-    return f"{recent_ambient_replies_rule()}\n" + "\n".join(lines)
+    bible = pet.characterBible if _is_record(pet.characterBible) else {}
+    if not bible:
+        return None
+    extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
+    lite_overlay = extensions.get("lite_overlay") if _is_record(extensions) else {}
+    payload = {
+        "characterBible": bible,
+        "liteOverlay": lite_overlay if _is_record(lite_overlay) else {},
+    }
+    return "CHARACTER_PROFILE:\n" + _safe_json_context(payload, 3000)
 
 
-def _proactive_reason_block(reason: str) -> str | None:
-    reason_text = _clean_optional_text(reason, 240)
-    return f"Повод для самостоятельной реплики: {reason_text}" if reason_text else None
+def _story_context_for_routing(
+    *,
+    surface: PhraseSurface,
+    payload: Any,
+    context_routing: ContextRoutingDecision,
+) -> AssembledPetContext:
+    if surface == "chat":
+        user_message = payload.message
+        history = payload.history
+    elif surface == "ambient":
+        user_message = _ambient_context_prompt()
+        history = []
+    else:
+        user_message = (
+            payload.memoryContext.proactiveCandidate.reason
+            if payload.memoryContext and payload.memoryContext.proactiveCandidate
+            else surface_prompt("proactive", {"reason": ""})
+        )
+        history = []
+    return assemble_pet_context(
+        mode=surface,
+        pet=payload.pet,
+        user_message=user_message,
+        history=history,
+        memory_context=payload.memoryContext,
+        force_context=context_routing.enabled("worldContext"),
+        forced_query=context_routing.query("worldContext"),
+        forced_reason="context_routing",
+        routing_applied=True,
+    )
 
 
 def _extract_hidden_reaction(raw_reply: str) -> tuple[str, str | None, str | None]:
@@ -625,9 +840,11 @@ def _baby_phrase_examples_for_prompt(payload: LocalChatRequest) -> str | None:
     return f"{baby_examples_intro()}\n{lines}"
 
 
-def _lite_tools_for_message(text: str) -> list[dict[str, Any]] | None:
+def _lite_tools_for_routing(
+    context_routing: ContextRoutingDecision,
+) -> list[dict[str, Any]] | None:
     tools = list(PET_STATE_TOOLS)
-    if LITE_RAG_REQUEST_PATTERN.search(text):
+    if context_routing.enabled("characterProfile"):
         tools.extend(LITE_CHARACTER_TOOLS)
     return tools
 
@@ -648,19 +865,21 @@ def _identity_line_for_pet(
     pet: Any,
     description: str,
     reply_limit: int,
-    concise_hint: str = "можно короче, даже одной фразой",
 ) -> str:
-    system_content = f"Отвечай мне как {description}."
     flags = state_layer_surface_flags(surface)
+    age_hint = ""
     if flags.get("age", False):
-        system_content = f"{system_content} Сейчас ты {_age_role_hint_for_pet(pet)}."
+        age_hint = _age_role_hint_for_pet(pet)
     state_modifier = _state_role_modifier_for_pet(pet, surface)
-    if state_modifier:
-        system_content = f"{system_content} Ты сейчас {state_modifier}."
-    system_content = (
-        f"{system_content} Ответ максимум {reply_limit} символов; {concise_hint}."
+    system_content = identity_prompt(
+        {
+            "description": description,
+            "age_hint": age_hint,
+            "state_modifier": state_modifier or "",
+            "reply_limit": str(reply_limit),
+        },
     )
-    return system_content
+    return re.sub(r"[ \t]{2,}", " ", system_content).strip()
 
 
 def _chat_identity_line(payload: LocalChatRequest, reply_limit: int) -> str:
@@ -670,15 +889,6 @@ def _chat_identity_line(payload: LocalChatRequest, reply_limit: int) -> str:
         description=_short_character_description(payload),
         reply_limit=reply_limit,
     )
-    system_content = (
-        f"{system_content} Если пользователь явно переименовывает тебя, "
-        "вызови update_pet_name с новым отображаемым именем."
-    )
-    if payload.replyMaxChars is not None:
-        system_content = (
-            f"{system_content} Сгенерируй законченную реплику сразу в этом лимите; "
-            "не сокращай ее многоточием."
-        )
     return system_content
 
 
@@ -686,16 +896,21 @@ def _phrase_plan_for_chat(
     payload: LocalChatRequest,
     *,
     context_bundle: AssembledPetContext,
+    context_routing: ContextRoutingDecision | None = None,
 ) -> PhrasePlan:
     reply_limit = payload.replyMaxChars or MAX_REPLY_CHARS
     return PhrasePlan(
         surface="chat",
         reply_limit=reply_limit,
         identity_line=_chat_identity_line(payload, reply_limit),
-        persona_contract=_lite_persona_contract(),
-        memory_block=_memory_context_block(payload.memoryContext),
+        persona_contract=surface_prompt("chat"),
+        character_block=_character_context_block(payload.pet, context_routing),
+        memory_block=(
+            _memory_context_block(payload.memoryContext)
+            if _routing_enabled(context_routing, "userMemory", default=True)
+            else None
+        ),
         world_block=context_bundle.prompt_block or None,
-        extra_rules=visible_reply_rules("chat"),
     )
 
 
@@ -703,16 +918,19 @@ def build_lite_chat_messages(
     payload: LocalChatRequest,
     *,
     context_bundle: AssembledPetContext | None = None,
+    context_routing: ContextRoutingDecision | None = None,
 ) -> list[dict[str, str]]:
     if context_bundle is None:
-        context_bundle = assemble_pet_context(
-            mode="chat",
-            pet=payload.pet,
-            user_message=payload.message,
-            history=payload.history,
-            memory_context=payload.memoryContext,
+        context_bundle = _story_context_for_routing(
+            surface="chat",
+            payload=payload,
+            context_routing=context_routing or ContextRoutingDecision(surface="chat"),
         )
-    plan = _phrase_plan_for_chat(payload, context_bundle=context_bundle)
+    plan = _phrase_plan_for_chat(
+        payload,
+        context_bundle=context_bundle,
+        context_routing=context_routing,
+    )
     system_content = plan.system_content()
     baby_examples = _baby_phrase_examples_for_prompt(payload)
     if baby_examples:
@@ -821,12 +1039,15 @@ def _world_seed_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
         },
         {
             "role": "user",
-            "content": (
-                f"Имя: {payload.pet.name or 'без имени'}\n"
-                f"Существо: {payload.pet.description}\n"
-                f"Возрастная стадия: {_age_role_hint(payload)}\n"
-                f"Состояние: {_state_role_modifier(payload) or payload.pet.mood}\n"
-                f"Вопрос пользователя: {payload.message}"
+            "content": speech_template(
+                "worldSeedUserMessage",
+                {
+                    "pet_name": payload.pet.name or speech_template("unnamedPet"),
+                    "description": payload.pet.description,
+                    "age_hint": _age_role_hint(payload),
+                    "state": _state_role_modifier(payload) or payload.pet.mood,
+                    "user_message": payload.message,
+                },
             ),
         },
     ]
@@ -964,6 +1185,7 @@ def _read_character_json(
     arguments: dict[str, Any],
     overlay_patch: dict[str, Any] | None = None,
     *,
+    context_routing: ContextRoutingDecision | None = None,
     client: Any | None = None,
     model: str | None = None,
     timeout: float | None = None,
@@ -975,7 +1197,7 @@ def _read_character_json(
         sections = {"characterBible", "liteOverlay"}
 
     should_seed_world = bool(
-        LITE_WORLD_REQUEST_PATTERN.search(payload.message)
+        context_routing and context_routing.enabled("worldContext")
     ) and not _existing_world_texts(payload)
     world_seed_patch = (
         _world_seed_overlay_patch(
@@ -1143,10 +1365,13 @@ def build_lite_fact_extraction_messages(
         },
         {
             "role": "user",
-            "content": (
-                f"Текущие данные персонажа JSON:\n{_lite_extraction_context(payload)}\n\n"
-                f"Сообщение пользователя:\n{payload.message}\n\n"
-                f"Ответ персонажа:\n{payload.reply}"
+            "content": speech_template(
+                "liteFactExtractionUserMessage",
+                {
+                    "character_context": _lite_extraction_context(payload),
+                    "message": payload.message,
+                    "reply": payload.reply,
+                },
             ),
         },
     ]
@@ -1209,6 +1434,7 @@ def _handle_tool_call(
     overlay_patch: dict[str, Any],
     pet_patch: dict[str, Any],
     *,
+    context_routing: ContextRoutingDecision,
     client: Any,
     model: str,
     timeout: float,
@@ -1223,6 +1449,7 @@ def _handle_tool_call(
             payload,
             arguments,
             overlay_patch,
+            context_routing=context_routing,
             client=client,
             model=model,
             timeout=timeout,
@@ -1291,12 +1518,17 @@ def build_story_library_extraction_messages(
         },
         {
             "role": "user",
-            "content": (
-                f"pet:\n{_safe_json_context(_lite_pet_context_payload(payload), 1600)}\n\n"
-                f"userMessage:\n{payload.message}\n\n"
-                f"petReply:\n{reply}\n\n"
-                "existingStoryContext:\n"
-                f"{_safe_json_context(_story_context_brief(context_bundle), 3000)}"
+            "content": speech_template(
+                "storyExtractionUserMessage",
+                {
+                    "pet_context": _safe_json_context(_lite_pet_context_payload(payload), 1600),
+                    "user_message": payload.message,
+                    "reply": reply,
+                    "story_context": _safe_json_context(
+                        _story_context_brief(context_bundle),
+                        3000,
+                    ),
+                },
             ),
         },
     ]
@@ -1378,22 +1610,28 @@ def generate_lite_pet_reply(
     model = model or get_chat_model(settings)
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
-    context_bundle = assemble_pet_context(
-        mode="chat",
-        pet=payload.pet,
-        user_message=payload.message,
-        history=payload.history,
-        memory_context=payload.memoryContext,
+    context_routing, context_routing_prompt_debug = _route_contexts_for_visible_reply(
+        surface="chat",
+        payload=payload,
+        client=openai_client,
+        model=model,
+        timeout=timeout,
+    )
+    context_bundle = _story_context_for_routing(
+        surface="chat",
+        payload=payload,
+        context_routing=context_routing,
     )
     messages: list[dict[str, Any]] = build_lite_chat_messages(
         payload,
         context_bundle=context_bundle,
+        context_routing=context_routing,
     )
-    tools = _lite_tools_for_message(payload.message)
+    tools = _lite_tools_for_routing(context_routing)
     overlay_patch: dict[str, Any] = {}
     pet_patch: dict[str, Any] = {}
     tool_debug: list[dict[str, Any]] = []
-    prompt_debug: list[dict[str, Any]] = []
+    prompt_debug: list[dict[str, Any]] = [context_routing_prompt_debug]
     reply = ""
     inner_thought: str | None = None
     face_hint: str | None = None
@@ -1432,6 +1670,7 @@ def generate_lite_pet_reply(
                 tool_call,
                 overlay_patch,
                 pet_patch,
+                context_routing=context_routing,
                 client=openai_client,
                 model=model,
                 timeout=timeout,
@@ -1463,6 +1702,13 @@ def generate_lite_pet_reply(
         liteOverlayPatch=overlay_patch or None,
         storyLibraryPatch=story_library_patch,
         storyLibraryDebug=_story_context_debug(context_bundle),
+        contextRoutingDebug={
+            "surface": context_routing.surface,
+            "enabledSources": sorted(context_routing.enabled_sources),
+            "queries": context_routing.queries,
+            "reason": context_routing.reason,
+            "raw": context_routing.raw,
+        },
     )
     return LocalChatResponse(
         reply=reply,
@@ -1622,14 +1868,17 @@ def build_memory_extraction_messages(payload: MemoryExtractionRequest) -> list[d
         },
         {
             "role": "user",
-            "content": (
-                f"nowIso: {payload.nowIso or _now_iso()}\n"
-                f"timezone: {payload.timezone or 'Europe/Moscow'}\n\n"
-                f"Уже известная память:\n{payload.existingMemoryBrief or '-'}\n\n"
-                f"Recall context:\n{_safe_json_context(memory_context, 3000)}\n\n"
-                f"Недавняя история:\n{_safe_json_context(history_context, 3000)}\n\n"
-                f"Последнее сообщение пользователя:\n{payload.message}\n\n"
-                f"Ответ персонажа, уже показанный пользователю:\n{payload.reply}"
+            "content": speech_template(
+                "userMemoryExtractionUserMessage",
+                {
+                    "now_iso": payload.nowIso or _now_iso(),
+                    "timezone": payload.timezone or "Europe/Moscow",
+                    "existing_memory": payload.existingMemoryBrief or speech_template("emptyValue"),
+                    "memory_context": _safe_json_context(memory_context, 3000),
+                    "history_context": _safe_json_context(history_context, 3000),
+                    "message": payload.message,
+                    "reply": payload.reply,
+                },
             ),
         },
     ]
@@ -1745,13 +1994,16 @@ def build_memory_consolidation_messages(
         },
         {
             "role": "user",
-            "content": (
-                f"nowIso: {payload.nowIso or _now_iso()}\n"
-                f"timezone: {payload.timezone or 'Europe/Moscow'}\n\n"
-                f"pendingLearnings:\n{_safe_json_context(payload.pendingLearnings, 9000)}\n\n"
-                f"existingMemories:\n{_safe_json_context(payload.existingMemories, 9000)}\n\n"
-                f"summary:\n{payload.summary or '-'}\n\n"
-                f"userProfile:\n{payload.userProfile or '-'}"
+            "content": speech_template(
+                "userMemoryConsolidationUserMessage",
+                {
+                    "now_iso": payload.nowIso or _now_iso(),
+                    "timezone": payload.timezone or "Europe/Moscow",
+                    "pending_learnings": _safe_json_context(payload.pendingLearnings, 9000),
+                    "existing_memories": _safe_json_context(payload.existingMemories, 9000),
+                    "summary": payload.summary or speech_template("emptyValue"),
+                    "user_profile": payload.userProfile or speech_template("emptyValue"),
+                },
             ),
         },
     ]
@@ -1805,19 +2057,22 @@ def build_proactive_messages(
     payload: LocalProactiveRequest,
     *,
     context_bundle: AssembledPetContext | None = None,
+    context_routing: ContextRoutingDecision | None = None,
 ) -> list[dict[str, str]]:
-    memory_block = _memory_context_block(payload.memoryContext) or "Память пока пустая."
-    if context_bundle is None:
-        context_bundle = assemble_pet_context(
-            mode="proactive",
-            pet=payload.pet,
-            memory_context=payload.memoryContext,
-        )
-    reason = (
-        payload.memoryContext.proactiveCandidate.reason
-        if payload.memoryContext.proactiveCandidate
-        else "есть личный повод из памяти пользователя"
+    memory_block = (
+        _memory_context_block(payload.memoryContext)
+        if _routing_enabled(context_routing, "userMemory", default=True)
+        else None
     )
+    if context_bundle is None:
+        context_bundle = _story_context_for_routing(
+            surface="proactive",
+            payload=payload,
+            context_routing=context_routing or ContextRoutingDecision(surface="proactive"),
+        )
+    reason = ""
+    if payload.memoryContext.proactiveCandidate:
+        reason = _clean_optional_text(payload.memoryContext.proactiveCandidate.reason, 240) or ""
     plan = PhrasePlan(
         surface="proactive",
         reply_limit=MAX_REPLY_CHARS,
@@ -1826,13 +2081,11 @@ def build_proactive_messages(
             pet=payload.pet,
             description=_short_pet_description(payload.pet),
             reply_limit=MAX_REPLY_CHARS,
-            concise_hint="можно короче",
         ),
-        persona_contract=_lite_persona_contract(),
+        persona_contract=surface_prompt("proactive", {"reason": reason}),
         world_block=context_bundle.prompt_block or None,
+        character_block=_character_context_block(payload.pet, context_routing),
         memory_block=memory_block,
-        dialogue_block=_proactive_reason_block(reason),
-        extra_rules=visible_reply_rules("proactive"),
     )
     return [
         {
@@ -1854,15 +2107,27 @@ def generate_proactive_pet_message(
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
     prompt_debug: list[dict[str, Any]] = []
-    context_bundle = assemble_pet_context(
-        mode="proactive",
-        pet=payload.pet,
-        memory_context=payload.memoryContext,
+    context_routing, context_routing_prompt_debug = _route_contexts_for_visible_reply(
+        surface="proactive",
+        payload=payload,
+        client=openai_client,
+        model=model,
+        timeout=timeout,
+    )
+    prompt_debug.append(context_routing_prompt_debug)
+    context_bundle = _story_context_for_routing(
+        surface="proactive",
+        payload=payload,
+        context_routing=context_routing,
     )
 
     request_kwargs: dict[str, Any] = {
         "model": model,
-        "messages": build_proactive_messages(payload, context_bundle=context_bundle),
+        "messages": build_proactive_messages(
+            payload,
+            context_bundle=context_bundle,
+            context_routing=context_routing,
+        ),
         "timeout": timeout,
         **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
     }
@@ -1891,6 +2156,13 @@ def generate_proactive_pet_message(
                 ),
             },
             storyLibraryDebug=_story_context_debug(context_bundle),
+            contextRoutingDebug={
+                "surface": context_routing.surface,
+                "enabledSources": sorted(context_routing.enabled_sources),
+                "queries": context_routing.queries,
+                "reason": context_routing.reason,
+                "raw": context_routing.raw,
+            },
         )
     return LocalProactiveResponse(
         reply=reply,
@@ -1905,17 +2177,25 @@ def build_ambient_messages(
     payload: LocalAmbientRequest,
     *,
     context_bundle: AssembledPetContext | None = None,
+    context_routing: ContextRoutingDecision | None = None,
 ) -> list[dict[str, str]]:
     reply_limit = payload.replyMaxChars or 160
-    memory_block = _ambient_memory_context_block(payload.memoryContext)
+    memory_block = (
+        _ambient_memory_context_block(payload.memoryContext)
+        if _routing_enabled(context_routing, "userMemory", default=True)
+        else None
+    )
     if context_bundle is None:
-        context_bundle = assemble_pet_context(
-            mode="ambient",
-            pet=payload.pet,
-            history=payload.history,
-            memory_context=payload.memoryContext,
+        context_bundle = _story_context_for_routing(
+            surface="ambient",
+            payload=payload,
+            context_routing=context_routing or ContextRoutingDecision(surface="ambient"),
         )
-    recent_ambient_block = _recent_ambient_replies_block(payload.recentAmbientReplies)
+    recent_ambient_replies = (
+        _recent_ambient_replies_text(payload.recentAmbientReplies)
+        if _routing_enabled(context_routing, "recentReplies", default=True)
+        else ""
+    )
     plan = PhrasePlan(
         surface="ambient",
         reply_limit=reply_limit,
@@ -1925,27 +2205,12 @@ def build_ambient_messages(
             description=_short_pet_description(payload.pet),
             reply_limit=reply_limit,
         ),
-        persona_contract=_lite_persona_contract(),
+        persona_contract=surface_prompt("ambient", {"recent_replies": recent_ambient_replies}),
         world_block=context_bundle.prompt_block or None,
+        character_block=_character_context_block(payload.pet, context_routing),
         memory_block=memory_block,
-        recent_ambient_block=recent_ambient_block,
-        dialogue_block=ambient_self_prompt(),
-        extra_rules=visible_reply_rules("ambient"),
     )
-    return [
-        {
-            "role": "system",
-            "content": plan.system_content(),
-        },
-        *[
-            {"role": "assistant" if item.role == "pet" else "user", "content": item.text}
-            for item in payload.history[-6:]
-        ],
-        {
-            "role": "user",
-            "content": "Сгенерируй одну короткую самостоятельную idle-реплику.",
-        },
-    ]
+    return [{"role": "system", "content": plan.system_content()}]
 
 
 def generate_ambient_pet_message(
@@ -1960,16 +2225,27 @@ def generate_ambient_pet_message(
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
     prompt_debug: list[dict[str, Any]] = []
-    context_bundle = assemble_pet_context(
-        mode="ambient",
-        pet=payload.pet,
-        history=payload.history,
-        memory_context=payload.memoryContext,
+    context_routing, context_routing_prompt_debug = _route_contexts_for_visible_reply(
+        surface="ambient",
+        payload=payload,
+        client=openai_client,
+        model=model,
+        timeout=timeout,
+    )
+    prompt_debug.append(context_routing_prompt_debug)
+    context_bundle = _story_context_for_routing(
+        surface="ambient",
+        payload=payload,
+        context_routing=context_routing,
     )
 
     request_kwargs: dict[str, Any] = {
         "model": model,
-        "messages": build_ambient_messages(payload, context_bundle=context_bundle),
+        "messages": build_ambient_messages(
+            payload,
+            context_bundle=context_bundle,
+            context_routing=context_routing,
+        ),
         "timeout": timeout,
         **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
     }
@@ -1986,6 +2262,13 @@ def generate_ambient_pet_message(
             validationFlags=[],
             promptDebug=prompt_debug,
             storyLibraryDebug=_story_context_debug(context_bundle),
+            contextRoutingDebug={
+                "surface": context_routing.surface,
+                "enabledSources": sorted(context_routing.enabled_sources),
+                "queries": context_routing.queries,
+                "reason": context_routing.reason,
+                "raw": context_routing.raw,
+            },
         )
     return LocalChatResponse(
         reply=clamp_reply_text(reply, payload.replyMaxChars or 160),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -35,6 +36,22 @@ class AdminPublishRequest(BaseModel):
 AdminSource = Literal["local", "production"]
 
 
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _sync_warning_result(exc: AdminPublishError) -> dict[str, Any]:
+    return {
+        "status": "local_dirty",
+        "message": (
+            "Есть незадеплоенные изменения. "
+            "Форма показывает локальные data-файлы; нажми Deploy, когда они готовы."
+        ),
+        "serverCommit": None,
+        "updatedAt": _now_iso(),
+    }
+
+
 def require_local_admin(request: Request) -> None:
     settings = get_settings()
     host = request.client.host if request.client else ""
@@ -59,12 +76,11 @@ def speech_admin_manifest(source: AdminSource = "local") -> dict[str, Any]:
     deploy_enabled = bool(getattr(settings, "admin_publish_enabled", False))
     deploy_message = (
         (
-            "Production-изменения будут отправлены в GitHub "
-            "и применены deploy на Hetzner."
+            "Deploy отправит data-файлы в GitHub и применит их на Hetzner."
         )
         if deploy_enabled
         else (
-            "Production-запись отключена. "
+            "Deploy отключен. "
             "Задай ADMIN_PUBLISH_ENABLED=true и SSH-настройки."
         )
     )
@@ -77,7 +93,12 @@ def speech_admin_manifest(source: AdminSource = "local") -> dict[str, Any]:
             )
         sync_result = None
         if getattr(settings, "admin_sync_from_server_enabled", False):
-            sync_result = sync_admin_files_from_server(settings)
+            try:
+                sync_result = sync_admin_files_from_server(settings)
+            except AdminPublishError as exc:
+                if exc.code != "ADMIN_SYNC_LOCAL_DIRTY":
+                    raise
+                sync_result = _sync_warning_result(exc)
         return read_admin_manifest(
             deploy_enabled=deploy_enabled,
             deploy_message=deploy_message,

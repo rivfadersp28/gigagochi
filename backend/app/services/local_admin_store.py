@@ -8,8 +8,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 from app.prompts.world_description_anchors import load_world_description_dataset
+from app.services.character_bible_template import (
+    character_bible_template_config,
+    validate_character_bible_template_config,
+)
 from app.services.pet_reply_engine.age_message_examples import _dataset as age_speech_dataset
-from app.services.pet_reply_engine.speech_runtime import speech_runtime_config
+from app.services.pet_reply_engine.speech_runtime import (
+    speech_runtime_config,
+    validate_speech_runtime_config,
+)
 from app.services.story_constructor import story_constructor_catalog
 from app.services.story_library import _catalog as story_library_catalog
 from app.services.story_library import global_story_bricks
@@ -79,6 +86,13 @@ MANAGED_FILES: tuple[ManagedFile, ...] = (
         "Якоря среды, из которых при создании собирается template character bible.",
     ),
     ManagedFile(
+        "character_bible_template",
+        "Шаблон библии персонажа",
+        "character_bible_template.json",
+        "json",
+        "JSON schema и prompt-правила для новых characterBible, включая voice.catchphrases.",
+    ),
+    ManagedFile(
         "external_character_sources",
         "Внешние фрагменты",
         "external_character_sources/fragments.jsonl",
@@ -136,7 +150,12 @@ def _validate_jsonl(content: str) -> str:
 
 def _validate_content(spec: ManagedFile, content: str) -> str:
     if spec.file_format == "json":
-        return _validate_json(content)
+        normalized = _validate_json(content)
+        if spec.file_id == "speech_runtime":
+            validate_speech_runtime_config(json.loads(normalized))
+        if spec.file_id == "character_bible_template":
+            validate_character_bible_template_config(json.loads(normalized))
+        return normalized
     return _validate_jsonl(content)
 
 
@@ -208,7 +227,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": False,
                 "fileId": None,
                 "configPath": None,
-                "summary": "Имя, description и текущая стадия питомца формируют базовое «Отвечай мне как ...».",
+                "summary": (
+                    "Имя, description и текущая стадия питомца формируют базовое "
+                    "«Отвечай мне как ...»."
+                ),
             },
             {
                 "id": "pet_profile",
@@ -218,7 +240,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": False,
                 "fileId": None,
                 "configPath": "assetSet.characterBible / extensions.lite_overlay",
-                "summary": "Текущий characterBible, lite_overlay, имя, описание, стадия, настроение и stats конкретного питомца.",
+                "summary": (
+                    "Текущий characterBible, lite_overlay, имя, описание, стадия, "
+                    "настроение и stats конкретного питомца."
+                ),
             },
             {
                 "id": "conversation_context",
@@ -228,7 +253,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": False,
                 "fileId": None,
                 "configPath": "message / history / recentAmbientReplies",
-                "summary": "Текущая реплика пользователя, последние сообщения чата и последние idle-фразы для anti-repeat.",
+                "summary": (
+                    "Текущая реплика пользователя и последние сообщения чата; idle "
+                    "использует только recentAmbientReplies через {recent_replies}."
+                ),
             },
             {
                 "id": "proactive_reason",
@@ -238,7 +266,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": False,
                 "fileId": None,
                 "configPath": "memoryContext.proactiveCandidate.reason",
-                "summary": "Повод для самостоятельной proactive-реплики передается как контекст, без отдельного набора surface rules.",
+                "summary": (
+                    "Повод для самостоятельной proactive-реплики передается как контекст, "
+                    "без отдельного набора surface rules."
+                ),
             },
             {
                 "id": "state_layer",
@@ -248,47 +279,36 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": True,
                 "fileId": "speech_runtime",
                 "configPath": "stateLayer",
-                "summary": "Surface-флаги, age hints, пороги голода/энергии и короткие state-модификаторы.",
+                "summary": (
+                    "Surface-флаги, age hints, пороги голода/энергии и короткие "
+                    "state-модификаторы."
+                ),
             },
             {
-                "id": "persona_contract",
-                "label": "Persona contract",
+                "id": "surface_prompts",
+                "label": "Surface prompts",
                 "surfaces": surfaces,
                 "source": "speech_runtime",
                 "editable": True,
                 "fileId": "speech_runtime",
-                "configPath": "personaContract",
-                "summary": "Главная инструкция естественной речи, роли питомца и запрета служебного формата.",
+                "configPath": "surfacePrompts",
+                "summary": (
+                    "Единые prompt-поля для chat, proactive и idle без отдельных "
+                    "hidden rules/user prompts."
+                ),
             },
             {
-                "id": "visible_reply_rules",
-                "label": "Visible reply rules",
+                "id": "identity_template",
+                "label": "Identity template",
                 "surfaces": surfaces,
                 "source": "speech_runtime",
                 "editable": True,
                 "fileId": "speech_runtime",
-                "configPath": "visibleReply",
-                "summary": "Общие и surface-specific правила для chat/proactive/idle видимых реплик.",
-            },
-            {
-                "id": "ambient_self_prompt",
-                "label": "Idle self-prompt",
-                "surfaces": ["ambient"],
-                "source": "speech_runtime",
-                "editable": True,
-                "fileId": "speech_runtime",
-                "configPath": "ambientSelfPrompt",
-                "summary": "Открытая инструкция для живой idle-фразы без фиксированного хода.",
-            },
-            {
-                "id": "recent_ambient_replies",
-                "label": "Recent idle anti-repeat",
-                "surfaces": ["ambient"],
-                "source": "runtime",
-                "editable": True,
-                "fileId": "speech_runtime",
-                "configPath": "recentAmbientRepliesRule",
-                "summary": "Последние idle-реплики подмешиваются как запрет на повтор образа и конструкции.",
+                "configPath": "identityTemplate",
+                "summary": (
+                    "Один шаблон identity/age/state/reply-limit строки для всех "
+                    "видимых реплик."
+                ),
             },
             {
                 "id": "user_memory_prompt",
@@ -298,7 +318,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": True,
                 "fileId": "speech_runtime",
                 "configPath": "memoryUsageRule",
-                "summary": "Профиль, summary и relevantMemories владельца; для idle фильтруются deadline/event.",
+                "summary": (
+                    "Профиль, summary и relevantMemories владельца; для idle "
+                    "фильтруются deadline/event."
+                ),
             },
             {
                 "id": "world_context_prompt",
@@ -311,14 +334,17 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "summary": "Обертка для уже выбранных story bricks перед финальной генерацией.",
             },
             {
-                "id": "world_context_gate",
-                "label": "WORLD_CONTEXT gate",
+                "id": "context_routing",
+                "label": "Context routing",
                 "surfaces": surfaces,
-                "source": "backend runtime",
-                "editable": False,
-                "fileId": None,
-                "configPath": "context_assembler story-signal heuristics",
-                "summary": "Решает, подтягивать ли story bricks в prompt; generic small talk не должен получать RAG.",
+                "source": "speech_runtime",
+                "editable": True,
+                "fileId": "speech_runtime",
+                "configPath": "contextRouting",
+                "summary": (
+                    "Единый LLM-router решает, подключать ли world context, "
+                    "character profile, user memory и recent replies."
+                ),
             },
             {
                 "id": "chat_tools",
@@ -328,7 +354,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": False,
                 "fileId": None,
                 "configPath": "update_pet_name / read_character_json",
-                "summary": "Модель может переименовать питомца или прочитать character JSON при явном lore/facts-запросе.",
+                "summary": (
+                    "Модель может переименовать питомца; чтение character JSON доступно, "
+                    "когда context routing включил characterProfile."
+                ),
             },
             {
                 "id": "reply_limits",
@@ -338,7 +367,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": False,
                 "fileId": None,
                 "configPath": "replyMaxChars / MAX_REPLY_CHARS",
-                "summary": "Лимит символов попадает в identity line и влияет на форму всех видимых реплик.",
+                "summary": (
+                    "Лимит символов попадает в identity line и влияет на форму всех "
+                    "видимых реплик."
+                ),
             },
             {
                 "id": "memory_extractors",
@@ -348,7 +380,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": True,
                 "fileId": "speech_runtime",
                 "configPath": "characterMemory / userMemory",
-                "summary": "После ответа сохраняют новые факты персонажа, story bricks и память владельца.",
+                "summary": (
+                    "После ответа сохраняют новые факты персонажа, story bricks и "
+                    "память владельца."
+                ),
             },
         ],
         "collections": [
@@ -361,7 +396,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": True,
                 "fileId": "story_library",
                 "configPath": "pools",
-                "summary": "Основная RAG-коллекция для WORLD_CONTEXT; включается только при story-сигнале.",
+                "summary": (
+                    "Основная RAG-коллекция для WORLD_CONTEXT; подключается только "
+                    "решением contextRouting.worldContext."
+                ),
             },
             {
                 "id": "story_library_overlay",
@@ -372,7 +410,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": False,
                 "fileId": None,
                 "configPath": "characterBible.extensions.story_library_overlay",
-                "summary": "Личный лор конкретного питомца, накопленный из диалога; при поиске идет перед global.",
+                "summary": (
+                    "Личный лор конкретного питомца, накопленный из диалога; при поиске "
+                    "идет перед global."
+                ),
             },
             {
                 "id": "user_memory",
@@ -383,7 +424,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": False,
                 "fileId": None,
                 "configPath": "LocalPetMemoryStateV1",
-                "summary": "Память владельца: recall для chat/proactive и мягко отфильтрованный контекст для idle.",
+                "summary": (
+                    "Память владельца: recall для chat/proactive и мягко "
+                    "отфильтрованный контекст для idle."
+                ),
             },
             {
                 "id": "age_speech_examples",
@@ -394,7 +438,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": True,
                 "fileId": "age_speech_examples",
                 "configPath": "creature_phrases_dataset",
-                "summary": "Примеры детской манеры для baby-стадии; используются как rhythm/examples, не как шаблон.",
+                "summary": (
+                    "Примеры детской манеры для baby-стадии; используются как "
+                    "rhythm/examples, не как шаблон."
+                ),
             },
             {
                 "id": "story_constructor",
@@ -427,7 +474,24 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": True,
                 "fileId": "world_descriptions",
                 "configPath": "dataset",
-                "summary": "Влияет на создание template character bible, но не подтягивается в текущий диалог напрямую.",
+                "summary": (
+                    "Влияет на создание template character bible, но не подтягивается "
+                    "в текущий диалог напрямую."
+                ),
+            },
+            {
+                "id": "character_bible_template",
+                "label": "Character bible template",
+                "role": "creation",
+                "surfaces": [],
+                "source": "backend/data",
+                "editable": True,
+                "fileId": "character_bible_template",
+                "configPath": "schema / prompt / runtimeMappings",
+                "summary": (
+                    "Шаблон новых characterBible: JSON schema, prompt-правила и mapping "
+                    "voice.catchphrases -> lore.voice.favorite_phrases."
+                ),
             },
             {
                 "id": "external_character_sources",
@@ -438,7 +502,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": True,
                 "fileId": "external_character_sources",
                 "configPath": "jsonl",
-                "summary": "Справочный корпус; текущий runtime создания и диалога не читает его напрямую.",
+                "summary": (
+                    "Справочный корпус; текущий runtime создания и диалога не читает "
+                    "его напрямую."
+                ),
             },
         ],
     }
@@ -502,6 +569,7 @@ def _clear_runtime_caches() -> None:
     load_world_description_dataset.cache_clear()
     age_speech_dataset.cache_clear()
     speech_runtime_config.cache_clear()
+    character_bible_template_config.cache_clear()
 
 
 def clear_admin_runtime_caches() -> None:
