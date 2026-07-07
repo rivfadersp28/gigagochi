@@ -374,6 +374,30 @@ def _run_push_command_on_server(settings: Any, payload: dict[str, Any]) -> dict[
         cwd=REPO_ROOT,
         timeout=timeout,
     )
+    parsed = _parse_push_command_output(output)
+    if parsed.get("ok") is True and isinstance(parsed.get("result"), dict):
+        return parsed["result"]
+
+    code = parsed.get("code") if isinstance(parsed.get("code"), str) else "PRODUCTION_PUSH_FAILED"
+    message = (
+        parsed.get("message")
+        if isinstance(parsed.get("message"), str)
+        else "Production push failed."
+    )
+    raise AdminPublishError(code, message)
+
+
+def _parse_push_command_output(output: str) -> dict[str, Any]:
+    for line in reversed(output.splitlines()):
+        text = line.strip()
+        if not text.startswith("{") or not text.endswith("}"):
+            continue
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and "ok" in parsed:
+            return parsed
     try:
         parsed = json.loads(output)
     except json.JSONDecodeError as exc:
@@ -386,16 +410,7 @@ def _run_push_command_on_server(settings: Any, payload: dict[str, Any]) -> dict[
             "ADMIN_PRODUCTION_PUSH_RESPONSE_INVALID",
             "Production push вернул не JSON object.",
         )
-    if parsed.get("ok") is True and isinstance(parsed.get("result"), dict):
-        return parsed["result"]
-
-    code = parsed.get("code") if isinstance(parsed.get("code"), str) else "PRODUCTION_PUSH_FAILED"
-    message = (
-        parsed.get("message")
-        if isinstance(parsed.get("message"), str)
-        else "Production push failed."
-    )
-    raise AdminPublishError(code, message)
+    return parsed
 
 
 def sync_admin_files_from_server(settings: Any) -> dict[str, Any]:

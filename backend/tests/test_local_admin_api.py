@@ -8,7 +8,11 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import local_admin_store
-from app.services.local_admin_publish import AdminPublishError, unexpected_publish_paths
+from app.services.local_admin_publish import (
+    AdminPublishError,
+    _parse_push_command_output,
+    unexpected_publish_paths,
+)
 
 DATA_FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "data"
 
@@ -405,6 +409,21 @@ def test_local_admin_sends_production_manual_push(monkeypatch) -> None:
         "reason": "debug reason",
         "include_debug": True,
     }
+
+
+def test_production_push_output_parser_ignores_prompt_debug() -> None:
+    parsed = _parse_push_command_output(
+        "\n".join(
+            [
+                "=== AI chat prompt: pet_reply/push ===",
+                '{"label":"debug","messages":[]}',
+                "=== End AI chat prompt ===",
+                '{"ok": true, "result": {"sent": true, "reply": "hi"}}',
+            ]
+        )
+    )
+
+    assert parsed == {"ok": True, "result": {"sent": True, "reply": "hi"}}
 
 
 def test_local_admin_sends_push_to_all_reachable(monkeypatch) -> None:
