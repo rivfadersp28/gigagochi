@@ -128,6 +128,126 @@ body {
   height: var(--tma-viewport-height);
 }
 
+.create-pet-stage,
+.creation-loader-screen {
+  position: relative;
+  isolation: isolate;
+  background: #000000;
+  color: #fbfbfb;
+}
+
+.create-pet-form {
+  position: relative;
+  z-index: 1;
+}
+
+.create-pet-prompt-block {
+  display: grid;
+  gap: 12px;
+}
+
+.create-pet-label {
+  color: #fbfbfb;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 21px;
+}
+
+.create-pet-prompt {
+  width: 100%;
+  min-height: 154px;
+  border: 0;
+  background: transparent;
+  color: rgba(251, 251, 251, 0.24);
+  caret-color: #756cff;
+  font-family: var(--font-sans);
+  font-size: clamp(29px, 7.35vw, 44px);
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: 0;
+  outline: none;
+  overflow: hidden;
+  resize: none;
+}
+
+.create-pet-prompt::placeholder {
+  color: rgba(251, 251, 251, 0.2);
+  opacity: 1;
+}
+
+.create-pet-prompt--filled {
+  color: #fbfbfb;
+}
+
+.create-pet-prompt:disabled {
+  opacity: 0.72;
+}
+
+.create-pet-error {
+  max-width: 520px;
+  margin-top: 18px;
+  color: #ff6969;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.create-pet-submit {
+  display: inline-flex;
+  min-width: 149px;
+  height: 62px;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 24px 16px;
+  border: 2px solid rgba(0, 0, 0, 0.04);
+  border-radius: 24px;
+  background: #fbfbfb;
+  color: #070707;
+  font-family: var(--font-sans);
+  font-size: 23px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow:
+    inset 0 2px 4px rgba(255, 255, 255, 0.22),
+    inset 0 -4px 8px rgba(1, 1, 1, 0.38),
+    0 14px 34px rgba(0, 0, 0, 0.36);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.create-pet-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.create-pet-submit:focus-visible {
+  outline: 2px solid rgba(117, 108, 255, 0.92);
+  outline-offset: 4px;
+}
+
+.creation-loader-center {
+  z-index: 1;
+}
+
+.creation-loader-card {
+  width: 280px;
+  height: 280px;
+  max-width: calc(100vw - 80px);
+  max-height: calc(100vw - 80px);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 24px 64px rgba(0, 0, 0, 0.42);
+}
+
+.creation-loader-card .image-gen-child {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
 .main-mobile-scene {
   font-family: var(--font-sans);
 }

@@ -12,7 +12,7 @@ import { useLocalPetState } from "@/lib/useLocalPetState";
 import { PetCreatingStage } from "./PetCreatingStage";
 
 const MAX_PROMPT_LENGTH = 300;
-const PROMPT_PLACEHOLDER = "Фиолетовая птичка с шарфом и длинным клювом";
+const PROMPT_PLACEHOLDER = "Грозовой дракон с добрым характером";
 
 export function CreatePetForm() {
   const router = useRouter();
@@ -21,6 +21,7 @@ export function CreatePetForm() {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
+  const hasDescription = description.trim().length > 0;
 
   useEffect(() => {
     if (localPet.status === "ready" && localPet.pet) {
@@ -80,26 +81,29 @@ export function CreatePetForm() {
   }
 
   return (
-    <section className="tma-screen relative w-screen overflow-hidden bg-[var(--paper)] text-white" aria-label="Создание питомца">
+    <section className="create-pet-stage tma-screen relative w-screen overflow-hidden text-white" aria-label="Создание питомца">
       <form
         onSubmit={handleSubmit}
-        className="mx-auto flex min-h-full w-full max-w-[1440px] flex-col justify-center px-[clamp(24px,8vw,316px)] pb-[var(--tma-safe-bottom)] pt-[var(--tma-safe-top)]"
+        className="create-pet-form mx-auto flex min-h-full w-full max-w-[640px] flex-col px-[28px] pb-[calc(var(--tma-safe-bottom)+28px)] pt-[calc(var(--tma-safe-top)+88px)] sm:px-[40px]"
       >
-        <label
-          htmlFor="description"
-          className="h-[21px] whitespace-nowrap text-[17px] font-normal leading-none text-white/30"
-        >
-          Кого хотите создать?
-        </label>
+        <div className="create-pet-prompt-block">
+          <label htmlFor="description" className="create-pet-label">
+            Опиши своего друга
+          </label>
 
-        <div className="mt-[9px] w-full max-w-[900px]">
-          <input
-            type="text"
+          <textarea
             id="description"
             name="description"
             value={description}
-            onChange={(event) => setDescription(event.target.value)}
+            onChange={(event) => {
+              setDescription(event.target.value);
+              if (error) {
+                setError(null);
+              }
+            }}
             maxLength={MAX_PROMPT_LENGTH}
+            rows={4}
+            autoFocus
             autoComplete="off"
             autoCapitalize="sentences"
             inputMode="text"
@@ -108,41 +112,54 @@ export function CreatePetForm() {
             disabled={isSubmitting}
             aria-describedby={error ? "create-pet-error" : undefined}
             placeholder={PROMPT_PLACEHOLDER}
-            className="h-[48px] w-full appearance-none border-0 bg-transparent p-0 text-[clamp(27px,7.8vw,33px)] font-normal leading-[40px] text-white caret-white outline-none placeholder:text-white/30 disabled:opacity-60"
+            className={`create-pet-prompt ${hasDescription ? "create-pet-prompt--filled" : ""}`}
           />
         </div>
 
         {error ? (
           <p
             id="create-pet-error"
-            className="mt-[18px] max-w-[680px] whitespace-pre-wrap break-words text-[14px] leading-5 text-[var(--danger)]"
+            className="create-pet-error"
             aria-live="polite"
           >
             {error}
           </p>
         ) : null}
+
+        <div className="mt-auto flex min-h-[138px] items-start pb-[calc(var(--tma-safe-bottom)+52px)] pt-[48px]">
+          {hasDescription ? (
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="create-pet-submit"
+              aria-label="Создать персонажа"
+            >
+              Создать
+            </button>
+          ) : null}
+        </div>
       </form>
 
       <details className="absolute right-[max(16px,var(--tma-safe-right))] top-[max(16px,var(--tma-safe-top))] z-20 w-[min(320px,calc(100vw-32px))]">
         <summary
           aria-label="Debug меню создания персонажа"
-          className="ml-auto grid size-10 list-none place-items-center rounded-full border border-black/10 bg-white/80 text-black/48 shadow-[0_8px_24px_rgba(0,0,0,0.08)] backdrop-blur transition-colors hover:bg-white hover:text-black/72 focus:outline-none focus:ring-2 focus:ring-black/15 [&::-webkit-details-marker]:hidden"
+          className="ml-auto grid size-10 list-none place-items-center rounded-full border border-white/10 bg-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.48)] shadow-[0_8px_24px_rgba(0,0,0,0.32)] backdrop-blur transition-colors hover:bg-[rgba(255,255,255,0.12)] hover:text-[rgba(255,255,255,0.72)] focus:outline-none focus:ring-2 focus:ring-[rgba(255,255,255,0.15)] [&::-webkit-details-marker]:hidden"
         >
           <Bug className="pointer-events-none size-4" aria-hidden="true" />
           <span className="sr-only">Debug меню создания персонажа</span>
         </summary>
         <aside
           aria-label="Debug действия создания персонажа"
-          className="mt-2 w-full overflow-hidden rounded-[8px] border border-black/10 bg-white text-black shadow-[0_18px_46px_rgba(0,0,0,0.14)]"
+          className="mt-2 w-full overflow-hidden rounded-[10px] border border-white/10 bg-[#121212] text-white shadow-[0_18px_46px_rgba(0,0,0,0.4)]"
         >
-          <header className="border-b border-black/10 px-4 py-3">
-            <h2 className="text-[15px] font-semibold leading-none text-black">Debug</h2>
+          <header className="border-b border-white/10 px-4 py-3">
+            <h2 className="text-[15px] font-semibold leading-none text-white">Debug</h2>
           </header>
           <div className="p-3">
             <button
               type="button"
               onClick={handleCreateTestPet}
-              className="flex h-11 w-full items-center justify-center rounded-[8px] bg-black px-4 text-[14px] font-medium leading-none text-white transition-colors hover:bg-black/80 focus:outline-none focus:ring-2 focus:ring-black/20 focus:ring-offset-2"
+              className="flex h-11 w-full items-center justify-center rounded-[8px] bg-white px-4 text-[14px] font-medium leading-none text-black transition-colors hover:bg-[rgba(255,255,255,0.86)] focus:outline-none focus:ring-2 focus:ring-white/20 focus:ring-offset-2 focus:ring-offset-[#121212]"
             >
               Тестовый персонаж
             </button>
