@@ -55,7 +55,7 @@ import {
   recordMemoryOperationsDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
-import { buildChatReturnPetReply } from "@/lib/petReplyPrompts";
+import { buildMainScreenPetReply } from "@/lib/petReplyPrompts";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
 import type {
@@ -148,9 +148,7 @@ const DEFAULT_SPEECH_END_TRIM_MS = 625;
 const FIGMA_SCREEN_HEIGHT = 874;
 const FIGMA_KEYBOARD_VISIBLE_HEIGHT = 542;
 const KEYBOARD_EAGER_SYNC_MS = 750;
-const INITIAL_PET_DAY_PROMPT = "Расскажи о своем дне";
-const INITIAL_PET_REPLY_MAX_CHARS = 40;
-const INITIAL_PET_REPLY_FALLBACK = "День был ярким.";
+const INITIAL_PET_REPLY_FALLBACK = "Какой у тебя сегодня день?";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 120;
 const DEFAULT_STATUS_NAME = "Челепиздрик";
 const SPEECH_BUBBLE_MIN_WIDTH = 190;
@@ -1067,7 +1065,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     setIsKeyboardRaised(false);
     setChatError(null);
     setConversationReplyMessageId(null);
-    showPetReplyMessage(buildChatReturnPetReply(pet), true, { dialogueHook: true });
+    showPetReplyMessage(buildMainScreenPetReply(pet), true, { dialogueHook: true });
     chatInputRef.current?.blur();
   }, [pet, showPetReplyMessage]);
 
@@ -1540,34 +1538,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
 
-    const initialMemoryContext = buildMemoryContextForMessage(memory, INITIAL_PET_DAY_PROMPT);
-    if (includePromptDebug) {
-      console.log("[memory-debug] dashboard initial bubble context", initialMemoryContext);
-    }
-    recordMemoryContextDebug(initialMemoryContext, "Память подставлена в стартовый бабл");
-    void sendLocalChatMessage(INITIAL_PET_DAY_PROMPT, pet, history, {
-      includeDebug: true,
-      memoryContext: initialMemoryContext,
-      replyMaxChars: INITIAL_PET_REPLY_MAX_CHARS,
-    })
-      .then((response) => {
-        if (petReplyMessageRef.current) {
-          return;
-        }
-        const rawReplyText = response.reply.trim();
-        const replyText = rawReplyText || INITIAL_PET_REPLY_FALLBACK;
-        logBrowserPromptDebug("dashboard initial bubble reply", response);
-        recordReplyPromptDebug(response);
-        recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
-        showPetReplyMessage(replyText, Boolean(rawReplyText));
-        localPet.applyMoodHint(response.moodHint, response.debug?.liteOverlayPatch);
-      })
-      .catch(() => {
-        if (petReplyMessageRef.current) {
-          return;
-        }
-        showPetReplyMessage(INITIAL_PET_REPLY_FALLBACK, false);
-      });
+    showPetReplyMessage(buildMainScreenPetReply(pet), true, { dialogueHook: true });
   }, [includePromptDebug, localPet, pet, petId, showPetReplyMessage]);
 
   if (localPet.status === "loading") {
