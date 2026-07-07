@@ -9,6 +9,7 @@ from typing import Any
 from app.config import get_settings
 from app.schemas import (
     LiteFactExtractionRequest,
+    LocalAmbientRequest,
     LocalChatDebug,
     LocalChatRequest,
     LocalChatResponse,
@@ -20,6 +21,7 @@ from app.schemas import (
     MemoryExtractionRequest,
     MemoryExtractionResponse,
 )
+from app.services.context_assembler import AssembledPetContext, assemble_pet_context
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_chat_model,
@@ -45,12 +47,6 @@ from app.services.pet_reply_engine.state_interpreter import (
 )
 from app.services.pet_reply_engine.voice_profile import pet_voice_prompt_block
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
-from app.services.story_library import (
-    merge_story_library_patch,
-    search_story_library,
-    story_library_patch_for_new_brick,
-    story_library_prompt_block,
-)
 
 MAX_LITE_TOOL_ROUNDS = 3
 MAX_LITE_BABY_EXAMPLES = 8
@@ -201,99 +197,6 @@ LITE_CHARACTER_TOOLS: list[dict[str, Any]] = [
                     "source": {"type": ["string", "null"]},
                 },
                 "required": ["kind", "text", "pathHint", "source"],
-            },
-        },
-    },
-]
-
-STORY_LIBRARY_TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_story_library",
-            "description": (
-                "Search compact story bricks for this pet's world: creatures, dangers, "
-                "objects, locations, neighbors, recurring events, or personal invented "
-                "bricks. Use before answering questions about what exists in the world "
-                "or before inventing a new related entity."
-            ),
-            "parameters": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 300,
-                        "description": "The user's concrete lookup need in natural language.",
-                    },
-                    "poolHints": {
-                        "type": "array",
-                        "maxItems": 5,
-                        "items": {"type": "string", "maxLength": 60},
-                        "description": (
-                            "Optional broad pool hints such as threats, creatures, items, "
-                            "locations, neighbors. Leave empty if unsure."
-                        ),
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 5,
-                        "description": "How many bricks to return.",
-                    },
-                },
-                "required": ["query", "poolHints", "limit"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "save_story_library_brick",
-            "description": (
-                "Save a new named story brick invented in this chat for this pet only. "
-                "Use when the new creature, object, place, danger, neighbor, or recurring "
-                "detail should be remembered in later chats. The new brick should be based "
-                "on searched reference bricks, not unrelated lore."
-            ),
-            "parameters": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "pool": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 60,
-                        "description": "Broad pool name, e.g. threats, creatures, items, locations.",
-                    },
-                    "name": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 120,
-                        "description": "Short reusable name of the invented brick.",
-                    },
-                    "description": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 700,
-                        "description": (
-                            "Reusable description preserving the core meaning. Include "
-                            "how it relates to the reference bricks if useful."
-                        ),
-                    },
-                    "basedOnBrickIds": {
-                        "type": "array",
-                        "maxItems": 8,
-                        "items": {"type": "string", "maxLength": 120},
-                    },
-                    "reason": {
-                        "type": "string",
-                        "maxLength": 240,
-                        "description": "Why this should recur for this pet.",
-                    },
-                },
-                "required": ["pool", "name", "description", "basedOnBrickIds", "reason"],
             },
         },
     },
@@ -630,7 +533,7 @@ def _baby_phrase_examples_for_prompt(payload: LocalChatRequest) -> str | None:
 
 
 def _lite_tools_for_message(text: str) -> list[dict[str, Any]] | None:
-    tools = [*PET_STATE_TOOLS, *STORY_LIBRARY_TOOLS]
+    tools = list(PET_STATE_TOOLS)
     if LITE_RAG_REQUEST_PATTERN.search(text):
         tools.extend(LITE_CHARACTER_TOOLS)
     return tools
@@ -646,7 +549,11 @@ def _history_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     ]
 
 
-def build_lite_chat_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
+def build_lite_chat_messages(
+    payload: LocalChatRequest,
+    *,
+    context_bundle: AssembledPetContext | None = None,
+) -> list[dict[str, str]]:
     reply_limit = payload.replyMaxChars or MAX_REPLY_CHARS
     system_content = (
         f"Отвечай мне как {_short_character_description(payload)}. "
@@ -675,9 +582,16 @@ def build_lite_chat_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     voice_block = pet_voice_prompt_block(payload.pet.characterBible, stage=payload.pet.stage)
     if voice_block:
         system_content = f"{system_content}\n\n{voice_block}"
-    story_library_block = story_library_prompt_block()
-    if story_library_block:
-        system_content = f"{system_content}\n\n{story_library_block}"
+    if context_bundle is None:
+        context_bundle = assemble_pet_context(
+            mode="chat",
+            pet=payload.pet,
+            user_message=payload.message,
+            history=payload.history,
+            memory_context=payload.memoryContext,
+        )
+    if context_bundle.prompt_block:
+        system_content = f"{system_content}\n\n{context_bundle.prompt_block}"
     baby_examples = _baby_phrase_examples_for_prompt(payload)
     if baby_examples:
         system_content = f"{system_content}\n\n{baby_examples}"
@@ -1240,7 +1154,6 @@ def _handle_tool_call(
     payload: LocalChatRequest,
     tool_call: Any,
     overlay_patch: dict[str, Any],
-    story_library_patch: dict[str, Any],
     pet_patch: dict[str, Any],
     *,
     client: Any,
@@ -1264,24 +1177,20 @@ def _handle_tool_call(
         )
     elif name == "update_character_json":
         result = _append_lite_fact(overlay_patch, arguments)
-    elif name == "search_story_library":
-        result = search_story_library(
-            query=str(arguments.get("query") or payload.message),
-            pool_hints=arguments.get("poolHints"),
-            limit=int(arguments.get("limit") or 3),
-            character_bible=payload.pet.characterBible,
-            story_library_patch=story_library_patch,
-        )
-    elif name == "save_story_library_brick":
-        result = story_library_patch_for_new_brick(arguments)
-        if result.get("saved") and isinstance(result.get("patch"), dict):
-            merge_story_library_patch(story_library_patch, result["patch"])
     elif name == "update_pet_name":
         result = _update_pet_name_patch(pet_patch, arguments)
     else:
         result = {"error": f"unknown_tool:{name}"}
     debug["result"] = result
     return result, debug
+
+
+def _story_context_debug(
+    context_bundle: AssembledPetContext | None,
+) -> dict[str, Any] | None:
+    if context_bundle and context_bundle.debug:
+        return context_bundle.debug
+    return None
 
 
 def generate_lite_pet_reply(
@@ -1295,10 +1204,19 @@ def generate_lite_pet_reply(
     model = model or get_chat_model(settings)
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
-    messages: list[dict[str, Any]] = build_lite_chat_messages(payload)
+    context_bundle = assemble_pet_context(
+        mode="chat",
+        pet=payload.pet,
+        user_message=payload.message,
+        history=payload.history,
+        memory_context=payload.memoryContext,
+    )
+    messages: list[dict[str, Any]] = build_lite_chat_messages(
+        payload,
+        context_bundle=context_bundle,
+    )
     tools = _lite_tools_for_message(payload.message)
     overlay_patch: dict[str, Any] = {}
-    story_library_patch: dict[str, Any] = {}
     pet_patch: dict[str, Any] = {}
     tool_debug: list[dict[str, Any]] = []
     prompt_debug: list[dict[str, Any]] = []
@@ -1339,7 +1257,6 @@ def generate_lite_pet_reply(
                 payload,
                 tool_call,
                 overlay_patch,
-                story_library_patch,
                 pet_patch,
                 client=openai_client,
                 model=model,
@@ -1355,26 +1272,7 @@ def generate_lite_pet_reply(
         promptDebug=prompt_debug,
         liteToolCalls=tool_debug,
         liteOverlayPatch=overlay_patch or None,
-        storyLibraryPatch=story_library_patch or None,
-        storyLibraryDebug=(
-            {
-                "searched": [
-                    item
-                    for item in tool_debug
-                    if item.get("name") == "search_story_library"
-                ],
-                "saved": [
-                    item
-                    for item in tool_debug
-                    if item.get("name") == "save_story_library_brick"
-                ],
-            }
-            if any(
-                item.get("name") in {"search_story_library", "save_story_library_brick"}
-                for item in tool_debug
-            )
-            else None
-        ),
+        storyLibraryDebug=_story_context_debug(context_bundle),
     )
     return LocalChatResponse(
         reply=reply,
@@ -1729,15 +1627,26 @@ def consolidate_user_memory(
     return MemoryConsolidationResponse(operations=operations, debug=debug)
 
 
-def build_proactive_messages(payload: LocalProactiveRequest) -> list[dict[str, str]]:
+def build_proactive_messages(
+    payload: LocalProactiveRequest,
+    *,
+    context_bundle: AssembledPetContext | None = None,
+) -> list[dict[str, str]]:
     memory_block = _memory_context_block(payload.memoryContext) or "Память пока пустая."
     voice_block = pet_voice_prompt_block(payload.pet.characterBible, stage=payload.pet.stage)
+    if context_bundle is None:
+        context_bundle = assemble_pet_context(
+            mode="proactive",
+            pet=payload.pet,
+            memory_context=payload.memoryContext,
+        )
     reason = (
         payload.memoryContext.proactiveCandidate.reason
         if payload.memoryContext.proactiveCandidate
         else "есть личный повод из памяти пользователя"
     )
     voice_section = f"\n\n{voice_block}" if voice_block else ""
+    world_section = f"\n\n{context_bundle.prompt_block}" if context_bundle.prompt_block else ""
     return [
         {
             "role": "system",
@@ -1745,7 +1654,7 @@ def build_proactive_messages(payload: LocalProactiveRequest) -> list[dict[str, s
                 f"Отвечай мне как {_short_pet_description(payload.pet)}. "
                 f"Сейчас ты {_age_role_hint(LocalChatRequest(message='...', pet=payload.pet))}. "
                 f"Ответ максимум {MAX_REPLY_CHARS} символов; можно короче.\n\n"
-                f"{_lite_persona_contract()}{voice_section}\n\n"
+                f"{_lite_persona_contract()}{voice_section}{world_section}\n\n"
                 f"{memory_block}\n\n"
                 "Ты сам решил написать пользователю первым. "
                 f"Повод: {reason}. Напиши одну живую реплику. "
@@ -1767,10 +1676,15 @@ def generate_proactive_pet_message(
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
     prompt_debug: list[dict[str, Any]] = []
+    context_bundle = assemble_pet_context(
+        mode="proactive",
+        pet=payload.pet,
+        memory_context=payload.memoryContext,
+    )
 
     request_kwargs: dict[str, Any] = {
         "model": model,
-        "messages": build_proactive_messages(payload),
+        "messages": build_proactive_messages(payload, context_bundle=context_bundle),
         "timeout": timeout,
         **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
     }
@@ -1798,9 +1712,98 @@ def generate_proactive_pet_message(
                     else []
                 ),
             },
+            storyLibraryDebug=_story_context_debug(context_bundle),
         )
     return LocalProactiveResponse(
         reply=reply,
+        moodHint=None,
+        innerThought=inner_thought,
+        faceHint=face_hint,
+        debug=debug,
+    )
+
+
+def build_ambient_messages(
+    payload: LocalAmbientRequest,
+    *,
+    context_bundle: AssembledPetContext | None = None,
+) -> list[dict[str, str]]:
+    reply_limit = payload.replyMaxChars or 160
+    memory_block = _memory_context_block(payload.memoryContext)
+    voice_block = pet_voice_prompt_block(payload.pet.characterBible, stage=payload.pet.stage)
+    if context_bundle is None:
+        context_bundle = assemble_pet_context(
+            mode="ambient",
+            pet=payload.pet,
+            history=payload.history,
+            memory_context=payload.memoryContext,
+        )
+    voice_section = f"\n\n{voice_block}" if voice_block else ""
+    memory_section = f"\n\n{memory_block}" if memory_block else ""
+    world_section = f"\n\n{context_bundle.prompt_block}" if context_bundle.prompt_block else ""
+    return [
+        {
+            "role": "system",
+            "content": (
+                f"Отвечай мне как {_short_pet_description(payload.pet)}. "
+                f"Сейчас ты {_age_role_hint(LocalChatRequest(message='...', pet=payload.pet))}. "
+                f"Ответ максимум {reply_limit} символов; можно короче, даже одной фразой.\n\n"
+                f"{_lite_persona_contract()}{voice_section}{world_section}{memory_section}\n\n"
+                "Ты произносишь idle-фразу на главном экране без прямого вопроса пользователя. "
+                "Скажи одно живое наблюдение, маленькое событие или короткий крючок "
+                "из своего мира. Не объясняй, что это автоматическое сообщение. "
+                "Не спрашивай пользователя каждый раз."
+            ),
+        },
+        *[
+            {"role": "assistant" if item.role == "pet" else "user", "content": item.text}
+            for item in payload.history[-6:]
+        ],
+        {"role": "user", "content": "Скажи одну короткую idle-фразу сейчас."},
+    ]
+
+
+def generate_ambient_pet_message(
+    payload: LocalAmbientRequest,
+    *,
+    client: Any | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+) -> LocalChatResponse:
+    settings = get_settings()
+    model = model or get_chat_model(settings)
+    timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
+    openai_client = client or get_openai_client()
+    prompt_debug: list[dict[str, Any]] = []
+    context_bundle = assemble_pet_context(
+        mode="ambient",
+        pet=payload.pet,
+        history=payload.history,
+        memory_context=payload.memoryContext,
+    )
+
+    request_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": build_ambient_messages(payload, context_bundle=context_bundle),
+        "timeout": timeout,
+        **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
+    }
+    prompt_debug.append(log_chat_completion_prompt("pet_reply/ambient", request_kwargs))
+    completion = openai_client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("pet_reply/ambient", completion)
+    reply, inner_thought, face_hint = _extract_hidden_reaction(
+        completion.choices[0].message.content or ""
+    )
+    debug = None
+    if payload.includeDebug or prompt_debug:
+        debug = LocalChatDebug(
+            usedFallback=False,
+            validationFlags=[],
+            promptDebug=prompt_debug,
+            storyLibraryDebug=_story_context_debug(context_bundle),
+        )
+    return LocalChatResponse(
+        reply=clamp_reply_text(reply, payload.replyMaxChars or 160),
         moodHint=None,
         innerThought=inner_thought,
         faceHint=face_hint,

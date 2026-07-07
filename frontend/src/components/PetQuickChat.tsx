@@ -83,7 +83,7 @@ export function PetQuickChat({
       recordMemoryContextDebug(memoryContext);
       appendLocalChatMessages([userMessage]);
       const response = await sendLocalChatMessage(message, pet, history, {
-        includeDebug: true,
+        includeDebug: includePromptDebug,
         memoryContext,
       });
       logBrowserPromptDebug("quick chat reply", response);

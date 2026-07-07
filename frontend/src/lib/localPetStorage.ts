@@ -11,12 +11,9 @@ import type {
 export const PET_STATE_STORAGE_KEY = "tamagochi:v1:pet-state";
 export const CHAT_HISTORY_STORAGE_KEY = "tamagochi:v1:chat-history";
 export const SETTINGS_STORAGE_KEY = "tamagochi:v1:settings";
-export const PENDING_MAIN_REPLY_STORAGE_KEY = "tamagochi:v1:pending-main-reply";
 
 const MAX_CHAT_MESSAGES = 50;
 const MAX_CHAT_MESSAGE_TEXT = 8000;
-const MAX_PENDING_MAIN_REPLY_TEXT = 260;
-const PENDING_MAIN_REPLY_MAX_AGE_MS = 5 * 60 * 1000;
 const MAX_STORY_LIBRARY_BRICKS = 80;
 const MIN_STAT = 0;
 const MAX_STAT = 100;
@@ -30,29 +27,11 @@ export type LocalPetSettings = {
   includePromptDebug: boolean;
 };
 
-export type PendingMainPetReply = {
-  version: 1;
-  petId: string;
-  text: string;
-  createdAt: string;
-};
-
 function storage() {
   if (typeof window === "undefined") {
     return null;
   }
   return window.localStorage;
-}
-
-function sessionStore() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  try {
-    return window.sessionStorage;
-  } catch {
-    return null;
-  }
 }
 
 function defaultLocalPetSettings(): LocalPetSettings {
@@ -87,71 +66,6 @@ export function readLocalPetSettings(): LocalPetSettings {
 
 export function writeLocalPetSettings(settings: LocalPetSettings) {
   storage()?.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(normalizeLocalPetSettings(settings)));
-}
-
-function normalizePendingMainPetReply(value: unknown): PendingMainPetReply | null {
-  if (!isRecord(value) || value.version !== 1 || typeof value.petId !== "string") {
-    return null;
-  }
-
-  const text = normalizeText(value.text, MAX_PENDING_MAIN_REPLY_TEXT);
-  if (!text || !isIsoDate(value.createdAt)) {
-    return null;
-  }
-
-  return {
-    version: 1,
-    petId: value.petId,
-    text,
-    createdAt: value.createdAt,
-  };
-}
-
-export function writePendingMainPetReply(petId: string, text: string) {
-  const normalizedText = normalizeText(text, MAX_PENDING_MAIN_REPLY_TEXT);
-  if (!petId || !normalizedText) {
-    return;
-  }
-
-  sessionStore()?.setItem(
-    PENDING_MAIN_REPLY_STORAGE_KEY,
-    JSON.stringify({
-      version: 1,
-      petId,
-      text: normalizedText,
-      createdAt: new Date().toISOString(),
-    } satisfies PendingMainPetReply),
-  );
-}
-
-export function consumePendingMainPetReply(petId: string): PendingMainPetReply | null {
-  const store = sessionStore();
-  if (!store) {
-    return null;
-  }
-
-  try {
-    const rawValue = store.getItem(PENDING_MAIN_REPLY_STORAGE_KEY);
-    if (!rawValue) {
-      return null;
-    }
-
-    store.removeItem(PENDING_MAIN_REPLY_STORAGE_KEY);
-    const reply = normalizePendingMainPetReply(JSON.parse(rawValue));
-    if (!reply || reply.petId !== petId) {
-      return null;
-    }
-
-    const createdAtTime = Date.parse(reply.createdAt);
-    if (Number.isNaN(createdAtTime) || Date.now() - createdAtTime > PENDING_MAIN_REPLY_MAX_AGE_MS) {
-      return null;
-    }
-
-    return reply;
-  } catch {
-    store.removeItem(PENDING_MAIN_REPLY_STORAGE_KEY);
-    return null;
-  }
 }
 
 export function clampStat(value: unknown): number {

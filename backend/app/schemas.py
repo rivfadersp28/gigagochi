@@ -223,6 +223,16 @@ class LocalProactiveRequest(BaseModel):
     includeDebug: bool = False
 
 
+class LocalAmbientRequest(BaseModel):
+    pet: LocalPetChatContext
+    history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
+    memoryContext: LocalPetMemoryContext | None = None
+    replyMaxChars: int | None = Field(default=None, ge=1, le=260)
+    nowIso: str | None = Field(default=None, max_length=80)
+    timezone: str | None = Field(default=None, max_length=80)
+    includeDebug: bool = False
+
+
 class LocalProactiveResponse(BaseModel):
     reply: str
     moodHint: PetStateValue | None = None

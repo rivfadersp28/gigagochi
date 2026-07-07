@@ -19,7 +19,6 @@ import {
   latestChatMessages,
   readLocalChatHistory,
   readLocalPetSettings,
-  writePendingMainPetReply,
 } from "@/lib/localPetStorage";
 import {
   applyMemoryConsolidationOperations,
@@ -41,7 +40,6 @@ import {
   recordMemoryOperationsDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
-import { buildChatReturnPetReply } from "@/lib/petReplyPrompts";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
 import type { LocalChatMessage } from "@/lib/types";
@@ -65,14 +63,9 @@ export function ChatView({ petId }: ChatViewProps) {
   const proactiveAttemptedRef = useRef(false);
   const pet = localPet.pet;
 
-  const rememberChatReturnReply = useCallback(() => {
-    writePendingMainPetReply(petId, buildChatReturnPetReply(pet));
-  }, [pet, petId]);
-
   const goBack = useCallback(() => {
-    rememberChatReturnReply();
     router.push(`/pet/${petId}`);
-  }, [petId, rememberChatReturnReply, router]);
+  }, [petId, router]);
 
   useTelegramBackButton(goBack);
 
@@ -141,7 +134,7 @@ export function ChatView({ petId }: ChatViewProps) {
     }
     recordMemoryContextDebug(memoryContext, "Память подставлена в proactive prompt");
     void generateLocalProactiveMessage(pet, memoryContext, {
-      includeDebug: true,
+      includeDebug: settings.includePromptDebug,
     })
       .then((response) => {
         logBrowserPromptDebug("proactive chat", response);
@@ -161,7 +154,11 @@ export function ChatView({ petId }: ChatViewProps) {
             response.reply,
           ),
         );
-        localPet.applyMoodHint(response.moodHint);
+        localPet.applyMoodHint(
+          response.moodHint,
+          response.debug?.liteOverlayPatch,
+          response.debug?.storyLibraryPatch,
+        );
       })
       .catch(() => undefined);
   }, [localPet, pet, petId, runMemoryConsolidationIfNeeded]);
@@ -204,7 +201,7 @@ export function ChatView({ petId }: ChatViewProps) {
       }
       recordMemoryContextDebug(memoryContext);
       const response = await sendLocalChatMessage(message, pet, historyBeforeMessage, {
-        includeDebug: true,
+        includeDebug: settings.includePromptDebug,
         memoryContext,
       });
       logBrowserPromptDebug("chat reply", response);
@@ -312,7 +309,6 @@ export function ChatView({ petId }: ChatViewProps) {
             ) : null}
             <Link
               href={`/pet/${petId}`}
-              onClick={rememberChatReturnReply}
               className="inline-flex h-10 items-center gap-2 rounded-[8px] border border-[var(--line)] px-3 text-sm font-medium text-[var(--ink)] transition-colors hover:bg-[var(--surface)]"
             >
               <ArrowLeft className="size-4" aria-hidden="true" />

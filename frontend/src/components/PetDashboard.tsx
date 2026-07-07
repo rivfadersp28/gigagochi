@@ -19,13 +19,13 @@ import {
   consolidateLocalUserMemory,
   extractLocalLiteFacts,
   extractLocalUserMemory,
+  generateLocalAmbientMessage,
   generatePetTravel,
   generateLocalProactiveMessage,
   sendLocalChatMessage,
 } from "@/lib/api";
 import {
   appendLocalChatMessages,
-  consumePendingMainPetReply,
   createLocalId,
   latestChatMessages,
   readLocalChatHistory,
@@ -54,7 +54,6 @@ import {
   recordMemoryOperationsDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
-import { buildMainScreenPetReply } from "@/lib/petReplyPrompts";
 import { applyPetVoice, type PetVoiceMode } from "@/lib/petVoice";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
@@ -149,7 +148,7 @@ const DEFAULT_SPEECH_END_TRIM_MS = 625;
 const FIGMA_SCREEN_HEIGHT = 874;
 const FIGMA_KEYBOARD_VISIBLE_HEIGHT = 542;
 const KEYBOARD_EAGER_SYNC_MS = 750;
-const INITIAL_PET_REPLY_FALLBACK = "Какой у тебя сегодня день?";
+const INITIAL_PET_REPLY_FALLBACK = "…";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 120;
 const DEFAULT_STATUS_NAME = "Челепиздрик";
 const SPEECH_BUBBLE_MIN_WIDTH = 190;
@@ -1028,6 +1027,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     height: SPEECH_BUBBLE_MIN_HEIGHT,
   });
   const proactiveAttemptedRef = useRef(false);
+  const ambientRequestIdRef = useRef(0);
   const petReplyMessageRef = useRef<PetReplyMessage | null>(null);
   const activeDialogueHookRef = useRef<string | null>(null);
   const speechBubbleRef = useRef<HTMLDivElement>(null);
@@ -1062,18 +1062,65 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     }
   }, [pet]);
 
+  const requestAmbientReply = useCallback(() => {
+    if (!pet) {
+      return;
+    }
+
+    const requestId = ambientRequestIdRef.current + 1;
+    ambientRequestIdRef.current = requestId;
+    const memory = readLocalPetMemory(pet.petId);
+    const memoryContext = {
+      summary: memory.summary,
+      userProfile: memory.userProfile,
+      relevantMemories: memory.memories.slice(0, 3).map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        text: item.text,
+        dueAt: item.dueAt,
+      })),
+    };
+    const history = readLocalChatHistory().messages;
+
+    void generateLocalAmbientMessage(pet, {
+      includeDebug: includePromptDebug,
+      memoryContext,
+      history,
+      replyMaxChars: 160,
+    })
+      .then((response) => {
+        if (ambientRequestIdRef.current !== requestId) {
+          return;
+        }
+        logBrowserPromptDebug("dashboard ambient", response);
+        recordReplyPromptDebug(response);
+        showPetReplyMessage(response.reply, true, {
+          dialogueHook: true,
+          voiceMode: "generated",
+        });
+        localPet.applyMoodHint(
+          response.moodHint,
+          response.debug?.liteOverlayPatch,
+          response.debug?.storyLibraryPatch,
+        );
+      })
+      .catch(() => {
+        if (ambientRequestIdRef.current !== requestId) {
+          return;
+        }
+        showPetReplyMessage("…", false, { voiceMode: "system" });
+      });
+  }, [includePromptDebug, localPet, pet, showPetReplyMessage]);
+
   const closeChatMode = useCallback(() => {
     keyboardSyncUntilRef.current = 0;
     setIsChatMode(false);
     setIsKeyboardRaised(false);
     setChatError(null);
     setConversationReplyMessageId(null);
-    showPetReplyMessage(buildMainScreenPetReply(pet), true, {
-      dialogueHook: true,
-      voiceMode: "generated",
-    });
+    requestAmbientReply();
     chatInputRef.current?.blur();
-  }, [pet, showPetReplyMessage]);
+  }, [requestAmbientReply]);
 
   useTelegramBackButton(closeChatMode, isChatMode);
 
@@ -1351,7 +1398,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
     try {
       const response = await sendLocalChatMessage(message, pet, historyWithDialogueHook, {
-        includeDebug: true,
+        includeDebug: includePromptDebug,
         memoryContext,
         replyMaxChars: DASHBOARD_CHAT_REPLY_MAX_CHARS,
       });
@@ -1466,22 +1513,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     if (localPet.status === "loading" || !pet || pet.petId !== petId) {
       return;
     }
-
-    const pendingReply = consumePendingMainPetReply(pet.petId);
-    if (!pendingReply) {
-      return;
-    }
-
-    showPetReplyMessage(pendingReply.text, true, {
-      dialogueHook: true,
-      voiceMode: "generated",
-    });
-  }, [localPet.status, pet, petId, showPetReplyMessage]);
-
-  useEffect(() => {
-    if (localPet.status === "loading" || !pet || pet.petId !== petId) {
-      return;
-    }
     if (proactiveAttemptedRef.current) {
       return;
     }
@@ -1512,7 +1543,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         console.log("[memory-debug] dashboard proactive candidate", proactiveMemoryContext);
       }
       recordMemoryContextDebug(proactiveMemoryContext, "Память подставлена в proactive prompt");
-      void generateLocalProactiveMessage(pet, proactiveMemoryContext, { includeDebug: true })
+      void generateLocalProactiveMessage(pet, proactiveMemoryContext, {
+        includeDebug: includePromptDebug,
+      })
         .then((response) => {
           if (petReplyMessageRef.current) {
             return;
@@ -1535,18 +1568,19 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               response.reply,
             ),
           );
-          showPetReplyMessage(response.reply, true);
-          localPet.applyMoodHint(response.moodHint);
+          showPetReplyMessage(response.reply, true, { dialogueHook: true });
+          localPet.applyMoodHint(
+            response.moodHint,
+            response.debug?.liteOverlayPatch,
+            response.debug?.storyLibraryPatch,
+          );
         })
         .catch(() => undefined);
       return;
     }
 
-    showPetReplyMessage(buildMainScreenPetReply(pet), true, {
-      dialogueHook: true,
-      voiceMode: "generated",
-    });
-  }, [includePromptDebug, localPet, pet, petId, showPetReplyMessage]);
+    requestAmbientReply();
+  }, [includePromptDebug, localPet, pet, petId, requestAmbientReply, showPetReplyMessage]);
 
   if (localPet.status === "loading") {
     return (
@@ -1569,7 +1603,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     visiblePetImage === "/figma/main-pet.png" ? mainPetBackdropSrc : visiblePetImage;
   const displayedReply = petReplyMessage ?? {
     id: 0,
-    text: applyPetVoice(INITIAL_PET_REPLY_FALLBACK, pet, { mode: "local" }),
+    text: INITIAL_PET_REPLY_FALLBACK,
     playSpeechAudio: false,
   };
   const shouldShowConversationReply =

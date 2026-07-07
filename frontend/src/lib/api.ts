@@ -559,6 +559,40 @@ export async function generateLocalProactiveMessage(
   });
 }
 
+export async function generateLocalAmbientMessage(
+  pet: LocalPetState,
+  options: {
+    includeDebug?: boolean;
+    memoryContext?: LocalPetMemoryContext;
+    history?: LocalChatMessage[];
+    replyMaxChars?: number;
+  } = {},
+): Promise<LocalChatResponse> {
+  return request<LocalChatResponse>("/api/chat/ambient", {
+    method: "POST",
+    headers: tmaAuthHeaders(),
+    body: {
+      includeDebug: options.includeDebug ?? false,
+      memoryContext: options.memoryContext,
+      replyMaxChars: options.replyMaxChars,
+      nowIso: new Date().toISOString(),
+      timezone: browserTimezone(),
+      pet: {
+        name: pet.name,
+        description: pet.description,
+        characterBible: pet.assetSet?.characterBible,
+        stage: pet.stage,
+        mood: pet.mood,
+        stats: pet.stats,
+      },
+      history: (options.history ?? []).slice(-12).map((item) => ({
+        role: item.role,
+        text: item.text,
+      })),
+    },
+  });
+}
+
 export async function extractLocalLiteFacts(
   message: string,
   reply: string,

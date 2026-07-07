@@ -25,6 +25,7 @@ from app.schemas import (
     GenerateTravelResponse,
     LiteFactExtractionRequest,
     LiteFactExtractionResponse,
+    LocalAmbientRequest,
     LocalChatRequest,
     LocalChatResponse,
     LocalProactiveRequest,
@@ -41,6 +42,7 @@ from app.services.pet_reply_engine.lite_generator import (
     consolidate_user_memory,
     extract_lite_overlay_patch_from_reply,
     extract_user_memory_operations,
+    generate_ambient_pet_message,
     generate_proactive_pet_message,
 )
 from app.services.prompt_debug import (
@@ -506,6 +508,39 @@ def travel(payload: GenerateTravelRequest, user: TelegramUser) -> GenerateTravel
             "travel_failed",
             code,
             travel_error_message(code),
+            exc,
+        ) from exc
+    finally:
+        reset_prompt_log_context(prompt_log_token)
+
+
+@router.post(
+    "/chat/ambient",
+    response_model=LocalChatResponse,
+    response_model_exclude_none=True,
+)
+def ambient_chat(
+    payload: LocalAmbientRequest,
+    user: TelegramUser,
+) -> LocalChatResponse:
+    check_rate_limit("chat", user)
+    prompt_log_token = set_prompt_log_context({"endpoint": "/api/chat/ambient"})
+    try:
+        return generate_ambient_pet_message(payload)
+    except MissingOpenAIAPIKey:
+        raise public_error(
+            "MISSING_OPENAI_API_KEY",
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+        ) from None
+    except HTTPException:
+        raise
+    except Exception as exc:
+        code = chat_error_code(exc)
+        raise ai_failure_http_exception(
+            "/api/chat/ambient",
+            "ambient_chat_failed",
+            code,
+            chat_error_message(code),
             exc,
         ) from exc
     finally:

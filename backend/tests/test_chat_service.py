@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from app.schemas import (
     LiteFactExtractionRequest,
+    LocalAmbientRequest,
     LocalChatRequest,
     LocalProactiveRequest,
     MemoryConsolidationRequest,
@@ -12,12 +13,14 @@ from app.schemas import (
 )
 from app.services.chat_service import chat_with_local_pet
 from app.services.pet_reply_engine.lite_generator import (
+    build_ambient_messages,
     build_lite_chat_messages,
     build_memory_extraction_messages,
     build_proactive_messages,
     consolidate_user_memory,
     extract_lite_overlay_patch_from_reply,
     extract_user_memory_operations,
+    generate_ambient_pet_message,
     generate_lite_pet_reply,
     generate_proactive_pet_message,
 )
@@ -88,11 +91,8 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert "Отвечай владельцу естественно, кратко и своим голосом." in system_message
     assert "Верни только JSON" not in system_message
     assert "response_format" not in request
-    assert [tool["function"]["name"] for tool in request["tools"]] == [
-        "update_pet_name",
-        "search_story_library",
-        "save_story_library_brick",
-    ]
+    assert [tool["function"]["name"] for tool in request["tools"]] == ["update_pet_name"]
+    assert "STORY_LIBRARY" not in system_message
 
 
 def test_lite_prompt_includes_age_role_hint() -> None:
@@ -284,13 +284,15 @@ def test_lite_prompt_uses_baby_dataset_phrases_only_for_baby() -> None:
     assert "Приветик! Ты пришёл!" not in teen_system_message
 
 
-def test_lite_prompt_includes_story_library_inventory() -> None:
-    system_message = build_lite_chat_messages(lite_payload())[0]["content"]
+def test_lite_prompt_includes_preselected_world_context_for_story_query() -> None:
+    system_message = build_lite_chat_messages(
+        lite_payload(message="есть ли в твоем мире монстры?")
+    )[0]["content"]
 
-    assert "STORY_LIBRARY" in system_message
-    assert "search_story_library" in system_message
-    assert "Доступные разделы" in system_message
-    assert "threats" in system_message
+    assert "WORLD_CONTEXT" in system_message
+    assert "Опасности и монстры" in system_message
+    assert "STORY_LIBRARY" not in system_message
+    assert "search_story_library" not in system_message
 
 
 def test_proactive_prompt_includes_character_voice_control() -> None:
@@ -329,6 +331,110 @@ def test_proactive_prompt_includes_character_voice_control() -> None:
     assert "VOICE_CONTROL" in system_message
     assert "говорит через маленькие бытовые детали" in system_message
     assert "нос подсказывает" in system_message
+
+
+def test_proactive_prompt_uses_preselected_world_context() -> None:
+    payload = LocalProactiveRequest.model_validate(
+        {
+            "pet": {
+                "name": "Пончик",
+                "description": "кремовый котенок-компаньон",
+                "stage": "baby",
+                "mood": "happy",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 80,
+                    "energy": 80,
+                    "cleanliness": 80,
+                },
+                "characterBible": {},
+            },
+            "memoryContext": {
+                "summary": "Пользователь любит короткие диалоги.",
+                "proactiveCandidate": {
+                    "memoryIds": ["m1"],
+                    "reason": "пользователь обещал вернуться вечером",
+                },
+            },
+        }
+    )
+
+    system_message = build_proactive_messages(payload)[0]["content"]
+
+    assert "WORLD_CONTEXT" in system_message
+    assert "STORY_LIBRARY" not in system_message
+
+
+def test_ambient_prompt_uses_same_phrase_context_engine() -> None:
+    payload = LocalAmbientRequest.model_validate(
+        {
+            "pet": {
+                "name": "Листик",
+                "description": "серый челик с листом вместо лица",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 80,
+                    "energy": 80,
+                    "cleanliness": 80,
+                },
+                "characterBible": {
+                    "voice": {
+                        "rules": ["говорит коротко и тихо"],
+                        "catchphrases": ["лист шепчет"],
+                    }
+                },
+            },
+            "history": [],
+            "replyMaxChars": 120,
+        }
+    )
+
+    system_message = build_ambient_messages(payload)[0]["content"]
+
+    assert "idle-фразу на главном экране" in system_message
+    assert "VOICE_CONTROL" in system_message
+    assert "WORLD_CONTEXT" in system_message
+    assert "STORY_LIBRARY" not in system_message
+
+
+def test_ambient_generation_returns_story_context_debug() -> None:
+    client, completions = fake_lite_client(
+        SimpleNamespace(content="Лист шепчет: крошка сегодня светится.", tool_calls=None),
+    )
+    payload = LocalAmbientRequest.model_validate(
+        {
+            "pet": {
+                "name": "Листик",
+                "description": "серый челик с листом вместо лица",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 80,
+                    "energy": 80,
+                    "cleanliness": 80,
+                },
+                "characterBible": {},
+            },
+            "includeDebug": True,
+            "replyMaxChars": 120,
+        }
+    )
+
+    response = generate_ambient_pet_message(
+        payload,
+        client=client,
+        model="gpt-5.5",
+        timeout=10,
+    )
+
+    assert len(completions.calls) == 1
+    assert response.reply == "Лист шепчет: крошка сегодня светится."
+    assert response.debug is not None
+    assert response.debug.storyLibraryDebug is not None
+    assert response.debug.storyLibraryDebug["mode"] == "ambient"
 
 
 def test_lite_tools_read_and_append_overlay_fact() -> None:
@@ -371,8 +477,6 @@ def test_lite_tools_read_and_append_overlay_fact() -> None:
     assert response.debug is not None
     assert [tool["function"]["name"] for tool in completions.calls[0]["tools"]] == [
         "update_pet_name",
-        "search_story_library",
-        "save_story_library_brick",
         "read_character_json",
         "update_character_json",
     ]
@@ -386,23 +490,8 @@ def test_lite_tools_read_and_append_overlay_fact() -> None:
     assert response.debug.liteOverlayPatch["facts"][0]["kind"] == "preference"
 
 
-def test_lite_story_library_tool_searches_global_bricks() -> None:
-    search_call = SimpleNamespace(
-        id="call_story_search",
-        function=SimpleNamespace(
-            name="search_story_library",
-            arguments=json.dumps(
-                {
-                    "query": "есть ли в мире монстры и опасности",
-                    "poolHints": ["threats"],
-                    "limit": 3,
-                },
-                ensure_ascii=False,
-            ),
-        ),
-    )
+def test_lite_story_library_context_is_preselected_without_story_tools() -> None:
     client, completions = fake_lite_client(
-        SimpleNamespace(content="", tool_calls=[search_call]),
         SimpleNamespace(content="Да, но они чаще странные, чем злые.", tool_calls=None),
     )
 
@@ -413,54 +502,18 @@ def test_lite_story_library_tool_searches_global_bricks() -> None:
         timeout=10,
     )
 
-    assert len(completions.calls) == 2
+    assert len(completions.calls) == 1
     assert response.reply == "Да, но они чаще странные, чем злые."
+    request = completions.calls[0]
+    system_message = request["messages"][0]["content"]
+    assert "WORLD_CONTEXT" in system_message
+    assert "search_story_library" not in [
+        tool["function"]["name"] for tool in request["tools"]
+    ]
     assert response.debug is not None
-    search_result = response.debug.liteToolCalls[0]["result"]
-    assert search_result["bricks"]
-    assert search_result["bricks"][0]["pool"] == "threats"
     assert response.debug.storyLibraryDebug is not None
-    assert response.debug.storyLibraryDebug["searched"][0]["name"] == "search_story_library"
-
-
-def test_lite_story_library_save_returns_personal_patch() -> None:
-    save_call = SimpleNamespace(
-        id="call_story_save",
-        function=SimpleNamespace(
-            name="save_story_library_brick",
-            arguments=json.dumps(
-                {
-                    "pool": "threats",
-                    "name": "Шумный каменный сторож",
-                    "description": (
-                        "Новая местная опасность Громма: каменный сторож, который "
-                        "пугает грохотом, но успокаивается от тихого разговора."
-                    ),
-                    "basedOnBrickIds": ["global:threats:000"],
-                    "reason": "питомец упомянул как повторяемую опасность своего мира",
-                },
-                ensure_ascii=False,
-            ),
-        ),
-    )
-    client, _completions = fake_lite_client(
-        SimpleNamespace(content="", tool_calls=[save_call]),
-        SimpleNamespace(content="Есть один шумный сторож, но я знаю, как с ним говорить.", tool_calls=None),
-    )
-
-    response = generate_lite_pet_reply(
-        lite_payload(message="а свои монстры у тебя есть?"),
-        client=client,
-        model="gpt-5.5",
-        timeout=10,
-    )
-
-    assert response.debug is not None
-    assert response.debug.storyLibraryPatch is not None
-    brick = response.debug.storyLibraryPatch["bricks"][0]
-    assert brick["pool"] == "threats"
-    assert brick["name"] == "Шумный каменный сторож"
-    assert brick["basedOnBrickIds"] == ["global:threats:000"]
+    assert response.debug.storyLibraryDebug["mode"] == "chat"
+    assert response.debug.storyLibraryDebug["injectedSpheres"]
 
 
 def test_story_library_search_uses_personal_overlay_first() -> None:
@@ -474,7 +527,10 @@ def test_story_library_search_uses_personal_overlay_first() -> None:
                         "source": "pet_overlay",
                         "pool": "threats",
                         "name": "Тихий колокольный страж",
-                        "text": "Личная опасность Пончика: звонит только когда кто-то прячет находку.",
+                        "text": (
+                            "Личная опасность Пончика: звонит только когда "
+                            "кто-то прячет находку."
+                        ),
                     }
                 ],
             }

@@ -215,41 +215,6 @@ def global_story_bricks() -> tuple[dict[str, Any], ...]:
     return tuple(bricks)
 
 
-def story_library_pool_summaries() -> list[dict[str, Any]]:
-    counts: dict[str, dict[str, Any]] = {}
-    for brick in global_story_bricks():
-        pool = str(brick["pool"])
-        entry = counts.setdefault(
-            pool,
-            {
-                "pool": pool,
-                "label": brick.get("poolLabel") or pool,
-                "count": 0,
-            },
-        )
-        entry["count"] += 1
-    return list(counts.values())
-
-
-def story_library_prompt_block() -> str:
-    summaries = story_library_pool_summaries()
-    if not summaries:
-        return ""
-    lines = "\n".join(
-        f"- {item['pool']}: {item['label']} ({item['count']})" for item in summaries
-    )
-    return (
-        "STORY_LIBRARY: у тебя есть компактная библиотека кирпичиков мира. "
-        "Не проси весь датасет и не перечисляй его. Если вопрос касается существ, "
-        "опасностей, предметов, мест, соседей, событий или повторяемого лора, можешь "
-        "вызвать search_story_library и взять 1-3 подходящих кирпичика. "
-        "Можно умеренно фантазировать на основе найденных кирпичиков. Если ты вводишь "
-        "новую именованную сущность, которую стоит помнить дальше, сначала вызови "
-        "save_story_library_brick. В видимой реплике не говори про tools, JSON или датасет.\n"
-        f"Доступные разделы:\n{lines}"
-    )
-
-
 def story_library_overlay_from_bible(character_bible: Any) -> list[dict[str, Any]]:
     bible = character_bible if _is_record(character_bible) else {}
     extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
