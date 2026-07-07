@@ -1,4 +1,9 @@
 import type { LocalPetState } from "./types";
+import { applyPetVoice } from "./petVoice";
+import {
+  storyConstructorMainScreenTemplates,
+  type StoryConstructorMainScreenKind,
+} from "./storyConstructor";
 
 const MAIN_SCREEN_REPLY_STATE_STORAGE_KEY_PREFIX = "tamagochi:v1:main-screen-reply-state";
 const EVENT_LIMIT_PER_DAY = 2;
@@ -6,6 +11,7 @@ const EVENT_MIN_GAP_MS = 4 * 60 * 60 * 1000;
 
 type ChatReturnHookContext = {
   mood: LocalPetState["mood"] | null;
+  pet?: LocalPetState | null;
 };
 
 type MainScreenReplyKind = "event" | "question" | "joke";
@@ -24,7 +30,18 @@ type MainScreenReplyState = {
   lastTemplateId: string | null;
 };
 
+function storyConstructorTemplates(
+  kind: StoryConstructorMainScreenKind,
+): MainScreenReplyTemplate[] {
+  return storyConstructorMainScreenTemplates(kind).map((template) => ({
+    id: template.id,
+    kind: template.kind,
+    text: ({ pet }) => template.text(pet),
+  }));
+}
+
 const EVENT_TEMPLATES: MainScreenReplyTemplate[] = [
+  ...storyConstructorTemplates("event"),
   {
     id: "event-shiny-crumb",
     kind: "event",
@@ -90,6 +107,7 @@ const EVENT_TEMPLATES: MainScreenReplyTemplate[] = [
 ];
 
 const QUESTION_TEMPLATES: MainScreenReplyTemplate[] = [
+  ...storyConstructorTemplates("question"),
   {
     id: "question-world",
     kind: "question",
@@ -218,6 +236,7 @@ const QUESTION_TEMPLATES: MainScreenReplyTemplate[] = [
 ];
 
 const JOKE_TEMPLATES: MainScreenReplyTemplate[] = [
+  ...storyConstructorTemplates("joke"),
   {
     id: "joke-serious-trick",
     kind: "joke",
@@ -385,9 +404,11 @@ export function buildMainScreenPetReply(pet?: LocalPetState | null): string {
   }
 
   writeState(pet, nextState);
-  return template.text({
+  const reply = template.text({
     mood: pet?.mood ?? null,
+    pet,
   });
+  return applyPetVoice(reply, pet, { mode: "local" });
 }
 
 export function buildChatReturnPetReply(pet?: LocalPetState | null): string {

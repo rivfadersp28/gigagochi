@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -33,6 +36,7 @@ from app.services.prompt_debug import (
     log_chat_completion_response,
     write_prompt_log_line,
 )
+from app.services.story_constructor import build_story_constructor_context
 
 ADVENTURE_SCENE_COUNT = 7
 TRAVEL_CARD_OUTPUT_HEIGHT = 1080
@@ -42,6 +46,10 @@ TRAVEL_CHAT_MAX_ATTEMPTS = 3
 TRAVEL_CHAT_RETRY_SECONDS = (3.0, 8.0)
 TRAVEL_IMAGE_MAX_ATTEMPTS = 3
 TRAVEL_IMAGE_RETRY_SECONDS = (60.0, 90.0)
+TRAVEL_STORY_TEMPLATE_PATH = (
+    Path(__file__).resolve().parents[2] / "data" / "travel_story_templates.json"
+)
+TRACERY_SLOT_PATTERN = re.compile(r"#([a-zA-Z0-9_]+)#")
 
 
 @dataclass(frozen=True)
@@ -215,6 +223,37 @@ class Storyboard(BaseModel):
         expected = list(range(1, ADVENTURE_SCENE_COUNT + 1))
         if scene_numbers != expected:
             raise ValueError(f"storyboard panels must be sequential: {expected}")
+        return self
+
+
+class TravelPlotBriefBeat(BaseModel):
+    sceneNumber: int = Field(ge=1, le=ADVENTURE_SCENE_COUNT)
+    function: str = Field(min_length=1, max_length=80)
+    purpose: str = Field(min_length=1, max_length=700)
+    visualSeed: str = Field(min_length=1, max_length=500)
+    mustInclude: list[str] = Field(default_factory=list, max_length=6)
+    mustAvoid: list[str] = Field(default_factory=list, max_length=6)
+
+
+class TravelPlotBrief(BaseModel):
+    templateId: str = Field(min_length=1, max_length=100)
+    templateKind: str = Field(min_length=1, max_length=50)
+    sourceTemplateIds: list[str] = Field(default_factory=list, max_length=10)
+    title: str = Field(min_length=1, max_length=160)
+    logline: str = Field(min_length=1, max_length=700)
+    directorialIntent: str = Field(min_length=1, max_length=700)
+    selectedSlots: dict[str, str] = Field(default_factory=dict)
+    beats: list[TravelPlotBriefBeat] = Field(
+        min_length=ADVENTURE_SCENE_COUNT,
+        max_length=ADVENTURE_SCENE_COUNT,
+    )
+
+    @model_validator(mode="after")
+    def require_sequential_beats(self) -> TravelPlotBrief:
+        scene_numbers = [beat.sceneNumber for beat in self.beats]
+        expected = list(range(1, ADVENTURE_SCENE_COUNT + 1))
+        if scene_numbers != expected:
+            raise ValueError(f"plot brief beats must be sequential: {expected}")
         return self
 
 
@@ -512,9 +551,182 @@ def _framework_context(framework: StoryFramework) -> dict[str, str]:
     }
 
 
+@lru_cache(maxsize=1)
+def _travel_template_catalog() -> dict[str, Any]:
+    return json.loads(TRAVEL_STORY_TEMPLATE_PATH.read_text(encoding="utf-8"))
+
+
+def _adventure_templates_for_framework(framework: StoryFramework) -> list[dict[str, Any]]:
+    catalog = _travel_template_catalog()
+    templates = catalog.get("big_adventures", {}).get("templates", [])
+    if not isinstance(templates, list):
+        return []
+
+    matching_templates = [
+        template
+        for template in templates
+        if isinstance(template, dict) and framework.framework_id in template.get("frameworkIds", [])
+    ]
+    if matching_templates:
+        return matching_templates
+    return [template for template in templates if isinstance(template, dict)]
+
+
+def _select_adventure_template(framework: StoryFramework) -> dict[str, Any]:
+    templates = _adventure_templates_for_framework(framework)
+    if not templates:
+        raise RuntimeError("No travel adventure templates are configured")
+    return random.choice(templates)
+
+
+def _expand_tracery_text(
+    value: str,
+    *,
+    slots: dict[str, Any],
+    selected_slots: dict[str, str],
+    depth: int = 0,
+) -> str:
+    if depth > 8:
+        return value
+
+    def replace_slot(match: re.Match[str]) -> str:
+        slot_name = match.group(1)
+        if slot_name in selected_slots:
+            return selected_slots[slot_name]
+
+        choices = slots.get(slot_name)
+        if not isinstance(choices, list) or not choices:
+            return match.group(0)
+
+        selected_value = str(random.choice(choices))
+        expanded_value = _expand_tracery_text(
+            selected_value,
+            slots=slots,
+            selected_slots=selected_slots,
+            depth=depth + 1,
+        )
+        selected_slots[slot_name] = expanded_value
+        return expanded_value
+
+    return TRACERY_SLOT_PATTERN.sub(replace_slot, value)
+
+
+def _expand_template_text(
+    value: Any,
+    *,
+    slots: dict[str, Any],
+    selected_slots: dict[str, str],
+) -> str:
+    if not isinstance(value, str):
+        return ""
+    return _expand_tracery_text(value, slots=slots, selected_slots=selected_slots)
+
+
+def _expand_template_text_list(
+    value: Any,
+    *,
+    slots: dict[str, Any],
+    selected_slots: dict[str, str],
+) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        _expand_template_text(item, slots=slots, selected_slots=selected_slots)
+        for item in value
+        if isinstance(item, str)
+    ]
+
+
+def _build_travel_plot_brief(
+    payload: GenerateTravelRequest,
+    framework: StoryFramework,
+    *,
+    template: dict[str, Any] | None = None,
+) -> TravelPlotBrief:
+    catalog = _travel_template_catalog()
+    slots = catalog.get("slots", {})
+    if not isinstance(slots, dict):
+        slots = {}
+
+    selected_template = template or _select_adventure_template(framework)
+    selected_slots = {
+        "hero": _string_value(payload.pet.name) or "персонаж",
+    }
+
+    beats: list[dict[str, Any]] = []
+    for beat in selected_template.get("beats", []):
+        if not isinstance(beat, dict):
+            continue
+        beats.append(
+            {
+                "sceneNumber": beat.get("sceneNumber"),
+                "function": _string_value(beat.get("function")),
+                "purpose": _expand_template_text(
+                    beat.get("purposePattern"),
+                    slots=slots,
+                    selected_slots=selected_slots,
+                ),
+                "visualSeed": _expand_template_text(
+                    beat.get("visualSeedPattern"),
+                    slots=slots,
+                    selected_slots=selected_slots,
+                ),
+                "mustInclude": _expand_template_text_list(
+                    beat.get("mustInclude"),
+                    slots=slots,
+                    selected_slots=selected_slots,
+                ),
+                "mustAvoid": _expand_template_text_list(
+                    beat.get("mustAvoid"),
+                    slots=slots,
+                    selected_slots=selected_slots,
+                ),
+            }
+        )
+
+    return TravelPlotBrief.model_validate(
+        {
+            "templateId": selected_template.get("id"),
+            "templateKind": selected_template.get("kind"),
+            "sourceTemplateIds": selected_template.get("sourceTemplateIds", []),
+            "title": _expand_template_text(
+                selected_template.get("titlePattern"),
+                slots=slots,
+                selected_slots=selected_slots,
+            ),
+            "logline": _expand_template_text(
+                selected_template.get("loglinePattern"),
+                slots=slots,
+                selected_slots=selected_slots,
+            ),
+            "directorialIntent": _string_value(selected_template.get("directorialIntent")),
+            "selectedSlots": selected_slots,
+            "beats": beats,
+        }
+    )
+
+
+def _plot_brief_context(plot_brief: TravelPlotBrief | None) -> dict[str, Any]:
+    if plot_brief is None:
+        return {}
+    return plot_brief.model_dump(mode="json")
+
+
+def _log_plot_brief_selection(plot_brief: TravelPlotBrief) -> dict[str, Any]:
+    return write_prompt_log_line(
+        {
+            "event": "travel_stage",
+            "promptType": "internal_selection",
+            "label": "travel/plot_template",
+            "plotBrief": _plot_brief_context(plot_brief),
+        }
+    )
+
+
 def _build_adventure_story_messages(
     payload: GenerateTravelRequest,
     framework: StoryFramework,
+    plot_brief: TravelPlotBrief | None = None,
 ) -> list[dict[str, str]]:
     return [
         {
@@ -540,6 +752,12 @@ CHARACTER_CONTEXT_JSON:
 SELECTED_STORY_FRAMEWORK_JSON:
 {_compact_json(_framework_context(framework))}
 
+PLOT_TEMPLATE_BRIEF_JSON:
+{_compact_json(_plot_brief_context(plot_brief), max_chars=8500)}
+
+STORY_CONSTRUCTOR_BRICKS_JSON:
+{_compact_json(build_story_constructor_context(), max_chars=3800)}
+
 Required output:
 - adventureTitle
 - coreIdea
@@ -553,6 +771,18 @@ Required output:
 Story requirements:
 - Use the selected framework as the narrative backbone, but keep one central
   problem focused from beginning to end.
+- Use PLOT_TEMPLATE_BRIEF_JSON as a hidden structural scaffold. Follow its
+  7 beat functions in order, but do not copy its sentences literally.
+- Use STORY_CONSTRUCTOR_BRICKS_JSON as a low-level palette for concrete objects,
+  places, neighbors, creatures and soft obstacles. Pick only details that become
+  causally useful in the story. Never mention the constructor or dataset.
+- Invent fresh concrete locations, sensory details, actions, causes and turns
+  inside the scaffold. The output must feel like an original authored adventure,
+  not a filled template.
+- Every fullStory paragraph must serve one or more plot-brief beats. Do not
+  add a second central premise, unrelated side quest, or random one-scene lore.
+- Make the story specific enough that the next storyboard stage can create
+  7 distinct image prompts from it.
 - The story should read like a chapter from an adventure book.
 - The reader should always understand where the character is, what the character wants,
   what is preventing the character, what the character decides to do next, and why the next
@@ -584,12 +814,13 @@ Story requirements:
 def _generate_complete_story(
     payload: GenerateTravelRequest,
     framework: StoryFramework,
+    plot_brief: TravelPlotBrief | None = None,
 ) -> tuple[AdventureStory, dict[str, Any]]:
     settings = get_settings()
     client = get_openai_client()
     request_kwargs: dict[str, Any] = {
         "model": get_chat_model(settings),
-        "messages": _build_adventure_story_messages(payload, framework),
+        "messages": _build_adventure_story_messages(payload, framework, plot_brief),
         "response_format": {
             "type": "json_schema",
             "json_schema": {
@@ -608,7 +839,10 @@ def _generate_complete_story(
     return AdventureStory.model_validate(json.loads(content)), prompt_debug
 
 
-def _build_storyboard_messages(story: AdventureStory) -> list[dict[str, str]]:
+def _build_storyboard_messages(
+    story: AdventureStory,
+    plot_brief: TravelPlotBrief | None = None,
+) -> list[dict[str, str]]:
     return [
         {
             "role": "system",
@@ -626,8 +860,13 @@ Convert this complete adventure into exactly 7 storyboard panels.
 COMPLETE_ADVENTURE_JSON:
 {story.model_dump_json(indent=2)}
 
+PLOT_TEMPLATE_BRIEF_JSON:
+{_compact_json(_plot_brief_context(plot_brief), max_chars=8500)}
+
 Storyboard rules:
 - Exactly 7 panels, sceneNumber 1 through 7.
+- Panel N should visualize beat N from PLOT_TEMPLATE_BRIEF_JSON while staying
+  faithful to COMPLETE_ADVENTURE_JSON.
 - Each panel must show a unique visual moment.
 - Every panel must move the story forward through clear cause and effect.
 - Avoid repeated environments, repeated actions, standing conversations, filler travel,
@@ -650,12 +889,15 @@ Panel fields:
     ]
 
 
-def _generate_storyboard(story: AdventureStory) -> tuple[Storyboard, dict[str, Any]]:
+def _generate_storyboard(
+    story: AdventureStory,
+    plot_brief: TravelPlotBrief | None = None,
+) -> tuple[Storyboard, dict[str, Any]]:
     settings = get_settings()
     client = get_openai_client()
     request_kwargs: dict[str, Any] = {
         "model": get_chat_model(settings),
-        "messages": _build_storyboard_messages(story),
+        "messages": _build_storyboard_messages(story, plot_brief),
         "response_format": {
             "type": "json_schema",
             "json_schema": {
@@ -930,9 +1172,10 @@ def _generate_scene_images(
 def generate_travel(payload: GenerateTravelRequest) -> GenerateTravelResponse:
     travel_id = uuid.uuid4()
     framework = _select_story_framework()
-    prompt_debug = [_log_framework_selection(framework)]
-    complete_story, story_prompt_debug = _generate_complete_story(payload, framework)
-    storyboard, storyboard_prompt_debug = _generate_storyboard(complete_story)
+    plot_brief = _build_travel_plot_brief(payload, framework)
+    prompt_debug = [_log_framework_selection(framework), _log_plot_brief_selection(plot_brief)]
+    complete_story, story_prompt_debug = _generate_complete_story(payload, framework, plot_brief)
+    storyboard, storyboard_prompt_debug = _generate_storyboard(complete_story, plot_brief)
     prompt_debug.extend([story_prompt_debug, storyboard_prompt_debug])
     story = _travel_story_from_pipeline(complete_story, storyboard)
     images = _generate_scene_images(travel_id, payload, story)

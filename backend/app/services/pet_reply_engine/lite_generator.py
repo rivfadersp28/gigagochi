@@ -43,6 +43,7 @@ from app.services.pet_reply_engine.state_interpreter import (
     energy_band,
     hunger_band,
 )
+from app.services.pet_reply_engine.voice_profile import pet_voice_prompt_block
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
 
 MAX_LITE_TOOL_ROUNDS = 3
@@ -572,6 +573,9 @@ def build_lite_chat_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     memory_block = _memory_context_block(payload.memoryContext)
     if memory_block:
         system_content = f"{system_content}\n\n{memory_block}"
+    voice_block = pet_voice_prompt_block(payload.pet.characterBible, stage=payload.pet.stage)
+    if voice_block:
+        system_content = f"{system_content}\n\n{voice_block}"
     baby_examples = _baby_phrase_examples_for_prompt(payload)
     if baby_examples:
         system_content = f"{system_content}\n\n{baby_examples}"
@@ -1590,11 +1594,13 @@ def consolidate_user_memory(
 
 def build_proactive_messages(payload: LocalProactiveRequest) -> list[dict[str, str]]:
     memory_block = _memory_context_block(payload.memoryContext) or "Память пока пустая."
+    voice_block = pet_voice_prompt_block(payload.pet.characterBible, stage=payload.pet.stage)
     reason = (
         payload.memoryContext.proactiveCandidate.reason
         if payload.memoryContext.proactiveCandidate
         else "есть личный повод из памяти пользователя"
     )
+    voice_section = f"\n\n{voice_block}" if voice_block else ""
     return [
         {
             "role": "system",
@@ -1602,7 +1608,7 @@ def build_proactive_messages(payload: LocalProactiveRequest) -> list[dict[str, s
                 f"Отвечай мне как {_short_pet_description(payload.pet)}. "
                 f"Сейчас ты {_age_role_hint(LocalChatRequest(message='...', pet=payload.pet))}. "
                 f"Ответ максимум {MAX_REPLY_CHARS} символов; можно короче.\n\n"
-                f"{_lite_persona_contract()}\n\n"
+                f"{_lite_persona_contract()}{voice_section}\n\n"
                 f"{memory_block}\n\n"
                 "Ты сам решил написать пользователю первым. "
                 f"Повод: {reason}. Напиши одну живую реплику. "

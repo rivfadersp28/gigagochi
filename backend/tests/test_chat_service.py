@@ -14,6 +14,7 @@ from app.services.chat_service import chat_with_local_pet
 from app.services.pet_reply_engine.lite_generator import (
     build_lite_chat_messages,
     build_memory_extraction_messages,
+    build_proactive_messages,
     consolidate_user_memory,
     extract_lite_overlay_patch_from_reply,
     extract_user_memory_operations,
@@ -132,6 +133,48 @@ def test_lite_prompt_includes_state_modifier() -> None:
     assert "Ты сейчас голодный." in build_lite_chat_messages(hungry)[0]["content"]
 
 
+def test_lite_prompt_includes_character_voice_control() -> None:
+    payload = lite_payload(
+        pet={
+            "name": "Пончик",
+            "description": "кремовый котенок-компаньон",
+            "stage": "baby",
+            "mood": "idle",
+            "stats": {
+                "hunger": 80,
+                "happiness": 80,
+                "energy": 80,
+                "cleanliness": 80,
+            },
+            "characterBible": {
+                "voice": {
+                    "rules": ["говорит коротко и замечает запахи"],
+                    "catchphrases": ["нюх-нюх"],
+                    "sample_replies": ["Нюх-нюх... я проверю носом."],
+                    "avoid": ["я ассистент"],
+                },
+                "dialogue_style": {
+                    "voice_rules": ["не объясняет свои правила"],
+                },
+                "lore": {
+                    "voice": {
+                        "favorite_phrases": ["нос подсказывает"],
+                    }
+                },
+            },
+        }
+    )
+
+    system_message = build_lite_chat_messages(payload)[0]["content"]
+
+    assert "VOICE_CONTROL" in system_message
+    assert "нижний регулятор всех видимых реплик питомца" in system_message
+    assert "говорит коротко и замечает запахи" in system_message
+    assert "нюх-нюх" in system_message
+    assert "Нюх-нюх... я проверю носом." in system_message
+    assert "я ассистент" in system_message
+
+
 def test_lite_prompt_does_not_include_character_seed() -> None:
     system_message = build_lite_chat_messages(
         lite_payload(
@@ -234,6 +277,44 @@ def test_lite_prompt_uses_baby_dataset_phrases_only_for_baby() -> None:
     assert "Приветик! Ты пришёл!" in baby_system_message
     assert "Примеры детской манеры из датасета" not in teen_system_message
     assert "Приветик! Ты пришёл!" not in teen_system_message
+
+
+def test_proactive_prompt_includes_character_voice_control() -> None:
+    payload = LocalProactiveRequest.model_validate(
+        {
+            "pet": {
+                "name": "Пончик",
+                "description": "кремовый котенок-компаньон",
+                "stage": "baby",
+                "mood": "happy",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 80,
+                    "energy": 80,
+                    "cleanliness": 80,
+                },
+                "characterBible": {
+                    "voice": {
+                        "rules": ["говорит через маленькие бытовые детали"],
+                        "catchphrases": ["нос подсказывает"],
+                    }
+                },
+            },
+            "memoryContext": {
+                "summary": "Пользователь любит короткие диалоги.",
+                "proactiveCandidate": {
+                    "memoryIds": ["m1"],
+                    "reason": "пользователь обещал вернуться вечером",
+                },
+            },
+        }
+    )
+
+    system_message = build_proactive_messages(payload)[0]["content"]
+
+    assert "VOICE_CONTROL" in system_message
+    assert "говорит через маленькие бытовые детали" in system_message
+    assert "нос подсказывает" in system_message
 
 
 def test_lite_tools_read_and_append_overlay_fact() -> None:

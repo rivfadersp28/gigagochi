@@ -8,6 +8,10 @@ from PIL import Image
 
 from app.schemas import GenerateTravelRequest, TravelStory
 from app.services import travel_service
+from app.services.story_constructor import (
+    build_story_constructor_context,
+    story_constructor_catalog,
+)
 
 
 def travel_payload() -> GenerateTravelRequest:
@@ -76,6 +80,122 @@ def sample_png_bytes() -> bytes:
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def adventure_template(template_id: str) -> dict[str, object]:
+    templates = travel_service._travel_template_catalog()["big_adventures"]["templates"]
+    return next(template for template in templates if template["id"] == template_id)
+
+
+def test_travel_story_templates_include_background_valence_and_stat_signals() -> None:
+    catalog = travel_service._travel_template_catalog()
+
+    assert len(catalog["big_adventures"]["templates"]) >= 5
+    assert len(catalog["background_events"]["positive"]) >= 8
+    assert len(catalog["background_events"]["negative"]) >= 8
+
+    for event in catalog["background_events"]["positive"]:
+        assert event["valence"] == "positive"
+        assert event["statSignals"]
+    for event in catalog["background_events"]["negative"]:
+        assert event["valence"] == "negative"
+        assert event["statSignals"]
+
+
+def test_story_constructor_context_is_sanitized_and_compact() -> None:
+    catalog = story_constructor_catalog()
+    context = build_story_constructor_context(limit_per_pool=3)
+    serialized = str(context)
+
+    assert catalog["meta"]["format"] == "tamagochi-story-constructor-v1"
+    assert context["items"]
+    assert len(context["locations"]) <= 3
+    assert context["eventArchetypes"]
+    assert "Princess Peach" not in serialized
+    assert "Animal Crossing" not in serialized
+    assert "1-Up Mushroom" not in serialized
+
+
+def test_travel_plot_brief_expands_template_into_seven_image_ready_beats() -> None:
+    framework = next(
+        framework
+        for framework in travel_service.STORY_FRAMEWORKS
+        if framework.framework_id == "grand_mission"
+    )
+    brief = travel_service._build_travel_plot_brief(
+        travel_payload(),
+        framework,
+        template=adventure_template("rescue_without_force"),
+    )
+
+    serialized = brief.model_dump_json()
+    assert brief.templateId == "rescue_without_force"
+    assert brief.templateKind == "rescue"
+    assert brief.selectedSlots["hero"] == "Листик"
+    assert [beat.sceneNumber for beat in brief.beats] == [1, 2, 3, 4, 5, 6, 7]
+    assert all(beat.purpose for beat in brief.beats)
+    assert all(beat.visualSeed for beat in brief.beats)
+    assert "#" not in serialized
+    assert "Листик" in serialized
+    assert "спас" in serialized.lower()
+
+
+def test_adventure_story_prompt_receives_plot_brief_as_hidden_scaffold() -> None:
+    framework = travel_service.STORY_FRAMEWORKS[0]
+    brief = travel_service._build_travel_plot_brief(
+        travel_payload(),
+        framework,
+        template=adventure_template("legendary_artifact_test"),
+    )
+    messages = travel_service._build_adventure_story_messages(
+        travel_payload(),
+        framework,
+        brief,
+    )
+    user_content = messages[1]["content"]
+
+    assert "PLOT_TEMPLATE_BRIEF_JSON:" in user_content
+    assert "STORY_CONSTRUCTOR_BRICKS_JSON:" in user_content
+    assert "legendary_artifact_test" in user_content
+    assert "hidden structural scaffold" in user_content
+    assert "low-level palette" in user_content
+    assert "not a filled template" in user_content
+    assert "7 beat functions in order" in user_content
+    assert brief.selectedSlots["artifact"] in user_content
+
+
+def test_storyboard_prompt_maps_panels_to_plot_brief_beats() -> None:
+    framework = travel_service.STORY_FRAMEWORKS[0]
+    brief = travel_service._build_travel_plot_brief(
+        travel_payload(),
+        framework,
+        template=adventure_template("great_discovery_changes_home"),
+    )
+    messages = travel_service._build_storyboard_messages(
+        travel_service.AdventureStory.model_validate(
+            {
+                "adventureTitle": "Тайна света",
+                "coreIdea": "Листик раскрывает маленькую тайну дома.",
+                "world": "Теплая поляна у корня.",
+                "mainObjective": "Понять, почему свет задерживается.",
+                "importantCharacters": ["Листик — маленький листолицый питомец."],
+                "importantLocations": [
+                    "Домик у корня",
+                    "Лес фонариков",
+                    "Башня лестниц",
+                ],
+                "importantObjects": [],
+                "fullStory": [f"Абзац {index}." for index in range(1, 9)],
+            }
+        ),
+        brief,
+    )
+    user_content = messages[1]["content"]
+
+    assert "PLOT_TEMPLATE_BRIEF_JSON:" in user_content
+    assert "great_discovery_changes_home" in user_content
+    assert "Panel N should visualize beat N" in user_content
+    assert "Do not invent a new plot" in messages[0]["content"]
 
 
 def test_travel_image_prompt_includes_character_asset_references() -> None:
