@@ -116,6 +116,12 @@ type PetReplyMessage = {
   playSpeechAudio: boolean;
 };
 
+type PetTapParticleBurstProps = {
+  id: number;
+  targetRef: RefObject<HTMLElement>;
+  onComplete: (id: number) => void;
+};
+
 type ShowPetReplyOptions = {
   showInConversation?: boolean;
 };
@@ -217,6 +223,28 @@ const petTapParticleConfig = {
     wobble: true,
   },
 } satisfies AnimationConfig;
+
+function PetTapParticleBurst({ id, targetRef, onComplete }: PetTapParticleBurstProps) {
+  const { reward } = useReward(targetRef, "bubbles", petTapParticleConfig);
+
+  useEffect(() => {
+    let shouldComplete = true;
+    const timeoutId = window.setTimeout(() => {
+      void reward().finally(() => {
+        if (shouldComplete) {
+          onComplete(id);
+        }
+      });
+    }, 0);
+
+    return () => {
+      shouldComplete = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [id, onComplete, reward]);
+
+  return null;
+}
 
 const PET_RENAME_PATTERNS = [
   /(?:^|[.!?]\s*)(?:теперь|отныне|с этого момента)\s+тебя\s+зовут\s+(.+)$/i,
@@ -1021,6 +1049,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [travelResult, setTravelResult] = useState<GenerateTravelResponse | null>(null);
   const [travelError, setTravelError] = useState<string | null>(null);
   const [conversationReplyMessageId, setConversationReplyMessageId] = useState<number | null>(null);
+  const [petTapParticleBursts, setPetTapParticleBursts] = useState<number[]>([]);
   const [petTapPulseId, setPetTapPulseId] = useState(0);
   const [selectedSprite, setSelectedSprite] = useState<SelectedSprite | null>(null);
   const [idleAnimationSettings, setIdleAnimationSettings] = useState<IdleAnimationSettings>(
@@ -1037,6 +1066,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const speechBubbleRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const petTapTargetRef = useRef<HTMLButtonElement>(null);
+  const petTapParticleBurstIdRef = useRef(0);
   const petTapSoundStartedOnPointerRef = useRef(false);
   const isSendingChatRef = useRef(false);
   const isTravelGeneratingRef = useRef(false);
@@ -1044,11 +1074,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const keyboardSyncUntilRef = useRef(0);
   const pet = localPet.pet;
   const includePromptDebug = promptSettings.includePromptDebug;
-  const { replay: replayPetTapParticles } = useReward(
-    petTapTargetRef as RefObject<HTMLElement>,
-    "bubbles",
-    petTapParticleConfig,
-  );
 
   const showPetReplyMessage = useCallback((
     text: string,
@@ -1089,9 +1114,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     if (shouldReduceMotion()) {
       return;
     }
-    void replayPetTapParticles();
+    const nextBurstId = petTapParticleBurstIdRef.current + 1;
+    petTapParticleBurstIdRef.current = nextBurstId;
+    setPetTapParticleBursts((currentBursts) => [...currentBursts, nextBurstId]);
     setPetTapPulseId((currentId) => currentId + 1);
-  }, [replayPetTapParticles]);
+  }, []);
+
+  const removePetTapParticleBurst = useCallback((burstId: number) => {
+    setPetTapParticleBursts((currentBursts) =>
+      currentBursts.filter((currentBurstId) => currentBurstId !== burstId),
+    );
+  }, []);
 
   const handlePetTapPointerDown = useCallback((event: PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) {
@@ -1726,6 +1759,14 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
         <div className="main-pet-stage absolute left-0 top-[277px] z-20 h-[372px] w-[402px]">
           <div className="pet-idle-rotation absolute left-0 top-0 h-[357px] w-[402px]" style={idleRotationStyle}>
+            {petTapParticleBursts.map((burstId) => (
+              <PetTapParticleBurst
+                key={burstId}
+                id={burstId}
+                targetRef={petTapTargetRef as RefObject<HTMLElement>}
+                onComplete={removePetTapParticleBurst}
+              />
+            ))}
             <button
               key={petTapPulseId}
               ref={petTapTargetRef}
