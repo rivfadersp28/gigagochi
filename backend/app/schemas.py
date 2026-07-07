@@ -226,6 +226,7 @@ class LocalProactiveRequest(BaseModel):
 class LocalAmbientRequest(BaseModel):
     pet: LocalPetChatContext
     history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
+    recentAmbientReplies: list[str] = Field(default_factory=list, max_length=6)
     memoryContext: LocalPetMemoryContext | None = None
     replyMaxChars: int | None = Field(default=None, ge=1, le=260)
     nowIso: str | None = Field(default=None, max_length=80)

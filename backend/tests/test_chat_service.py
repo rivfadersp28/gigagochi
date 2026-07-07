@@ -419,18 +419,26 @@ def test_ambient_prompt_uses_same_phrase_engine_without_forced_world_context() -
                 },
             },
             "history": [],
+            "recentAmbientReplies": ["Привет, я Листик. Я просто рядом."],
             "replyMaxChars": 120,
         }
     )
 
-    system_message = build_ambient_messages(payload)[0]["content"]
+    messages = build_ambient_messages(payload)
+    system_message = messages[0]["content"]
 
     assert "idle-фразу на главном экране" in system_message
+    assert "IDLE_DIALOGUE_ENGINE" in system_message
+    assert "Расскажи про свой мир так" in system_message
+    assert "Привет, я Листик. Я просто рядом." in system_message
+    assert "я просто рядом" in system_message
     assert "VOICE_CONTROL" in system_message
     assert "WORLD_CONTEXT" not in system_message
     assert "лист шепчет" not in system_message
     assert "заинтересоваться его миром" in system_message
     assert "STORY_LIBRARY" not in system_message
+    assert messages[-1]["content"] != "Скажи одну короткую idle-фразу сейчас."
+    assert "выбранному диалоговому ходу" in messages[-1]["content"]
 
 
 def test_ambient_prompt_uses_world_context_when_history_needs_it() -> None:

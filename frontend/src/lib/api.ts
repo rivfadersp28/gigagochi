@@ -565,6 +565,7 @@ export async function generateLocalAmbientMessage(
     includeDebug?: boolean;
     memoryContext?: LocalPetMemoryContext;
     history?: LocalChatMessage[];
+    recentAmbientReplies?: string[];
     replyMaxChars?: number;
   } = {},
 ): Promise<LocalChatResponse> {
@@ -577,6 +578,7 @@ export async function generateLocalAmbientMessage(
       replyMaxChars: options.replyMaxChars,
       nowIso: new Date().toISOString(),
       timezone: browserTimezone(),
+      recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-6),
       pet: {
         name: pet.name,
         description: pet.description,

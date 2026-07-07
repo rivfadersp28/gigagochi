@@ -9,6 +9,7 @@ import type {
   CSSProperties,
   FormEvent,
   MouseEvent,
+  PointerEvent as ReactPointerEvent,
   ReactNode,
   RefObject,
 } from "react";
@@ -121,6 +122,32 @@ type PetTapParticleBurstProps = {
   onComplete: (id: number) => void;
 };
 
+type FoodAsset = {
+  id: string;
+  label: string;
+  src: string;
+  rotation: number;
+};
+
+type FoodDragState = {
+  pointerId: number | null;
+  x: number;
+  y: number;
+  isDragging: boolean;
+};
+
+type FeedFoodTokenStyle = CSSProperties & {
+  "--feed-food-rotation": string;
+  "--feed-food-size": string;
+};
+
+type DraggableFoodTokenProps = {
+  food: FoodAsset;
+  disabled: boolean;
+  onDrop: (clientX: number, clientY: number, foodId: string) => boolean;
+  onActivate: (foodId: string) => boolean;
+};
+
 type ShowPetReplyOptions = {
   showInConversation?: boolean;
   dialogueHook?: boolean;
@@ -170,6 +197,33 @@ const actionIconSrc = {
   feed: `/figma/action-feed-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
   travel: `/figma/action-travel-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
 } as const;
+
+const feedFoodAssets = [
+  {
+    id: "berry-bowl",
+    label: "ягоды",
+    src: "/figma/feed-food-berry-bowl.svg",
+    rotation: -8,
+  },
+  {
+    id: "moon-bun",
+    label: "булочка",
+    src: "/figma/feed-food-moon-bun.svg",
+    rotation: 7,
+  },
+  {
+    id: "fish-snack",
+    label: "рыбка",
+    src: "/figma/feed-food-fish-snack.svg",
+    rotation: -4,
+  },
+  {
+    id: "leaf-crunch",
+    label: "листик",
+    src: "/figma/feed-food-leaf-crunch.svg",
+    rotation: 6,
+  },
+] satisfies FoodAsset[];
 
 const mainActionButtonGlassStyle = {
   height: "58.203px",
@@ -351,6 +405,15 @@ function shouldReduceMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+function isPointNearRect(clientX: number, clientY: number, rect: DOMRect, padding: number) {
+  return (
+    clientX >= rect.left - padding &&
+    clientX <= rect.right + padding &&
+    clientY >= rect.top - padding &&
+    clientY <= rect.bottom + padding
+  );
+}
+
 function estimatedKeyboardVisibleHeight(fullHeight: number) {
   const ratio = FIGMA_KEYBOARD_VISIBLE_HEIGHT / FIGMA_SCREEN_HEIGHT;
   return Math.max(320, Math.min(fullHeight, Math.round(fullHeight * ratio)));
@@ -427,6 +490,108 @@ function MainPetBackdrop({ src }: { src: string }) {
     <div className="main-pet-backdrop" aria-hidden="true">
       <img src={src} alt="" draggable={false} />
     </div>
+  );
+}
+
+function DraggableFoodToken({
+  food,
+  disabled,
+  onDrop,
+  onActivate,
+}: DraggableFoodTokenProps) {
+  const [dragState, setDragState] = useState<FoodDragState>({
+    pointerId: null,
+    x: 0,
+    y: 0,
+    isDragging: false,
+  });
+  const dragOriginRef = useRef({ x: 0, y: 0 });
+  const suppressClickRef = useRef(false);
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (disabled) {
+      return;
+    }
+
+    dragOriginRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+    suppressClickRef.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragState({
+      pointerId: event.pointerId,
+      x: 0,
+      y: 0,
+      isDragging: true,
+    });
+  }
+
+  function handlePointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const nextX = event.clientX - dragOriginRef.current.x;
+    const nextY = event.clientY - dragOriginRef.current.y;
+    if (Math.hypot(nextX, nextY) > 6) {
+      suppressClickRef.current = true;
+    }
+    setDragState((current) => ({
+      ...current,
+      x: nextX,
+      y: nextY,
+    }));
+  }
+
+  function finishPointerDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const didFeed = onDrop(event.clientX, event.clientY, food.id);
+    suppressClickRef.current = suppressClickRef.current || didFeed;
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    setDragState({
+      pointerId: null,
+      x: 0,
+      y: 0,
+      isDragging: false,
+    });
+  }
+
+  const tokenStyle: FeedFoodTokenStyle = {
+    "--feed-food-rotation": `${food.rotation}deg`,
+    "--feed-food-size": dragState.isDragging ? "92px" : "78px",
+    transform: `translate3d(${dragState.x}px, ${dragState.y}px, 0) rotate(var(--feed-food-rotation))`,
+  };
+
+  return (
+    <button
+      type="button"
+      className={`feed-food-token ${dragState.isDragging ? "feed-food-token--dragging" : ""}`}
+      style={tokenStyle}
+      disabled={disabled}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={finishPointerDrag}
+      onPointerCancel={finishPointerDrag}
+      onClick={(event) => {
+        if (suppressClickRef.current) {
+          suppressClickRef.current = false;
+          event.preventDefault();
+          return;
+        }
+        onActivate(food.id);
+      }}
+      aria-label={`Дать персонажу ${food.label}`}
+    >
+      <img src={food.src} alt="" draggable={false} />
+    </button>
   );
 }
 
@@ -1028,6 +1193,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   });
   const proactiveAttemptedRef = useRef(false);
   const ambientRequestIdRef = useRef(0);
+  const ambientReplyHistoryRef = useRef<string[]>([]);
   const petReplyMessageRef = useRef<PetReplyMessage | null>(null);
   const activeDialogueHookRef = useRef<string | null>(null);
   const speechBubbleRef = useRef<HTMLDivElement>(null);
@@ -1040,6 +1206,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const keyboardSyncUntilRef = useRef(0);
   const pet = localPet.pet;
   const includePromptDebug = promptSettings.includePromptDebug;
+
+  useEffect(() => {
+    ambientReplyHistoryRef.current = [];
+  }, [petId]);
 
   const showPetReplyMessage = useCallback((
     text: string,
@@ -1086,6 +1256,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       includeDebug: includePromptDebug,
       memoryContext,
       history,
+      recentAmbientReplies: ambientReplyHistoryRef.current,
       replyMaxChars: 160,
     })
       .then((response) => {
@@ -1098,6 +1269,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           dialogueHook: true,
           voiceMode: "generated",
         });
+        ambientReplyHistoryRef.current = [
+          ...ambientReplyHistoryRef.current,
+          response.reply,
+        ].slice(-5);
         localPet.applyMoodHint(
           response.moodHint,
           response.debug?.liteOverlayPatch,

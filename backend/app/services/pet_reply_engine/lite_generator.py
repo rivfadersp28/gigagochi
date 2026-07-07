@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -73,6 +74,64 @@ USER_MEMORY_KINDS = (
 )
 FACE_HINTS = ("happy", "excited", "curious", "content", "grumpy", "sleepy")
 MAX_MEMORY_CONTEXT_ITEMS = 5
+MAX_RECENT_AMBIENT_REPLIES = 5
+
+AMBIENT_RANDOM = random.SystemRandom()
+
+AMBIENT_DIALOGUE_MOVES: tuple[tuple[str, str], ...] = (
+    (
+        "ask_user_world",
+        "спроси владельца про его мир так, будто хочешь туда заглянуть на пять минут",
+    ),
+    (
+        "ask_school_or_work_role",
+        "спроси про школу, учебу, работу или роль владельца в сегодняшнем дне",
+    ),
+    (
+        "ask_identity_playful",
+        "игриво спроси, кем владелец себя сегодня чувствует: человеком, "
+        "зверьком, погодой или происшествием",
+    ),
+    (
+        "ask_inner_weather",
+        "спроси про настроение через образ погоды внутри",
+    ),
+    (
+        "ask_day_map",
+        "попроси описать день как маленькую карту с препятствием и сокровищем",
+    ),
+    (
+        "ask_tiny_ritual",
+        "спроси про маленький ритуал перед сложным делом",
+    ),
+    (
+        "offer_mini_quest",
+        "попроси у владельца маленький квест или предложи ему выбрать крошечное действие",
+    ),
+    (
+        "small_funny_event",
+        "расскажи одно короткое смешное событие питомца и закончи вопросом владельцу",
+    ),
+    (
+        "small_care_check",
+        "мягко проверь, как у владельца дела, но без фразы 'я рядом'",
+    ),
+    (
+        "lore_hook_if_context_allows",
+        "если в контексте уже есть WORLD_CONTEXT, зацепись за одну деталь "
+        "мира и переведи ее в вопрос владельцу",
+    ),
+)
+
+AMBIENT_DIALOGUE_EXAMPLES: tuple[str, ...] = (
+    "Расскажи про свой мир так, будто я туда попал на пять минут. Что я увижу первым?",
+    "Если честно: ты больше человек, животное или отдельное погодное явление?",
+    "В школе ты был бы отличником, нарушителем или тем, кто рисует на полях?",
+    "Какая погода у тебя внутри: ясно, туман, гроза или редкий смешной ветер?",
+    "Какой у тебя ритуал перед сложным делом: собраться, пошутить или исчезнуть на минутку?",
+    "Если нарисовать карту твоего дня, где там болото, где гора, а где сокровище?",
+    "Дай мне маленький квест на сегодня. Только такой, чтобы я не зазнался.",
+)
 
 LITE_AGE_ROLE_HINTS = {
     "baby": "малыш такого существа",
@@ -422,6 +481,43 @@ def _memory_context_block(memory_context: LocalPetMemoryContext | None) -> str |
         "\n".join(lines)
         + "\nИспользуй это только если уместно. Не пересказывай память списком "
         "и не говори, что видишь memoryContext."
+    )
+
+
+def _recent_ambient_replies_block(replies: list[str]) -> str | None:
+    lines: list[str] = []
+    for reply in replies[-MAX_RECENT_AMBIENT_REPLIES:]:
+        text = _clean_optional_text(reply, 180)
+        if text:
+            lines.append(f"- {text}")
+    if not lines:
+        return None
+    return (
+        "Недавние idle-фразы, которые уже показывались владельцу. "
+        "Не повторяй их начало, смысловую конструкцию и главный образ:\n"
+        + "\n".join(lines)
+    )
+
+
+def _ambient_dialogue_block(*, has_world_context: bool) -> str:
+    moves = list(AMBIENT_DIALOGUE_MOVES)
+    if not has_world_context:
+        moves = [
+            move
+            for move in moves
+            if move[0] != "lore_hook_if_context_allows"
+        ]
+    move_id, move_description = AMBIENT_RANDOM.choice(moves)
+    examples = "\n".join(f"- {example}" for example in AMBIENT_DIALOGUE_EXAMPLES)
+    return (
+        "IDLE_DIALOGUE_ENGINE: главная задача idle-фразы — подтолкнуть владельца "
+        "к диалогу, а не просто сообщить, что питомец рядом. "
+        "Фраза должна быть самостоятельной, живой и обращенной к владельцу. "
+        "Не начинай с шаблонов вроде 'Привет, я ...', 'я просто рядом', "
+        "'я тут' или 'я с тобой'.\n"
+        f"Выбранный диалоговый ход: {move_id} — {move_description}.\n"
+        "Примеры старых удачных ходов. Бери тип вопроса и энергию, но не копируй дословно:\n"
+        f"{examples}"
     )
 
 
@@ -1745,6 +1841,11 @@ def build_ambient_messages(
     voice_section = f"\n\n{voice_block}" if voice_block else ""
     memory_section = f"\n\n{memory_block}" if memory_block else ""
     world_section = f"\n\n{context_bundle.prompt_block}" if context_bundle.prompt_block else ""
+    recent_ambient_block = _recent_ambient_replies_block(payload.recentAmbientReplies)
+    recent_ambient_section = f"\n\n{recent_ambient_block}" if recent_ambient_block else ""
+    ambient_dialogue_section = (
+        f"\n\n{_ambient_dialogue_block(has_world_context=bool(context_bundle.prompt_block))}"
+    )
     return [
         {
             "role": "system",
@@ -1752,19 +1853,28 @@ def build_ambient_messages(
                 f"Отвечай мне как {_short_pet_description(payload.pet)}. "
                 f"Сейчас ты {_age_role_hint(LocalChatRequest(message='...', pet=payload.pet))}. "
                 f"Ответ максимум {reply_limit} символов; можно короче, даже одной фразой.\n\n"
-                f"{_lite_persona_contract()}{voice_section}{world_section}{memory_section}\n\n"
+                f"{_lite_persona_contract()}{voice_section}{world_section}"
+                f"{memory_section}{recent_ambient_section}{ambient_dialogue_section}\n\n"
                 "Ты произносишь idle-фразу на главном экране без прямого вопроса пользователя. "
                 "Скажи одну живую реплику владельцу: можешь обратиться к нему напрямую, "
                 "поделиться маленьким наблюдением, заинтересоваться его миром или задать "
                 "короткий естественный вопрос. Не объясняй, что это автоматическое сообщение. "
-                "Не превращай каждую idle-фразу в вопрос и не повторяй одни и те же обороты."
+                "Сильнее всего следуй выбранному диалоговому ходу. "
+                "Не превращай каждую idle-фразу в одинаковый вопрос и не повторяй "
+                "одни и те же обороты."
             ),
         },
         *[
             {"role": "assistant" if item.role == "pet" else "user", "content": item.text}
             for item in payload.history[-6:]
         ],
-        {"role": "user", "content": "Скажи одну короткую idle-фразу сейчас."},
+        {
+            "role": "user",
+            "content": (
+                "Сгенерируй одну короткую idle-реплику "
+                "по выбранному диалоговому ходу."
+            ),
+        },
     ]
 
 
