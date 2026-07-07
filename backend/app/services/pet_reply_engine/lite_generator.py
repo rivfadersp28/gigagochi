@@ -1730,7 +1730,11 @@ def build_ambient_messages(
 ) -> list[dict[str, str]]:
     reply_limit = payload.replyMaxChars or 160
     memory_block = _memory_context_block(payload.memoryContext)
-    voice_block = pet_voice_prompt_block(payload.pet.characterBible, stage=payload.pet.stage)
+    voice_block = pet_voice_prompt_block(
+        payload.pet.characterBible,
+        stage=payload.pet.stage,
+        include_catchphrases=False,
+    )
     if context_bundle is None:
         context_bundle = assemble_pet_context(
             mode="ambient",
@@ -1750,9 +1754,10 @@ def build_ambient_messages(
                 f"Ответ максимум {reply_limit} символов; можно короче, даже одной фразой.\n\n"
                 f"{_lite_persona_contract()}{voice_section}{world_section}{memory_section}\n\n"
                 "Ты произносишь idle-фразу на главном экране без прямого вопроса пользователя. "
-                "Скажи одно живое наблюдение, маленькое событие или короткий крючок "
-                "из своего мира. Не объясняй, что это автоматическое сообщение. "
-                "Не спрашивай пользователя каждый раз."
+                "Скажи одну живую реплику владельцу: можешь обратиться к нему напрямую, "
+                "поделиться маленьким наблюдением, заинтересоваться его миром или задать "
+                "короткий естественный вопрос. Не объясняй, что это автоматическое сообщение. "
+                "Не превращай каждую idle-фразу в вопрос и не повторяй одни и те же обороты."
             ),
         },
         *[

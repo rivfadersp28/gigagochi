@@ -51,7 +51,12 @@ def _bullet_block(title: str, values: list[str]) -> str:
     return f"{title}:\n{lines}"
 
 
-def pet_voice_prompt_block(character_bible: Any, *, stage: str | None = None) -> str | None:
+def pet_voice_prompt_block(
+    character_bible: Any,
+    *,
+    stage: str | None = None,
+    include_catchphrases: bool = True,
+) -> str | None:
     bible = _record(character_bible)
     if not bible:
         return None
@@ -95,12 +100,15 @@ def pet_voice_prompt_block(character_bible: Any, *, stage: str | None = None) ->
         limit=MAX_AVOID_PATTERNS,
     )
 
-    blocks = [
-        _bullet_block("Правила голоса", rules),
-        _bullet_block("Любимые короткие фразы", catchphrases),
-        _bullet_block("Примеры ритма", sample_replies),
-        _bullet_block("Не говорить так", avoid_patterns),
-    ]
+    blocks = [_bullet_block("Правила голоса", rules)]
+    if include_catchphrases:
+        blocks.append(_bullet_block("Любимые короткие фразы", catchphrases))
+    blocks.extend(
+        [
+            _bullet_block("Примеры ритма", sample_replies),
+            _bullet_block("Не говорить так", avoid_patterns),
+        ]
+    )
     body = "\n\n".join(block for block in blocks if block)
     if not body:
         return None

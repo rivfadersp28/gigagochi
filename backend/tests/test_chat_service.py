@@ -333,7 +333,7 @@ def test_proactive_prompt_includes_character_voice_control() -> None:
     assert "нос подсказывает" in system_message
 
 
-def test_proactive_prompt_uses_preselected_world_context() -> None:
+def test_proactive_prompt_skips_world_context_without_story_signal() -> None:
     payload = LocalProactiveRequest.model_validate(
         {
             "pet": {
@@ -361,11 +361,43 @@ def test_proactive_prompt_uses_preselected_world_context() -> None:
 
     system_message = build_proactive_messages(payload)[0]["content"]
 
+    assert "WORLD_CONTEXT" not in system_message
+    assert "STORY_LIBRARY" not in system_message
+
+
+def test_proactive_prompt_uses_preselected_world_context_when_needed() -> None:
+    payload = LocalProactiveRequest.model_validate(
+        {
+            "pet": {
+                "name": "Пончик",
+                "description": "кремовый котенок-компаньон",
+                "stage": "baby",
+                "mood": "happy",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 80,
+                    "energy": 80,
+                    "cleanliness": 80,
+                },
+                "characterBible": {},
+            },
+            "memoryContext": {
+                "summary": "Пользователь спрашивал, есть ли в мире монстры.",
+                "proactiveCandidate": {
+                    "memoryIds": ["m1"],
+                    "reason": "пользователь интересовался монстрами в мире питомца",
+                },
+            },
+        }
+    )
+
+    system_message = build_proactive_messages(payload)[0]["content"]
+
     assert "WORLD_CONTEXT" in system_message
     assert "STORY_LIBRARY" not in system_message
 
 
-def test_ambient_prompt_uses_same_phrase_context_engine() -> None:
+def test_ambient_prompt_uses_same_phrase_engine_without_forced_world_context() -> None:
     payload = LocalAmbientRequest.model_validate(
         {
             "pet": {
@@ -395,6 +427,40 @@ def test_ambient_prompt_uses_same_phrase_context_engine() -> None:
 
     assert "idle-фразу на главном экране" in system_message
     assert "VOICE_CONTROL" in system_message
+    assert "WORLD_CONTEXT" not in system_message
+    assert "лист шепчет" not in system_message
+    assert "заинтересоваться его миром" in system_message
+    assert "STORY_LIBRARY" not in system_message
+
+
+def test_ambient_prompt_uses_world_context_when_history_needs_it() -> None:
+    payload = LocalAmbientRequest.model_validate(
+        {
+            "pet": {
+                "name": "Листик",
+                "description": "серый челик с листом вместо лица",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 80,
+                    "energy": 80,
+                    "cleanliness": 80,
+                },
+                "characterBible": {},
+            },
+            "history": [
+                {
+                    "role": "user",
+                    "text": "Есть ли в твоем мире монстры?",
+                }
+            ],
+            "replyMaxChars": 120,
+        }
+    )
+
+    system_message = build_ambient_messages(payload)[0]["content"]
+
     assert "WORLD_CONTEXT" in system_message
     assert "STORY_LIBRARY" not in system_message
 
@@ -435,6 +501,7 @@ def test_ambient_generation_returns_story_context_debug() -> None:
     assert response.debug is not None
     assert response.debug.storyLibraryDebug is not None
     assert response.debug.storyLibraryDebug["mode"] == "ambient"
+    assert response.debug.storyLibraryDebug["injectedSpheres"] == []
 
 
 def test_lite_tools_read_and_append_overlay_fact() -> None:

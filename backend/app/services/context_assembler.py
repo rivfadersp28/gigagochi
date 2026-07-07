@@ -79,12 +79,6 @@ POOL_KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-MODE_DEFAULT_POOLS: dict[ContextMode, tuple[str, ...]] = {
-    "chat": (),
-    "proactive": ("items", "locations", "neighbors", "creatures"),
-    "ambient": ("items", "locations", "neighbors", "creatures", "threats"),
-}
-
 
 @dataclass(frozen=True)
 class AssembledPetContext:
@@ -130,15 +124,12 @@ def _memory_text(memory_context: LocalPetMemoryContext | None) -> str:
     return _text_value(" ".join(parts), limit=1200)
 
 
-def _pool_hints(text: str, mode: ContextMode) -> list[str]:
+def _pool_hints(text: str) -> list[str]:
     text_tokens = _tokens(text)
     hints: list[str] = []
     for pool, keywords in POOL_KEYWORDS.items():
         if any(keyword in text_tokens or keyword in text.casefold() for keyword in keywords):
             hints.append(pool)
-
-    if not hints:
-        hints.extend(MODE_DEFAULT_POOLS[mode])
 
     result: list[str] = []
     seen: set[str] = set()
@@ -148,6 +139,24 @@ def _pool_hints(text: str, mode: ContextMode) -> list[str]:
         seen.add(hint)
         result.append(hint)
     return result[:5]
+
+
+def _retrieval_signal_text(
+    *,
+    user_message: str,
+    history: list[LocalChatHistoryItem],
+    memory_context: LocalPetMemoryContext | None,
+) -> str:
+    return _text_value(
+        " ".join(
+            [
+                user_message,
+                _history_text(history),
+                _memory_text(memory_context),
+            ]
+        ),
+        limit=1500,
+    )
 
 
 def _query_text(
@@ -227,8 +236,13 @@ def assemble_pet_context(
         history=active_history,
         memory_context=memory_context,
     )
-    hints = _pool_hints(query, mode)
-    if mode == "chat" and not hints:
+    signal_text = _retrieval_signal_text(
+        user_message=user_message,
+        history=active_history,
+        memory_context=memory_context,
+    )
+    hints = _pool_hints(signal_text)
+    if not hints:
         return AssembledPetContext(
             prompt_block="",
             debug={
