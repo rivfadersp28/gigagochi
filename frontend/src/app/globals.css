@@ -490,32 +490,6 @@ body {
   top: 248px;
 }
 
-.main-mobile-scene--feed .pet-status-name {
-  top: 92px;
-}
-
-.main-mobile-scene--feed .top-status-strip {
-  top: 131px;
-  left: 50%;
-  gap: 0;
-  transform: translate3d(-50%, 0, 0);
-}
-
-.main-mobile-scene--feed .feed-hunger-meter,
-.main-mobile-scene--feed .hunger-progress-ring {
-  width: 56px;
-  height: 56px;
-  flex-basis: 56px;
-}
-
-.main-mobile-scene--feed .top-status-icon--mood,
-.main-mobile-scene--feed .top-status-icon--energy {
-  width: 0;
-  flex-basis: 0;
-  opacity: 0;
-  transform: scale(0.7);
-}
-
 .main-mobile-scene--feed .main-pet-stage {
   top: 251px;
 }
@@ -568,14 +542,12 @@ body {
   justify-content: space-between;
   gap: 8px;
   overflow: visible;
-  padding: 18px 16px;
-  border-radius: 32px;
-  background: rgba(41, 41, 41, 0.44);
-  box-shadow:
-    inset 0 2px 4px rgba(255, 255, 255, 0.09),
-    0 18px 46px rgba(0, 0, 0, 0.24);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   pointer-events: auto;
 }
 
