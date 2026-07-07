@@ -36,15 +36,15 @@
       },
       "proactive": {
         "age": true,
-        "mood": false,
-        "hunger": false,
-        "energy": false
+        "mood": true,
+        "hunger": true,
+        "energy": true
       },
       "ambient": {
         "age": true,
-        "mood": false,
-        "hunger": false,
-        "energy": false
+        "mood": true,
+        "hunger": true,
+        "energy": true
       }
     },
     "ageRoleHints": {
