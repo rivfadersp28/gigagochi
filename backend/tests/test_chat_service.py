@@ -21,6 +21,7 @@ from app.services.pet_reply_engine.lite_generator import (
     generate_lite_pet_reply,
     generate_proactive_pet_message,
 )
+from app.services.story_library import search_story_library
 
 
 class FakeLiteCompletions:
@@ -87,7 +88,11 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert "Отвечай владельцу естественно, кратко и своим голосом." in system_message
     assert "Верни только JSON" not in system_message
     assert "response_format" not in request
-    assert [tool["function"]["name"] for tool in request["tools"]] == ["update_pet_name"]
+    assert [tool["function"]["name"] for tool in request["tools"]] == [
+        "update_pet_name",
+        "search_story_library",
+        "save_story_library_brick",
+    ]
 
 
 def test_lite_prompt_includes_age_role_hint() -> None:
@@ -279,6 +284,15 @@ def test_lite_prompt_uses_baby_dataset_phrases_only_for_baby() -> None:
     assert "Приветик! Ты пришёл!" not in teen_system_message
 
 
+def test_lite_prompt_includes_story_library_inventory() -> None:
+    system_message = build_lite_chat_messages(lite_payload())[0]["content"]
+
+    assert "STORY_LIBRARY" in system_message
+    assert "search_story_library" in system_message
+    assert "Доступные разделы" in system_message
+    assert "threats" in system_message
+
+
 def test_proactive_prompt_includes_character_voice_control() -> None:
     payload = LocalProactiveRequest.model_validate(
         {
@@ -357,6 +371,8 @@ def test_lite_tools_read_and_append_overlay_fact() -> None:
     assert response.debug is not None
     assert [tool["function"]["name"] for tool in completions.calls[0]["tools"]] == [
         "update_pet_name",
+        "search_story_library",
+        "save_story_library_brick",
         "read_character_json",
         "update_character_json",
     ]
@@ -368,6 +384,112 @@ def test_lite_tools_read_and_append_overlay_fact() -> None:
     assert read_result["characterBible"]["lore"]["home"]["story"] == "каменная балка"
     assert response.debug.liteOverlayPatch is not None
     assert response.debug.liteOverlayPatch["facts"][0]["kind"] == "preference"
+
+
+def test_lite_story_library_tool_searches_global_bricks() -> None:
+    search_call = SimpleNamespace(
+        id="call_story_search",
+        function=SimpleNamespace(
+            name="search_story_library",
+            arguments=json.dumps(
+                {
+                    "query": "есть ли в мире монстры и опасности",
+                    "poolHints": ["threats"],
+                    "limit": 3,
+                },
+                ensure_ascii=False,
+            ),
+        ),
+    )
+    client, completions = fake_lite_client(
+        SimpleNamespace(content="", tool_calls=[search_call]),
+        SimpleNamespace(content="Да, но они чаще странные, чем злые.", tool_calls=None),
+    )
+
+    response = generate_lite_pet_reply(
+        lite_payload(message="есть ли в твоем мире монстры?"),
+        client=client,
+        model="gpt-5.5",
+        timeout=10,
+    )
+
+    assert len(completions.calls) == 2
+    assert response.reply == "Да, но они чаще странные, чем злые."
+    assert response.debug is not None
+    search_result = response.debug.liteToolCalls[0]["result"]
+    assert search_result["bricks"]
+    assert search_result["bricks"][0]["pool"] == "threats"
+    assert response.debug.storyLibraryDebug is not None
+    assert response.debug.storyLibraryDebug["searched"][0]["name"] == "search_story_library"
+
+
+def test_lite_story_library_save_returns_personal_patch() -> None:
+    save_call = SimpleNamespace(
+        id="call_story_save",
+        function=SimpleNamespace(
+            name="save_story_library_brick",
+            arguments=json.dumps(
+                {
+                    "pool": "threats",
+                    "name": "Шумный каменный сторож",
+                    "description": (
+                        "Новая местная опасность Громма: каменный сторож, который "
+                        "пугает грохотом, но успокаивается от тихого разговора."
+                    ),
+                    "basedOnBrickIds": ["global:threats:000"],
+                    "reason": "питомец упомянул как повторяемую опасность своего мира",
+                },
+                ensure_ascii=False,
+            ),
+        ),
+    )
+    client, _completions = fake_lite_client(
+        SimpleNamespace(content="", tool_calls=[save_call]),
+        SimpleNamespace(content="Есть один шумный сторож, но я знаю, как с ним говорить.", tool_calls=None),
+    )
+
+    response = generate_lite_pet_reply(
+        lite_payload(message="а свои монстры у тебя есть?"),
+        client=client,
+        model="gpt-5.5",
+        timeout=10,
+    )
+
+    assert response.debug is not None
+    assert response.debug.storyLibraryPatch is not None
+    brick = response.debug.storyLibraryPatch["bricks"][0]
+    assert brick["pool"] == "threats"
+    assert brick["name"] == "Шумный каменный сторож"
+    assert brick["basedOnBrickIds"] == ["global:threats:000"]
+
+
+def test_story_library_search_uses_personal_overlay_first() -> None:
+    character_bible = {
+        "extensions": {
+            "story_library_overlay": {
+                "version": 1,
+                "bricks": [
+                    {
+                        "id": "pet:threats:quiet-bell",
+                        "source": "pet_overlay",
+                        "pool": "threats",
+                        "name": "Тихий колокольный страж",
+                        "text": "Личная опасность Пончика: звонит только когда кто-то прячет находку.",
+                    }
+                ],
+            }
+        }
+    }
+
+    result = search_story_library(
+        query="кто такой тихий колокольный страж",
+        pool_hints=["threats"],
+        character_bible=character_bible,
+        limit=3,
+    )
+
+    assert result["bricks"][0]["id"] == "pet:threats:quiet-bell"
+    assert result["bricks"][0]["source"] == "pet_overlay"
 
 
 def test_lite_tool_updates_pet_name() -> None:

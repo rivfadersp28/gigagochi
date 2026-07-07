@@ -1367,7 +1367,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       appendLocalChatMessages([assistantMessage]);
       recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
       showPetReplyMessage(response.reply, true, { showInConversation: true });
-      localPet.applyMoodHint(response.moodHint, response.debug?.liteOverlayPatch);
+      localPet.applyMoodHint(
+        response.moodHint,
+        response.debug?.liteOverlayPatch,
+        response.debug?.storyLibraryPatch,
+      );
       if (response.petPatch?.name) {
         localPet.updateName(response.petPatch.name);
       }

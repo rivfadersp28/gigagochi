@@ -45,6 +45,12 @@ from app.services.pet_reply_engine.state_interpreter import (
 )
 from app.services.pet_reply_engine.voice_profile import pet_voice_prompt_block
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
+from app.services.story_library import (
+    merge_story_library_patch,
+    search_story_library,
+    story_library_patch_for_new_brick,
+    story_library_prompt_block,
+)
 
 MAX_LITE_TOOL_ROUNDS = 3
 MAX_LITE_BABY_EXAMPLES = 8
@@ -195,6 +201,99 @@ LITE_CHARACTER_TOOLS: list[dict[str, Any]] = [
                     "source": {"type": ["string", "null"]},
                 },
                 "required": ["kind", "text", "pathHint", "source"],
+            },
+        },
+    },
+]
+
+STORY_LIBRARY_TOOLS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_story_library",
+            "description": (
+                "Search compact story bricks for this pet's world: creatures, dangers, "
+                "objects, locations, neighbors, recurring events, or personal invented "
+                "bricks. Use before answering questions about what exists in the world "
+                "or before inventing a new related entity."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300,
+                        "description": "The user's concrete lookup need in natural language.",
+                    },
+                    "poolHints": {
+                        "type": "array",
+                        "maxItems": 5,
+                        "items": {"type": "string", "maxLength": 60},
+                        "description": (
+                            "Optional broad pool hints such as threats, creatures, items, "
+                            "locations, neighbors. Leave empty if unsure."
+                        ),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 5,
+                        "description": "How many bricks to return.",
+                    },
+                },
+                "required": ["query", "poolHints", "limit"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_story_library_brick",
+            "description": (
+                "Save a new named story brick invented in this chat for this pet only. "
+                "Use when the new creature, object, place, danger, neighbor, or recurring "
+                "detail should be remembered in later chats. The new brick should be based "
+                "on searched reference bricks, not unrelated lore."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "pool": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60,
+                        "description": "Broad pool name, e.g. threats, creatures, items, locations.",
+                    },
+                    "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120,
+                        "description": "Short reusable name of the invented brick.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 700,
+                        "description": (
+                            "Reusable description preserving the core meaning. Include "
+                            "how it relates to the reference bricks if useful."
+                        ),
+                    },
+                    "basedOnBrickIds": {
+                        "type": "array",
+                        "maxItems": 8,
+                        "items": {"type": "string", "maxLength": 120},
+                    },
+                    "reason": {
+                        "type": "string",
+                        "maxLength": 240,
+                        "description": "Why this should recur for this pet.",
+                    },
+                },
+                "required": ["pool", "name", "description", "basedOnBrickIds", "reason"],
             },
         },
     },
@@ -531,7 +630,7 @@ def _baby_phrase_examples_for_prompt(payload: LocalChatRequest) -> str | None:
 
 
 def _lite_tools_for_message(text: str) -> list[dict[str, Any]] | None:
-    tools = list(PET_STATE_TOOLS)
+    tools = [*PET_STATE_TOOLS, *STORY_LIBRARY_TOOLS]
     if LITE_RAG_REQUEST_PATTERN.search(text):
         tools.extend(LITE_CHARACTER_TOOLS)
     return tools
@@ -576,6 +675,9 @@ def build_lite_chat_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     voice_block = pet_voice_prompt_block(payload.pet.characterBible, stage=payload.pet.stage)
     if voice_block:
         system_content = f"{system_content}\n\n{voice_block}"
+    story_library_block = story_library_prompt_block()
+    if story_library_block:
+        system_content = f"{system_content}\n\n{story_library_block}"
     baby_examples = _baby_phrase_examples_for_prompt(payload)
     if baby_examples:
         system_content = f"{system_content}\n\n{baby_examples}"
@@ -1138,6 +1240,7 @@ def _handle_tool_call(
     payload: LocalChatRequest,
     tool_call: Any,
     overlay_patch: dict[str, Any],
+    story_library_patch: dict[str, Any],
     pet_patch: dict[str, Any],
     *,
     client: Any,
@@ -1161,6 +1264,18 @@ def _handle_tool_call(
         )
     elif name == "update_character_json":
         result = _append_lite_fact(overlay_patch, arguments)
+    elif name == "search_story_library":
+        result = search_story_library(
+            query=str(arguments.get("query") or payload.message),
+            pool_hints=arguments.get("poolHints"),
+            limit=int(arguments.get("limit") or 3),
+            character_bible=payload.pet.characterBible,
+            story_library_patch=story_library_patch,
+        )
+    elif name == "save_story_library_brick":
+        result = story_library_patch_for_new_brick(arguments)
+        if result.get("saved") and isinstance(result.get("patch"), dict):
+            merge_story_library_patch(story_library_patch, result["patch"])
     elif name == "update_pet_name":
         result = _update_pet_name_patch(pet_patch, arguments)
     else:
@@ -1183,6 +1298,7 @@ def generate_lite_pet_reply(
     messages: list[dict[str, Any]] = build_lite_chat_messages(payload)
     tools = _lite_tools_for_message(payload.message)
     overlay_patch: dict[str, Any] = {}
+    story_library_patch: dict[str, Any] = {}
     pet_patch: dict[str, Any] = {}
     tool_debug: list[dict[str, Any]] = []
     prompt_debug: list[dict[str, Any]] = []
@@ -1223,6 +1339,7 @@ def generate_lite_pet_reply(
                 payload,
                 tool_call,
                 overlay_patch,
+                story_library_patch,
                 pet_patch,
                 client=openai_client,
                 model=model,
@@ -1238,6 +1355,26 @@ def generate_lite_pet_reply(
         promptDebug=prompt_debug,
         liteToolCalls=tool_debug,
         liteOverlayPatch=overlay_patch or None,
+        storyLibraryPatch=story_library_patch or None,
+        storyLibraryDebug=(
+            {
+                "searched": [
+                    item
+                    for item in tool_debug
+                    if item.get("name") == "search_story_library"
+                ],
+                "saved": [
+                    item
+                    for item in tool_debug
+                    if item.get("name") == "save_story_library_brick"
+                ],
+            }
+            if any(
+                item.get("name") in {"search_story_library", "save_story_library_brick"}
+                for item in tool_debug
+            )
+            else None
+        ),
     )
     return LocalChatResponse(
         reply=reply,

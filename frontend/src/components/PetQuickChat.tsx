@@ -35,6 +35,7 @@ type PetQuickChatProps = {
   onChatResponse: (response: LocalChatResponse) => void;
   onPetPatch?: (patch?: LocalChatPetPatch) => void;
   onLiteOverlayPatch?: (patch?: Record<string, unknown>) => void;
+  onStoryLibraryPatch?: (patch?: Record<string, unknown>) => void;
 };
 
 function errorMessage(caught: unknown, fallback: string): string {
@@ -47,6 +48,7 @@ export function PetQuickChat({
   onChatResponse,
   onPetPatch,
   onLiteOverlayPatch,
+  onStoryLibraryPatch,
 }: PetQuickChatProps) {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +97,7 @@ export function PetQuickChat({
       appendLocalChatMessages([assistantMessage]);
       onChatResponse(response);
       onPetPatch?.(response.petPatch);
+      onStoryLibraryPatch?.(response.debug?.storyLibraryPatch);
       recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
       const selectedMemoryIds = memoryContext.relevantMemories.map((item) => item.id);
       if (selectedMemoryIds.length) {

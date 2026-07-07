@@ -100,6 +100,8 @@ export type LocalChatResponse = {
     promptDebug?: ChatPromptDebug[];
     liteToolCalls?: Record<string, unknown>[];
     liteOverlayPatch?: Record<string, unknown>;
+    storyLibraryPatch?: Record<string, unknown>;
+    storyLibraryDebug?: Record<string, unknown>;
     memoryDebug?: Record<string, unknown>;
   };
 };

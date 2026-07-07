@@ -17,6 +17,7 @@ const MAX_CHAT_MESSAGES = 50;
 const MAX_CHAT_MESSAGE_TEXT = 8000;
 const MAX_PENDING_MAIN_REPLY_TEXT = 260;
 const PENDING_MAIN_REPLY_MAX_AGE_MS = 5 * 60 * 1000;
+const MAX_STORY_LIBRARY_BRICKS = 80;
 const MIN_STAT = 0;
 const MAX_STAT = 100;
 const MOODS: PetMood[] = ["idle", "happy", "hungry", "sad"];
@@ -254,6 +255,59 @@ function liteFactKey(fact: Record<string, unknown>): string {
   return `${String(fact.sphere ?? "")}:${String(fact.kind ?? "lore_fact")}:${normalizeText(fact.text).toLocaleLowerCase()}`;
 }
 
+function normalizeStoryLibraryBrick(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const name = normalizeText(value.name, 120);
+  const text = normalizeText(value.text ?? value.description, 8000);
+  const pool = normalizeText(value.pool, 80) || "personal";
+  if (!name || !text) {
+    return null;
+  }
+  const id =
+    normalizeText(value.id, 160) ||
+    `pet:${pool}:${name.toLocaleLowerCase("ru-RU")}:${text.slice(0, 32).toLocaleLowerCase("ru-RU")}`;
+
+  return {
+    ...value,
+    id,
+    source: normalizeText(value.source, 80) || "pet_overlay",
+    pool,
+    poolLabel: normalizeText(value.poolLabel, 160) || pool,
+    name,
+    text,
+    attributes: isRecord(value.attributes) ? value.attributes : {},
+    basedOnBrickIds: Array.isArray(value.basedOnBrickIds)
+      ? value.basedOnBrickIds.filter((item): item is string => typeof item === "string")
+      : [],
+    createdAt: isIsoDate(value.createdAt) ? value.createdAt : new Date().toISOString(),
+  };
+}
+
+function normalizeStoryLibraryBricks(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(normalizeStoryLibraryBrick)
+    .filter((brick): brick is Record<string, unknown> => Boolean(brick));
+}
+
+function dedupeStoryLibraryBricks(values: Record<string, unknown>[]): Record<string, unknown>[] {
+  const seen = new Set<string>();
+  const result: Record<string, unknown>[] = [];
+  for (const brick of values) {
+    const id = String(brick.id ?? "");
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    result.push(brick);
+  }
+  return result.slice(-MAX_STORY_LIBRARY_BRICKS);
+}
+
 function liteFactsFromSpheres(value: unknown): Record<string, unknown>[] {
   if (!isRecord(value)) {
     return [];
@@ -351,6 +405,50 @@ export function applyLiteOverlayPatch(
             ...patch,
             facts: mergedFacts,
             ...(mergedSpheres ? { spheres: mergedSpheres } : {}),
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      },
+    },
+  };
+}
+
+export function applyStoryLibraryPatch(
+  state: LocalPetState,
+  patch: Record<string, unknown> | undefined,
+): LocalPetState {
+  if (!patch || !state.assetSet?.characterBible) {
+    return state;
+  }
+
+  const patchBricks = normalizeStoryLibraryBricks(patch.bricks);
+  if (!patchBricks.length) {
+    return state;
+  }
+
+  const characterBible = state.assetSet.characterBible;
+  const currentExtensions = isRecord(characterBible.extensions) ? characterBible.extensions : {};
+  const currentOverlay = isRecord(currentExtensions.story_library_overlay)
+    ? currentExtensions.story_library_overlay
+    : {};
+  const mergedBricks = dedupeStoryLibraryBricks([
+    ...normalizeStoryLibraryBricks(currentOverlay.bricks),
+    ...patchBricks,
+  ]);
+
+  return {
+    ...state,
+    assetSet: {
+      ...state.assetSet,
+      characterBible: {
+        ...characterBible,
+        extensions: {
+          ...currentExtensions,
+          story_library_overlay: {
+            ...currentOverlay,
+            ...patch,
+            version: 1,
+            bricks: mergedBricks,
             updatedAt: new Date().toISOString(),
           },
         },

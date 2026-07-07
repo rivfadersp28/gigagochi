@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   applyOfflineProgress,
   applyLiteOverlayPatch as applyStoredLiteOverlayPatch,
+  applyStoryLibraryPatch as applyStoredStoryLibraryPatch,
   calculatePetMood,
   calculatePetStage,
   clearLocalChatHistory,
@@ -32,8 +33,10 @@ type UseLocalPetStateResult = {
   applyMoodHint: (
     moodHint?: PetMood,
     liteOverlayPatch?: Record<string, unknown>,
+    storyLibraryPatch?: Record<string, unknown>,
   ) => LocalPetState | null;
   applyLiteOverlayPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
+  applyStoryLibraryPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
 };
 
 function saveAndReturn(state: LocalPetState) {
@@ -161,27 +164,36 @@ export function useLocalPetState(): UseLocalPetStateResult {
     return nextPet;
   }, [pet]);
 
-  const applyMoodHint = useCallback((moodHint?: PetMood, liteOverlayPatch?: Record<string, unknown>) => {
-    if (!pet) {
+  const applyMoodHint = useCallback((
+    moodHint?: PetMood,
+    liteOverlayPatch?: Record<string, unknown>,
+    storyLibraryPatch?: Record<string, unknown>,
+  ) => {
+    const currentPet = readLocalPetState() ?? pet;
+    if (!currentPet) {
       return null;
     }
 
     const now = new Date();
     const stats = {
-      ...pet.stats,
-      happiness: Math.min(100, pet.stats.happiness + 5),
+      ...currentPet.stats,
+      happiness: Math.min(100, currentPet.stats.happiness + 5),
     };
     const nextState = {
-      ...pet,
+      ...currentPet,
       updatedAt: now.toISOString(),
       lastInteractionAt: now.toISOString(),
-      stage: calculatePetStage(pet.createdAt, now),
+      stage: calculatePetStage(currentPet.createdAt, now),
       mood: moodHint ?? calculatePetMood(stats),
       stats,
     };
-    const nextPet = saveAndReturn(
-      liteOverlayPatch ? applyStoredLiteOverlayPatch(nextState, liteOverlayPatch) : nextState,
-    );
+    const withLiteOverlay = liteOverlayPatch
+      ? applyStoredLiteOverlayPatch(nextState, liteOverlayPatch)
+      : nextState;
+    const withStoryLibrary = storyLibraryPatch
+      ? applyStoredStoryLibraryPatch(withLiteOverlay, storyLibraryPatch)
+      : withLiteOverlay;
+    const nextPet = saveAndReturn(withStoryLibrary);
     setPet(nextPet);
     return nextPet;
   }, [pet]);
@@ -201,6 +213,21 @@ export function useLocalPetState(): UseLocalPetStateResult {
     return nextPet;
   }, []);
 
+  const applyStoryLibraryPatch = useCallback((patch?: Record<string, unknown>) => {
+    if (!patch) {
+      return null;
+    }
+
+    const currentPet = readLocalPetState();
+    if (!currentPet) {
+      return null;
+    }
+
+    const nextPet = saveAndReturn(applyStoredStoryLibraryPatch(currentPet, patch));
+    setPet(nextPet);
+    return nextPet;
+  }, []);
+
   return {
     pet,
     status,
@@ -213,5 +240,6 @@ export function useLocalPetState(): UseLocalPetStateResult {
     applyGeneratedAssets,
     applyMoodHint,
     applyLiteOverlayPatch,
+    applyStoryLibraryPatch,
   };
 }

@@ -217,7 +217,11 @@ export function ChatView({ petId }: ChatViewProps) {
       };
       setMessages(appendLocalChatMessages([assistantMessage]).messages);
       recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
-      localPet.applyMoodHint(response.moodHint, response.debug?.liteOverlayPatch);
+      localPet.applyMoodHint(
+        response.moodHint,
+        response.debug?.liteOverlayPatch,
+        response.debug?.storyLibraryPatch,
+      );
       if (response.petPatch?.name) {
         localPet.updateName(response.petPatch.name);
       }

@@ -120,6 +120,8 @@ class LocalChatDebug(BaseModel):
     promptDebug: list[dict[str, Any]] = Field(default_factory=list)
     liteToolCalls: list[dict[str, Any]] = Field(default_factory=list)
     liteOverlayPatch: dict[str, Any] | None = None
+    storyLibraryPatch: dict[str, Any] | None = None
+    storyLibraryDebug: dict[str, Any] | None = None
     memoryDebug: dict[str, Any] | None = None
 
 
