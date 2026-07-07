@@ -111,9 +111,15 @@
     "templates": [
       {
         "id": "journey_to_wonder",
-        "sourceTemplateIds": ["journey"],
+        "sourceTemplateIds": [
+          "journey"
+        ],
         "kind": "journey",
-        "frameworkIds": ["chase_the_impossible", "expedition", "great_event"],
+        "frameworkIds": [
+          "chase_the_impossible",
+          "expedition",
+          "great_event"
+        ],
         "titlePattern": "Путешествие к месту, где #world_problem#",
         "loglinePattern": "#hero# покидает родное место: #home_place#, чтобы понять, почему #world_problem#, и в финале получает знак: #kind_reward#.",
         "directorialIntent": "Большое путешествие без злодея: чувство дороги, открытия и возвращения домой.",
@@ -123,64 +129,105 @@
             "function": "inciting_wonder",
             "purposePattern": "#hero# замечает, что #world_problem#, и решает выйти из безопасного места.",
             "visualSeedPattern": "#home_place#, первый странный знак, герой на пороге решения",
-            "mustInclude": ["ясная причина отправиться", "родное место героя"],
-            "mustAvoid": ["объяснять всю тайну сразу"]
+            "mustInclude": [
+              "ясная причина отправиться",
+              "родное место героя"
+            ],
+            "mustAvoid": [
+              "объяснять всю тайну сразу"
+            ]
           },
           {
             "sceneNumber": 2,
             "function": "first_threshold",
             "purposePattern": "Новая локация: #first_location#. Там появляется первый след и мягкое препятствие.",
             "visualSeedPattern": "#first_location#, видимый след, движение вперед",
-            "mustInclude": ["первый след", "новая локация"],
-            "mustAvoid": ["случайная прогулка без цели"]
+            "mustInclude": [
+              "первый след",
+              "новая локация"
+            ],
+            "mustAvoid": [
+              "случайная прогулка без цели"
+            ]
           },
           {
             "sceneNumber": 3,
             "function": "wrong_turn",
             "purposePattern": "Герой #mistake#, поэтому проблема становится конкретнее и ближе.",
             "visualSeedPattern": "ошибка героя, изменившийся путь, тревожная но мягкая атмосфера",
-            "mustInclude": ["понятная ошибка", "последствие ошибки"],
-            "mustAvoid": ["наказание или жестокость"]
+            "mustInclude": [
+              "понятная ошибка",
+              "последствие ошибки"
+            ],
+            "mustAvoid": [
+              "наказание или жестокость"
+            ]
           },
           {
             "sceneNumber": 4,
             "function": "new_understanding",
             "purposePattern": "Следующая локация: #second_location#. Там герой замечает маленькую деталь и понимает новое правило пути.",
             "visualSeedPattern": "#second_location#, крупная деталь-подсказка, герой смотрит внимательнее",
-            "mustInclude": ["новое правило", "активное наблюдение героя"],
-            "mustAvoid": ["новый случайный артефакт"]
+            "mustInclude": [
+              "новое правило",
+              "активное наблюдение героя"
+            ],
+            "mustAvoid": [
+              "новый случайный артефакт"
+            ]
           },
           {
             "sceneNumber": 5,
             "function": "approach_to_wonder",
             "purposePattern": "Герой применяет #hero_quality#, чтобы добраться до места кульминации: #climax_location#.",
             "visualSeedPattern": "приближение к месту кульминации: #climax_location#, масштаб растет",
-            "mustInclude": ["личное качество героя", "нарастание масштаба"],
-            "mustAvoid": ["решение силой"]
+            "mustInclude": [
+              "личное качество героя",
+              "нарастание масштаба"
+            ],
+            "mustAvoid": [
+              "решение силой"
+            ]
           },
           {
             "sceneNumber": 6,
             "function": "revelation",
             "purposePattern": "Кульминация: #climax_location#. Герой видит настоящую причину чуда и помогает миру через #hero_quality#.",
             "visualSeedPattern": "#climax_location#, центральное открытие, герой действует",
-            "mustInclude": ["главное открытие", "видимое действие героя"],
-            "mustAvoid": ["новый конфликт в последнюю минуту"]
+            "mustInclude": [
+              "главное открытие",
+              "видимое действие героя"
+            ],
+            "mustAvoid": [
+              "новый конфликт в последнюю минуту"
+            ]
           },
           {
             "sceneNumber": 7,
             "function": "changed_return",
             "purposePattern": "Герой возвращается домой; финальный знак: #kind_reward#. Мир становится немного яснее.",
             "visualSeedPattern": "возвращение домой, маленький знак изменения, теплое завершение",
-            "mustInclude": ["возвращение", "эмоциональное изменение"],
-            "mustAvoid": ["новые важные сущности"]
+            "mustInclude": [
+              "возвращение",
+              "эмоциональное изменение"
+            ],
+            "mustAvoid": [
+              "новые важные сущности"
+            ]
           }
         ]
       },
       {
         "id": "legendary_artifact_test",
-        "sourceTemplateIds": ["artifact"],
+        "sourceTemplateIds": [
+          "artifact"
+        ],
         "kind": "artifact",
-        "frameworkIds": ["chase_the_impossible", "expedition", "grand_mission"],
+        "frameworkIds": [
+          "chase_the_impossible",
+          "expedition",
+          "grand_mission"
+        ],
         "titlePattern": "Поиск легендарного #artifact#",
         "loglinePattern": "#hero# ищет #artifact#, но понимает, что артефакт открывается только тому, кто выбирает #hero_quality#.",
         "directorialIntent": "Артефакт не приз, а проверка характера; история должна оставаться конкретной и визуальной.",
@@ -190,64 +237,105 @@
             "function": "legend_enters_life",
             "purposePattern": "Герой слышит легенду: #artifact#. Он узнает, какую маленькую беду артефакт может исправить.",
             "visualSeedPattern": "легенда становится видимой в обычном месте героя",
-            "mustInclude": ["легенда", "практическая причина искать артефакт"],
-            "mustAvoid": ["абстрактное спасение всего мира"]
+            "mustInclude": [
+              "легенда",
+              "практическая причина искать артефакт"
+            ],
+            "mustAvoid": [
+              "абстрактное спасение всего мира"
+            ]
           },
           {
             "sceneNumber": 2,
             "function": "preparation",
             "purposePattern": "Герой готовится к пути и выбирает простой предмет или навык, который поможет позже.",
             "visualSeedPattern": "сборы, маленькая подготовка, решимость",
-            "mustInclude": ["подготовка", "будущий payoff"],
-            "mustAvoid": ["случайный набор магических вещей"]
+            "mustInclude": [
+              "подготовка",
+              "будущий payoff"
+            ],
+            "mustAvoid": [
+              "случайный набор магических вещей"
+            ]
           },
           {
             "sceneNumber": 3,
             "function": "guardian_or_rule",
             "purposePattern": "Локация проверки: #first_location#. Герой сталкивается не со злым стражем, а с правилом места.",
             "visualSeedPattern": "#first_location#, мягкий страж или знак правила",
-            "mustInclude": ["правило места", "проверка внимательности"],
-            "mustAvoid": ["бой"]
+            "mustInclude": [
+              "правило места",
+              "проверка внимательности"
+            ],
+            "mustAvoid": [
+              "бой"
+            ]
           },
           {
             "sceneNumber": 4,
             "function": "false_reading",
             "purposePattern": "Герой #mistake# и понимает, что легенда была неполной.",
             "visualSeedPattern": "ложная подсказка, герой замечает противоречие",
-            "mustInclude": ["неполная легенда", "самостоятельный вывод героя"],
-            "mustAvoid": ["внешний персонаж объясняет все сразу"]
+            "mustInclude": [
+              "неполная легенда",
+              "самостоятельный вывод героя"
+            ],
+            "mustAvoid": [
+              "внешний персонаж объясняет все сразу"
+            ]
           },
           {
             "sceneNumber": 5,
             "function": "true_test",
             "purposePattern": "Локация выбора: #second_location#. Герой выбирает помочь кому-то вместо того, чтобы быстрее взять #artifact#.",
             "visualSeedPattern": "#second_location#, выбор между целью и заботой",
-            "mustInclude": ["моральный выбор", "задержка перед целью"],
-            "mustAvoid": ["жадность как единственная мотивация"]
+            "mustInclude": [
+              "моральный выбор",
+              "задержка перед целью"
+            ],
+            "mustAvoid": [
+              "жадность как единственная мотивация"
+            ]
           },
           {
             "sceneNumber": 6,
             "function": "artifact_reveals",
             "purposePattern": "Кульминация: #climax_location#. #artifact# открывается, потому что герой проявляет #hero_quality#.",
             "visualSeedPattern": "#artifact#, локация кульминации: #climax_location#, мягкое свечение, герой проходит проверку",
-            "mustInclude": ["артефакт", "проверка характера"],
-            "mustAvoid": ["артефакт как оружие"]
+            "mustInclude": [
+              "артефакт",
+              "проверка характера"
+            ],
+            "mustAvoid": [
+              "артефакт как оружие"
+            ]
           },
           {
             "sceneNumber": 7,
             "function": "artifact_used_wisely",
             "purposePattern": "Герой использует #artifact# один раз для мира и получает финальный знак: #kind_reward#, а не трофей.",
             "visualSeedPattern": "артефакт помогает маленькому миру, спокойная развязка",
-            "mustInclude": ["осмысленное применение", "не-трофейный финал"],
-            "mustAvoid": ["новая погоня за артефактом"]
+            "mustInclude": [
+              "осмысленное применение",
+              "не-трофейный финал"
+            ],
+            "mustAvoid": [
+              "новая погоня за артефактом"
+            ]
           }
         ]
       },
       {
         "id": "rescue_without_force",
-        "sourceTemplateIds": ["rescue"],
+        "sourceTemplateIds": [
+          "rescue"
+        ],
         "kind": "rescue",
-        "frameworkIds": ["grand_mission", "expedition", "great_event"],
+        "frameworkIds": [
+          "grand_mission",
+          "expedition",
+          "great_event"
+        ],
         "titlePattern": "Спасение: #rescue_target#",
         "loglinePattern": "#hero# отправляется спасать #rescue_target#, но настоящая опасность оказывается не там, где ожидалось.",
         "directorialIntent": "Спасение должно быть активным, но мягким: герой помогает через наблюдение, смелость и заботу.",
@@ -257,64 +345,105 @@
             "function": "missing_sign",
             "purposePattern": "Родное место: #home_place#. Там появляется признак беды: #rescue_target# не вернулся или зовет на помощь.",
             "visualSeedPattern": "пустое место, след беды, герой замечает отсутствие",
-            "mustInclude": ["конкретный признак беды", "эмоциональная ставка"],
-            "mustAvoid": ["паника без причины"]
+            "mustInclude": [
+              "конкретный признак беды",
+              "эмоциональная ставка"
+            ],
+            "mustAvoid": [
+              "паника без причины"
+            ]
           },
           {
             "sceneNumber": 2,
             "function": "tracking",
             "purposePattern": "Локация следа: #first_location#. Герой использует свое внимание вместо силы.",
             "visualSeedPattern": "#first_location#, следы, герой изучает путь",
-            "mustInclude": ["след", "активное действие героя"],
-            "mustAvoid": ["герой просто случайно приходит"]
+            "mustInclude": [
+              "след",
+              "активное действие героя"
+            ],
+            "mustAvoid": [
+              "герой просто случайно приходит"
+            ]
           },
           {
             "sceneNumber": 3,
             "function": "misleading_danger",
             "purposePattern": "Герой #mistake#, и след ведет к ложной версии опасности.",
             "visualSeedPattern": "ложная опасность, герой ошибается но учится",
-            "mustInclude": ["ложная догадка", "новая информация"],
-            "mustAvoid": ["жестокая угроза"]
+            "mustInclude": [
+              "ложная догадка",
+              "новая информация"
+            ],
+            "mustAvoid": [
+              "жестокая угроза"
+            ]
           },
           {
             "sceneNumber": 4,
             "function": "real_cause",
             "purposePattern": "Локация причины: #second_location#. Герой узнает, почему #rescue_target# не может выбраться сам.",
             "visualSeedPattern": "#second_location#, причина ловушки, герой понимает масштаб",
-            "mustInclude": ["реальная причина беды", "сочувствие"],
-            "mustAvoid": ["новый злодей без подготовки"]
+            "mustInclude": [
+              "реальная причина беды",
+              "сочувствие"
+            ],
+            "mustAvoid": [
+              "новый злодей без подготовки"
+            ]
           },
           {
             "sceneNumber": 5,
             "function": "rescue_plan",
             "purposePattern": "Герой придумывает простой план, где важны #hero_quality# и подготовленная ранее деталь.",
             "visualSeedPattern": "подготовка спасения, предметы окружения, напряжение",
-            "mustInclude": ["план", "личное качество героя"],
-            "mustAvoid": ["решение внешней магией"]
+            "mustInclude": [
+              "план",
+              "личное качество героя"
+            ],
+            "mustAvoid": [
+              "решение внешней магией"
+            ]
           },
           {
             "sceneNumber": 6,
             "function": "rescue_climax",
             "purposePattern": "Кульминация: #climax_location#. Герой спасает #rescue_target#, меняя само условие ловушки.",
             "visualSeedPattern": "#climax_location#, момент спасения, ясный силуэт действия",
-            "mustInclude": ["видимое спасение", "изменение условия"],
-            "mustAvoid": ["бой или наказание"]
+            "mustInclude": [
+              "видимое спасение",
+              "изменение условия"
+            ],
+            "mustAvoid": [
+              "бой или наказание"
+            ]
           },
           {
             "sceneNumber": 7,
             "function": "gratitude_return",
             "purposePattern": "Герой и #rescue_target# возвращаются домой; остается знак благодарности: #kind_reward#.",
             "visualSeedPattern": "возвращение вдвоем, благодарность, теплый знак",
-            "mustInclude": ["благодарность", "закрытие ставки"],
-            "mustAvoid": ["новая пропажа"]
+            "mustInclude": [
+              "благодарность",
+              "закрытие ставки"
+            ],
+            "mustAvoid": [
+              "новая пропажа"
+            ]
           }
         ]
       },
       {
         "id": "villain_gentle_defeat",
-        "sourceTemplateIds": ["defeat"],
+        "sourceTemplateIds": [
+          "defeat"
+        ],
         "kind": "villain",
-        "frameworkIds": ["grand_mission", "world_transformation", "great_event"],
+        "frameworkIds": [
+          "grand_mission",
+          "world_transformation",
+          "great_event"
+        ],
         "titlePattern": "Как #hero# остановил вредителя: #villain#",
         "loglinePattern": "Вредитель портит маленький мир: #villain#. #hero# побеждает не силой, а через #hero_quality# и понимание мотива: #villain_motive#.",
         "directorialIntent": "Есть антагонист, но конфликт решается без жестокости: разобрать план, понять мотив, остановить вред.",
@@ -324,64 +453,106 @@
             "function": "harm_seen",
             "purposePattern": "#hero# видит, как вредитель нарушает порядок. Противник: #villain#. Родное место: #home_place#.",
             "visualSeedPattern": "видимые последствия проделки злодея, герой реагирует",
-            "mustInclude": ["последствие вреда", "решение вмешаться"],
-            "mustAvoid": ["страшный хоррор"]
+            "mustInclude": [
+              "последствие вреда",
+              "решение вмешаться"
+            ],
+            "mustAvoid": [
+              "страшный хоррор"
+            ]
           },
           {
             "sceneNumber": 2,
             "function": "pattern_discovered",
             "purposePattern": "Локация расследования: #first_location#. Герой замечает повторяющийся паттерн проделок вредителя.",
             "visualSeedPattern": "#first_location#, следы одинаковой проделки, герой сравнивает детали",
-            "mustInclude": ["паттерн", "расследование"],
-            "mustAvoid": ["случайная догадка"]
+            "mustInclude": [
+              "паттерн",
+              "расследование"
+            ],
+            "mustAvoid": [
+              "случайная догадка"
+            ]
           },
           {
             "sceneNumber": 3,
             "function": "trap_or_misdirection",
             "purposePattern": "Вредитель устраивает мягкую ловушку: #soft_obstacle#. Противник: #villain#.",
             "visualSeedPattern": "ловушка без насилия, запутанный путь, герой в движении",
-            "mustInclude": ["ловушка", "безопасная опасность"],
-            "mustAvoid": ["оружие"]
+            "mustInclude": [
+              "ловушка",
+              "безопасная опасность"
+            ],
+            "mustAvoid": [
+              "оружие"
+            ]
           },
           {
             "sceneNumber": 4,
             "function": "motive_hint",
             "purposePattern": "Герой понимает намек на мотив злодея: #villain_motive#.",
             "visualSeedPattern": "маленькая уязвимость злодея, герой наблюдает из укрытия",
-            "mustInclude": ["мотив", "эмпатическое понимание"],
-            "mustAvoid": ["полное оправдание вреда"]
+            "mustInclude": [
+              "мотив",
+              "эмпатическое понимание"
+            ],
+            "mustAvoid": [
+              "полное оправдание вреда"
+            ]
           },
           {
             "sceneNumber": 5,
             "function": "plan_understood",
             "purposePattern": "Локация плана: #second_location#. Герой видит главный план вредителя и находит слабое место.",
             "visualSeedPattern": "#second_location#, план злодея как визуальный механизм, слабая точка",
-            "mustInclude": ["план", "слабое место"],
-            "mustAvoid": ["новые правила мира"]
+            "mustInclude": [
+              "план",
+              "слабое место"
+            ],
+            "mustAvoid": [
+              "новые правила мира"
+            ]
           },
           {
             "sceneNumber": 6,
             "function": "nonviolent_defeat",
             "purposePattern": "Кульминация: #climax_location#. Герой останавливает план через #hero_quality#, не унижая противника.",
             "visualSeedPattern": "#climax_location#, план разваливается мягко, герой в центре действия",
-            "mustInclude": ["остановленный вред", "не силовое решение"],
-            "mustAvoid": ["бой", "месть"]
+            "mustInclude": [
+              "остановленный вред",
+              "не силовое решение"
+            ],
+            "mustAvoid": [
+              "бой",
+              "месть"
+            ]
           },
           {
             "sceneNumber": 7,
             "function": "world_repaired",
             "purposePattern": "Мир празднует, а бывший вредитель получает шанс на новую роль или тихий уход. Противник: #villain#.",
             "visualSeedPattern": "мир восстановлен, спокойный финал, след бывшего конфликта",
-            "mustInclude": ["восстановленный мир", "мягкая судьба злодея"],
-            "mustAvoid": ["новый злодей"]
+            "mustInclude": [
+              "восстановленный мир",
+              "мягкая судьба злодея"
+            ],
+            "mustAvoid": [
+              "новый злодей"
+            ]
           }
         ]
       },
       {
         "id": "great_discovery_changes_home",
-        "sourceTemplateIds": ["discovery"],
+        "sourceTemplateIds": [
+          "discovery"
+        ],
         "kind": "discovery",
-        "frameworkIds": ["expedition", "world_transformation", "chase_the_impossible"],
+        "frameworkIds": [
+          "expedition",
+          "world_transformation",
+          "chase_the_impossible"
+        ],
         "titlePattern": "Великое открытие: #discovery_secret#",
         "loglinePattern": "#hero# замечает странность и раскрывает тайну: #discovery_secret#. После этого родное место меняется к лучшему: #home_place#.",
         "directorialIntent": "Тайна растет из повседневной детали; открытие меняет маленький мир, а не вводит огромный лор.",
@@ -391,56 +562,91 @@
             "function": "odd_detail",
             "purposePattern": "Родное место: #home_place#. Герой замечает странность, связанную с тайной: #discovery_secret#.",
             "visualSeedPattern": "обычное место, одна необычная деталь, герой замечает",
-            "mustInclude": ["маленькая странность", "любопытство"],
-            "mustAvoid": ["случайная энциклопедическая легенда"]
+            "mustInclude": [
+              "маленькая странность",
+              "любопытство"
+            ],
+            "mustAvoid": [
+              "случайная энциклопедическая легенда"
+            ]
           },
           {
             "sceneNumber": 2,
             "function": "not_believed",
             "purposePattern": "Другие считают странность пустяком. Локация проверки: #first_location#.",
             "visualSeedPattern": "#first_location#, герой один проверяет гипотезу",
-            "mustInclude": ["сомнение окружающих", "самостоятельное действие"],
-            "mustAvoid": ["унижение героя"]
+            "mustInclude": [
+              "сомнение окружающих",
+              "самостоятельное действие"
+            ],
+            "mustAvoid": [
+              "унижение героя"
+            ]
           },
           {
             "sceneNumber": 3,
             "function": "clue_chain",
             "purposePattern": "Герой находит цепочку подсказок, но одна из них противоречит первой догадке.",
             "visualSeedPattern": "несколько подсказок в одной композиции, герой сравнивает",
-            "mustInclude": ["цепочка подсказок", "противоречие"],
-            "mustAvoid": ["несвязанные находки"]
+            "mustInclude": [
+              "цепочка подсказок",
+              "противоречие"
+            ],
+            "mustAvoid": [
+              "несвязанные находки"
+            ]
           },
           {
             "sceneNumber": 4,
             "function": "deeper_pattern",
             "purposePattern": "Локация закономерности: #second_location#. Герой понимает, что странность повторяется по правилу.",
             "visualSeedPattern": "#second_location#, повторяющийся паттерн, герой осознает правило",
-            "mustInclude": ["правило", "нарастающее понимание"],
-            "mustAvoid": ["магия без причины"]
+            "mustInclude": [
+              "правило",
+              "нарастающее понимание"
+            ],
+            "mustAvoid": [
+              "магия без причины"
+            ]
           },
           {
             "sceneNumber": 5,
             "function": "cost_of_truth",
             "purposePattern": "Чтобы проверить истину, герой должен рискнуть комфортом и проявить #hero_quality#.",
             "visualSeedPattern": "герой перед выбором, уют позади, тайна впереди",
-            "mustInclude": ["выбор", "личная цена"],
-            "mustAvoid": ["опасность ради опасности"]
+            "mustInclude": [
+              "выбор",
+              "личная цена"
+            ],
+            "mustAvoid": [
+              "опасность ради опасности"
+            ]
           },
           {
             "sceneNumber": 6,
             "function": "truth_revealed",
             "purposePattern": "Кульминация: #climax_location#. Герой раскрывает тайну: #discovery_secret#, и показывает это миру.",
             "visualSeedPattern": "#climax_location#, визуальное раскрытие тайны, герой делится открытием",
-            "mustInclude": ["раскрытая тайна", "видимый эффект"],
-            "mustAvoid": ["новая тайна вместо ответа"]
+            "mustInclude": [
+              "раскрытая тайна",
+              "видимый эффект"
+            ],
+            "mustAvoid": [
+              "новая тайна вместо ответа"
+            ]
           },
           {
             "sceneNumber": 7,
             "function": "home_reinterpreted",
             "purposePattern": "Родное место становится понятнее и теплее: #home_place#. Герой принес новое знание.",
             "visualSeedPattern": "то же родное место, но с новым смыслом, спокойное завершение",
-            "mustInclude": ["измененное восприятие дома", "закрытая тайна"],
-            "mustAvoid": ["клиффхэнгер"]
+            "mustInclude": [
+              "измененное восприятие дома",
+              "закрытая тайна"
+            ],
+            "mustAvoid": [
+              "клиффхэнгер"
+            ]
           }
         ]
       }
@@ -450,81 +656,118 @@
     "positive": [
       {
         "id": "find_treasure",
-        "sourceTemplateIds": ["find"],
+        "sourceTemplateIds": [
+          "find"
+        ],
         "valence": "positive",
         "category": "mood",
         "severity": "small",
-        "statSignals": ["mood_up"],
+        "statSignals": [
+          "mood_up"
+        ],
         "seedPattern": "#hero# находит маленький предмет и объявляет его сокровищем.",
         "promptRole": "Короткое радостное событие: находка, гордость, без большого приключения."
       },
       {
         "id": "friendly_visit",
-        "sourceTemplateIds": ["meet"],
+        "sourceTemplateIds": [
+          "meet"
+        ],
         "valence": "positive",
         "category": "social",
         "severity": "small",
-        "statSignals": ["mood_up"],
+        "statSignals": [
+          "mood_up"
+        ],
         "seedPattern": "К #hero# заглядывает добрый сосед; они помогают друг другу или смешно ошибаются.",
         "promptRole": "Теплая социальная сцена без длинного диалога."
       },
       {
         "id": "good_weather",
-        "sourceTemplateIds": ["weather"],
+        "sourceTemplateIds": [
+          "weather"
+        ],
         "valence": "positive",
         "category": "mood",
         "severity": "small",
-        "statSignals": ["mood_up", "energy_up"],
+        "statSignals": [
+          "mood_up",
+          "energy_up"
+        ],
         "seedPattern": "Погода делает день красивее, и #hero# находит способ этим насладиться.",
         "promptRole": "Позитивное погодное событие с сильной визуальной атмосферой."
       },
       {
         "id": "useful_practice",
-        "sourceTemplateIds": ["practice"],
+        "sourceTemplateIds": [
+          "practice"
+        ],
         "valence": "positive",
         "category": "energy",
         "severity": "small",
-        "statSignals": ["mood_up"],
+        "statSignals": [
+          "mood_up"
+        ],
         "seedPattern": "#hero# тренирует привычный навык и замечает маленький прогресс.",
         "promptRole": "Маленькая победа через тренировку, без соревнования."
       },
       {
         "id": "cozy_feast",
-        "sourceTemplateIds": ["feast"],
+        "sourceTemplateIds": [
+          "feast"
+        ],
         "valence": "positive",
         "category": "food",
         "severity": "small",
-        "statSignals": ["hunger_relief", "mood_up"],
+        "statSignals": [
+          "hunger_relief",
+          "mood_up"
+        ],
         "seedPattern": "#hero# устраивает маленький пир из любимой еды.",
         "promptRole": "Уютное событие про сытость и удовольствие."
       },
       {
         "id": "help_reward",
-        "sourceTemplateIds": ["helper"],
+        "sourceTemplateIds": [
+          "helper"
+        ],
         "valence": "positive",
         "category": "social",
         "severity": "small",
-        "statSignals": ["mood_up"],
+        "statSignals": [
+          "mood_up"
+        ],
         "seedPattern": "#hero# помогает соседу с небольшой проблемой и получает благодарность.",
         "promptRole": "Доброе событие: помощь, благодарность, маленький подарок или жест."
       },
       {
         "id": "restful_dream",
-        "sourceTemplateIds": ["dream"],
+        "sourceTemplateIds": [
+          "dream"
+        ],
         "valence": "positive",
         "category": "energy",
         "severity": "small",
-        "statSignals": ["energy_up", "mood_up"],
+        "statSignals": [
+          "energy_up",
+          "mood_up"
+        ],
         "seedPattern": "#hero# видит спокойный сон и просыпается отдохнувшим.",
         "promptRole": "Мягкое событие восстановления сил."
       },
       {
         "id": "clean_home",
-        "sourceTemplateIds": ["build", "collect"],
+        "sourceTemplateIds": [
+          "build",
+          "collect"
+        ],
         "valence": "positive",
         "category": "cleanliness",
         "severity": "small",
-        "statSignals": ["cleanliness_up", "mood_up"],
+        "statSignals": [
+          "cleanliness_up",
+          "mood_up"
+        ],
         "seedPattern": "#hero# приводит в порядок дом или свою коллекцию и радуется уюту.",
         "promptRole": "Позитивное бытовое событие про чистоту, порядок и гордость."
       }
@@ -532,81 +775,122 @@
     "negative": [
       {
         "id": "lost_snack",
-        "sourceTemplateIds": ["feast"],
+        "sourceTemplateIds": [
+          "feast"
+        ],
         "valence": "negative",
         "category": "food",
         "severity": "small",
-        "statSignals": ["hunger_worse", "mood_down"],
+        "statSignals": [
+          "hunger_worse",
+          "mood_down"
+        ],
         "seedPattern": "#hero# хотел перекусить, но еда пропала, оказалась слишком маленькой или неудачной.",
         "promptRole": "Легкая бытовая неприятность про голод, без драматизации."
       },
       {
         "id": "bad_weather",
-        "sourceTemplateIds": ["weather"],
+        "sourceTemplateIds": [
+          "weather"
+        ],
         "valence": "negative",
         "category": "mood",
         "severity": "small",
-        "statSignals": ["mood_down", "cleanliness_down"],
+        "statSignals": [
+          "mood_down",
+          "cleanliness_down"
+        ],
         "seedPattern": "Погода портит планы: #hero# промокает, пачкается или вынужден прятаться.",
         "promptRole": "Негативное погодное событие, мягкое и визуальное."
       },
       {
         "id": "small_scare",
-        "sourceTemplateIds": ["scare"],
+        "sourceTemplateIds": [
+          "scare"
+        ],
         "valence": "negative",
         "category": "mood",
         "severity": "small",
-        "statSignals": ["mood_down"],
+        "statSignals": [
+          "mood_down"
+        ],
         "seedPattern": "#hero# пугается неожиданного звука или тени и прячется, хотя все заканчивается безопасно.",
         "promptRole": "Короткий испуг без хоррора и травмы."
       },
       {
         "id": "tired_practice",
-        "sourceTemplateIds": ["practice", "race"],
+        "sourceTemplateIds": [
+          "practice",
+          "race"
+        ],
         "valence": "negative",
         "category": "energy",
         "severity": "small",
-        "statSignals": ["energy_down", "mood_down"],
+        "statSignals": [
+          "energy_down",
+          "mood_down"
+        ],
         "seedPattern": "#hero# слишком увлекается тренировкой или гонкой и устает сильнее, чем планировал.",
         "promptRole": "Неприятность про усталость, но без провала личности."
       },
       {
         "id": "messy_collecting",
-        "sourceTemplateIds": ["collect"],
+        "sourceTemplateIds": [
+          "collect"
+        ],
         "valence": "negative",
         "category": "cleanliness",
         "severity": "small",
-        "statSignals": ["cleanliness_down", "mood_down"],
+        "statSignals": [
+          "cleanliness_down",
+          "mood_down"
+        ],
         "seedPattern": "#hero# собирает интересные мелочи и случайно весь пачкается.",
         "promptRole": "Смешная досада про грязь и беспорядок."
       },
       {
         "id": "awkward_visit",
-        "sourceTemplateIds": ["meet", "sing"],
+        "sourceTemplateIds": [
+          "meet",
+          "sing"
+        ],
         "valence": "negative",
         "category": "social",
         "severity": "small",
-        "statSignals": ["mood_down"],
+        "statSignals": [
+          "mood_down"
+        ],
         "seedPattern": "#hero# пытается пообщаться, но его не так понимают или он неловко ошибается.",
         "promptRole": "Мягко-негативное социальное событие без токсичности."
       },
       {
         "id": "restless_dream",
-        "sourceTemplateIds": ["dream"],
+        "sourceTemplateIds": [
+          "dream"
+        ],
         "valence": "negative",
         "category": "energy",
         "severity": "small",
-        "statSignals": ["energy_down", "mood_down"],
+        "statSignals": [
+          "energy_down",
+          "mood_down"
+        ],
         "seedPattern": "#hero# видит беспокойный сон и просыпается не до конца отдохнувшим.",
         "promptRole": "Негативное событие сна: беспокойство, усталость, без страшных образов."
       },
       {
         "id": "small_bump",
-        "sourceTemplateIds": ["hide", "build"],
+        "sourceTemplateIds": [
+          "hide",
+          "build"
+        ],
         "valence": "negative",
         "category": "health",
         "severity": "small",
-        "statSignals": ["health_down", "mood_down"],
+        "statSignals": [
+          "health_down",
+          "mood_down"
+        ],
         "seedPattern": "#hero# во время игры или строительства слегка ушибается о мягкую вещь.",
         "promptRole": "Мелкая неприятность для здоровья, без серьезной болезни или жестокости."
       }
