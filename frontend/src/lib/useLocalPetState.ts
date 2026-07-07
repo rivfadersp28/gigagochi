@@ -27,6 +27,7 @@ type UseLocalPetStateResult = {
   feed: () => LocalPetState | null;
   play: () => LocalPetState | null;
   reset: () => void;
+  updateName: (name: string) => LocalPetState | null;
   applyGeneratedAssets: (assetSet: LocalPetAssetSet) => LocalPetState | null;
   applyMoodHint: (
     moodHint?: PetMood,
@@ -119,6 +120,30 @@ export function useLocalPetState(): UseLocalPetStateResult {
     setError(null);
   }, [pet?.petId]);
 
+  const updateName = useCallback((name: string) => {
+    const normalizedName = name.trim().replace(/\s+/g, " ").slice(0, 32);
+    if (!normalizedName) {
+      return null;
+    }
+
+    const currentPet = readLocalPetState() ?? pet;
+    if (!currentPet) {
+      return null;
+    }
+
+    const now = new Date();
+    const nextPet = saveAndReturn({
+      ...currentPet,
+      name: normalizedName,
+      updatedAt: now.toISOString(),
+      stage: calculatePetStage(currentPet.createdAt, now),
+    });
+    setPet(nextPet);
+    setStatus("ready");
+    setError(null);
+    return nextPet;
+  }, [pet]);
+
   const applyGeneratedAssets = useCallback((assetSet: LocalPetAssetSet) => {
     if (!pet) {
       return null;
@@ -184,6 +209,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
     feed,
     play,
     reset,
+    updateName,
     applyGeneratedAssets,
     applyMoodHint,
     applyLiteOverlayPatch,

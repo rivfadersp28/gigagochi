@@ -145,18 +145,22 @@ const INITIAL_PET_DAY_PROMPT = "Расскажи о своем дне";
 const INITIAL_PET_REPLY_MAX_CHARS = 40;
 const INITIAL_PET_REPLY_FALLBACK = "День был ярким.";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 120;
-const HARDCODED_STATUS_NAME = "Челепиздрик";
-const HARDCODED_STATUS_LEVEL = "Уровень: 2";
+const DEFAULT_STATUS_NAME = "Челепиздрик";
+const PET_RENAME_MAX_CHARS = 32;
 const SPEECH_BUBBLE_MIN_WIDTH = 190;
 const SPEECH_BUBBLE_MIN_HEIGHT = 86;
 const SPEECH_BUBBLE_RADIUS = 43;
 const SPEECH_BUBBLE_TAIL_HEIGHT = 21;
 const SPEECH_BUBBLE_TAIL_HALF_WIDTH = 22;
 const ACTION_ICON_CACHE_VERSION = "20260706-action-colors-4";
-const TOP_STATUS_ASSET_CACHE_VERSION = "20260706-top-status-colors-2";
+const TOP_STATUS_ASSET_CACHE_VERSION = "20260707-top-status-icons-1";
 const MAIN_PET_BACKDROP_CACHE_VERSION = "20260706-main-pet-bg-1";
-const mainStomachSrc = `/figma/main-stomach.svg?v=${TOP_STATUS_ASSET_CACHE_VERSION}`;
 const mainPetBackdropSrc = `/figma/main-pet-bg.png?v=${MAIN_PET_BACKDROP_CACHE_VERSION}`;
+const topStatusIconSrc = {
+  hunger: `/figma/top-status-hunger.svg?v=${TOP_STATUS_ASSET_CACHE_VERSION}`,
+  mood: `/figma/top-status-mood.svg?v=${TOP_STATUS_ASSET_CACHE_VERSION}`,
+  energy: `/figma/top-status-energy.svg?v=${TOP_STATUS_ASSET_CACHE_VERSION}`,
+} as const;
 const actionIconSrc = {
   chat: `/figma/action-chat-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
   feed: `/figma/action-feed-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
@@ -213,6 +217,44 @@ const petTapParticleConfig = {
     wobble: true,
   },
 } satisfies AnimationConfig;
+
+const PET_RENAME_PATTERNS = [
+  /(?:^|[.!?]\s*)(?:теперь|отныне|с этого момента)\s+тебя\s+зовут\s+(.+)$/i,
+  /(?:^|[.!?]\s*)тебя\s+зовут\s+(.+)$/i,
+  /(?:^|[.!?]\s*)давай\s+(?:я\s+)?(?:буду\s+)?(?:звать|называть)\s+тебя\s+(.+)$/i,
+  /(?:^|[.!?]\s*)(?:я\s+)?(?:назову|называю)\s+тебя\s+(.+)$/i,
+  /(?:^|[.!?]\s*)тво[её]\s+имя\s*[:=—-]?\s+(.+)$/i,
+  /(?:^|[.!?]\s*)будешь\s+зваться\s+(.+)$/i,
+] as const;
+
+function normalizeRequestedPetName(value: string) {
+  const firstClause = value.split(/[,.!?;:]/)[0] ?? "";
+  const name = firstClause
+    .trim()
+    .replace(/^["'«»“”„]+|["'«»“”„]+$/g, "")
+    .replace(/\s+(?:пожалуйста|плиз|окей|ок)$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!name || name.length > PET_RENAME_MAX_CHARS || !/[0-9A-Za-zА-Яа-яЁё]/.test(name)) {
+    return null;
+  }
+
+  return name;
+}
+
+function extractRequestedPetName(message: string) {
+  const normalizedMessage = message.trim().replace(/\s+/g, " ");
+  for (const pattern of PET_RENAME_PATTERNS) {
+    const match = pattern.exec(normalizedMessage);
+    const name = match?.[1] ? normalizeRequestedPetName(match[1]) : null;
+    if (name) {
+      return name;
+    }
+  }
+
+  return null;
+}
 
 function buildSpeechBubbleClipPath({ width, height }: SpeechBubbleSize) {
   const w = Math.max(SPEECH_BUBBLE_MIN_WIDTH, width);
@@ -1288,6 +1330,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     const history = latestChatMessages(12);
     const memoryBeforeMessage = readLocalPetMemory(pet.petId);
     const memoryContext = buildMemoryContextForMessage(memoryBeforeMessage, message);
+    const requestedPetName = extractRequestedPetName(message);
 
     if (includePromptDebug) {
       console.log("[memory-debug] dashboard quick chat recall context", memoryContext);
@@ -1314,6 +1357,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
       showPetReplyMessage(response.reply, true, { showInConversation: true });
       localPet.applyMoodHint(response.moodHint, response.debug?.liteOverlayPatch);
+      if (requestedPetName) {
+        localPet.updateName(requestedPetName);
+      }
 
       const selectedMemoryIds = memoryContext.relevantMemories.map((item) => item.id);
       if (selectedMemoryIds.length) {
@@ -1527,6 +1573,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   };
   const shouldShowConversationReply =
     isChatMode && conversationReplyMessageId === displayedReply.id;
+  const displayedPetName = pet.name?.trim() || DEFAULT_STATUS_NAME;
   const transformOrigin = `${animationSettings.originX}% ${animationSettings.originY}%`;
   const idleStretchStyle: IdleStretchStyle = {
     "--pet-idle-duration": `${(
@@ -1628,22 +1675,33 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           {pet.stats.energy}/100. Cleanliness {pet.stats.cleanliness}/100.
         </div>
 
-        <div className="conversation-fade-target absolute left-[31px] top-[118px] z-20">
-          <div className="text-[17px] font-[800] leading-[normal] text-white">
-            {HARDCODED_STATUS_NAME}
-          </div>
-          <div className="mt-[2px] text-[32.073px] font-[800] leading-[normal] text-white">
-            {HARDCODED_STATUS_LEVEL}
-          </div>
+        <div className="conversation-fade-target absolute left-1/2 top-[66px] z-20 max-w-[260px] -translate-x-1/2 truncate text-center text-[17px] font-[800] leading-[20px] text-white">
+          {displayedPetName}
         </div>
 
-        <img
-          src={mainStomachSrc}
-          alt=""
+        <div
+          className="conversation-fade-target absolute left-[99px] top-[107px] z-20 flex items-center gap-[21px]"
           aria-hidden="true"
-          className="conversation-fade-target absolute left-[315px] top-[118px] z-20 h-[57.933px] w-[58.601px] max-w-none"
-          draggable={false}
-        />
+        >
+          <img
+            src={topStatusIconSrc.hunger}
+            alt=""
+            className="size-[54px] max-w-none shrink-0"
+            draggable={false}
+          />
+          <img
+            src={topStatusIconSrc.mood}
+            alt=""
+            className="size-[54px] max-w-none shrink-0"
+            draggable={false}
+          />
+          <img
+            src={topStatusIconSrc.energy}
+            alt=""
+            className="size-[54px] max-w-none shrink-0"
+            draggable={false}
+          />
+        </div>
 
         <div
           className={`absolute left-1/2 top-[226px] z-30 -translate-x-1/2 ${
