@@ -1290,6 +1290,10 @@ export function SpeechAdmin() {
                     <Badge variant="outline">{pushStatus?.count ?? "?"}</Badge>
                   </div>
                   <div className="flex items-center justify-between gap-3">
+                    <span>Источник</span>
+                    <Badge variant="outline">{pushStatus?.source ?? "local"}</Badge>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
                     <span>Чат открыт</span>
                     <Badge variant="outline">{reachablePushCount}</Badge>
                   </div>

@@ -82,6 +82,7 @@ export type AdminSpeechPublishJob = {
 };
 
 export type AdminPushStatus = {
+  source?: "local" | "production" | string;
   count: number;
   snapshotCount?: number;
   reachableCount?: number;

@@ -271,6 +271,133 @@ def read_admin_manifest_from_server(
     )
 
 
+def read_admin_push_status_from_server(settings: Any) -> dict[str, Any]:
+    return _run_push_command_on_server(settings, {"action": "status"})
+
+
+def send_admin_push_on_server(
+    settings: Any,
+    *,
+    telegram_id: int | None,
+    reason: str | None,
+    include_debug: bool,
+) -> dict[str, Any]:
+    return _run_push_command_on_server(
+        settings,
+        {
+            "action": "send",
+            "telegramId": telegram_id,
+            "reason": reason,
+            "includeDebug": include_debug,
+        },
+    )
+
+
+def send_admin_push_all_on_server(
+    settings: Any,
+    *,
+    reason: str | None,
+    include_debug: bool,
+) -> dict[str, Any]:
+    return _run_push_command_on_server(
+        settings,
+        {
+            "action": "send_all",
+            "reason": reason,
+            "includeDebug": include_debug,
+        },
+    )
+
+
+def _run_push_command_on_server(settings: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    timeout = float(_setting(settings, "admin_publish_command_timeout_seconds", 1200))
+    remote_path = str(_setting(settings, "admin_publish_remote_path", "/opt/gigagochi"))
+    payload_json = json.dumps(payload, ensure_ascii=False)
+    remote_script = dedent(
+        """
+        import json
+
+        from app.services.telegram_push_service import (
+            TelegramPushError,
+            push_status,
+            send_manual_push,
+            send_manual_push_to_reachable,
+        )
+
+        payload = json.loads(PAYLOAD_JSON)
+        action = payload.get("action")
+        try:
+            if action == "status":
+                result = push_status()
+            elif action == "send":
+                result = send_manual_push(
+                    telegram_id=payload.get("telegramId"),
+                    reason=payload.get("reason"),
+                    include_debug=bool(payload.get("includeDebug", True)),
+                )
+            elif action == "send_all":
+                result = send_manual_push_to_reachable(
+                    reason=payload.get("reason"),
+                    include_debug=bool(payload.get("includeDebug", True)),
+                )
+            else:
+                raise TelegramPushError("ADMIN_PUSH_ACTION_INVALID", "Unknown push action.")
+        except TelegramPushError as exc:
+            print(json.dumps(
+                {"ok": False, "code": exc.code, "message": exc.message},
+                ensure_ascii=False,
+            ))
+        except Exception as exc:
+            print(json.dumps(
+                {"ok": False, "code": "PUSH_SEND_FAILED", "message": str(exc)},
+                ensure_ascii=False,
+            ))
+        else:
+            print(json.dumps({"ok": True, "result": result}, ensure_ascii=False))
+        """
+    ).strip()
+    remote_script = remote_script.replace("PAYLOAD_JSON", repr(payload_json))
+    remote_command = (
+        f"set -e; cd {shlex.quote(remote_path)}; "
+        "docker compose --env-file .env.production -f docker-compose.prod.yml "
+        f"exec -T backend python - <<'PY'\n{remote_script}\nPY"
+    )
+    output = _run_capture(
+        [
+            *_ssh_command_args(
+                settings,
+                missing_code="ADMIN_PRODUCTION_PUSH_SSH_TARGET_MISSING",
+                invalid_code="ADMIN_PRODUCTION_PUSH_SSH_TARGET_INVALID",
+            ),
+            remote_command,
+        ],
+        cwd=REPO_ROOT,
+        timeout=timeout,
+    )
+    try:
+        parsed = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise AdminPublishError(
+            "ADMIN_PRODUCTION_PUSH_RESPONSE_INVALID",
+            f"Production push вернул некорректный ответ: {output[:500]}",
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise AdminPublishError(
+            "ADMIN_PRODUCTION_PUSH_RESPONSE_INVALID",
+            "Production push вернул не JSON object.",
+        )
+    if parsed.get("ok") is True and isinstance(parsed.get("result"), dict):
+        return parsed["result"]
+
+    code = parsed.get("code") if isinstance(parsed.get("code"), str) else "PRODUCTION_PUSH_FAILED"
+    message = (
+        parsed.get("message")
+        if isinstance(parsed.get("message"), str)
+        else "Production push failed."
+    )
+    raise AdminPublishError(code, message)
+
+
 def sync_admin_files_from_server(settings: Any) -> dict[str, Any]:
     if not _setting(settings, "admin_sync_from_server_enabled", False):
         return {

@@ -333,6 +333,80 @@ def test_local_admin_sends_manual_push(monkeypatch) -> None:
     }
 
 
+def test_local_admin_reads_production_push_status(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        allow_dev_tma_auth=True,
+        admin_publish_enabled=True,
+        admin_publish_ssh_target="root@example.test",
+    )
+    monkeypatch.setattr("app.routers.local_admin.get_settings", lambda: settings)
+
+    def fake_read_admin_push_status_from_server(sync_settings):
+        assert sync_settings is settings
+        return {
+            "count": 1,
+            "snapshotCount": 1,
+            "reachableCount": 1,
+            "latest": None,
+            "records": [],
+        }
+
+    monkeypatch.setattr(
+        "app.routers.local_admin.read_admin_push_status_from_server",
+        fake_read_admin_push_status_from_server,
+    )
+
+    response = TestClient(app).get("/api/admin/push/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "production"
+    assert payload["reachableCount"] == 1
+
+
+def test_local_admin_sends_production_manual_push(monkeypatch) -> None:
+    captured = {}
+    settings = SimpleNamespace(
+        allow_dev_tma_auth=True,
+        admin_publish_enabled=True,
+        admin_publish_ssh_target="root@example.test",
+    )
+    monkeypatch.setattr("app.routers.local_admin.get_settings", lambda: settings)
+
+    def fake_send_admin_push_on_server(sync_settings, *, telegram_id, reason, include_debug):
+        captured["settings"] = sync_settings
+        captured["telegram_id"] = telegram_id
+        captured["reason"] = reason
+        captured["include_debug"] = include_debug
+        return {
+            "sent": True,
+            "manual": True,
+            "telegramId": telegram_id,
+            "petId": "pet-1",
+            "reply": "Я тут.",
+            "sentAt": "2026-07-07T12:00:00Z",
+        }
+
+    monkeypatch.setattr(
+        "app.routers.local_admin.send_admin_push_on_server",
+        fake_send_admin_push_on_server,
+    )
+
+    response = TestClient(app).post(
+        "/api/admin/push/send",
+        json={"telegramId": 42, "reason": "debug reason", "includeDebug": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "Я тут."
+    assert captured == {
+        "settings": settings,
+        "telegram_id": 42,
+        "reason": "debug reason",
+        "include_debug": True,
+    }
+
+
 def test_local_admin_sends_push_to_all_reachable(monkeypatch) -> None:
     captured = {}
 
