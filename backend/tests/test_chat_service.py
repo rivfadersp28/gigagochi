@@ -432,9 +432,10 @@ def test_ambient_prompt_uses_same_phrase_engine_without_forced_world_context() -
 
     assert "idle-фразу на главном экране" in system_message
     assert "IDLE_DIALOGUE_ENGINE" in system_message
-    assert "Расскажи про свой мир так" in system_message
+    assert "Спроси меня что-нибудь" in system_message
+    assert "пять минут" not in system_message
     assert "Привет, я Листик. Я просто рядом." in system_message
-    assert "я просто рядом" in system_message
+    assert "Я просто рядом" in system_message
     assert "ask_school_or_work_role" in system_message
     assert "VOICE_CONTROL" in system_message
     assert "WORLD_CONTEXT" not in system_message

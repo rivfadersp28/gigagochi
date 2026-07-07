@@ -28,6 +28,9 @@
   `{cooldown_line}`, `{move_id}`, `{move_description}`, and `{examples}`
   placeholders; otherwise the selected idle dialogue move is computed but never
   shown to the model.
+- Removing `speech_runtime.json` `ambientDialogue.examples` or `moves` is not
+  enough to remove old idle wording: missing or empty values fall back to
+  `DEFAULT_SPEECH_RUNTIME` in `speech_runtime.py`.
 - Admin publish is local-only and opt-in. Keep `ADMIN_PUBLISH_ENABLED=false` on
   Hetzner; the publish job must stage only `managed_admin_git_paths()` and never
   `.admin-backups/` or unrelated dirty/untracked files.

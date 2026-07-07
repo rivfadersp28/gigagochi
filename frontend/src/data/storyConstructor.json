@@ -238,7 +238,7 @@
     "questionTemplates": [
       {
         "id": "constructor-question-world",
-        "text": "Расскажи про свой мир так, будто я попал туда на пять минут. Что я увижу первым?"
+        "text": "Расскажи про свой мир через одну дверь: что за ней первым шевельнется?"
       },
       {
         "id": "constructor-question-kind",
