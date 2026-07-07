@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import random
 import re
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -47,19 +46,22 @@ from app.services.pet_reply_engine.models import (
 )
 from app.services.pet_reply_engine.reply_limits import MAX_REPLY_CHARS, clamp_reply_text
 from app.services.pet_reply_engine.speech_runtime import (
-    ambient_dialogue_moves,
-    format_ambient_dialogue_block,
+    age_role_hint,
+    ambient_self_prompt,
+    baby_examples_intro,
+    character_fact_extraction_system_prompt,
+    dialogue_state_modifier,
     memory_usage_rule,
     persona_contract,
     recent_ambient_replies_rule,
+    story_library_extraction_system_prompt,
+    state_layer_surface_flags,
     surface_rules,
+    user_memory_consolidation_system_prompt,
+    user_memory_extraction_system_prompt,
+    visible_reply_rules,
+    world_seed_system_prompt,
 )
-from app.services.pet_reply_engine.state_interpreter import (
-    clamp_stat,
-    energy_band,
-    hunger_band,
-)
-from app.services.pet_reply_engine.voice_profile import pet_voice_prompt_block
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
 from app.services.story_library import story_library_patch_for_new_brick
 
@@ -89,10 +91,10 @@ USER_MEMORY_KINDS = (
 FACE_HINTS = ("happy", "excited", "curious", "content", "grumpy", "sleepy")
 MAX_MEMORY_CONTEXT_ITEMS = 5
 MAX_RECENT_AMBIENT_REPLIES = 5
+AMBIENT_MEMORY_KINDS = {"preference", "relationship", "routine", "boundary"}
 
 PhraseSurface = Literal["chat", "proactive", "ambient"]
 
-AMBIENT_RANDOM = random.SystemRandom()
 
 @dataclass(frozen=True)
 class PhrasePlan:
@@ -120,12 +122,6 @@ class PhrasePlan:
         ]
         return "\n\n".join(section for section in sections if section)
 
-
-LITE_AGE_ROLE_HINTS = {
-    "baby": "малыш такого существа",
-    "teen": "подросток такого существа",
-    "adult": "взрослый, сформировавшийся представитель такого существа",
-}
 
 LITE_RAG_REQUEST_PATTERN = re.compile(
     r"("
@@ -485,6 +481,25 @@ def _memory_context_block(memory_context: LocalPetMemoryContext | None) -> str |
     return "\n".join(lines) + f"\n{memory_usage_rule()}"
 
 
+def _ambient_memory_context_block(memory_context: LocalPetMemoryContext | None) -> str | None:
+    if not memory_context:
+        return None
+
+    soft_memories = [
+        memory
+        for memory in memory_context.relevantMemories
+        if memory.kind in AMBIENT_MEMORY_KINDS and not memory.dueAt
+    ]
+    soft_context = memory_context.model_copy(
+        update={
+            "summary": None,
+            "relevantMemories": soft_memories,
+            "proactiveCandidate": None,
+        }
+    )
+    return _memory_context_block(soft_context)
+
+
 def _recent_ambient_replies_block(replies: list[str]) -> str | None:
     lines: list[str] = []
     for reply in replies[-MAX_RECENT_AMBIENT_REPLIES:]:
@@ -494,57 +509,6 @@ def _recent_ambient_replies_block(replies: list[str]) -> str | None:
     if not lines:
         return None
     return f"{recent_ambient_replies_rule()}\n" + "\n".join(lines)
-
-
-def _infer_recent_ambient_intents(replies: list[str]) -> set[str]:
-    text = _compact_spaces(" ".join(replies[-MAX_RECENT_AMBIENT_REPLIES:])).casefold()
-    intents: set[str] = set()
-    if not text:
-        return intents
-    if any(value in text for value in ("твой мир", "про свой мир", "увижу первым")):
-        intents.add("ask_user_world")
-    if any(value in text for value in ("школ", "учеб", "работ", "отличник", "нарушител")):
-        intents.add("ask_school_or_work_role")
-    if any(value in text for value in ("человек", "животн", "звер", "погодное явление")):
-        intents.add("ask_identity_playful")
-    if any(value in text for value in ("погода внутри", "ясно", "туман", "гроза")):
-        intents.add("ask_inner_weather")
-    if any(value in text for value in ("карта", "болото", "гора", "сокровищ")):
-        intents.add("ask_day_map")
-    if any(value in text for value in ("ритуал", "сложным делом")):
-        intents.add("ask_tiny_ritual")
-    if "квест" in text:
-        intents.add("offer_mini_quest")
-    if any(value in text for value in ("я сегодня", "нашел", "увидел", "спрятал")):
-        intents.add("small_funny_event")
-    if any(value in text for value in ("как дела", "что происходит", "как твой день")):
-        intents.add("small_care_check")
-    return intents
-
-
-def _ambient_dialogue_block(*, has_world_context: bool, recent_replies: list[str]) -> str:
-    moves = list(ambient_dialogue_moves())
-    if not has_world_context:
-        moves = [
-            move
-            for move in moves
-            if move[0] != "lore_hook_if_context_allows"
-        ]
-    recent_intents = _infer_recent_ambient_intents(recent_replies)
-    fresh_moves = [move for move in moves if move[0] not in recent_intents]
-    if fresh_moves:
-        moves = fresh_moves
-    move_id, move_description = AMBIENT_RANDOM.choice(moves)
-    cooldown_line = (
-        f"Недавние диалоговые ходы, которых сейчас избегаем: {', '.join(sorted(recent_intents))}.\n"
-        if recent_intents
-        else ""
-    )
-    return format_ambient_dialogue_block(
-        cooldown_line=cooldown_line,
-        move_id=move_id,
-        move_description=move_description,
-    )
 
 
 def _extract_hidden_reaction(raw_reply: str) -> tuple[str, str | None, str | None]:
@@ -582,23 +546,29 @@ def _short_character_description(payload: LocalChatRequest) -> str:
     return _short_pet_description(payload.pet)
 
 
-def _state_role_modifier(payload: LocalChatRequest) -> str | None:
-    stats = payload.pet.stats
-    if payload.pet.mood == "hungry" or hunger_band(clamp_stat(stats.hunger)) == "low":
-        return "голодный"
-    if payload.pet.mood == "happy":
-        if energy_band(stats.energy) == "low":
-            return "радостный, но уставший"
-        return "радостный, энергичный, полный сил"
-    if payload.pet.mood == "sad":
-        return "грустный, притихший"
-    if energy_band(stats.energy) == "low":
-        return "уставший"
-    return None
+def _state_role_modifier_for_pet(pet: Any, surface: PhraseSurface) -> str | None:
+    stats = pet.stats
+    flags = state_layer_surface_flags(surface)
+    return dialogue_state_modifier(
+        mood=pet.mood,
+        hunger=stats.hunger,
+        energy=stats.energy,
+        include_mood=flags.get("mood", False),
+        include_hunger=flags.get("hunger", False),
+        include_energy=flags.get("energy", False),
+    )
+
+
+def _state_role_modifier(payload: LocalChatRequest, surface: PhraseSurface = "chat") -> str | None:
+    return _state_role_modifier_for_pet(payload.pet, surface)
+
+
+def _age_role_hint_for_pet(pet: Any) -> str:
+    return age_role_hint(pet.stage)
 
 
 def _age_role_hint(payload: LocalChatRequest) -> str:
-    return LITE_AGE_ROLE_HINTS[payload.pet.stage]
+    return _age_role_hint_for_pet(payload.pet)
 
 
 def _lite_reply_input_for_examples(payload: LocalChatRequest) -> PetReplyInput:
@@ -648,10 +618,7 @@ def _baby_phrase_examples_for_prompt(payload: LocalChatRequest) -> str | None:
         return None
 
     lines = "\n".join(f"- {phrase}" for _, phrase in examples)
-    return (
-        "Примеры детской манеры из датасета. Можно брать ритм и характер, "
-        f"но не обязательно копировать дословно:\n{lines}"
-    )
+    return f"{baby_examples_intro()}\n{lines}"
 
 
 def _lite_tools_for_message(text: str) -> list[dict[str, Any]] | None:
@@ -671,17 +638,33 @@ def _history_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     ]
 
 
-def _chat_identity_line(payload: LocalChatRequest, reply_limit: int) -> str:
-    system_content = (
-        f"Отвечай мне как {_short_character_description(payload)}. "
-        f"Сейчас ты {_age_role_hint(payload)}."
-    )
-    state_modifier = _state_role_modifier(payload)
+def _identity_line_for_pet(
+    *,
+    surface: PhraseSurface,
+    pet: Any,
+    description: str,
+    reply_limit: int,
+    concise_hint: str = "можно короче, даже одной фразой",
+) -> str:
+    system_content = f"Отвечай мне как {description}."
+    flags = state_layer_surface_flags(surface)
+    if flags.get("age", False):
+        system_content = f"{system_content} Сейчас ты {_age_role_hint_for_pet(pet)}."
+    state_modifier = _state_role_modifier_for_pet(pet, surface)
     if state_modifier:
         system_content = f"{system_content} Ты сейчас {state_modifier}."
     system_content = (
-        f"{system_content} Ответ максимум {reply_limit} символов; "
-        "можно короче, даже одной фразой."
+        f"{system_content} Ответ максимум {reply_limit} символов; {concise_hint}."
+    )
+    return system_content
+
+
+def _chat_identity_line(payload: LocalChatRequest, reply_limit: int) -> str:
+    system_content = _identity_line_for_pet(
+        surface="chat",
+        pet=payload.pet,
+        description=_short_character_description(payload),
+        reply_limit=reply_limit,
     )
     system_content = (
         f"{system_content} Если пользователь явно переименовывает тебя, "
@@ -707,8 +690,8 @@ def _phrase_plan_for_chat(
         identity_line=_chat_identity_line(payload, reply_limit),
         persona_contract=_lite_persona_contract(),
         memory_block=_memory_context_block(payload.memoryContext),
-        voice_block=pet_voice_prompt_block(payload.pet.characterBible, stage=payload.pet.stage),
         world_block=context_bundle.prompt_block or None,
+        extra_rules=visible_reply_rules("chat"),
     )
 
 
@@ -811,8 +794,7 @@ def _existing_world_texts(payload: LocalChatRequest) -> list[str]:
                 for fact in overlay.get("facts", [])
                 if isinstance(fact, dict)
                 and (
-                    fact.get("sphere") == "world"
-                    or fact.get("kind") in {"world_fact", "lore_fact"}
+                    fact.get("sphere") == "world" or fact.get("kind") in {"world_fact", "lore_fact"}
                 )
             ]
         )
@@ -831,14 +813,7 @@ def _world_seed_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     return [
         {
             "role": "system",
-            "content": (
-                "Ты придумываешь стартовый лор мира для вымышленного питомца. "
-                "Верни только JSON по схеме. Придумай конкретный, органичный мир и дом "
-                "для существа, без ссылки на датасеты, шаблоны или отсутствие информации. "
-                "worldText должен быть на русском, 1-3 предложения, с ощущением места, "
-                "дома/среды обитания и одной-двумя деталями, которые потом можно считать "
-                "устойчивым лором персонажа."
-            ),
+            "content": world_seed_system_prompt(),
         },
         {
             "role": "user",
@@ -916,9 +891,7 @@ def _merge_lite_overlay_patch(target: dict[str, Any], patch: dict[str, Any] | No
         return
 
     existing_keys = {
-        _lite_fact_key(fact)
-        for fact in target.get("facts", [])
-        if isinstance(fact, dict)
+        _lite_fact_key(fact) for fact in target.get("facts", []) if isinstance(fact, dict)
     }
     facts = target.setdefault("facts", [])
     if not isinstance(facts, list):
@@ -997,10 +970,9 @@ def _read_character_json(
     if not sections:
         sections = {"characterBible", "liteOverlay"}
 
-    should_seed_world = (
-        bool(LITE_WORLD_REQUEST_PATTERN.search(payload.message))
-        and not _existing_world_texts(payload)
-    )
+    should_seed_world = bool(
+        LITE_WORLD_REQUEST_PATTERN.search(payload.message)
+    ) and not _existing_world_texts(payload)
     world_seed_patch = (
         _world_seed_overlay_patch(
             payload,
@@ -1163,18 +1135,7 @@ def build_lite_fact_extraction_messages(
     return [
         {
             "role": "system",
-            "content": (
-                "Ты фоновый анализатор Lite-чата. Не отвечай пользователю. "
-                "Извлекай только новые устойчивые факты, которые появились или были "
-                "подтверждены в последней реплике персонажа. Раскладывай факты по сферам: "
-                "character — характер, привычки, предпочтения, манера думать; "
-                "appearance — вид, тело, материал, силы и способности существа; "
-                "world — мир, дом, происхождение, культура и лор; "
-                "relationship — отношения с пользователем или другими персонажами. "
-                "Не сохраняй временное настроение, одноразовую реакцию, вопрос к пользователю, "
-                "повтор уже известного факта или красивую метафору без устойчивого смысла. "
-                "Если новых фактов нет, верни пустой facts."
-            ),
+            "content": character_fact_extraction_system_prompt(),
         },
         {
             "role": "user",
@@ -1322,16 +1283,7 @@ def build_story_library_extraction_messages(
     return [
         {
             "role": "system",
-            "content": (
-                "Ты фоновый анализатор мира питомца. Не отвечай пользователю. "
-                "Верни только JSON по схеме. Извлекай только новые устойчивые "
-                "story bricks, которые появились в ответе питомца: именованное "
-                "существо, место, предмет, сосед/персонаж или опасность. "
-                "Не сохраняй настроение, метафоры, вопросы к пользователю, обычный "
-                "small talk, факты о пользователе и уже известные bricks. "
-                "Если новая сущность умеренно фантазирует, она должна быть вариацией "
-                "на выбранные референсы из existingStoryContext."
-            ),
+            "content": story_library_extraction_system_prompt(),
         },
         {
             "role": "user",
@@ -1662,17 +1614,7 @@ def build_memory_extraction_messages(payload: MemoryExtractionRequest) -> list[d
     return [
         {
             "role": "system",
-            "content": (
-                "Ты фоновый анализатор памяти пользователя. Не отвечай пользователю. "
-                "Верни только JSON по схеме. Извлекай только факты, которые сказал "
-                "или явно подтвердил пользователь. Не сохраняй догадки персонажа, "
-                "одноразовые команды интерфейса, секреты, токены, пароли и случайный small talk. "
-                "Если пользователь говорит 'завтра', 'в пятницу' или похожую дату, "
-                "нормализуй dueAt относительно nowIso/timezone. Важные конкретные факты "
-                "можно сразу вернуть как remember_user_fact; слабые наблюдения — "
-                "как capture_learning. "
-                "Если сохранять нечего, верни пустой operations."
-            ),
+            "content": user_memory_extraction_system_prompt(),
         },
         {
             "role": "user",
@@ -1795,13 +1737,7 @@ def build_memory_consolidation_messages(
     return [
         {
             "role": "system",
-            "content": (
-                "Ты фоновый memory consolidator. Не отвечай пользователю. "
-                "Верни только JSON по схеме. Разбери pending learnings: устойчивые "
-                "и полезные факты о пользователе продвигай в memories, слабые и "
-                "одноразовые наблюдения prune. Summary и user profile переписывай "
-                "только если есть реальная польза; они должны быть короткими."
-            ),
+            "content": user_memory_consolidation_system_prompt(),
         },
         {
             "role": "user",
@@ -1867,7 +1803,6 @@ def build_proactive_messages(
     context_bundle: AssembledPetContext | None = None,
 ) -> list[dict[str, str]]:
     memory_block = _memory_context_block(payload.memoryContext) or "Память пока пустая."
-    voice_block = pet_voice_prompt_block(payload.pet.characterBible, stage=payload.pet.stage)
     if context_bundle is None:
         context_bundle = assemble_pet_context(
             mode="proactive",
@@ -1882,16 +1817,20 @@ def build_proactive_messages(
     plan = PhrasePlan(
         surface="proactive",
         reply_limit=MAX_REPLY_CHARS,
-        identity_line=(
-            f"Отвечай мне как {_short_pet_description(payload.pet)}. "
-            f"Сейчас ты {_age_role_hint(LocalChatRequest(message='...', pet=payload.pet))}. "
-            f"Ответ максимум {MAX_REPLY_CHARS} символов; можно короче."
+        identity_line=_identity_line_for_pet(
+            surface="proactive",
+            pet=payload.pet,
+            description=_short_pet_description(payload.pet),
+            reply_limit=MAX_REPLY_CHARS,
+            concise_hint="можно короче",
         ),
         persona_contract=_lite_persona_contract(),
-        voice_block=voice_block,
         world_block=context_bundle.prompt_block or None,
         memory_block=memory_block,
-        extra_rules=surface_rules("proactive", reason=reason),
+        extra_rules=(
+            *visible_reply_rules("proactive"),
+            *surface_rules("proactive", reason=reason),
+        ),
     )
     return [
         {
@@ -1966,12 +1905,7 @@ def build_ambient_messages(
     context_bundle: AssembledPetContext | None = None,
 ) -> list[dict[str, str]]:
     reply_limit = payload.replyMaxChars or 160
-    memory_block = _memory_context_block(payload.memoryContext)
-    voice_block = pet_voice_prompt_block(
-        payload.pet.characterBible,
-        stage=payload.pet.stage,
-        include_catchphrases=False,
-    )
+    memory_block = _ambient_memory_context_block(payload.memoryContext)
     if context_bundle is None:
         context_bundle = assemble_pet_context(
             mode="ambient",
@@ -1980,25 +1914,24 @@ def build_ambient_messages(
             memory_context=payload.memoryContext,
         )
     recent_ambient_block = _recent_ambient_replies_block(payload.recentAmbientReplies)
-    dialogue_block = _ambient_dialogue_block(
-        has_world_context=bool(context_bundle.prompt_block),
-        recent_replies=payload.recentAmbientReplies,
-    )
     plan = PhrasePlan(
         surface="ambient",
         reply_limit=reply_limit,
-        identity_line=(
-            f"Отвечай мне как {_short_pet_description(payload.pet)}. "
-            f"Сейчас ты {_age_role_hint(LocalChatRequest(message='...', pet=payload.pet))}. "
-            f"Ответ максимум {reply_limit} символов; можно короче, даже одной фразой."
+        identity_line=_identity_line_for_pet(
+            surface="ambient",
+            pet=payload.pet,
+            description=_short_pet_description(payload.pet),
+            reply_limit=reply_limit,
         ),
         persona_contract=_lite_persona_contract(),
-        voice_block=voice_block,
         world_block=context_bundle.prompt_block or None,
         memory_block=memory_block,
         recent_ambient_block=recent_ambient_block,
-        dialogue_block=dialogue_block,
-        extra_rules=surface_rules("ambient"),
+        dialogue_block=ambient_self_prompt(),
+        extra_rules=(
+            *visible_reply_rules("ambient"),
+            *surface_rules("ambient"),
+        ),
     )
     return [
         {
@@ -2011,10 +1944,7 @@ def build_ambient_messages(
         ],
         {
             "role": "user",
-            "content": (
-                "Сгенерируй одну короткую idle-реплику "
-                "по выбранному диалоговому ходу."
-            ),
+            "content": "Сгенерируй одну короткую самостоятельную idle-реплику.",
         },
     ]
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.services.local_admin_publish import (
     AdminPublishError,
     get_admin_publish_job,
+    read_admin_manifest_from_server,
     start_admin_publish,
     sync_admin_files_from_server,
 )
@@ -31,6 +32,9 @@ class AdminPublishRequest(BaseModel):
     message: str | None = Field(default=None, max_length=180)
 
 
+AdminSource = Literal["local", "production"]
+
+
 def require_local_admin(request: Request) -> None:
     settings = get_settings()
     host = request.client.host if request.client else ""
@@ -50,38 +54,52 @@ router = APIRouter(
 
 
 @router.get("/speech")
-def speech_admin_manifest() -> dict[str, Any]:
+def speech_admin_manifest(source: AdminSource = "local") -> dict[str, Any]:
     settings = get_settings()
     deploy_enabled = bool(getattr(settings, "admin_publish_enabled", False))
-    sync_result = None
-    if getattr(settings, "admin_sync_from_server_enabled", False):
-        try:
-            sync_result = sync_admin_files_from_server(settings)
-        except AdminPublishError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={"code": exc.code, "message": exc.message},
-            ) from exc
     deploy_message = (
         (
-            "Публикация отправит изменения в GitHub "
-            "и запустит deploy на Hetzner."
+            "Production-изменения будут отправлены в GitHub "
+            "и применены deploy на Hetzner."
         )
         if deploy_enabled
         else (
-            "Публикация отключена. "
+            "Production-запись отключена. "
             "Задай ADMIN_PUBLISH_ENABLED=true и SSH-настройки."
         )
     )
-    return read_admin_manifest(
-        deploy_enabled=deploy_enabled,
-        deploy_message=deploy_message,
-        sync_result=sync_result,
-    )
+    try:
+        if source == "production":
+            return read_admin_manifest_from_server(
+                settings,
+                deploy_enabled=deploy_enabled,
+                deploy_message=deploy_message,
+            )
+        sync_result = None
+        if getattr(settings, "admin_sync_from_server_enabled", False):
+            sync_result = sync_admin_files_from_server(settings)
+        return read_admin_manifest(
+            deploy_enabled=deploy_enabled,
+            deploy_message=deploy_message,
+            sync_result=sync_result,
+        )
+    except AdminPublishError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
 
 
 @router.put("/speech")
-def save_speech_admin(payload: AdminSaveRequest) -> dict[str, Any]:
+def save_speech_admin(payload: AdminSaveRequest, source: AdminSource = "local") -> dict[str, Any]:
+    if source == "production":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "ADMIN_PRODUCTION_DIRECT_SAVE_DISABLED",
+                "message": "Production меняется только через publish/deploy.",
+            },
+        )
     result = save_admin_files([item.model_dump() for item in payload.files])
     if not result["saved"]:
         raise HTTPException(

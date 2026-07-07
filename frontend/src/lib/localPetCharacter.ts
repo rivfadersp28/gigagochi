@@ -1,6 +1,7 @@
 import type { LocalPetAssetSet } from "./types";
 
 const CHARACTER_INSTANCE_SCHEMA_VERSION = 1;
+const PROMPT_MODEL_SCHEMA_VERSION = 2;
 const MUTABLE_EXTENSION_KEYS = ["lite_overlay", "story_library_overlay", "instance"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -34,6 +35,24 @@ function cleanTemplateBible(value: Record<string, unknown>): Record<string, unkn
   return template;
 }
 
+function stripPromptScaffolding(value: Record<string, unknown>): Record<string, unknown> {
+  const bible = cloneRecord(value);
+  delete bible.voice;
+  delete bible.dialogue_style;
+
+  if (isRecord(bible.lore)) {
+    const lore = { ...bible.lore };
+    delete lore.voice;
+    if (Object.keys(lore).length) {
+      bible.lore = lore;
+    } else {
+      delete bible.lore;
+    }
+  }
+
+  return bible;
+}
+
 function withInstanceMeta(
   bible: Record<string, unknown>,
   assetSet: LocalPetAssetSet,
@@ -56,6 +75,8 @@ function withInstanceMeta(
       liteOverlay: "extensions.lite_overlay",
       storyLibraryOverlay: "extensions.story_library_overlay",
     },
+    promptModelVersion: PROMPT_MODEL_SCHEMA_VERSION,
+    disabledPromptSections: ["characterBible.voice", "characterBible.dialogue_style", "lore.voice"],
   };
 
   return {
@@ -79,7 +100,7 @@ export function normalizeCharacterAssetSet(
   return {
     ...assetSet,
     characterTemplate,
-    characterBible: withInstanceMeta(assetSet.characterBible, assetSet, createdAt),
+    characterBible: withInstanceMeta(stripPromptScaffolding(assetSet.characterBible), assetSet, createdAt),
   };
 }
 

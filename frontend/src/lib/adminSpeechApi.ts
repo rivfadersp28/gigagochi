@@ -1,6 +1,7 @@
 import { API_URL, ApiError } from "./api";
 
 export type AdminSpeechFileFormat = "json" | "jsonl";
+export type AdminSpeechDataSource = "local" | "production";
 
 export type AdminSpeechFile = {
   id: string;
@@ -17,8 +18,12 @@ export type AdminSpeechFile = {
 
 export type AdminSpeechManifest = {
   generatedAt: string;
-  mode: "local";
+  mode: AdminSpeechDataSource;
   files: AdminSpeechFile[];
+  dialogue: {
+    modifiers: AdminDialogueInfluenceItem[];
+    collections: AdminDialogueInfluenceItem[];
+  };
   sync: {
     status: "disabled" | "already_current" | "synced" | string;
     message: string;
@@ -29,6 +34,18 @@ export type AdminSpeechManifest = {
     enabled: boolean;
     message: string;
   };
+};
+
+export type AdminDialogueInfluenceItem = {
+  id: string;
+  label: string;
+  role?: string;
+  surfaces: string[];
+  source: string;
+  editable: boolean;
+  fileId: string | null;
+  configPath: string | null;
+  summary: string;
 };
 
 export type AdminSpeechSaveResponse = {
@@ -94,14 +111,17 @@ async function adminRequest<T>(path: string, options: RequestInit = {}): Promise
   return response.json() as Promise<T>;
 }
 
-export function fetchAdminSpeechManifest(): Promise<AdminSpeechManifest> {
-  return adminRequest<AdminSpeechManifest>("/api/admin/speech");
+export function fetchAdminSpeechManifest(
+  source: AdminSpeechDataSource = "local",
+): Promise<AdminSpeechManifest> {
+  return adminRequest<AdminSpeechManifest>(`/api/admin/speech?source=${source}`);
 }
 
 export function saveAdminSpeechFiles(
   files: Array<Pick<AdminSpeechFile, "id" | "content">>,
+  source: AdminSpeechDataSource = "local",
 ): Promise<AdminSpeechSaveResponse> {
-  return adminRequest<AdminSpeechSaveResponse>("/api/admin/speech", {
+  return adminRequest<AdminSpeechSaveResponse>(`/api/admin/speech?source=${source}`, {
     method: "PUT",
     body: JSON.stringify({ files }),
   });

@@ -54,6 +54,8 @@ def test_local_admin_reads_managed_files(monkeypatch, tmp_path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["mode"] == "local"
+    assert payload["dialogue"]["modifiers"]
+    assert payload["dialogue"]["collections"]
     assert [item["id"] for item in payload["files"]][:2] == [
         "speech_runtime",
         "story_library",
@@ -92,6 +94,45 @@ def test_local_admin_syncs_before_reading_manifest(monkeypatch, tmp_path) -> Non
     assert captured["settings"] is settings
     assert payload["sync"]["status"] == "synced"
     assert payload["sync"]["serverCommit"] == "abc123"
+
+
+def test_local_admin_reads_production_manifest(monkeypatch) -> None:
+    captured = {}
+    settings = SimpleNamespace(allow_dev_tma_auth=True, admin_publish_enabled=True)
+    monkeypatch.setattr("app.routers.local_admin.get_settings", lambda: settings)
+
+    def fake_read_admin_manifest_from_server(sync_settings, *, deploy_enabled, deploy_message):
+        captured["settings"] = sync_settings
+        captured["deploy_enabled"] = deploy_enabled
+        captured["deploy_message"] = deploy_message
+        return {
+            "generatedAt": "2026-01-01T00:00:00Z",
+            "mode": "production",
+            "files": [],
+            "dialogue": {"modifiers": [], "collections": []},
+            "sync": {
+                "status": "production",
+                "message": "ok",
+                "serverCommit": "abc123",
+                "updatedAt": "2026-01-01T00:00:00Z",
+            },
+            "deploy": {"enabled": True, "message": deploy_message},
+        }
+
+    monkeypatch.setattr(
+        "app.routers.local_admin.read_admin_manifest_from_server",
+        fake_read_admin_manifest_from_server,
+    )
+
+    response = TestClient(app).get("/api/admin/speech?source=production")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "production"
+    assert payload["sync"]["status"] == "production"
+    assert captured["settings"] is settings
+    assert captured["deploy_enabled"] is True
+    assert "Hetzner" in captured["deploy_message"]
 
 
 def test_local_admin_sync_conflict_returns_409(monkeypatch) -> None:
@@ -146,6 +187,21 @@ def test_local_admin_saves_json_and_makes_backup(monkeypatch, tmp_path) -> None:
     assert payload["files"][0]["backupPath"].startswith(".admin-backups/")
     saved = (tmp_path / "speech_runtime.json").read_text(encoding="utf-8")
     assert '"personaContract": "Пиши короче."' in saved
+
+
+def test_local_admin_rejects_direct_production_save(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.local_admin.get_settings",
+        lambda: SimpleNamespace(allow_dev_tma_auth=True),
+    )
+
+    response = TestClient(app).put(
+        "/api/admin/speech?source=production",
+        json={"files": [{"id": "speech_runtime", "content": "{}"}]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "ADMIN_PRODUCTION_DIRECT_SAVE_DISABLED"
 
 
 def test_local_admin_rejects_invalid_json(monkeypatch, tmp_path) -> None:

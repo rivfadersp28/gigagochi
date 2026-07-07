@@ -169,6 +169,12 @@ const KEYBOARD_EAGER_SYNC_MS = 750;
 const INITIAL_PET_REPLY_FALLBACK = "…";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 120;
 const DEFAULT_STATUS_NAME = "Челепиздрик";
+const AMBIENT_MEMORY_KINDS = new Set<string>([
+  "preference",
+  "relationship",
+  "routine",
+  "boundary",
+]);
 const SPEECH_BUBBLE_MIN_WIDTH = 190;
 const SPEECH_BUBBLE_MIN_HEIGHT = 86;
 const SPEECH_BUBBLE_RADIUS = 43;
@@ -1269,10 +1275,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     const requestId = ambientRequestIdRef.current + 1;
     ambientRequestIdRef.current = requestId;
     const memory = readLocalPetMemory(pet.petId);
+    const ambientMemories = memory.memories
+      .filter((item) => AMBIENT_MEMORY_KINDS.has(item.kind) && !item.dueAt)
+      .slice(0, 3);
     const memoryContext = {
-      summary: memory.summary,
       userProfile: memory.userProfile,
-      relevantMemories: memory.memories.slice(0, 3).map((item) => ({
+      relevantMemories: ambientMemories.map((item) => ({
         id: item.id,
         kind: item.kind,
         text: item.text,

@@ -12,9 +12,11 @@ from app.schemas import (
     MemoryExtractionRequest,
 )
 from app.services.chat_service import chat_with_local_pet
+from app.services.pet_reply_engine import speech_runtime
 from app.services.pet_reply_engine.lite_generator import (
     build_ambient_messages,
     build_lite_chat_messages,
+    build_lite_fact_extraction_messages,
     build_memory_extraction_messages,
     build_proactive_messages,
     consolidate_user_memory,
@@ -138,7 +140,7 @@ def test_lite_prompt_includes_state_modifier() -> None:
     assert "Ты сейчас голодный." in build_lite_chat_messages(hungry)[0]["content"]
 
 
-def test_lite_prompt_includes_character_voice_control() -> None:
+def test_lite_prompt_does_not_include_character_voice_control() -> None:
     payload = lite_payload(
         pet={
             "name": "Пончик",
@@ -172,12 +174,13 @@ def test_lite_prompt_includes_character_voice_control() -> None:
 
     system_message = build_lite_chat_messages(payload)[0]["content"]
 
-    assert "VOICE_CONTROL" in system_message
-    assert "нижний регулятор всех видимых реплик питомца" in system_message
-    assert "говорит коротко и замечает запахи" in system_message
-    assert "нюх-нюх" in system_message
-    assert "Нюх-нюх... я проверю носом." in system_message
-    assert "я ассистент" in system_message
+    assert "Отвечай мне как Пончик, кремовый котенок-компаньон." in system_message
+    assert "VOICE_CONTROL" not in system_message
+    assert "нижний регулятор всех видимых реплик питомца" not in system_message
+    assert "говорит коротко и замечает запахи" not in system_message
+    assert "нюх-нюх" not in system_message
+    assert "Нюх-нюх... я проверю носом." not in system_message
+    assert "я ассистент" not in system_message
 
 
 def test_lite_prompt_does_not_include_character_seed() -> None:
@@ -244,10 +247,78 @@ def test_lite_prompt_includes_memory_context_only_when_present() -> None:
     assert "Используй это только если уместно." in system_message
 
 
-def test_lite_clamps_reply_to_300_chars() -> None:
-    client, _completions = fake_lite_client(
-        SimpleNamespace(content="а" * 420, tool_calls=None)
+def test_speech_runtime_config_controls_reply_and_extractor_prompts(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runtime_path = tmp_path / "speech_runtime.json"
+    runtime_path.write_text(
+        json.dumps(
+            {
+                "visibleReply": {
+                    "globalRules": ["CUSTOM_VISIBLE_RULE"],
+                    "chatRules": ["CUSTOM_CHAT_RULE"],
+                },
+                "characterMemory": {
+                    "factExtractionSystem": "CUSTOM_FACT_EXTRACTION_PROMPT",
+                },
+                "stateLayer": {
+                    "surfaces": {
+                        "chat": {
+                            "age": True,
+                            "mood": False,
+                            "hunger": True,
+                            "energy": False,
+                        },
+                        "proactive": {
+                            "age": True,
+                            "mood": False,
+                            "hunger": False,
+                            "energy": False,
+                        },
+                        "ambient": {
+                            "age": True,
+                            "mood": False,
+                            "hunger": False,
+                            "energy": False,
+                        },
+                    },
+                    "ageRoleHints": {"adult": "CUSTOM_ADULT_AGE"},
+                    "thresholds": {"hungerLowMax": 90},
+                    "stateModifiers": {"hungry": "CUSTOM_HUNGRY_STATE"},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
     )
+    monkeypatch.setattr(speech_runtime, "DATA_PATH", runtime_path)
+    speech_runtime.speech_runtime_config.cache_clear()
+
+    try:
+        system_message = build_lite_chat_messages(lite_payload())[0]["content"]
+        extraction_messages = build_lite_fact_extraction_messages(
+            LiteFactExtractionRequest.model_validate(
+                {
+                    "message": "расскажи о доме",
+                    "reply": "Мой дом под теплой плитой.",
+                    "pet": lite_payload().pet.model_dump(),
+                    "history": [],
+                }
+            )
+        )
+    finally:
+        speech_runtime.speech_runtime_config.cache_clear()
+
+    assert "CUSTOM_VISIBLE_RULE" in system_message
+    assert "CUSTOM_CHAT_RULE" in system_message
+    assert "CUSTOM_ADULT_AGE" in system_message
+    assert "CUSTOM_HUNGRY_STATE" in system_message
+    assert extraction_messages[0]["content"] == "CUSTOM_FACT_EXTRACTION_PROMPT"
+
+
+def test_lite_clamps_reply_to_300_chars() -> None:
+    client, _completions = fake_lite_client(SimpleNamespace(content="а" * 420, tool_calls=None))
 
     response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
 
@@ -295,7 +366,7 @@ def test_lite_prompt_includes_preselected_world_context_for_story_query() -> Non
     assert "search_story_library" not in system_message
 
 
-def test_proactive_prompt_includes_character_voice_control() -> None:
+def test_proactive_prompt_does_not_include_character_voice_control() -> None:
     payload = LocalProactiveRequest.model_validate(
         {
             "pet": {
@@ -328,9 +399,9 @@ def test_proactive_prompt_includes_character_voice_control() -> None:
 
     system_message = build_proactive_messages(payload)[0]["content"]
 
-    assert "VOICE_CONTROL" in system_message
-    assert "говорит через маленькие бытовые детали" in system_message
-    assert "нос подсказывает" in system_message
+    assert "VOICE_CONTROL" not in system_message
+    assert "говорит через маленькие бытовые детали" not in system_message
+    assert "нос подсказывает" not in system_message
 
 
 def test_proactive_prompt_skips_world_context_without_story_signal() -> None:
@@ -423,6 +494,23 @@ def test_ambient_prompt_uses_same_phrase_engine_without_forced_world_context() -
                 "Привет, я Листик. Я просто рядом.",
                 "В школе ты был бы отличником или тем, кто рисует на полях?",
             ],
+            "memoryContext": {
+                "summary": "Пользователь готовится к экзамену.",
+                "userProfile": "Пользователь любит короткие спокойные реплики.",
+                "relevantMemories": [
+                    {
+                        "id": "m1",
+                        "kind": "deadline",
+                        "text": "У пользователя завтра экзамен.",
+                        "dueAt": "2026-07-08T09:00:00+03:00",
+                    },
+                    {
+                        "id": "m2",
+                        "kind": "preference",
+                        "text": "Пользователь любит короткие ответы.",
+                    },
+                ],
+            },
             "replyMaxChars": 120,
         }
     )
@@ -431,19 +519,24 @@ def test_ambient_prompt_uses_same_phrase_engine_without_forced_world_context() -
     system_message = messages[0]["content"]
 
     assert "idle-фразу на главном экране" in system_message
-    assert "IDLE_DIALOGUE_ENGINE" in system_message
-    assert "Спроси меня что-нибудь" in system_message
+    assert "IDLE_SELF_PROMPT" in system_message
+    assert "IDLE_DIALOGUE_ENGINE" not in system_message
+    assert "Спроси меня что-нибудь" not in system_message
     assert "пять минут" not in system_message
     assert "Привет, я Листик. Я просто рядом." in system_message
     assert "Я просто рядом" in system_message
-    assert "ask_school_or_work_role" in system_message
-    assert "VOICE_CONTROL" in system_message
+    assert "ask_school_or_work_role" not in system_message
+    assert "У пользователя завтра экзамен." not in system_message
+    assert "Пользователь готовится к экзамену." not in system_message
+    assert "Пользователь любит короткие ответы." in system_message
+    assert "VOICE_CONTROL" not in system_message
     assert "WORLD_CONTEXT" not in system_message
     assert "лист шепчет" not in system_message
     assert "заинтересоваться его миром" in system_message
     assert "STORY_LIBRARY" not in system_message
     assert messages[-1]["content"] != "Скажи одну короткую idle-фразу сейчас."
-    assert "выбранному диалоговому ходу" in messages[-1]["content"]
+    assert "выбранному диалоговому ходу" not in messages[-1]["content"]
+    assert "самостоятельную idle-реплику" in messages[-1]["content"]
 
 
 def test_ambient_prompt_uses_world_context_when_history_needs_it() -> None:
@@ -568,9 +661,7 @@ def test_lite_story_library_context_is_preselected_without_story_tools() -> None
     request = completions.calls[0]
     system_message = request["messages"][0]["content"]
     assert "WORLD_CONTEXT" in system_message
-    assert "search_story_library" not in [
-        tool["function"]["name"] for tool in request["tools"]
-    ]
+    assert "search_story_library" not in [tool["function"]["name"] for tool in request["tools"]]
     assert response.debug is not None
     assert response.debug.storyLibraryPatch is None
     assert response.debug.storyLibraryDebug is not None
@@ -638,8 +729,7 @@ def test_story_library_search_uses_personal_overlay_first() -> None:
                         "pool": "threats",
                         "name": "Тихий колокольный страж",
                         "text": (
-                            "Личная опасность Пончика: звонит только когда "
-                            "кто-то прячет находку."
+                            "Личная опасность Пончика: звонит только когда кто-то прячет находку."
                         ),
                     }
                 ],
@@ -734,8 +824,7 @@ def test_lite_world_tool_bootstraps_missing_world_from_chatgpt() -> None:
                         "world": {
                             "story": "World facts come from source_descriptions only:\n-",
                             "environment": (
-                                "безопасная среда для формы "
-                                "«гигантский земляной великан»"
+                                "безопасная среда для формы «гигантский земляной великан»"
                             ),
                         },
                         "home": {
@@ -953,9 +1042,7 @@ def test_memory_consolidation_promotes_learning() -> None:
 
 
 def test_proactive_reply_is_clamped() -> None:
-    client, _completions = fake_lite_client(
-        SimpleNamespace(content="б" * 420, tool_calls=None)
-    )
+    client, _completions = fake_lite_client(SimpleNamespace(content="б" * 420, tool_calls=None))
 
     response = generate_proactive_pet_message(
         LocalProactiveRequest.model_validate(

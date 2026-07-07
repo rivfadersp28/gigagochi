@@ -19,6 +19,7 @@ DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
 BACKUP_ROOT_NAME = ".admin-backups"
 
 FileFormat = Literal["json", "jsonl"]
+AdminDataSource = Literal["local", "production"]
 
 
 @dataclass(frozen=True)
@@ -40,7 +41,7 @@ MANAGED_FILES: tuple[ManagedFile, ...] = (
         "Рантайм характера",
         "speech_runtime.json",
         "json",
-        "Главные правила persona contract, ambient moves и world context для реплик.",
+        "Главные правила persona contract, ambient self-prompt и world context для реплик.",
     ),
     ManagedFile(
         "story_library",
@@ -155,11 +156,14 @@ def _summary(spec: ManagedFile, content: str) -> dict[str, Any]:
     return {"type": type(parsed).__name__}
 
 
-def _file_entry(spec: ManagedFile) -> dict[str, Any]:
-    path = spec.path
-    exists = path.exists()
-    content = path.read_text(encoding="utf-8") if exists else ""
-    stat = path.stat() if exists else None
+def file_entry_from_content(
+    spec: ManagedFile,
+    *,
+    content: str,
+    exists: bool,
+    size_bytes: int,
+    updated_at: str | None,
+) -> dict[str, Any]:
     return {
         "id": spec.file_id,
         "label": spec.label,
@@ -167,27 +171,246 @@ def _file_entry(spec: ManagedFile) -> dict[str, Any]:
         "format": spec.file_format,
         "description": spec.description,
         "exists": exists,
-        "sizeBytes": stat.st_size if stat else 0,
-        "updatedAt": (
-            datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat().replace("+00:00", "Z")
-            if stat
-            else None
-        ),
+        "sizeBytes": size_bytes,
+        "updatedAt": updated_at,
         "summary": _summary(spec, content) if exists else {"status": "missing"},
         "content": content,
     }
 
 
+def _file_entry(spec: ManagedFile) -> dict[str, Any]:
+    path = spec.path
+    exists = path.exists()
+    content = path.read_text(encoding="utf-8") if exists else ""
+    stat = path.stat() if exists else None
+    return file_entry_from_content(
+        spec,
+        content=content,
+        exists=exists,
+        size_bytes=stat.st_size if stat else 0,
+        updated_at=(
+            datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat().replace("+00:00", "Z")
+            if stat
+            else None
+        ),
+    )
+
+
+def dialogue_influence_manifest() -> dict[str, Any]:
+    surfaces = ["chat", "proactive", "ambient"]
+    return {
+        "modifiers": [
+            {
+                "id": "identity_line",
+                "label": "Identity line",
+                "surfaces": surfaces,
+                "source": "pet",
+                "editable": False,
+                "fileId": None,
+                "configPath": None,
+                "summary": "Имя, description и текущая стадия питомца формируют базовое «Отвечай мне как ...».",
+            },
+            {
+                "id": "state_layer",
+                "label": "Возраст, настроение, голод, энергия",
+                "surfaces": surfaces,
+                "source": "speech_runtime",
+                "editable": True,
+                "fileId": "speech_runtime",
+                "configPath": "stateLayer",
+                "summary": "Surface-флаги, age hints, пороги голода/энергии и короткие state-модификаторы.",
+            },
+            {
+                "id": "persona_contract",
+                "label": "Persona contract",
+                "surfaces": surfaces,
+                "source": "speech_runtime",
+                "editable": True,
+                "fileId": "speech_runtime",
+                "configPath": "personaContract",
+                "summary": "Главная инструкция естественной речи, роли питомца и запрета служебного формата.",
+            },
+            {
+                "id": "visible_reply_rules",
+                "label": "Visible reply rules",
+                "surfaces": surfaces,
+                "source": "speech_runtime",
+                "editable": True,
+                "fileId": "speech_runtime",
+                "configPath": "visibleReply",
+                "summary": "Общие и surface-specific правила для chat/proactive/idle видимых реплик.",
+            },
+            {
+                "id": "surface_rules",
+                "label": "Proactive / idle surface rules",
+                "surfaces": ["proactive", "ambient"],
+                "source": "speech_runtime",
+                "editable": True,
+                "fileId": "speech_runtime",
+                "configPath": "surfaceRules",
+                "summary": "Правила самостоятельной реплики и proactive-повода.",
+            },
+            {
+                "id": "ambient_self_prompt",
+                "label": "Idle self-prompt",
+                "surfaces": ["ambient"],
+                "source": "speech_runtime",
+                "editable": True,
+                "fileId": "speech_runtime",
+                "configPath": "ambientSelfPrompt",
+                "summary": "Открытая инструкция для живой idle-фразы без фиксированного хода.",
+            },
+            {
+                "id": "recent_ambient_replies",
+                "label": "Recent idle anti-repeat",
+                "surfaces": ["ambient"],
+                "source": "runtime",
+                "editable": True,
+                "fileId": "speech_runtime",
+                "configPath": "recentAmbientRepliesRule",
+                "summary": "Последние idle-реплики подмешиваются как запрет на повтор образа и конструкции.",
+            },
+            {
+                "id": "user_memory_prompt",
+                "label": "User memory block",
+                "surfaces": surfaces,
+                "source": "localStorage + speech_runtime",
+                "editable": True,
+                "fileId": "speech_runtime",
+                "configPath": "memoryUsageRule",
+                "summary": "Профиль, summary и relevantMemories владельца; для idle фильтруются deadline/event.",
+            },
+            {
+                "id": "world_context_prompt",
+                "label": "WORLD_CONTEXT framing",
+                "surfaces": surfaces,
+                "source": "speech_runtime",
+                "editable": True,
+                "fileId": "speech_runtime",
+                "configPath": "worldContext",
+                "summary": "Обертка для уже выбранных story bricks перед финальной генерацией.",
+            },
+            {
+                "id": "memory_extractors",
+                "label": "Фоновые extractors",
+                "surfaces": ["chat"],
+                "source": "speech_runtime",
+                "editable": True,
+                "fileId": "speech_runtime",
+                "configPath": "characterMemory / userMemory",
+                "summary": "После ответа сохраняют новые факты персонажа, story bricks и память владельца.",
+            },
+        ],
+        "collections": [
+            {
+                "id": "story_library",
+                "label": "Global story library",
+                "role": "rag",
+                "surfaces": surfaces,
+                "source": "backend/data",
+                "editable": True,
+                "fileId": "story_library",
+                "configPath": "pools",
+                "summary": "Основная RAG-коллекция для WORLD_CONTEXT; включается только при story-сигнале.",
+            },
+            {
+                "id": "story_library_overlay",
+                "label": "Per-pet story overlay",
+                "role": "rag",
+                "surfaces": surfaces,
+                "source": "localStorage",
+                "editable": False,
+                "fileId": None,
+                "configPath": "characterBible.extensions.story_library_overlay",
+                "summary": "Личный лор конкретного питомца, накопленный из диалога; при поиске идет перед global.",
+            },
+            {
+                "id": "user_memory",
+                "label": "User memory",
+                "role": "memory",
+                "surfaces": surfaces,
+                "source": "localStorage",
+                "editable": False,
+                "fileId": None,
+                "configPath": "LocalPetMemoryStateV1",
+                "summary": "Память владельца: recall для chat/proactive и мягко отфильтрованный контекст для idle.",
+            },
+            {
+                "id": "age_speech_examples",
+                "label": "Age speech examples",
+                "role": "examples",
+                "surfaces": ["chat"],
+                "source": "backend/data",
+                "editable": True,
+                "fileId": "age_speech_examples",
+                "configPath": "creature_phrases_dataset",
+                "summary": "Примеры детской манеры для baby-стадии; используются как rhythm/examples, не как шаблон.",
+            },
+            {
+                "id": "story_constructor",
+                "label": "Story constructor",
+                "role": "travel",
+                "surfaces": [],
+                "source": "backend/data",
+                "editable": True,
+                "fileId": "story_constructor",
+                "configPath": "pools",
+                "summary": "Не влияет на обычный диалог; используется travel/adventure pipeline.",
+            },
+            {
+                "id": "travel_story_templates",
+                "label": "Travel templates",
+                "role": "travel",
+                "surfaces": [],
+                "source": "backend/data",
+                "editable": True,
+                "fileId": "travel_story_templates",
+                "configPath": "templates",
+                "summary": "Не влияет на chat/idle/proactive; задает структуру приключений.",
+            },
+            {
+                "id": "world_descriptions",
+                "label": "World description anchors",
+                "role": "creation",
+                "surfaces": [],
+                "source": "backend/data",
+                "editable": True,
+                "fileId": "world_descriptions",
+                "configPath": "dataset",
+                "summary": "Влияет на создание template character bible, но не подтягивается в текущий диалог напрямую.",
+            },
+            {
+                "id": "external_character_sources",
+                "label": "External character fragments",
+                "role": "seed",
+                "surfaces": [],
+                "source": "backend/data",
+                "editable": True,
+                "fileId": "external_character_sources",
+                "configPath": "jsonl",
+                "summary": "Справочный корпус; текущий runtime создания и диалога не читает его напрямую.",
+            },
+        ],
+    }
+
+
 def read_admin_manifest(
     *,
+    mode: AdminDataSource = "local",
+    file_entries: list[dict[str, Any]] | None = None,
     deploy_enabled: bool = False,
     deploy_message: str | None = None,
     sync_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "generatedAt": _now_iso(),
-        "mode": "local",
-        "files": [_file_entry(spec) for spec in MANAGED_FILES],
+        "mode": mode,
+        "files": (
+            file_entries
+            if file_entries is not None
+            else [_file_entry(spec) for spec in MANAGED_FILES]
+        ),
+        "dialogue": dialogue_influence_manifest(),
         "sync": sync_result
         or {
             "status": "disabled",

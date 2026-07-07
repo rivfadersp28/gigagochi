@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import selectors
 import shlex
 import subprocess
@@ -11,11 +12,15 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from textwrap import dedent
 from typing import Any, Literal
 
 from app.services.local_admin_store import (
+    MANAGED_FILES,
     clear_admin_runtime_caches,
+    file_entry_from_content,
     managed_admin_git_paths,
+    read_admin_manifest,
     save_admin_files,
     validate_admin_files_on_disk,
 )
@@ -150,6 +155,120 @@ def get_admin_publish_job(job_id: str) -> dict[str, Any] | None:
     with _jobs_lock:
         job = _jobs.get(job_id)
     return job.snapshot() if job else None
+
+
+def read_admin_manifest_from_server(
+    settings: Any,
+    *,
+    deploy_enabled: bool,
+    deploy_message: str | None,
+) -> dict[str, Any]:
+    timeout = float(_setting(settings, "admin_publish_command_timeout_seconds", 1200))
+    remote_path = str(_setting(settings, "admin_publish_remote_path", "/opt/gigagochi"))
+    paths_json = json.dumps([spec.relative_path for spec in MANAGED_FILES], ensure_ascii=False)
+    remote_script = dedent(
+        """
+        import json
+        import subprocess
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        paths = json.loads(PATHS_JSON)
+        root = Path("backend/data")
+        files = []
+        for rel in paths:
+            path = root / rel
+            if path.exists():
+                stat = path.stat()
+                updated_at = (
+                    datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                )
+                files.append(
+                    {
+                        "path": rel,
+                        "exists": True,
+                        "content": path.read_text(encoding="utf-8"),
+                        "sizeBytes": stat.st_size,
+                        "updatedAt": updated_at,
+                    }
+                )
+            else:
+                files.append(
+                    {
+                        "path": rel,
+                        "exists": False,
+                        "content": "",
+                        "sizeBytes": 0,
+                        "updatedAt": None,
+                    }
+                )
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        print(json.dumps({"commit": commit, "files": files}, ensure_ascii=False))
+        """
+    ).strip()
+    remote_script = remote_script.replace("PATHS_JSON", repr(paths_json))
+    remote_command = (
+        f"set -e; cd {shlex.quote(remote_path)}; "
+        f"python3 - <<'PY'\n{remote_script}\nPY"
+    )
+    try:
+        output = _run_capture(
+            [
+                *_ssh_command_args(
+                    settings,
+                    missing_code="ADMIN_PRODUCTION_SSH_TARGET_MISSING",
+                    invalid_code="ADMIN_PRODUCTION_SSH_TARGET_INVALID",
+                ),
+                remote_command,
+            ],
+            cwd=REPO_ROOT,
+            timeout=timeout,
+        )
+        payload = json.loads(output or "{}")
+    except AdminPublishError:
+        raise
+    except Exception as exc:
+        raise AdminPublishError(
+            "ADMIN_PRODUCTION_READ_FAILED",
+            f"Не удалось прочитать production data с Hetzner: {exc}",
+        ) from exc
+
+    files_by_path = {
+        item.get("path"): item
+        for item in payload.get("files", [])
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    }
+    entries: list[dict[str, Any]] = []
+    for spec in MANAGED_FILES:
+        item = files_by_path.get(spec.relative_path, {})
+        content = item.get("content") if isinstance(item.get("content"), str) else ""
+        entries.append(
+            file_entry_from_content(
+                spec,
+                content=content,
+                exists=bool(item.get("exists")),
+                size_bytes=int(item.get("sizeBytes") or 0),
+                updated_at=(
+                    item.get("updatedAt") if isinstance(item.get("updatedAt"), str) else None
+                ),
+            )
+        )
+
+    commit = str(payload.get("commit") or "").strip()
+    return read_admin_manifest(
+        mode="production",
+        file_entries=entries,
+        deploy_enabled=deploy_enabled,
+        deploy_message=deploy_message,
+        sync_result={
+            "status": "production",
+            "message": "Данные прочитаны напрямую с Hetzner.",
+            "serverCommit": commit[:12] if commit else None,
+            "updatedAt": _now_iso(),
+        },
+    )
 
 
 def sync_admin_files_from_server(settings: Any) -> dict[str, Any]:

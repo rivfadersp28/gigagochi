@@ -3,22 +3,31 @@
 ## Pet Replies
 
 - Backend phrase generation lives in `backend/app/services/pet_reply_engine/lite_generator.py`.
-- Chat, proactive and ambient replies are assembled through the same `PhrasePlan` structure: identity, persona contract, optional voice block, optional world context, memory and surface-specific rules.
+- Chat, proactive and ambient replies are assembled through the same `PhrasePlan` structure: identity, persona contract, optional world context, memory and surface-specific rules.
 - `backend/app/services/context_assembler.py` decides whether story context is needed before the model call. It returns selected `WORLD_CONTEXT` bricks plus debug metadata instead of embedding the full story dataset.
 - Story retrieval is heuristic-gated by story-sphere signals. Generic small talk should not retrieve world bricks.
-- Tone of voice is rendered by `backend/app/services/pet_reply_engine/voice_profile.py`. It is intended to change speech form only, not facts, answer meaning or selected story bricks.
-- Ambient replies use `IDLE_DIALOGUE_ENGINE` inside the same phrase engine. They are expected to address the owner, ask questions or invite dialogue, with recent idle replies used as anti-repeat context.
+- Ambient replies use an open `IDLE_SELF_PROMPT` inside the same phrase engine. There is no selected dialogue move; the model can choose a natural micro-moment, observation, check-in, or question. Recent idle replies are still passed as anti-repeat context.
 - New durable story entities can be extracted after a chat reply by `story_library_extraction` and returned as `debug.storyLibraryPatch`. Frontend applies that patch into the local per-pet story-library overlay.
 - Runtime speech regulator text that used to be hardcoded in the reply engine now lives in
   `backend/data/speech_runtime.json` and is read by
   `backend/app/services/pet_reply_engine/speech_runtime.py`. It covers persona
-  contract, memory usage rule, ambient dialogue moves/examples, surface rules,
-  and `WORLD_CONTEXT` prompt framing.
+  contract, memory usage rule, ambient self-prompt, surface rules,
+  visible reply rules, character/user memory extractor prompts, world seeding,
+  `WORLD_CONTEXT` prompt framing, and the visible age/mood/hunger/energy
+  `stateLayer` used by chat/proactive/ambient identity lines.
+- Backend chat/proactive/ambient prompts no longer inject `VOICE_CONTROL` from
+  `characterBible.voice` / `dialogue_style`; the identity line and character
+  description are the prompt source of voice. `voice_profile.py` remains in the
+  codebase but is not on the visible-reply path.
 - Generated pets follow a template -> instance contract in frontend local
   storage. `assetSet.characterTemplate` is the cleaned immutable snapshot from
   generation, while `assetSet.characterBible` is the mutable per-pet instance.
   Mutable facts stay in `characterBible.extensions.lite_overlay`; per-pet story
   bricks stay in `characterBible.extensions.story_library_overlay`.
+- Frontend character instance normalization strips prompt-scaffolding fields
+  (`voice`, `dialogue_style`, `lore.voice`) from `characterBible` and records
+  the prompt model version in `extensions.instance`. The original
+  `characterTemplate` can still keep the source data.
 - Normal frontend user chat turns share
   `frontend/src/lib/localPetChatTurn.ts`. It appends chat history, sends the
   backend request, marks recalled memory as used, and runs post-reply lite-fact
@@ -32,6 +41,10 @@
 
 - Local speech admin UI lives at `frontend/src/app/admin/speech/page.tsx` and
   `frontend/src/components/admin/SpeechAdmin.tsx`.
+- The speech admin has a structured "Настройка" tab for `speech_runtime.json`
+  so visible reply rules, idle self-prompt, memory extractor
+  prompts, and `WORLD_CONTEXT` templates can be edited without touching Python
+  code. Other managed datasets remain raw JSON/JSONL editors.
 - The UI talks to `backend/app/routers/local_admin.py` at `/api/admin/speech`.
   The router is local-dev only: it requires `ALLOW_DEV_TMA_AUTH=true` and a
   local client host.
@@ -46,3 +59,8 @@
 - With `ADMIN_SYNC_FROM_SERVER_ENABLED=true`, `GET /api/admin/speech` first
   reads the current Git commit from Hetzner over SSH and refreshes the local
   managed data files from that commit before returning the manifest.
+- The admin manifest also exposes a dialogue influence map with prompt
+  modifiers and RAG/memory/dataset collections. The `/admin/speech` UI has a
+  `Local / Production` switch: local mode edits current `backend/data`, while
+  production mode reads current Hetzner `backend/data` over SSH and applies
+  changes only through the publish/deploy pipeline.
