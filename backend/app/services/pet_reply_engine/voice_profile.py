@@ -1,11 +1,25 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 MAX_VOICE_RULES = 6
 MAX_CATCHPHRASES = 4
 MAX_SAMPLE_REPLIES = 5
 MAX_AVOID_PATTERNS = 6
+
+
+@dataclass(frozen=True)
+class VoiceProfile:
+    stage: str | None
+    rules: tuple[str, ...]
+    catchphrases: tuple[str, ...]
+    sample_replies: tuple[str, ...]
+    avoid_patterns: tuple[str, ...]
+    sentence_length: str
+    warmth: str
+    humor: str
+    directness: str
 
 
 def _is_record(value: Any) -> bool:
@@ -51,12 +65,11 @@ def _bullet_block(title: str, values: list[str]) -> str:
     return f"{title}:\n{lines}"
 
 
-def pet_voice_prompt_block(
+def pet_voice_profile(
     character_bible: Any,
     *,
     stage: str | None = None,
-    include_catchphrases: bool = True,
-) -> str | None:
+) -> VoiceProfile | None:
     bible = _record(character_bible)
     if not bible:
         return None
@@ -100,20 +113,60 @@ def pet_voice_prompt_block(
         limit=MAX_AVOID_PATTERNS,
     )
 
-    blocks = [_bullet_block("Правила голоса", rules)]
+    sentence_length = _string_value(voice.get("sentence_length")) or "короткие фразы"
+    warmth = _string_value(voice.get("warmth")) or "естественная теплота"
+    humor = _string_value(voice.get("humor")) or "по ситуации, без стендапа"
+    directness = _string_value(voice.get("directness")) or "прямо и просто"
+    if not any([rules, catchphrases, sample_replies, avoid_patterns]):
+        return None
+    return VoiceProfile(
+        stage=stage,
+        rules=tuple(rules),
+        catchphrases=tuple(catchphrases),
+        sample_replies=tuple(sample_replies),
+        avoid_patterns=tuple(avoid_patterns),
+        sentence_length=sentence_length,
+        warmth=warmth,
+        humor=humor,
+        directness=directness,
+    )
+
+
+def pet_voice_prompt_block(
+    character_bible: Any,
+    *,
+    stage: str | None = None,
+    include_catchphrases: bool = True,
+) -> str | None:
+    profile = pet_voice_profile(character_bible, stage=stage)
+    if not profile:
+        return None
+
+    blocks = [
+        _bullet_block(
+            "Параметры голоса",
+            [
+                f"длина: {profile.sentence_length}",
+                f"теплота: {profile.warmth}",
+                f"юмор: {profile.humor}",
+                f"прямота: {profile.directness}",
+            ],
+        ),
+        _bullet_block("Правила голоса", list(profile.rules)),
+    ]
     if include_catchphrases:
-        blocks.append(_bullet_block("Любимые короткие фразы", catchphrases))
+        blocks.append(_bullet_block("Любимые короткие фразы", list(profile.catchphrases)))
     blocks.extend(
         [
-            _bullet_block("Примеры ритма", sample_replies),
-            _bullet_block("Не говорить так", avoid_patterns),
+            _bullet_block("Примеры ритма", list(profile.sample_replies)),
+            _bullet_block("Не говорить так", list(profile.avoid_patterns)),
         ]
     )
     body = "\n\n".join(block for block in blocks if block)
     if not body:
         return None
 
-    stage_line = f"Возрастная стадия сейчас: {stage}." if stage else ""
+    stage_line = f"Возрастная стадия сейчас: {profile.stage}." if profile.stage else ""
     return (
         "VOICE_CONTROL: это нижний регулятор всех видимых реплик питомца. "
         "Следуй ему строже, чем общим советам по стилю. "

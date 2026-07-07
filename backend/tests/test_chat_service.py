@@ -419,7 +419,10 @@ def test_ambient_prompt_uses_same_phrase_engine_without_forced_world_context() -
                 },
             },
             "history": [],
-            "recentAmbientReplies": ["Привет, я Листик. Я просто рядом."],
+            "recentAmbientReplies": [
+                "Привет, я Листик. Я просто рядом.",
+                "В школе ты был бы отличником или тем, кто рисует на полях?",
+            ],
             "replyMaxChars": 120,
         }
     )
@@ -432,6 +435,7 @@ def test_ambient_prompt_uses_same_phrase_engine_without_forced_world_context() -
     assert "Расскажи про свой мир так" in system_message
     assert "Привет, я Листик. Я просто рядом." in system_message
     assert "я просто рядом" in system_message
+    assert "ask_school_or_work_role" in system_message
     assert "VOICE_CONTROL" in system_message
     assert "WORLD_CONTEXT" not in system_message
     assert "лист шепчет" not in system_message
@@ -586,9 +590,58 @@ def test_lite_story_library_context_is_preselected_without_story_tools() -> None
         tool["function"]["name"] for tool in request["tools"]
     ]
     assert response.debug is not None
+    assert response.debug.storyLibraryPatch is None
     assert response.debug.storyLibraryDebug is not None
     assert response.debug.storyLibraryDebug["mode"] == "chat"
     assert response.debug.storyLibraryDebug["injectedSpheres"]
+
+
+def test_lite_story_library_extraction_returns_personal_patch() -> None:
+    client, completions = fake_lite_client(
+        SimpleNamespace(
+            content="Я встретил стеклянного шуршуна у корня. Он тихо звенит.",
+            tool_calls=None,
+        ),
+        SimpleNamespace(
+            content=json.dumps(
+                {
+                    "bricks": [
+                        {
+                            "pool": "creatures",
+                            "name": "стеклянный шуршун",
+                            "description": (
+                                "Личное существо питомца: маленький стеклянный "
+                                "шуршун, который тихо звенит у корней."
+                            ),
+                            "basedOnBrickIds": ["global:creatures:000"],
+                            "reason": "питомец ввел новое устойчивое существо",
+                            "confidence": 0.92,
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            tool_calls=None,
+        ),
+    )
+
+    response = generate_lite_pet_reply(
+        lite_payload(message="есть ли в твоем мире существа?"),
+        client=client,
+        model="gpt-5.5",
+        timeout=10,
+    )
+
+    assert len(completions.calls) == 2
+    assert completions.calls[1]["response_format"]["json_schema"]["name"] == (
+        "story_library_extraction"
+    )
+    assert response.debug is not None
+    assert response.debug.storyLibraryPatch is not None
+    brick = response.debug.storyLibraryPatch["bricks"][0]
+    assert brick["source"] == "pet_overlay"
+    assert brick["pool"] == "creatures"
+    assert brick["name"] == "стеклянный шуршун"
 
 
 def test_story_library_search_uses_personal_overlay_first() -> None:

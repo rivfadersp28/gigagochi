@@ -12,6 +12,15 @@ ContextMode = Literal["chat", "proactive", "ambient"]
 MAX_CONTEXT_BRICKS = 5
 WORD_PATTERN = re.compile(r"[0-9A-Za-zА-Яа-яЁё-]+")
 
+GENERIC_DIALOGUE_PATTERNS: tuple[str, ...] = (
+    "привет",
+    "как дела",
+    "что делаешь",
+    "скуча",
+    "я рядом",
+    "обними",
+)
+
 POOL_KEYWORDS: dict[str, tuple[str, ...]] = {
     "items": (
         "предмет",
@@ -86,6 +95,15 @@ class AssembledPetContext:
     debug: dict[str, Any] | None
 
 
+@dataclass(frozen=True)
+class StoryRetrievalPlan:
+    needs_context: bool
+    query: str
+    signal_text: str
+    pool_hints: list[str]
+    reason: str
+
+
 def _compact_spaces(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
@@ -141,6 +159,16 @@ def _pool_hints(text: str) -> list[str]:
     return result[:5]
 
 
+def _has_strong_story_signal(text: str, hints: list[str]) -> bool:
+    if not hints:
+        return False
+    lowered = text.casefold()
+    if any(pattern in lowered for pattern in GENERIC_DIALOGUE_PATTERNS):
+        non_generic_words = _tokens(lowered) - _tokens(" ".join(GENERIC_DIALOGUE_PATTERNS))
+        return bool(non_generic_words & _tokens(" ".join(sum(POOL_KEYWORDS.values(), ()))))
+    return True
+
+
 def _retrieval_signal_text(
     *,
     user_message: str,
@@ -186,6 +214,44 @@ def _query_text(
     return "короткая реплика питомца"
 
 
+def _retrieval_plan(
+    *,
+    mode: ContextMode,
+    pet: LocalPetChatContext,
+    user_message: str,
+    history: list[LocalChatHistoryItem],
+    memory_context: LocalPetMemoryContext | None,
+) -> StoryRetrievalPlan:
+    query = _query_text(
+        mode=mode,
+        pet=pet,
+        user_message=user_message,
+        history=history,
+        memory_context=memory_context,
+    )
+    signal_text = _retrieval_signal_text(
+        user_message=user_message,
+        history=history,
+        memory_context=memory_context,
+    )
+    hints = _pool_hints(signal_text)
+    if not _has_strong_story_signal(signal_text, hints):
+        return StoryRetrievalPlan(
+            needs_context=False,
+            query=query,
+            signal_text=signal_text,
+            pool_hints=[],
+            reason="no_story_signal",
+        )
+    return StoryRetrievalPlan(
+        needs_context=True,
+        query=query,
+        signal_text=signal_text,
+        pool_hints=hints,
+        reason="matched_story_spheres",
+    )
+
+
 def _render_brick(brick: dict[str, Any]) -> str:
     pool = _text_value(brick.get("poolLabel") or brick.get("pool"), limit=80)
     name = _text_value(brick.get("name"), limit=120)
@@ -229,33 +295,30 @@ def assemble_pet_context(
     limit: int = MAX_CONTEXT_BRICKS,
 ) -> AssembledPetContext:
     active_history = history or []
-    query = _query_text(
+    plan = _retrieval_plan(
         mode=mode,
         pet=pet,
         user_message=user_message,
         history=active_history,
         memory_context=memory_context,
     )
-    signal_text = _retrieval_signal_text(
-        user_message=user_message,
-        history=active_history,
-        memory_context=memory_context,
-    )
-    hints = _pool_hints(signal_text)
-    if not hints:
+    if not plan.needs_context:
         return AssembledPetContext(
             prompt_block="",
             debug={
                 "mode": mode,
-                "query": query,
+                "query": plan.query,
+                "signalText": plan.signal_text,
                 "poolHints": [],
                 "injectedSpheres": [],
+                "needsStoryContext": False,
+                "reason": plan.reason,
             },
         )
 
     result = search_story_library(
-        query=query,
-        pool_hints=hints,
+        query=plan.query,
+        pool_hints=plan.pool_hints,
         limit=limit,
         character_bible=pet.characterBible,
     )
@@ -265,8 +328,11 @@ def assemble_pet_context(
         prompt_block=prompt_block,
         debug={
             "mode": mode,
-            "query": query,
-            "poolHints": hints,
+            "query": plan.query,
+            "signalText": plan.signal_text,
+            "poolHints": plan.pool_hints,
             "injectedSpheres": bricks,
+            "needsStoryContext": True,
+            "reason": plan.reason,
         },
     )

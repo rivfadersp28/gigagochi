@@ -4,8 +4,9 @@ import json
 import random
 import re
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from app.config import get_settings
 from app.schemas import (
@@ -22,7 +23,11 @@ from app.schemas import (
     MemoryExtractionRequest,
     MemoryExtractionResponse,
 )
-from app.services.context_assembler import AssembledPetContext, assemble_pet_context
+from app.services.context_assembler import (
+    MAX_CONTEXT_BRICKS,
+    AssembledPetContext,
+    assemble_pet_context,
+)
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_chat_model,
@@ -48,6 +53,7 @@ from app.services.pet_reply_engine.state_interpreter import (
 )
 from app.services.pet_reply_engine.voice_profile import pet_voice_prompt_block
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
+from app.services.story_library import story_library_patch_for_new_brick
 
 MAX_LITE_TOOL_ROUNDS = 3
 MAX_LITE_BABY_EXAMPLES = 8
@@ -75,6 +81,8 @@ USER_MEMORY_KINDS = (
 FACE_HINTS = ("happy", "excited", "curious", "content", "grumpy", "sleepy")
 MAX_MEMORY_CONTEXT_ITEMS = 5
 MAX_RECENT_AMBIENT_REPLIES = 5
+
+PhraseSurface = Literal["chat", "proactive", "ambient"]
 
 AMBIENT_RANDOM = random.SystemRandom()
 
@@ -133,6 +141,34 @@ AMBIENT_DIALOGUE_EXAMPLES: tuple[str, ...] = (
     "Дай мне маленький квест на сегодня. Только такой, чтобы я не зазнался.",
 )
 
+
+@dataclass(frozen=True)
+class PhrasePlan:
+    surface: PhraseSurface
+    reply_limit: int
+    identity_line: str
+    persona_contract: str
+    memory_block: str | None = None
+    voice_block: str | None = None
+    world_block: str | None = None
+    recent_ambient_block: str | None = None
+    dialogue_block: str | None = None
+    extra_rules: tuple[str, ...] = field(default_factory=tuple)
+
+    def system_content(self) -> str:
+        sections = [
+            self.identity_line,
+            self.persona_contract,
+            self.voice_block,
+            self.world_block,
+            self.memory_block,
+            self.recent_ambient_block,
+            self.dialogue_block,
+            "\n".join(self.extra_rules),
+        ]
+        return "\n\n".join(section for section in sections if section)
+
+
 LITE_AGE_ROLE_HINTS = {
     "baby": "малыш такого существа",
     "teen": "подросток такого существа",
@@ -153,6 +189,22 @@ LITE_WORLD_REQUEST_PATTERN = re.compile(
     r"("
     r"\bмир\b|мире|дом|жив[её]шь|где\s+ты|где\s+твой|откуда|место|"
     r"habitat|home|world|where\s+do\s+you\s+live"
+    r")",
+    re.IGNORECASE,
+)
+
+STORY_LIBRARY_QUERY_PATTERN = re.compile(
+    r"("
+    r"мир|мире|существ|монстр|опас|угроз|чудовищ|твар|звер|дух|"
+    r"предмет|вещ|наход|артефакт|мест|локац|лес|грот|пещер|сосед|персонаж"
+    r")",
+    re.IGNORECASE,
+)
+
+STORY_LIBRARY_REPLY_ENTITY_PATTERN = re.compile(
+    r"("
+    r"зовут|называ[ею]|встрет|наш[её]л|водится|обита|пряч|охраня|"
+    r"существ|монстр|страж|чудовищ|твар|звер|дух|артефакт|грот|пещер|сосед"
     r")",
     re.IGNORECASE,
 )
@@ -298,6 +350,45 @@ LITE_FACT_EXTRACTION_SCHEMA: dict[str, Any] = {
         }
     },
     "required": ["facts"],
+}
+
+STORY_LIBRARY_EXTRACTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "bricks": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "pool": {
+                        "type": "string",
+                        "enum": ["items", "locations", "neighbors", "creatures", "threats"],
+                    },
+                    "name": {"type": "string", "maxLength": 120},
+                    "description": {"type": "string", "maxLength": 500},
+                    "basedOnBrickIds": {
+                        "type": "array",
+                        "maxItems": 6,
+                        "items": {"type": "string", "maxLength": 120},
+                    },
+                    "reason": {"type": "string", "maxLength": 240},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                "required": [
+                    "pool",
+                    "name",
+                    "description",
+                    "basedOnBrickIds",
+                    "reason",
+                    "confidence",
+                ],
+            },
+        }
+    },
+    "required": ["bricks"],
 }
 
 LITE_WORLD_SEED_SCHEMA: dict[str, Any] = {
@@ -499,7 +590,33 @@ def _recent_ambient_replies_block(replies: list[str]) -> str | None:
     )
 
 
-def _ambient_dialogue_block(*, has_world_context: bool) -> str:
+def _infer_recent_ambient_intents(replies: list[str]) -> set[str]:
+    text = _compact_spaces(" ".join(replies[-MAX_RECENT_AMBIENT_REPLIES:])).casefold()
+    intents: set[str] = set()
+    if not text:
+        return intents
+    if any(value in text for value in ("твой мир", "про свой мир", "увижу первым")):
+        intents.add("ask_user_world")
+    if any(value in text for value in ("школ", "учеб", "работ", "отличник", "нарушител")):
+        intents.add("ask_school_or_work_role")
+    if any(value in text for value in ("человек", "животн", "звер", "погодное явление")):
+        intents.add("ask_identity_playful")
+    if any(value in text for value in ("погода внутри", "ясно", "туман", "гроза")):
+        intents.add("ask_inner_weather")
+    if any(value in text for value in ("карта", "болото", "гора", "сокровищ")):
+        intents.add("ask_day_map")
+    if any(value in text for value in ("ритуал", "сложным делом")):
+        intents.add("ask_tiny_ritual")
+    if "квест" in text:
+        intents.add("offer_mini_quest")
+    if any(value in text for value in ("я сегодня", "нашел", "увидел", "спрятал")):
+        intents.add("small_funny_event")
+    if any(value in text for value in ("как дела", "что происходит", "как твой день")):
+        intents.add("small_care_check")
+    return intents
+
+
+def _ambient_dialogue_block(*, has_world_context: bool, recent_replies: list[str]) -> str:
     moves = list(AMBIENT_DIALOGUE_MOVES)
     if not has_world_context:
         moves = [
@@ -507,14 +624,24 @@ def _ambient_dialogue_block(*, has_world_context: bool) -> str:
             for move in moves
             if move[0] != "lore_hook_if_context_allows"
         ]
+    recent_intents = _infer_recent_ambient_intents(recent_replies)
+    fresh_moves = [move for move in moves if move[0] not in recent_intents]
+    if fresh_moves:
+        moves = fresh_moves
     move_id, move_description = AMBIENT_RANDOM.choice(moves)
     examples = "\n".join(f"- {example}" for example in AMBIENT_DIALOGUE_EXAMPLES)
+    cooldown_line = (
+        f"Недавние диалоговые ходы, которых сейчас избегаем: {', '.join(sorted(recent_intents))}.\n"
+        if recent_intents
+        else ""
+    )
     return (
         "IDLE_DIALOGUE_ENGINE: главная задача idle-фразы — подтолкнуть владельца "
         "к диалогу, а не просто сообщить, что питомец рядом. "
         "Фраза должна быть самостоятельной, живой и обращенной к владельцу. "
         "Не начинай с шаблонов вроде 'Привет, я ...', 'я просто рядом', "
         "'я тут' или 'я с тобой'.\n"
+        f"{cooldown_line}"
         f"Выбранный диалоговый ход: {move_id} — {move_description}.\n"
         "Примеры старых удачных ходов. Бери тип вопроса и энергию, но не копируй дословно:\n"
         f"{examples}"
@@ -645,12 +772,7 @@ def _history_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     ]
 
 
-def build_lite_chat_messages(
-    payload: LocalChatRequest,
-    *,
-    context_bundle: AssembledPetContext | None = None,
-) -> list[dict[str, str]]:
-    reply_limit = payload.replyMaxChars or MAX_REPLY_CHARS
+def _chat_identity_line(payload: LocalChatRequest, reply_limit: int) -> str:
     system_content = (
         f"Отвечай мне как {_short_character_description(payload)}. "
         f"Сейчас ты {_age_role_hint(payload)}."
@@ -671,13 +793,31 @@ def build_lite_chat_messages(
             f"{system_content} Сгенерируй законченную реплику сразу в этом лимите; "
             "не сокращай ее многоточием."
         )
-    system_content = f"{system_content}\n\n{_lite_persona_contract()}"
-    memory_block = _memory_context_block(payload.memoryContext)
-    if memory_block:
-        system_content = f"{system_content}\n\n{memory_block}"
-    voice_block = pet_voice_prompt_block(payload.pet.characterBible, stage=payload.pet.stage)
-    if voice_block:
-        system_content = f"{system_content}\n\n{voice_block}"
+    return system_content
+
+
+def _phrase_plan_for_chat(
+    payload: LocalChatRequest,
+    *,
+    context_bundle: AssembledPetContext,
+) -> PhrasePlan:
+    reply_limit = payload.replyMaxChars or MAX_REPLY_CHARS
+    return PhrasePlan(
+        surface="chat",
+        reply_limit=reply_limit,
+        identity_line=_chat_identity_line(payload, reply_limit),
+        persona_contract=_lite_persona_contract(),
+        memory_block=_memory_context_block(payload.memoryContext),
+        voice_block=pet_voice_prompt_block(payload.pet.characterBible, stage=payload.pet.stage),
+        world_block=context_bundle.prompt_block or None,
+    )
+
+
+def build_lite_chat_messages(
+    payload: LocalChatRequest,
+    *,
+    context_bundle: AssembledPetContext | None = None,
+) -> list[dict[str, str]]:
     if context_bundle is None:
         context_bundle = assemble_pet_context(
             mode="chat",
@@ -686,8 +826,8 @@ def build_lite_chat_messages(
             history=payload.history,
             memory_context=payload.memoryContext,
         )
-    if context_bundle.prompt_block:
-        system_content = f"{system_content}\n\n{context_bundle.prompt_block}"
+    plan = _phrase_plan_for_chat(payload, context_bundle=context_bundle)
+    system_content = plan.system_content()
     baby_examples = _baby_phrase_examples_for_prompt(payload)
     if baby_examples:
         system_content = f"{system_content}\n\n{baby_examples}"
@@ -709,6 +849,15 @@ def _lite_overlay_from(payload: LocalChatRequest) -> dict[str, Any]:
         return {}
     overlay = extensions.get("lite_overlay")
     return dict(overlay) if _is_record(overlay) else {}
+
+
+def _lite_pet_context_payload(payload: LocalChatRequest) -> dict[str, Any]:
+    return {
+        "name": payload.pet.name,
+        "description": payload.pet.description,
+        "stage": payload.pet.stage,
+        "mood": payload.pet.mood,
+    }
 
 
 def _text_value(value: Any) -> str:
@@ -1289,6 +1438,138 @@ def _story_context_debug(
     return None
 
 
+def _story_context_brief(context_bundle: AssembledPetContext | None) -> list[dict[str, Any]]:
+    debug = _story_context_debug(context_bundle) or {}
+    bricks = debug.get("injectedSpheres")
+    if not isinstance(bricks, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for brick in bricks[:MAX_CONTEXT_BRICKS]:
+        if not isinstance(brick, dict):
+            continue
+        result.append(
+            {
+                "id": brick.get("id"),
+                "pool": brick.get("pool"),
+                "name": brick.get("name"),
+                "text": brick.get("text"),
+            }
+        )
+    return result
+
+
+def _should_extract_story_library_patch(
+    payload: LocalChatRequest,
+    reply: str,
+    context_bundle: AssembledPetContext | None,
+) -> bool:
+    if not reply.strip():
+        return False
+    if not STORY_LIBRARY_REPLY_ENTITY_PATTERN.search(reply):
+        return False
+    return bool(
+        (context_bundle and context_bundle.prompt_block)
+        or STORY_LIBRARY_QUERY_PATTERN.search(payload.message)
+    )
+
+
+def build_story_library_extraction_messages(
+    payload: LocalChatRequest,
+    reply: str,
+    context_bundle: AssembledPetContext | None,
+) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Ты фоновый анализатор мира питомца. Не отвечай пользователю. "
+                "Верни только JSON по схеме. Извлекай только новые устойчивые "
+                "story bricks, которые появились в ответе питомца: именованное "
+                "существо, место, предмет, сосед/персонаж или опасность. "
+                "Не сохраняй настроение, метафоры, вопросы к пользователю, обычный "
+                "small talk, факты о пользователе и уже известные bricks. "
+                "Если новая сущность умеренно фантазирует, она должна быть вариацией "
+                "на выбранные референсы из existingStoryContext."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"pet:\n{_safe_json_context(_lite_pet_context_payload(payload), 1600)}\n\n"
+                f"userMessage:\n{payload.message}\n\n"
+                f"petReply:\n{reply}\n\n"
+                "existingStoryContext:\n"
+                f"{_safe_json_context(_story_context_brief(context_bundle), 3000)}"
+            ),
+        },
+    ]
+
+
+def _parse_story_library_extraction_payload(raw_content: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(raw_content or "{}")
+    except json.JSONDecodeError:
+        return None
+    if not _is_record(parsed) or not isinstance(parsed.get("bricks"), list):
+        return None
+
+    bricks: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw_brick in parsed["bricks"]:
+        if not _is_record(raw_brick):
+            continue
+        confidence = _clamp_float(raw_brick.get("confidence"), 0.0)
+        if confidence < 0.6:
+            continue
+        result = story_library_patch_for_new_brick(raw_brick)
+        brick = result.get("brick") if _is_record(result) else None
+        if not _is_record(brick):
+            continue
+        brick_id = str(brick.get("id") or "")
+        if not brick_id or brick_id in seen:
+            continue
+        seen.add(brick_id)
+        bricks.append(brick)
+    if not bricks:
+        return None
+    return {"version": 1, "bricks": bricks}
+
+
+def extract_story_library_patch_from_reply(
+    payload: LocalChatRequest,
+    reply: str,
+    context_bundle: AssembledPetContext | None,
+    *,
+    client: Any,
+    model: str,
+    timeout: float,
+    prompt_debug: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not _should_extract_story_library_patch(payload, reply, context_bundle):
+        return None
+
+    request_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": build_story_library_extraction_messages(payload, reply, context_bundle),
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "story_library_extraction",
+                "schema": STORY_LIBRARY_EXTRACTION_SCHEMA,
+                "strict": True,
+            },
+        },
+        "timeout": timeout,
+        **chat_reasoning_effort_kwargs(get_settings().openai_chat_reasoning_effort),
+    }
+    prompt_debug.append(
+        log_chat_completion_prompt("pet_reply/story_library_extraction", request_kwargs)
+    )
+    completion = client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("pet_reply/story_library_extraction", completion)
+    return _parse_story_library_extraction_payload(completion.choices[0].message.content or "{}")
+
+
 def generate_lite_pet_reply(
     payload: LocalChatRequest,
     *,
@@ -1362,12 +1643,28 @@ def generate_lite_pet_reply(
             tool_debug.append(debug)
             messages.append(_tool_response_message(_tool_call_id(tool_call), result))
 
+    story_library_patch: dict[str, Any] | None = None
+    if reply:
+        try:
+            story_library_patch = extract_story_library_patch_from_reply(
+                payload,
+                reply,
+                context_bundle,
+                client=openai_client,
+                model=model,
+                timeout=timeout,
+                prompt_debug=prompt_debug,
+            )
+        except Exception:
+            story_library_patch = None
+
     debug = LocalChatDebug(
         usedFallback=False,
         validationFlags=[],
         promptDebug=prompt_debug,
         liteToolCalls=tool_debug,
         liteOverlayPatch=overlay_patch or None,
+        storyLibraryPatch=story_library_patch,
         storyLibraryDebug=_story_context_debug(context_bundle),
     )
     return LocalChatResponse(
@@ -1741,21 +2038,28 @@ def build_proactive_messages(
         if payload.memoryContext.proactiveCandidate
         else "есть личный повод из памяти пользователя"
     )
-    voice_section = f"\n\n{voice_block}" if voice_block else ""
-    world_section = f"\n\n{context_bundle.prompt_block}" if context_bundle.prompt_block else ""
+    plan = PhrasePlan(
+        surface="proactive",
+        reply_limit=MAX_REPLY_CHARS,
+        identity_line=(
+            f"Отвечай мне как {_short_pet_description(payload.pet)}. "
+            f"Сейчас ты {_age_role_hint(LocalChatRequest(message='...', pet=payload.pet))}. "
+            f"Ответ максимум {MAX_REPLY_CHARS} символов; можно короче."
+        ),
+        persona_contract=_lite_persona_contract(),
+        voice_block=voice_block,
+        world_block=context_bundle.prompt_block or None,
+        memory_block=memory_block,
+        extra_rules=(
+            "Ты сам решил написать пользователю первым.",
+            f"Повод: {reason}. Напиши одну живую реплику.",
+            "Не объясняй, что это напоминание или автоматическое сообщение.",
+        ),
+    )
     return [
         {
             "role": "system",
-            "content": (
-                f"Отвечай мне как {_short_pet_description(payload.pet)}. "
-                f"Сейчас ты {_age_role_hint(LocalChatRequest(message='...', pet=payload.pet))}. "
-                f"Ответ максимум {MAX_REPLY_CHARS} символов; можно короче.\n\n"
-                f"{_lite_persona_contract()}{voice_section}{world_section}\n\n"
-                f"{memory_block}\n\n"
-                "Ты сам решил написать пользователю первым. "
-                f"Повод: {reason}. Напиши одну живую реплику. "
-                "Не объясняй, что это напоминание или автоматическое сообщение."
-            ),
+            "content": plan.system_content(),
         }
     ]
 
@@ -1838,31 +2142,40 @@ def build_ambient_messages(
             history=payload.history,
             memory_context=payload.memoryContext,
         )
-    voice_section = f"\n\n{voice_block}" if voice_block else ""
-    memory_section = f"\n\n{memory_block}" if memory_block else ""
-    world_section = f"\n\n{context_bundle.prompt_block}" if context_bundle.prompt_block else ""
     recent_ambient_block = _recent_ambient_replies_block(payload.recentAmbientReplies)
-    recent_ambient_section = f"\n\n{recent_ambient_block}" if recent_ambient_block else ""
-    ambient_dialogue_section = (
-        f"\n\n{_ambient_dialogue_block(has_world_context=bool(context_bundle.prompt_block))}"
+    dialogue_block = _ambient_dialogue_block(
+        has_world_context=bool(context_bundle.prompt_block),
+        recent_replies=payload.recentAmbientReplies,
+    )
+    plan = PhrasePlan(
+        surface="ambient",
+        reply_limit=reply_limit,
+        identity_line=(
+            f"Отвечай мне как {_short_pet_description(payload.pet)}. "
+            f"Сейчас ты {_age_role_hint(LocalChatRequest(message='...', pet=payload.pet))}. "
+            f"Ответ максимум {reply_limit} символов; можно короче, даже одной фразой."
+        ),
+        persona_contract=_lite_persona_contract(),
+        voice_block=voice_block,
+        world_block=context_bundle.prompt_block or None,
+        memory_block=memory_block,
+        recent_ambient_block=recent_ambient_block,
+        dialogue_block=dialogue_block,
+        extra_rules=(
+            "Ты произносишь idle-фразу на главном экране без прямого вопроса пользователя.",
+            "Скажи одну живую реплику владельцу: можешь обратиться к нему напрямую, "
+            "поделиться маленьким наблюдением, заинтересоваться его миром или задать "
+            "короткий естественный вопрос.",
+            "Не объясняй, что это автоматическое сообщение.",
+            "Сильнее всего следуй выбранному диалоговому ходу.",
+            "Не превращай каждую idle-фразу в одинаковый вопрос и не повторяй "
+            "одни и те же обороты.",
+        ),
     )
     return [
         {
             "role": "system",
-            "content": (
-                f"Отвечай мне как {_short_pet_description(payload.pet)}. "
-                f"Сейчас ты {_age_role_hint(LocalChatRequest(message='...', pet=payload.pet))}. "
-                f"Ответ максимум {reply_limit} символов; можно короче, даже одной фразой.\n\n"
-                f"{_lite_persona_contract()}{voice_section}{world_section}"
-                f"{memory_section}{recent_ambient_section}{ambient_dialogue_section}\n\n"
-                "Ты произносишь idle-фразу на главном экране без прямого вопроса пользователя. "
-                "Скажи одну живую реплику владельцу: можешь обратиться к нему напрямую, "
-                "поделиться маленьким наблюдением, заинтересоваться его миром или задать "
-                "короткий естественный вопрос. Не объясняй, что это автоматическое сообщение. "
-                "Сильнее всего следуй выбранному диалоговому ходу. "
-                "Не превращай каждую idle-фразу в одинаковый вопрос и не повторяй "
-                "одни и те же обороты."
-            ),
+            "content": plan.system_content(),
         },
         *[
             {"role": "assistant" if item.role == "pet" else "user", "content": item.text}
