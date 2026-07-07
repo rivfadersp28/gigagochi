@@ -188,7 +188,6 @@ const TOP_STATUS_ASSET_CACHE_VERSION = "20260707-top-status-icons-1";
 const MAIN_PET_BACKDROP_CACHE_VERSION = "20260706-main-pet-bg-1";
 const mainPetBackdropSrc = `/figma/main-pet-bg.png?v=${MAIN_PET_BACKDROP_CACHE_VERSION}`;
 const topStatusIconSrc = {
-  hunger: `/figma/top-status-hunger.svg?v=${TOP_STATUS_ASSET_CACHE_VERSION}`,
   mood: `/figma/top-status-mood.svg?v=${TOP_STATUS_ASSET_CACHE_VERSION}`,
   energy: `/figma/top-status-energy.svg?v=${TOP_STATUS_ASSET_CACHE_VERSION}`,
 } as const;
@@ -364,6 +363,9 @@ const petMessageUnitStyle: CSSProperties = {
   willChange: "transform, opacity",
 };
 
+const HUNGER_RING_RADIUS = 23.5;
+const HUNGER_RING_CIRCUMFERENCE = 2 * Math.PI * HUNGER_RING_RADIUS;
+
 const defaultIdleAnimationSettings: IdleAnimationSettings = {
   speed: 1.5,
   maxScale: 1.12,
@@ -490,6 +492,39 @@ function MainPetBackdrop({ src }: { src: string }) {
     <div className="main-pet-backdrop" aria-hidden="true">
       <img src={src} alt="" draggable={false} />
     </div>
+  );
+}
+
+function HungerProgressRing({ value }: { value: number }) {
+  const progress = Math.max(0, Math.min(100, value));
+  const dashOffset = HUNGER_RING_CIRCUMFERENCE * (1 - progress / 100);
+  const tone = progress < 30 ? "low" : progress >= 70 ? "high" : "mid";
+
+  return (
+    <span className={`hunger-progress-ring hunger-progress-ring--${tone}`} aria-hidden="true">
+      <svg viewBox="0 0 54 54" focusable="false">
+        <circle
+          className="hunger-progress-ring__track"
+          cx="27"
+          cy="27"
+          r={HUNGER_RING_RADIUS}
+          pathLength={HUNGER_RING_CIRCUMFERENCE}
+        />
+        <circle
+          className="hunger-progress-ring__progress"
+          cx="27"
+          cy="27"
+          r={HUNGER_RING_RADIUS}
+          pathLength={HUNGER_RING_CIRCUMFERENCE}
+          strokeDasharray={HUNGER_RING_CIRCUMFERENCE}
+          strokeDashoffset={dashOffset}
+        />
+        <path
+          className="hunger-progress-ring__glyph"
+          d="M22.5576 39.2633C21.5408 39.2633 20.8871 38.6719 20.9078 37.7173L21.1257 26.2C21.1361 25.5878 21.0323 25.4321 20.6277 25.235C19.1232 24.519 18.3969 23.7512 18.511 21.5515L18.8223 15.5957C18.8534 15.0146 19.1958 14.6515 19.725 14.6515C20.2645 14.6515 20.5758 15.025 20.5654 15.6268L20.472 21.3544C20.4617 21.7694 20.6692 21.9977 21.0116 21.9977C21.354 21.9977 21.5615 21.7694 21.5719 21.3855L21.686 15.4089C21.6964 14.8486 22.0284 14.4647 22.5576 14.4647C23.0868 14.4647 23.4188 14.8486 23.4292 15.4089L23.5433 21.3855C23.5537 21.7798 23.7405 21.9977 24.1036 21.9977C24.4357 21.9977 24.6432 21.7694 24.6328 21.3544L24.5498 15.6268C24.5394 15.025 24.8507 14.6515 25.3799 14.6515C25.9194 14.6515 26.2411 15.0043 26.2826 15.5957L26.5835 21.5515C26.708 23.7512 25.9921 24.519 24.4772 25.235C24.0725 25.4321 23.9791 25.5878 23.9895 26.2L24.197 37.7173C24.2074 38.6615 23.5848 39.2633 22.5576 39.2633ZM30.8584 30.0702C30.8792 29.5825 30.7546 29.3646 30.3604 29.0948L30.0698 28.9081C29.3124 28.3893 29.0945 27.9327 29.0945 27.1234V26.4282C29.0945 22.5476 30.4226 17.5153 32.1035 15.191C32.4667 14.693 32.7572 14.4647 33.1722 14.4647C33.6807 14.4647 34.0127 14.8175 34.0127 15.3467V37.7277C34.0127 38.6719 33.4109 39.2633 32.3733 39.2633C31.3564 39.2633 30.7131 38.6719 30.7235 37.7069L30.8584 30.0702Z"
+        />
+      </svg>
+    </span>
   );
 }
 
@@ -1170,6 +1205,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [isIdleControlsOpen, setIsIdleControlsOpen] = useState(false);
   const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
   const [isChatMode, setIsChatMode] = useState(false);
+  const [isFeedMode, setIsFeedMode] = useState(false);
   const [isKeyboardRaised, setIsKeyboardRaised] = useState(false);
   const [conversationVisibleHeight, setConversationVisibleHeight] = useState(874);
   const [chatInput, setChatInput] = useState("");
@@ -1179,6 +1215,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [travelResult, setTravelResult] = useState<GenerateTravelResponse | null>(null);
   const [travelError, setTravelError] = useState<string | null>(null);
   const [conversationReplyMessageId, setConversationReplyMessageId] = useState<number | null>(null);
+  const [feedSuccessId, setFeedSuccessId] = useState(0);
   const [petTapParticleBursts, setPetTapParticleBursts] = useState<number[]>([]);
   const [petTapPulseId, setPetTapPulseId] = useState(0);
   const [selectedSprite, setSelectedSprite] = useState<SelectedSprite | null>(null);
@@ -1199,6 +1236,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const speechBubbleRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const petTapTargetRef = useRef<HTMLButtonElement>(null);
+  const feedDropTargetRef = useRef<HTMLDivElement>(null);
   const petTapParticleBurstIdRef = useRef(0);
   const isSendingChatRef = useRef(false);
   const isTravelGeneratingRef = useRef(false);
@@ -1297,7 +1335,20 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     chatInputRef.current?.blur();
   }, [requestAmbientReply]);
 
-  useTelegramBackButton(closeChatMode, isChatMode);
+  const closeFeedMode = useCallback(() => {
+    setIsFeedMode(false);
+  }, []);
+
+  const handleTelegramBack = useCallback(() => {
+    if (isFeedMode) {
+      closeFeedMode();
+      return;
+    }
+
+    closeChatMode();
+  }, [closeChatMode, closeFeedMode, isFeedMode]);
+
+  useTelegramBackButton(handleTelegramBack, isChatMode || isFeedMode);
 
   const handlePetTap = useCallback(() => {
     void playPetTapSound();
@@ -1429,13 +1480,51 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [localPet.status, pet, petId, router]);
 
   function handleFeed() {
-    if (!pet || isFeeding) {
+    if (!pet) {
       return;
     }
 
+    setIsIdleControlsOpen(false);
+    setIsDebugPanelOpen(false);
+    setTravelError(null);
+    setIsFeedMode(true);
+  }
+
+  function serveFood() {
+    if (!pet || isFeeding) {
+      return false;
+    }
+
     setIsFeeding(true);
-    localPet.feed();
-    window.setTimeout(() => setIsFeeding(false), 180);
+    const nextPet = localPet.feed();
+    if (!nextPet) {
+      setIsFeeding(false);
+      return false;
+    }
+
+    setFeedSuccessId((currentId) => currentId + 1);
+    setPetTapPulseId((currentId) => currentId + 1);
+    hapticNotification("success");
+    window.setTimeout(() => setIsFeeding(false), 420);
+    return true;
+  }
+
+  function handleFoodDrop(clientX: number, clientY: number) {
+    if (!isFeedMode) {
+      return false;
+    }
+
+    const dropTarget = feedDropTargetRef.current;
+    if (!dropTarget) {
+      return false;
+    }
+
+    const targetRect = dropTarget.getBoundingClientRect();
+    if (!isPointNearRect(clientX, clientY, targetRect, 18)) {
+      return false;
+    }
+
+    return serveFood();
   }
 
   async function handleTravel() {
@@ -1447,6 +1536,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     isTravelGeneratingRef.current = true;
     setIsTravelGenerating(true);
     setTravelError(null);
+    setIsFeedMode(false);
     setIsIdleControlsOpen(false);
     setIsDebugPanelOpen(false);
     showPetReplyMessage("Собираю путешествие...", false, { voiceMode: "local" });
@@ -1495,6 +1585,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }
 
   function handleOpenChatMode() {
+    setIsFeedMode(false);
     setIsIdleControlsOpen(false);
     setIsDebugPanelOpen(false);
     setChatError(null);
@@ -1676,6 +1767,16 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     router.push("/");
   }
 
+  function handleResetPetStats() {
+    const confirmed = window.confirm("Сбросить параметры персонажа в 0?");
+    if (!confirmed) {
+      return;
+    }
+
+    localPet.resetStats();
+    hapticNotification("warning");
+  }
+
   function handlePromptDebugChange(enabled: boolean) {
     const nextSettings = {
       includePromptDebug: enabled,
@@ -1784,6 +1885,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const shouldShowConversationReply =
     isChatMode && conversationReplyMessageId === displayedReply.id;
   const displayedPetName = pet.name?.trim() || DEFAULT_STATUS_NAME;
+  const hungerPercent = Math.max(0, Math.min(100, Math.round(pet.stats.hunger)));
   const transformOrigin = `${animationSettings.originX}% ${animationSettings.originY}%`;
   const idleStretchStyle: IdleStretchStyle = {
     "--pet-idle-duration": `${(
@@ -1832,6 +1934,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         className={`main-mobile-scene tma-screen relative mx-auto w-full max-w-[402px] overflow-hidden bg-black ${
           isChatMode ? "main-mobile-scene--chat" : ""
         } ${
+          isFeedMode ? "main-mobile-scene--feed" : ""
+        } ${
           isKeyboardRaised ? "main-mobile-scene--keyboard" : ""
         } ${
           shouldShowConversationReply ? "main-mobile-scene--reply" : ""
@@ -1877,6 +1981,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           isOpen={isDebugPanelOpen}
           onClose={() => setIsDebugPanelOpen(false)}
           onResetPet={handleResetPet}
+          onResetPetStats={handleResetPetStats}
         />
 
         <div className="sr-only" aria-live="polite">
@@ -1885,36 +1990,35 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           {pet.stats.energy}/100. Cleanliness {pet.stats.cleanliness}/100.
         </div>
 
-        <div className="conversation-fade-target absolute left-1/2 top-[66px] z-20 max-w-[260px] -translate-x-1/2 truncate text-center text-[17px] font-[800] leading-[20px] text-white">
+        <div className="pet-status-name conversation-fade-target">
           {displayedPetName}
         </div>
 
         <div
-          className="conversation-fade-target absolute left-[99px] top-[107px] z-20 flex items-center gap-[21px]"
-          aria-hidden="true"
+          className="top-status-strip conversation-fade-target"
+          aria-label={`Голод ${hungerPercent} из 100`}
         >
-          <img
-            src={topStatusIconSrc.hunger}
-            alt=""
-            className="size-[54px] max-w-none shrink-0"
-            draggable={false}
-          />
+          <div className="feed-hunger-meter">
+            <HungerProgressRing value={hungerPercent} />
+          </div>
           <img
             src={topStatusIconSrc.mood}
             alt=""
-            className="size-[54px] max-w-none shrink-0"
+            className="top-status-icon top-status-icon--mood"
             draggable={false}
+            aria-hidden="true"
           />
           <img
             src={topStatusIconSrc.energy}
             alt=""
-            className="size-[54px] max-w-none shrink-0"
+            className="top-status-icon top-status-icon--energy"
             draggable={false}
+            aria-hidden="true"
           />
         </div>
 
         <div
-          className={`absolute left-1/2 top-[226px] z-30 -translate-x-1/2 ${
+          className={`feed-fade-target absolute left-1/2 top-[226px] z-30 -translate-x-1/2 ${
             shouldShowConversationReply
               ? "conversation-reply-bubble"
               : "conversation-fade-target"
@@ -1934,7 +2038,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           </div>
         </div>
 
-        <div className="main-pet-stage absolute left-0 top-[277px] z-20 h-[372px] w-[402px]">
+        <div
+          ref={feedDropTargetRef}
+          className="main-pet-stage absolute left-0 top-[277px] z-20 h-[372px] w-[402px]"
+        >
           <div className="pet-idle-rotation absolute left-0 top-0 h-[357px] w-[402px]" style={idleRotationStyle}>
             {petTapParticleBursts.map((burstId) => (
               <PetTapParticleBurst
@@ -2026,15 +2133,42 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             setIsIdleControlsOpen(false);
             setIsDebugPanelOpen(true);
           }}
-          className="conversation-fade-target absolute left-[327px] top-[685px] z-40 grid size-[58.203px] place-items-center overflow-hidden rounded-[24px] bg-[rgba(41,41,41,0.4)] text-white/90 shadow-[inset_0_2px_4px_rgba(255,255,255,0.09)] transition-colors hover:bg-[rgba(55,55,55,0.5)] focus:outline-none focus:ring-2 focus:ring-white/20"
+          className="feed-fade-target conversation-fade-target absolute left-[327px] top-[685px] z-40 grid size-[58.203px] place-items-center overflow-hidden rounded-[24px] bg-[rgba(41,41,41,0.4)] text-white/90 shadow-[inset_0_2px_4px_rgba(255,255,255,0.09)] transition-colors hover:bg-[rgba(55,55,55,0.5)] focus:outline-none focus:ring-2 focus:ring-white/20"
         >
           <Bug className="size-[22px]" aria-hidden="true" />
         </button>
+
+        {isFeedMode ? (
+          <div className="feed-mode-layer" aria-label="Кормление">
+            <button
+              type="button"
+              className="feed-mode-close"
+              aria-label="Закрыть кормление"
+              onClick={closeFeedMode}
+            >
+              <X className="size-[22px]" aria-hidden="true" />
+            </button>
+            {feedSuccessId > 0 ? (
+              <span key={feedSuccessId} className="feed-drop-pulse" aria-hidden="true" />
+            ) : null}
+            <div className="feed-food-shelf" aria-label="Еда">
+              {feedFoodAssets.map((food) => (
+                <DraggableFoodToken
+                  key={food.id}
+                  food={food}
+                  disabled={isFeeding}
+                  onDrop={handleFoodDrop}
+                  onActivate={serveFood}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <div
         className={`main-actions-scroll conversation-fade-target absolute top-[762px] z-30 ${
-          isChatMode ? "conversation-fade-target--hidden" : ""
+          isChatMode || isFeedMode ? "conversation-fade-target--hidden" : ""
         }`}
       >
         <div className="flex w-max gap-[19px] pr-[29px]">

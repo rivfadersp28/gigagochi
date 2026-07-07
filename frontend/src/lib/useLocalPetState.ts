@@ -28,6 +28,7 @@ type UseLocalPetStateResult = {
   feed: () => LocalPetState | null;
   play: () => LocalPetState | null;
   reset: () => void;
+  resetStats: () => LocalPetState | null;
   updateName: (name: string) => LocalPetState | null;
   applyGeneratedAssets: (assetSet: LocalPetAssetSet) => LocalPetState | null;
   applyMoodHint: (
@@ -122,6 +123,33 @@ export function useLocalPetState(): UseLocalPetStateResult {
     setStatus("empty");
     setError(null);
   }, [pet?.petId]);
+
+  const resetStats = useCallback(() => {
+    const currentPet = readLocalPetState() ?? pet;
+    if (!currentPet) {
+      return null;
+    }
+
+    const now = new Date();
+    const stats = {
+      hunger: 0,
+      happiness: 0,
+      energy: 0,
+      cleanliness: 0,
+    };
+    const nextPet = saveAndReturn({
+      ...currentPet,
+      updatedAt: now.toISOString(),
+      lastInteractionAt: now.toISOString(),
+      stage: calculatePetStage(currentPet.createdAt, now),
+      mood: calculatePetMood(stats),
+      stats,
+    });
+    setPet(nextPet);
+    setStatus("ready");
+    setError(null);
+    return nextPet;
+  }, [pet]);
 
   const updateName = useCallback((name: string) => {
     const normalizedName = name.trim().replace(/\s+/g, " ").slice(0, 32);
@@ -236,6 +264,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
     feed,
     play,
     reset,
+    resetStats,
     updateName,
     applyGeneratedAssets,
     applyMoodHint,

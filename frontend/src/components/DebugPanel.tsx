@@ -18,6 +18,7 @@ type DebugPanelProps = {
   isOpen: boolean;
   onClose: () => void;
   onResetPet?: () => void;
+  onResetPetStats?: () => void;
 };
 
 type DebugTab = "feed" | "prompts" | "character";
@@ -185,7 +186,13 @@ function CharacterInfo({ pet, memory }: { pet: LocalPetState; memory: LocalPetMe
   );
 }
 
-export function DebugPanel({ pet, isOpen, onClose, onResetPet }: DebugPanelProps) {
+export function DebugPanel({
+  pet,
+  isOpen,
+  onClose,
+  onResetPet,
+  onResetPetStats,
+}: DebugPanelProps) {
   const [activeTab, setActiveTab] = useState<DebugTab>("feed");
   const [events, setEvents] = useState<DebugPanelEvent[]>(() =>
     [...readDebugPanelEvents()].reverse(),
@@ -281,6 +288,17 @@ export function DebugPanel({ pet, isOpen, onClose, onResetPet }: DebugPanelProps
               </button>
             </div>
           </div>
+
+          {onResetPetStats ? (
+            <button
+              type="button"
+              onClick={onResetPetStats}
+              className="mt-4 inline-flex h-9 w-full items-center justify-center gap-2 rounded-[8px] bg-black/[0.055] px-3 text-[12px] font-medium leading-none text-black/62 transition-colors hover:bg-black/[0.085] hover:text-black/78 focus:outline-none focus:ring-2 focus:ring-black/10"
+            >
+              <RotateCcw className="size-3.5" aria-hidden="true" />
+              <span>Сбросить параметры персонажа</span>
+            </button>
+          ) : null}
 
           <div className="mt-4 grid grid-cols-3 gap-1 rounded-[8px] bg-black/[0.035] p-1">
             {tabs.map((tab) => {
