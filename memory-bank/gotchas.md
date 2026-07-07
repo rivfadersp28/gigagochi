@@ -21,6 +21,9 @@
   `backend/data/.admin-backups/`, and clear runtime `lru_cache` loaders. If a
   new cached dataset is added, include its cache clear hook in
   `local_admin_store._clear_runtime_caches()`.
+- Admin publish is local-only and opt-in. Keep `ADMIN_PUBLISH_ENABLED=false` on
+  Hetzner; the publish job must stage only `managed_admin_git_paths()` and never
+  `.admin-backups/` or unrelated dirty/untracked files.
 - Local speech admin uses the Next same-origin proxy. Keep
   `frontend/.env.local` `BACKEND_URL` aligned with the local backend port
   (`8000` in the current dev setup), and keep `127.0.0.1`/`localhost` in

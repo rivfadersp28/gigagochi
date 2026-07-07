@@ -98,6 +98,23 @@ def _spec_by_id(file_id: str) -> ManagedFile:
     raise KeyError(file_id)
 
 
+def managed_admin_git_paths() -> tuple[str, ...]:
+    return tuple(f"backend/data/{spec.relative_path}" for spec in MANAGED_FILES)
+
+
+def validate_admin_files_on_disk() -> dict[str, str]:
+    errors: dict[str, str] = {}
+    for spec in MANAGED_FILES:
+        try:
+            content = spec.path.read_text(encoding="utf-8")
+            _validate_content(spec, content)
+        except FileNotFoundError:
+            errors[spec.file_id] = "file is missing"
+        except (json.JSONDecodeError, ValueError) as exc:
+            errors[spec.file_id] = str(exc)
+    return errors
+
+
 def _validate_json(content: str) -> str:
     parsed = json.loads(content or "{}")
     return json.dumps(parsed, ensure_ascii=False, indent=2) + "\n"
@@ -161,16 +178,23 @@ def _file_entry(spec: ManagedFile) -> dict[str, Any]:
     }
 
 
-def read_admin_manifest() -> dict[str, Any]:
+def read_admin_manifest(
+    *,
+    deploy_enabled: bool = False,
+    deploy_message: str | None = None,
+) -> dict[str, Any]:
     return {
         "generatedAt": _now_iso(),
         "mode": "local",
         "files": [_file_entry(spec) for spec in MANAGED_FILES],
         "deploy": {
-            "enabled": False,
+            "enabled": deploy_enabled,
             "message": (
-                "Автодеплой отключен для локальной админки. "
-                "После сохранения нужен обычный deploy."
+                deploy_message
+                or (
+                    "Публикация отключена. "
+                    "После сохранения нужен обычный deploy."
+                )
             ),
         },
     }

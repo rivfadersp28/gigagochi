@@ -38,3 +38,8 @@
 - Managed files are defined in `backend/app/services/local_admin_store.py` and
   include `speech_runtime.json`, story datasets, age speech examples, world
   descriptions, and external character-source JSONL.
+- Publishing those local admin data edits is a separate opt-in flow. The
+  frontend calls `/api/admin/speech/publish`, backed by
+  `backend/app/services/local_admin_publish.py`; the job saves dirty drafts,
+  commits only managed `backend/data` paths to GitHub, runs the Hetzner compose
+  rebuild over SSH, and exposes polling logs/status back to the admin UI.

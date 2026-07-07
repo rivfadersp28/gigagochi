@@ -21,5 +21,7 @@ build/
 public/generated/
 backend/static/generated/
 backend/logs/
+backend-dev.log
+backend/data/.admin-backups/
 backend/data/calibration/*.jsonl
 /speech_*.wav

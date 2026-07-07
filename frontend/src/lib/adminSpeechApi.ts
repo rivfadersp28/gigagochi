@@ -37,6 +37,27 @@ export type AdminSpeechSaveResponse = {
   }>;
 };
 
+export type AdminSpeechPublishStatus = "pending" | "running" | "succeeded" | "failed";
+
+export type AdminSpeechPublishLog = {
+  at: string;
+  level: "info" | "warning" | "error" | string;
+  message: string;
+};
+
+export type AdminSpeechPublishJob = {
+  id: string;
+  status: AdminSpeechPublishStatus;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  logs: AdminSpeechPublishLog[];
+  error: string | null;
+  errorCode: string | null;
+  savedFiles: AdminSpeechSaveResponse["files"];
+  commitSha: string | null;
+};
+
 async function adminRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -78,4 +99,18 @@ export function saveAdminSpeechFiles(
     method: "PUT",
     body: JSON.stringify({ files }),
   });
+}
+
+export function startAdminSpeechPublish(
+  files: Array<Pick<AdminSpeechFile, "id" | "content">>,
+  message?: string,
+): Promise<AdminSpeechPublishJob> {
+  return adminRequest<AdminSpeechPublishJob>("/api/admin/speech/publish", {
+    method: "POST",
+    body: JSON.stringify({ files, message }),
+  });
+}
+
+export function fetchAdminSpeechPublishJob(jobId: string): Promise<AdminSpeechPublishJob> {
+  return adminRequest<AdminSpeechPublishJob>(`/api/admin/speech/publish/${jobId}`);
 }

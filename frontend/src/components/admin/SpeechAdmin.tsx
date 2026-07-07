@@ -6,6 +6,7 @@ import {
   Database,
   FileJson,
   RefreshCw,
+  Rocket,
   Save,
   Search,
   SlidersHorizontal,
@@ -31,15 +32,19 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  fetchAdminSpeechPublishJob,
   fetchAdminSpeechManifest,
   saveAdminSpeechFiles,
+  startAdminSpeechPublish,
   type AdminSpeechFile,
   type AdminSpeechManifest,
+  type AdminSpeechPublishJob,
 } from "@/lib/adminSpeechApi";
 import { cn } from "@/lib/utils";
 
 type Drafts = Record<string, string>;
 type ValidationState = Record<string, string | null>;
+const PUBLISH_POLL_INTERVAL_MS = 1500;
 
 const QUICK_FILTERS = [
   { id: "all", label: "Все", fileIds: null },
@@ -124,6 +129,29 @@ function summaryText(file: AdminSpeechFile) {
   return keys || `${Number(file.summary.topLevelKeys ?? 0)} ключей`;
 }
 
+function publishStatusLabel(status: AdminSpeechPublishJob["status"]) {
+  if (status === "succeeded") {
+    return "готово";
+  }
+  if (status === "failed") {
+    return "ошибка";
+  }
+  if (status === "running") {
+    return "в работе";
+  }
+  return "ожидание";
+}
+
+function isPublishFinished(status: AdminSpeechPublishJob["status"]) {
+  return status === "succeeded" || status === "failed";
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 export function SpeechAdmin() {
   const [manifest, setManifest] = useState<AdminSpeechManifest | null>(null);
   const [drafts, setDrafts] = useState<Drafts>({});
@@ -134,6 +162,8 @@ export function SpeechAdmin() {
   const [showManifest, setShowManifest] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishJob, setPublishJob] = useState<AdminSpeechPublishJob | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -236,10 +266,7 @@ export function SpeechAdmin() {
     }
   }
 
-  async function saveAll() {
-    if (!manifest || !dirtyIds.length) {
-      return;
-    }
+  function validateDirtyFiles() {
     const nextValidation: ValidationState = {};
     const dirtyFiles = files.filter((file) => dirtyIds.includes(file.id));
     for (const file of dirtyFiles) {
@@ -248,6 +275,17 @@ export function SpeechAdmin() {
     setValidation((current) => ({ ...current, ...nextValidation }));
     if (Object.values(nextValidation).some(Boolean)) {
       setError("Сначала исправь JSON/JSONL.");
+      return null;
+    }
+    return dirtyFiles;
+  }
+
+  async function saveAll() {
+    if (!manifest || !dirtyIds.length) {
+      return;
+    }
+    const dirtyFiles = validateDirtyFiles();
+    if (!dirtyFiles) {
       return;
     }
 
@@ -266,6 +304,53 @@ export function SpeechAdmin() {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function publishAll() {
+    if (!manifest) {
+      return;
+    }
+    if (!manifest.deploy.enabled) {
+      setError(manifest.deploy.message);
+      return;
+    }
+    const dirtyFiles = validateDirtyFiles();
+    if (!dirtyFiles) {
+      return;
+    }
+
+    setIsPublishing(true);
+    setError(null);
+    setNotice(null);
+    setPublishJob(null);
+    try {
+      let current = await startAdminSpeechPublish(
+        dirtyFiles.map((file) => ({
+          id: file.id,
+          content: drafts[file.id] ?? file.content,
+        })),
+      );
+      setPublishJob(current);
+      while (!isPublishFinished(current.status)) {
+        await wait(PUBLISH_POLL_INTERVAL_MS);
+        current = await fetchAdminSpeechPublishJob(current.id);
+        setPublishJob(current);
+      }
+      if (current.status === "succeeded") {
+        await loadManifest({ clearNotice: false });
+        setNotice(
+          current.commitSha
+            ? `Опубликовано: commit ${current.commitSha}, Hetzner health OK.`
+            : "Опубликовано: Hetzner health OK.",
+        );
+      } else {
+        setError(current.error ?? "Публикация завершилась ошибкой.");
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setIsPublishing(false);
     }
   }
 
@@ -304,7 +389,7 @@ export function SpeechAdmin() {
               variant="outline"
               size="icon"
               onClick={() => void loadManifest()}
-              disabled={isLoading || isSaving}
+              disabled={isLoading || isSaving || isPublishing}
               aria-label="Обновить"
             >
               <RefreshCw className={cn("size-4", isLoading && "animate-spin")} />
@@ -417,7 +502,7 @@ export function SpeechAdmin() {
               <Button
                 type="button"
                 onClick={() => void saveAll()}
-                disabled={!dirtyIds.length || hasValidationError || isSaving}
+                disabled={!dirtyIds.length || hasValidationError || isSaving || isPublishing}
               >
                 {isSaving ? (
                   <RefreshCw className="size-4 animate-spin" />
@@ -425,6 +510,19 @@ export function SpeechAdmin() {
                   <Save className="size-4" />
                 )}
                 Сохранить
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void publishAll()}
+                disabled={!manifest || hasValidationError || isSaving || isPublishing}
+              >
+                {isPublishing ? (
+                  <RefreshCw className="size-4 animate-spin" />
+                ) : (
+                  <Rocket className="size-4" />
+                )}
+                Опубликовать
               </Button>
             </div>
           </div>
@@ -443,6 +541,37 @@ export function SpeechAdmin() {
               <AlertTitle>Сохранено</AlertTitle>
               <AlertDescription>{notice}</AlertDescription>
             </Alert>
+          ) : null}
+
+          {publishJob ? (
+            <Card className="mt-4">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle className="text-base">Публикация</CardTitle>
+                  <Badge
+                    variant={publishJob.status === "failed" ? "destructive" : "secondary"}
+                  >
+                    {publishStatusLabel(publishJob.status)}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <pre className="max-h-72 overflow-auto rounded-lg border border-border/70 bg-muted/50 p-4 font-mono text-xs leading-relaxed text-muted-foreground">
+                  {publishJob.logs.length
+                    ? publishJob.logs
+                        .map((line) => {
+                          const time = new Intl.DateTimeFormat("ru-RU", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            second: "2-digit",
+                          }).format(new Date(line.at));
+                          return `${time} ${line.message}`;
+                        })
+                        .join("\n")
+                    : "Ожидание запуска..."}
+                </pre>
+              </CardContent>
+            </Card>
           ) : null}
 
           <Tabs defaultValue="editor" className="mt-4">

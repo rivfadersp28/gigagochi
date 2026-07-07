@@ -119,6 +119,28 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d --bui
 docker image prune -f
 ```
 
+## Local admin publish
+
+The `/admin/speech` editor is intentionally local-only. To publish edited data files from the
+local admin UI, enable publish in the local backend `.env` only:
+
+```bash
+ALLOW_DEV_TMA_AUTH=true
+ADMIN_PUBLISH_ENABLED=true
+ADMIN_PUBLISH_GIT_REMOTE=origin
+ADMIN_PUBLISH_GIT_BRANCH=main
+ADMIN_PUBLISH_SSH_TARGET=root@167.233.103.46
+# optional when the default SSH agent/key is not enough
+ADMIN_PUBLISH_SSH_KEY_PATH=~/.ssh/id_ed25519
+ADMIN_PUBLISH_REMOTE_PATH=/opt/gigagochi
+ADMIN_PUBLISH_HEALTH_URL=https://gigagochi.serega.works/health
+```
+
+The `Опубликовать` button saves dirty admin drafts, validates all managed `backend/data` files,
+commits only those managed data paths, pushes `HEAD:main` to GitHub, then runs the same update
+command on Hetzner over SSH and checks `/health`. Keep `ADMIN_PUBLISH_ENABLED=false` on the
+production server.
+
 ## Verify
 
 ```bash

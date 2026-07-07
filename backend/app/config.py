@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     lite_facts_rate_limit_per_hour: int = 0
     memory_rate_limit_per_hour: int = 0
     telegram_init_data_max_age_seconds: int = 60 * 60 * 24
+    admin_publish_enabled: bool = False
+    admin_publish_git_remote: str = "origin"
+    admin_publish_git_branch: str = "main"
+    admin_publish_ssh_target: str | None = None
+    admin_publish_ssh_key_path: str | None = None
+    admin_publish_remote_path: str = "/opt/gigagochi"
+    admin_publish_health_url: str = "https://gigagochi.serega.works/health"
+    admin_publish_command_timeout_seconds: float = 1200
     ai_provider: AIProvider = "openrouter"
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
