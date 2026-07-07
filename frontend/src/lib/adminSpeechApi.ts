@@ -83,6 +83,8 @@ export type AdminSpeechPublishJob = {
 
 export type AdminPushStatus = {
   count: number;
+  snapshotCount?: number;
+  reachableCount?: number;
   latest: AdminPushRecord | null;
   records: AdminPushRecord[];
 };
@@ -99,6 +101,9 @@ export type AdminPushRecord = {
   lastPushError?: string | null;
   lastPushErrorCode?: string | null;
   lastPushErrorAt?: string | null;
+  chatReachable?: boolean;
+  chatStartedAt?: string | null;
+  lastChatSeenAt?: string | null;
 };
 
 export type AdminPushSendResponse = {
@@ -109,6 +114,22 @@ export type AdminPushSendResponse = {
   reply: string;
   sentAt: string;
   debug?: unknown;
+};
+
+export type AdminPushBulkResponse = {
+  sent: boolean;
+  manual: boolean;
+  sentCount: number;
+  failedCount: number;
+  skippedCount: number;
+  targetCount: number;
+  results: AdminPushSendResponse[];
+  errors: Array<{
+    telegramId?: number | null;
+    petId?: string | null;
+    code: string;
+    message: string;
+  }>;
 };
 
 async function adminRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -182,5 +203,12 @@ export function sendAdminPush(
   return adminRequest<AdminPushSendResponse>("/api/admin/push/send", {
     method: "POST",
     body: JSON.stringify({ reason, telegramId, includeDebug: true }),
+  });
+}
+
+export function sendAdminPushAll(reason?: string): Promise<AdminPushBulkResponse> {
+  return adminRequest<AdminPushBulkResponse>("/api/admin/push/send-all", {
+    method: "POST",
+    body: JSON.stringify({ reason, includeDebug: true }),
   });
 }

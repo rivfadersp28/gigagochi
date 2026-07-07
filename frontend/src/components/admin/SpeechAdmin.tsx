@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Rocket,
   Save,
+  Users,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
@@ -27,6 +28,7 @@ import {
   fetchAdminSpeechPublishJob,
   saveAdminSpeechFiles,
   sendAdminPush,
+  sendAdminPushAll,
   startAdminSpeechPublish,
   type AdminPushStatus,
   type AdminSpeechFile,
@@ -1008,6 +1010,30 @@ export function SpeechAdmin() {
     }
   }
 
+  async function sendDebugPushAll() {
+    if (!manifest) {
+      return;
+    }
+    setIsSendingPush(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const saved = await saveDirtyDraftsForAction();
+      if (!saved) {
+        return;
+      }
+      const result = await sendAdminPushAll();
+      setNotice(
+        `Push всем: отправлено ${result.sentCount}, ошибок ${result.failedCount}, пропущено ${result.skippedCount}.`,
+      );
+      setPushStatus(await fetchAdminPushStatus().catch(() => null));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setIsSendingPush(false);
+    }
+  }
+
   async function deployAll() {
     if (!manifest) {
       return;
@@ -1066,6 +1092,10 @@ export function SpeechAdmin() {
   const selectedPushRecord = pushStatus?.records.find(
     (record) => String(record.telegramId) === selectedPushTelegramId,
   );
+  const reachablePushCount =
+    pushStatus?.reachableCount ??
+    pushStatus?.records.filter((record) => record.chatReachable).length ??
+    0;
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -1128,6 +1158,19 @@ export function SpeechAdmin() {
                   <Bell className="size-4" />
                 )}
                 Отправить push
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void sendDebugPushAll()}
+                disabled={pushDisabled || reachablePushCount === 0}
+              >
+                {isSendingPush ? (
+                  <RefreshCw className="size-4 animate-spin" />
+                ) : (
+                  <Users className="size-4" />
+                )}
+                Всем
               </Button>
               <Button
                 type="button"
@@ -1246,6 +1289,10 @@ export function SpeechAdmin() {
                     <span>Снапшоты</span>
                     <Badge variant="outline">{pushStatus?.count ?? "?"}</Badge>
                   </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Чат открыт</span>
+                    <Badge variant="outline">{reachablePushCount}</Badge>
+                  </div>
                   {pushStatus?.records.length ? (
                     <div className="grid gap-2">
                       <Label className="text-xs text-muted-foreground">Кому отправить</Label>
@@ -1271,6 +1318,14 @@ export function SpeechAdmin() {
                     <>
                       <div className="truncate">Pet: {selectedPushRecord?.petId ?? "-"}</div>
                       <div>Telegram ID: {selectedPushTelegramId || "-"}</div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span>Чат с ботом</span>
+                        <Badge
+                          variant={selectedPushRecord?.chatReachable ? "outline" : "destructive"}
+                        >
+                          {selectedPushRecord?.chatReachable ? "открыт" : "нет /start"}
+                        </Badge>
+                      </div>
                       <div>
                         Обновлен: {formatDate(selectedPushRecord?.registeredAt ?? null)}
                       </div>

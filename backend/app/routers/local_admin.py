@@ -15,7 +15,12 @@ from app.services.local_admin_publish import (
     sync_admin_files_from_server,
 )
 from app.services.local_admin_store import read_admin_manifest, save_admin_files
-from app.services.telegram_push_service import TelegramPushError, push_status, send_manual_push
+from app.services.telegram_push_service import (
+    TelegramPushError,
+    push_status,
+    send_manual_push,
+    send_manual_push_to_reachable,
+)
 
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
@@ -173,6 +178,25 @@ def admin_send_push(payload: AdminPushSendRequest) -> dict[str, Any]:
     try:
         return send_manual_push(
             telegram_id=payload.telegramId,
+            reason=payload.reason,
+            include_debug=payload.includeDebug,
+        )
+    except TelegramPushError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": "PUSH_SEND_FAILED", "message": str(exc)},
+        ) from exc
+
+
+@router.post("/push/send-all")
+def admin_send_push_all(payload: AdminPushSendRequest) -> dict[str, Any]:
+    try:
+        return send_manual_push_to_reachable(
             reason=payload.reason,
             include_debug=payload.includeDebug,
         )

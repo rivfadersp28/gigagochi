@@ -77,6 +77,7 @@ def send_message(
 def handle_update(client: httpx.Client, update: dict[str, Any]) -> None:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
+    sender = message.get("from") or {}
     chat_id = chat.get("id")
     text = str(message.get("text") or "")
     settings = get_settings()
@@ -95,6 +96,17 @@ def handle_update(client: httpx.Client, update: dict[str, Any]) -> None:
         return
 
     if text.startswith("/start") or text.startswith("/app"):
+        from app.services.telegram_push_service import mark_chat_started
+
+        username = sender.get("username")
+        first_name = sender.get("first_name")
+        language_code = sender.get("language_code")
+        mark_chat_started(
+            chat_id=chat_id,
+            username=username if isinstance(username, str) else None,
+            first_name=first_name if isinstance(first_name, str) else None,
+            language_code=language_code if isinstance(language_code, str) else None,
+        )
         send_message(client, chat_id, "Твой питомец ждет внутри Mini App.", keyboard)
 
 

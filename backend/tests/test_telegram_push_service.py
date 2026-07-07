@@ -12,14 +12,18 @@ from app.services import telegram_push_service
 from app.services.telegram_auth_service import TelegramUserContext
 
 
-def _user() -> TelegramUserContext:
+def _user_with_id(telegram_id: int, username: str = "serge") -> TelegramUserContext:
     return TelegramUserContext(
-        telegram_id=42,
-        username="serge",
+        telegram_id=telegram_id,
+        username=username,
         first_name="Serge",
         language_code="ru",
         auth_date=datetime(2026, 7, 7, 12, 0, tzinfo=UTC),
     )
+
+
+def _user() -> TelegramUserContext:
+    return _user_with_id(42)
 
 
 def _snapshot_payload() -> LocalPetPushSnapshotRequest:
@@ -86,6 +90,77 @@ def test_manual_push_uses_registered_telegram_chat(monkeypatch, tmp_path) -> Non
         "https://example.com/app"
     )
     assert telegram_push_service.push_status()["latest"]["lastDebugPushAt"] is not None
+
+
+def test_chat_start_marks_snapshot_reachable(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    assert telegram_push_service.push_status()["latest"]["chatReachable"] is False
+
+    telegram_push_service.mark_chat_started(
+        chat_id=42,
+        username="serge-updated",
+        first_name="Serge",
+        language_code="ru",
+    )
+
+    latest = telegram_push_service.push_status()["latest"]
+    assert latest["chatReachable"] is True
+    assert latest["username"] == "serge-updated"
+    assert latest["chatStartedAt"] is not None
+    assert latest["lastChatSeenAt"] is not None
+
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    assert telegram_push_service.push_status()["latest"]["chatReachable"] is True
+
+
+def test_chat_start_without_snapshot_is_not_push_target(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+
+    telegram_push_service.mark_chat_started(chat_id=42)
+
+    assert telegram_push_service.push_status()["count"] == 0
+    with pytest.raises(telegram_push_service.TelegramPushError) as exc_info:
+        telegram_push_service.send_manual_push(telegram_id=42)
+    assert exc_info.value.code == "PUSH_SNAPSHOT_NOT_FOUND"
+
+
+def test_manual_push_to_reachable_skips_unstarted_chats(monkeypatch, tmp_path) -> None:
+    captured_chat_ids: list[int] = []
+    settings = SimpleNamespace(
+        bot_token="bot-token",
+        webapp_url="https://example.com/app",
+        telegram_push_store_path=str(tmp_path / "push.json"),
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_push_pet_message",
+        lambda payload: LocalProactiveResponse(reply=f"Привет, {payload.pet.name}!"),
+    )
+
+    def fake_send_message(client, chat_id, text, reply_markup):
+        captured_chat_ids.append(chat_id)
+
+    monkeypatch.setattr(telegram_push_service, "send_message", fake_send_message)
+
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    telegram_push_service.mark_chat_started(chat_id=42)
+    telegram_push_service.register_push_snapshot(
+        _user_with_id(99, username="unstarted"),
+        _snapshot_payload(),
+    )
+
+    result = telegram_push_service.send_manual_push_to_reachable()
+
+    assert result["sentCount"] == 1
+    assert result["failedCount"] == 0
+    assert result["skippedCount"] == 1
+    assert result["targetCount"] == 1
+    assert captured_chat_ids == [42]
 
 
 def test_current_pet_record_decays_stats_and_recomputes_stage() -> None:
@@ -161,6 +236,7 @@ def test_telegram_send_error_is_sanitized(monkeypatch, tmp_path) -> None:
     latest = telegram_push_service.push_status()["latest"]
     assert latest["lastPushErrorCode"] == "TELEGRAM_CHAT_NOT_FOUND"
     assert latest["lastPushAttemptAt"] is not None
+    assert latest["chatReachable"] is False
 
 
 def test_failed_daily_attempt_delays_next_due_push(monkeypatch, tmp_path) -> None:
@@ -199,6 +275,7 @@ def test_failed_daily_attempt_delays_next_due_push(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(telegram_push_service, "send_message", fake_send_message)
 
     telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    telegram_push_service.mark_chat_started(chat_id=42)
     store = telegram_push_service._read_store()
     record = store["records"]["42"]
     record["registeredAt"] = (now - timedelta(hours=25)).isoformat().replace("+00:00", "Z")

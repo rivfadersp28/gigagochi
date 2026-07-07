@@ -164,15 +164,60 @@ def register_push_snapshot(
     }
     existing = _read_store().get("records", {}).get(str(user.telegram_id))
     if isinstance(existing, dict):
-        record["lastPushAt"] = existing.get("lastPushAt")
-        record["lastDebugPushAt"] = existing.get("lastDebugPushAt")
-        record["lastPushReply"] = existing.get("lastPushReply")
+        for key in (
+            "lastPushAt",
+            "lastPushAttemptAt",
+            "lastDebugPushAt",
+            "lastPushReply",
+            "lastPushError",
+            "lastPushErrorCode",
+            "lastPushErrorAt",
+            "chatStartedAt",
+            "lastChatSeenAt",
+            "chatReachable",
+        ):
+            record[key] = existing.get(key)
     _save_record(record)
     return LocalPetPushSnapshotResponse(
         registered=True,
         telegramId=user.telegram_id,
         updatedAt=now_iso,
     )
+
+
+def mark_chat_started(
+    *,
+    chat_id: int,
+    username: str | None = None,
+    first_name: str | None = None,
+    language_code: str | None = None,
+) -> dict[str, Any]:
+    now_iso = _iso()
+    existing = _read_store().get("records", {}).get(str(chat_id))
+    record = existing.copy() if isinstance(existing, dict) else {}
+    record.update(
+        {
+            "telegramId": record.get("telegramId") or chat_id,
+            "chatId": chat_id,
+            "chatReachable": True,
+            "chatStartedAt": record.get("chatStartedAt") or now_iso,
+            "lastChatSeenAt": now_iso,
+        }
+    )
+    if username:
+        record["username"] = username
+    if first_name:
+        record["firstName"] = first_name
+    if language_code:
+        record["languageCode"] = language_code
+    if not record.get("registeredAt"):
+        record["registeredAt"] = now_iso
+    _save_record(record)
+    return record
+
+
+def _has_snapshot(record: dict[str, Any]) -> bool:
+    return bool(record.get("petId")) and isinstance(record.get("pet"), dict)
 
 
 def _record_summary(record: dict[str, Any]) -> dict[str, Any]:
@@ -188,6 +233,9 @@ def _record_summary(record: dict[str, Any]) -> dict[str, Any]:
         "lastPushError": record.get("lastPushError"),
         "lastPushErrorCode": record.get("lastPushErrorCode"),
         "lastPushErrorAt": record.get("lastPushErrorAt"),
+        "chatReachable": record.get("chatReachable") is True,
+        "chatStartedAt": record.get("chatStartedAt"),
+        "lastChatSeenAt": record.get("lastChatSeenAt"),
     }
 
 
@@ -195,12 +243,14 @@ def push_status() -> dict[str, Any]:
     records = _read_store().get("records", {})
     summaries: list[dict[str, Any]] = []
     for record in records.values():
-        if not isinstance(record, dict):
+        if not isinstance(record, dict) or not _has_snapshot(record):
             continue
         summaries.append(_record_summary(record))
     summaries.sort(key=lambda item: str(item.get("registeredAt", "")), reverse=True)
     return {
-        "count": len(records),
+        "count": len(summaries),
+        "snapshotCount": len(summaries),
+        "reachableCount": sum(1 for item in summaries if item.get("chatReachable") is True),
         "latest": summaries[0] if summaries else None,
         "records": summaries,
     }
@@ -210,7 +260,7 @@ def _record_by_telegram_id(telegram_id: int | None = None) -> dict[str, Any]:
     records = _read_store().get("records", {})
     if telegram_id is not None:
         record = records.get(str(telegram_id))
-        if isinstance(record, dict):
+        if isinstance(record, dict) and _has_snapshot(record):
             return record
         raise TelegramPushError(
             "PUSH_SNAPSHOT_NOT_FOUND",
@@ -219,7 +269,7 @@ def _record_by_telegram_id(telegram_id: int | None = None) -> dict[str, Any]:
 
     latest = None
     for record in records.values():
-        if not isinstance(record, dict):
+        if not isinstance(record, dict) or not _has_snapshot(record):
             continue
         if latest is None or str(record.get("registeredAt", "")) > str(
             latest.get("registeredAt", "")
@@ -304,6 +354,7 @@ def _send_push_record(
         "lastPushErrorCode": None,
         "lastPushErrorAt": None,
         "lastPushAttemptAt": now_iso,
+        "chatReachable": True,
     }
     if manual:
         next_record["lastDebugPushAt"] = now_iso
@@ -352,6 +403,9 @@ def _save_push_failure(record: dict[str, Any], exc: Exception) -> None:
         "lastPushErrorAt": now_iso,
         "lastPushAttemptAt": now_iso,
     }
+    if error_code == "TELEGRAM_CHAT_NOT_FOUND":
+        failed["chatReachable"] = False
+        failed["chatUnreachableAt"] = now_iso
     _save_record(failed)
 
 
@@ -370,6 +424,65 @@ def send_manual_push(
     )
 
 
+def _snapshot_records() -> list[dict[str, Any]]:
+    records = _read_store().get("records", {})
+    return [
+        record
+        for record in records.values()
+        if isinstance(record, dict) and _has_snapshot(record)
+    ]
+
+
+def _bulk_error(record: dict[str, Any], exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, TelegramPushError):
+        code = exc.code
+        message = exc.message
+    else:
+        code = "PUSH_SEND_FAILED"
+        message = str(exc)
+    return {
+        "telegramId": record.get("telegramId"),
+        "petId": record.get("petId"),
+        "code": code,
+        "message": message,
+    }
+
+
+def send_manual_push_to_reachable(
+    *,
+    reason: str | None = None,
+    include_debug: bool = True,
+) -> dict[str, Any]:
+    records = _snapshot_records()
+    reachable = [record for record in records if record.get("chatReachable") is True]
+    results: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for record in reachable:
+        try:
+            results.append(
+                _send_push_record(
+                    record,
+                    reason=reason or MANUAL_PUSH_REASON,
+                    manual=True,
+                    include_debug=include_debug,
+                )
+            )
+        except Exception as exc:
+            if not isinstance(exc, TelegramPushError):
+                _save_push_failure(record, exc)
+            errors.append(_bulk_error(record, exc))
+    return {
+        "sent": len(results) > 0,
+        "manual": True,
+        "sentCount": len(results),
+        "failedCount": len(errors),
+        "skippedCount": len(records) - len(reachable),
+        "targetCount": len(reachable),
+        "results": results,
+        "errors": errors,
+    }
+
+
 def _due_records(now: datetime) -> list[dict[str, Any]]:
     settings = get_settings()
     cutoff = now - timedelta(hours=settings.telegram_daily_push_min_interval_hours)
@@ -377,6 +490,8 @@ def _due_records(now: datetime) -> list[dict[str, Any]]:
     due: list[dict[str, Any]] = []
     for record in records.values():
         if not isinstance(record, dict):
+            continue
+        if not _has_snapshot(record) or record.get("chatReachable") is not True:
             continue
         base_time = _latest_time(record.get("lastPushAt"), record.get("lastPushAttemptAt"))
         if base_time is None:

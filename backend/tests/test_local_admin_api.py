@@ -333,6 +333,46 @@ def test_local_admin_sends_manual_push(monkeypatch) -> None:
     }
 
 
+def test_local_admin_sends_push_to_all_reachable(monkeypatch) -> None:
+    captured = {}
+
+    monkeypatch.setattr(
+        "app.routers.local_admin.get_settings",
+        lambda: SimpleNamespace(allow_dev_tma_auth=True),
+    )
+
+    def fake_send_manual_push_to_reachable(*, reason, include_debug):
+        captured["reason"] = reason
+        captured["include_debug"] = include_debug
+        return {
+            "sent": True,
+            "manual": True,
+            "sentCount": 2,
+            "failedCount": 0,
+            "skippedCount": 1,
+            "targetCount": 2,
+            "results": [],
+            "errors": [],
+        }
+
+    monkeypatch.setattr(
+        "app.routers.local_admin.send_manual_push_to_reachable",
+        fake_send_manual_push_to_reachable,
+    )
+
+    response = TestClient(app).post(
+        "/api/admin/push/send-all",
+        json={"reason": "debug all", "includeDebug": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sentCount"] == 2
+    assert captured == {
+        "reason": "debug all",
+        "include_debug": True,
+    }
+
+
 def test_publish_path_filter_rejects_backups_and_unrelated_files() -> None:
     assert unexpected_publish_paths(["backend/data/story_library.json"]) == []
     assert unexpected_publish_paths(
