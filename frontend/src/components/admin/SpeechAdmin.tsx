@@ -146,6 +146,19 @@ function isPublishFinished(status: AdminSpeechPublishJob["status"]) {
   return status === "succeeded" || status === "failed";
 }
 
+function syncStatusLabel(status: string) {
+  if (status === "synced") {
+    return "с сервера";
+  }
+  if (status === "already_current") {
+    return "актуально";
+  }
+  if (status === "disabled") {
+    return "выкл.";
+  }
+  return status;
+}
+
 function wait(ms: number) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
@@ -370,6 +383,14 @@ export function SpeechAdmin() {
               {dirtyIds.length ? `${dirtyIds.length} изменено` : "чисто"}
             </Badge>
           </div>
+          {manifest?.sync ? (
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-xs text-muted-foreground">
+              <span className="min-w-0 truncate">{manifest.sync.message}</span>
+              <Badge variant="outline" className="shrink-0">
+                {manifest.sync.serverCommit ?? syncStatusLabel(manifest.sync.status)}
+              </Badge>
+            </div>
+          ) : null}
 
           <Separator className="my-4" />
 

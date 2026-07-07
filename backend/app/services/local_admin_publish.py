@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from app.services.local_admin_store import (
+    clear_admin_runtime_caches,
     managed_admin_git_paths,
     save_admin_files,
     validate_admin_files_on_disk,
@@ -149,6 +150,87 @@ def get_admin_publish_job(job_id: str) -> dict[str, Any] | None:
     with _jobs_lock:
         job = _jobs.get(job_id)
     return job.snapshot() if job else None
+
+
+def sync_admin_files_from_server(settings: Any) -> dict[str, Any]:
+    if not _setting(settings, "admin_sync_from_server_enabled", False):
+        return {
+            "status": "disabled",
+            "message": "Синхронизация с сервером отключена.",
+            "serverCommit": None,
+            "updatedAt": _now_iso(),
+        }
+
+    timeout = float(_setting(settings, "admin_publish_command_timeout_seconds", 1200))
+    remote = str(_setting(settings, "admin_publish_git_remote", "origin"))
+    branch = str(_setting(settings, "admin_publish_git_branch", "main"))
+    allowed_paths = managed_admin_git_paths()
+
+    try:
+        server_sha = _server_head_commit(settings, timeout)
+        _run_capture(["git", "fetch", remote, branch], cwd=REPO_ROOT, timeout=timeout)
+        _ensure_commit_exists(server_sha, timeout)
+
+        dirty_paths = _changed_paths(allowed_paths, timeout)
+        paths_different_from_server = _paths_differ_from_commit(
+            allowed_paths,
+            server_sha,
+            timeout,
+        )
+        if dirty_paths and paths_different_from_server:
+            raise AdminPublishError(
+                "ADMIN_SYNC_LOCAL_DIRTY",
+                (
+                    "Локальные data-файлы отличаются от сервера: "
+                    + ", ".join(paths_different_from_server)
+                    + ". Сначала опубликуй или откати локальные изменения."
+                ),
+            )
+
+        current_sha = _run_capture(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO_ROOT,
+            timeout=timeout,
+        )
+        if current_sha == server_sha or not paths_different_from_server:
+            validation_errors = validate_admin_files_on_disk()
+            if validation_errors:
+                raise AdminPublishError(
+                    "ADMIN_SYNC_VALIDATION_FAILED",
+                    f"Ошибки в data-файлах после sync: {validation_errors}",
+                )
+            return {
+                "status": "already_current",
+                "message": "Локальная админка уже читает данные с текущего commit сервера.",
+                "serverCommit": server_sha[:12],
+                "updatedAt": _now_iso(),
+            }
+
+        _sync_worktree_to_server_commit(server_sha, allowed_paths, timeout)
+        remaining_diff = _paths_differ_from_commit(allowed_paths, server_sha, timeout)
+        if remaining_diff:
+            raise AdminPublishError(
+                "ADMIN_SYNC_FAILED",
+                "Не удалось подтянуть серверные data-файлы: " + ", ".join(remaining_diff),
+            )
+        validation_errors = validate_admin_files_on_disk()
+        if validation_errors:
+            raise AdminPublishError(
+                "ADMIN_SYNC_VALIDATION_FAILED",
+                f"Ошибки в data-файлах после sync: {validation_errors}",
+            )
+    except AdminPublishError as exc:
+        if exc.code.startswith("ADMIN_PUBLISH_COMMAND"):
+            raise AdminPublishError("ADMIN_SYNC_COMMAND_FAILED", exc.message) from exc
+        raise
+
+    clear_admin_runtime_caches()
+    return {
+        "status": "synced",
+        "message": "Подтянул data-файлы с текущего commit сервера.",
+        "serverCommit": server_sha[:12],
+        "updatedAt": _now_iso(),
+    }
 
 
 def _run_publish_job(
@@ -337,18 +419,123 @@ def _unpublished_paths(
     return paths
 
 
-def _deploy_on_hetzner(job: AdminPublishJob, settings: Any, timeout: float) -> None:
-    ssh_target = str(_setting(settings, "admin_publish_ssh_target", ""))
+def _ssh_command_args(
+    settings: Any,
+    *,
+    missing_code: str = "ADMIN_PUBLISH_SSH_TARGET_INVALID",
+    invalid_code: str = "ADMIN_PUBLISH_SSH_TARGET_INVALID",
+) -> list[str]:
+    ssh_target = str(_setting(settings, "admin_publish_ssh_target", "") or "").strip()
+    if not ssh_target:
+        raise AdminPublishError(
+            missing_code,
+            "Не задан ADMIN_PUBLISH_SSH_TARGET.",
+        )
     if not ssh_target or any(char.isspace() for char in ssh_target):
         raise AdminPublishError(
-            "ADMIN_PUBLISH_SSH_TARGET_INVALID",
+            invalid_code,
             "ADMIN_PUBLISH_SSH_TARGET должен быть SSH target без пробелов.",
         )
-    remote_path = str(_setting(settings, "admin_publish_remote_path", "/opt/gigagochi"))
     ssh_args = ["ssh", "-o", "BatchMode=yes"]
     ssh_key = _setting(settings, "admin_publish_ssh_key_path")
     if ssh_key:
         ssh_args.extend(["-i", str(Path(str(ssh_key)).expanduser())])
+    return [*ssh_args, ssh_target]
+
+
+def _server_head_commit(settings: Any, timeout: float) -> str:
+    remote_path = str(_setting(settings, "admin_publish_remote_path", "/opt/gigagochi"))
+    remote_command = f"set -e; cd {shlex.quote(remote_path)}; git rev-parse HEAD"
+    output = _run_capture(
+        [
+            *_ssh_command_args(
+                settings,
+                missing_code="ADMIN_SYNC_SSH_TARGET_MISSING",
+                invalid_code="ADMIN_SYNC_SSH_TARGET_INVALID",
+            ),
+            remote_command,
+        ],
+        cwd=REPO_ROOT,
+        timeout=timeout,
+    )
+    sha = output.strip()
+    if len(sha) < 7 or len(sha) > 64 or any(
+        char not in "0123456789abcdefABCDEF" for char in sha
+    ):
+        raise AdminPublishError(
+            "ADMIN_SYNC_SERVER_COMMIT_INVALID",
+            f"Сервер вернул некорректный git commit: {sha!r}.",
+        )
+    return sha
+
+
+def _ensure_commit_exists(commit_sha: str, timeout: float) -> None:
+    try:
+        _run_capture(
+            ["git", "cat-file", "-e", f"{commit_sha}^{{commit}}"],
+            cwd=REPO_ROOT,
+            timeout=timeout,
+        )
+    except AdminPublishError as exc:
+        raise AdminPublishError(
+            "ADMIN_SYNC_SERVER_COMMIT_UNKNOWN",
+            (
+                "Commit сервера не найден локально после git fetch. "
+                "Проверь, что Hetzner deploy сделан из GitHub main."
+            ),
+        ) from exc
+
+
+def _paths_differ_from_commit(
+    paths: tuple[str, ...],
+    commit_sha: str,
+    timeout: float,
+) -> list[str]:
+    output = _run_capture(
+        ["git", "diff", "--name-only", commit_sha, "--", *paths],
+        cwd=REPO_ROOT,
+        timeout=timeout,
+    )
+    return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def _tracked_worktree_changes(timeout: float) -> list[str]:
+    output = _run_capture(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=REPO_ROOT,
+        timeout=timeout,
+    )
+    return [line[3:] if len(line) > 3 else line for line in output.splitlines() if line.strip()]
+
+
+def _sync_worktree_to_server_commit(
+    server_sha: str,
+    paths: tuple[str, ...],
+    timeout: float,
+) -> None:
+    if not _tracked_worktree_changes(timeout):
+        try:
+            _run_capture(
+                ["git", "merge", "--ff-only", server_sha],
+                cwd=REPO_ROOT,
+                timeout=timeout,
+            )
+        except AdminPublishError:
+            pass
+        else:
+            if not _paths_differ_from_commit(paths, server_sha, timeout):
+                return
+
+    _run_capture(
+        ["git", "restore", "--source", server_sha, "--worktree", "--", *paths],
+        cwd=REPO_ROOT,
+        timeout=timeout,
+    )
+
+
+def _deploy_on_hetzner(job: AdminPublishJob, settings: Any, timeout: float) -> None:
+    ssh_target = str(_setting(settings, "admin_publish_ssh_target", "") or "").strip()
+    remote_path = str(_setting(settings, "admin_publish_remote_path", "/opt/gigagochi"))
     git_remote = shlex.quote(str(_setting(settings, "admin_publish_git_remote", "origin")))
     git_branch = shlex.quote(str(_setting(settings, "admin_publish_git_branch", "main")))
     remote_command = (
@@ -360,7 +547,7 @@ def _deploy_on_hetzner(job: AdminPublishJob, settings: Any, timeout: float) -> N
     job.log(f"Запускаю deploy на Hetzner: {ssh_target}.")
     _run_logged_command(
         job,
-        [*ssh_args, ssh_target, remote_command],
+        [*_ssh_command_args(settings), remote_command],
         cwd=REPO_ROOT,
         timeout=timeout,
     )

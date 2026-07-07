@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     admin_publish_remote_path: str = "/opt/gigagochi"
     admin_publish_health_url: str = "https://gigagochi.serega.works/health"
     admin_publish_command_timeout_seconds: float = 1200
+    admin_sync_from_server_enabled: bool = False
     ai_provider: AIProvider = "openrouter"
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"

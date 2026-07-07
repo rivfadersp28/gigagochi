@@ -134,12 +134,16 @@ ADMIN_PUBLISH_SSH_TARGET=root@167.233.103.46
 ADMIN_PUBLISH_SSH_KEY_PATH=~/.ssh/id_ed25519
 ADMIN_PUBLISH_REMOTE_PATH=/opt/gigagochi
 ADMIN_PUBLISH_HEALTH_URL=https://gigagochi.serega.works/health
+ADMIN_SYNC_FROM_SERVER_ENABLED=true
 ```
 
 The `Опубликовать` button saves dirty admin drafts, validates all managed `backend/data` files,
 commits only those managed data paths, pushes `HEAD:main` to GitHub, then runs the same update
 command on Hetzner over SSH (`git pull --ff-only origin main` plus compose rebuild) and checks
-`/health`. Keep `ADMIN_PUBLISH_ENABLED=false` on the production server.
+`/health`. With `ADMIN_SYNC_FROM_SERVER_ENABLED=true`, every `/admin/speech` load first reads the
+current Git commit from Hetzner and refreshes the local managed data files before returning the
+manifest. Keep `ADMIN_PUBLISH_ENABLED=false` and `ADMIN_SYNC_FROM_SERVER_ENABLED=false` on the
+production server.
 
 ## Verify
 

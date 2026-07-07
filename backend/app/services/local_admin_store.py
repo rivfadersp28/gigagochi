@@ -182,11 +182,19 @@ def read_admin_manifest(
     *,
     deploy_enabled: bool = False,
     deploy_message: str | None = None,
+    sync_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "generatedAt": _now_iso(),
         "mode": "local",
         "files": [_file_entry(spec) for spec in MANAGED_FILES],
+        "sync": sync_result
+        or {
+            "status": "disabled",
+            "message": "Синхронизация с сервером отключена.",
+            "serverCommit": None,
+            "updatedAt": _now_iso(),
+        },
         "deploy": {
             "enabled": deploy_enabled,
             "message": (
@@ -221,6 +229,10 @@ def _clear_runtime_caches() -> None:
     load_world_description_dataset.cache_clear()
     age_speech_dataset.cache_clear()
     speech_runtime_config.cache_clear()
+
+
+def clear_admin_runtime_caches() -> None:
+    _clear_runtime_caches()
 
 
 def save_admin_files(files: list[dict[str, str]]) -> dict[str, Any]:

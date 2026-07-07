@@ -19,6 +19,12 @@ export type AdminSpeechManifest = {
   generatedAt: string;
   mode: "local";
   files: AdminSpeechFile[];
+  sync: {
+    status: "disabled" | "already_current" | "synced" | string;
+    message: string;
+    serverCommit: string | null;
+    updatedAt: string;
+  };
   deploy: {
     enabled: boolean;
     message: string;

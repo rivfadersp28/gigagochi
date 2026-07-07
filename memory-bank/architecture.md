@@ -43,3 +43,6 @@
   `backend/app/services/local_admin_publish.py`; the job saves dirty drafts,
   commits only managed `backend/data` paths to GitHub, runs the Hetzner compose
   rebuild over SSH, and exposes polling logs/status back to the admin UI.
+- With `ADMIN_SYNC_FROM_SERVER_ENABLED=true`, `GET /api/admin/speech` first
+  reads the current Git commit from Hetzner over SSH and refreshes the local
+  managed data files from that commit before returning the manifest.

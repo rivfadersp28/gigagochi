@@ -27,6 +27,9 @@
 - Admin publish is local-only and opt-in. Keep `ADMIN_PUBLISH_ENABLED=false` on
   Hetzner; the publish job must stage only `managed_admin_git_paths()` and never
   `.admin-backups/` or unrelated dirty/untracked files.
+- Admin server-sync is also local-only and opt-in. Keep
+  `ADMIN_SYNC_FROM_SERVER_ENABLED=false` on Hetzner; local sync should refuse to
+  overwrite managed data files when they already differ from the server commit.
 - Hetzner `/opt/gigagochi` may not have branch upstream tracking configured.
   Use explicit `git pull --ff-only origin main` in deploy commands.
 - Local speech admin uses the Next same-origin proxy. Keep

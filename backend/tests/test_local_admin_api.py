@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import local_admin_store
-from app.services.local_admin_publish import unexpected_publish_paths
+from app.services.local_admin_publish import AdminPublishError, unexpected_publish_paths
 
 
 def _seed_admin_files(root) -> None:
@@ -59,6 +59,65 @@ def test_local_admin_reads_managed_files(monkeypatch, tmp_path) -> None:
         "story_library",
     ]
     assert payload["files"][0]["content"].startswith("{")
+
+
+def test_local_admin_syncs_before_reading_manifest(monkeypatch, tmp_path) -> None:
+    _seed_admin_files(tmp_path)
+    captured = {}
+    monkeypatch.setattr(local_admin_store, "DATA_ROOT", tmp_path)
+    settings = SimpleNamespace(
+        allow_dev_tma_auth=True,
+        admin_sync_from_server_enabled=True,
+    )
+    monkeypatch.setattr("app.routers.local_admin.get_settings", lambda: settings)
+
+    def fake_sync_admin_files_from_server(sync_settings):
+        captured["settings"] = sync_settings
+        return {
+            "status": "synced",
+            "message": "ok",
+            "serverCommit": "abc123",
+            "updatedAt": "2026-01-01T00:00:00Z",
+        }
+
+    monkeypatch.setattr(
+        "app.routers.local_admin.sync_admin_files_from_server",
+        fake_sync_admin_files_from_server,
+    )
+
+    response = TestClient(app).get("/api/admin/speech")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured["settings"] is settings
+    assert payload["sync"]["status"] == "synced"
+    assert payload["sync"]["serverCommit"] == "abc123"
+
+
+def test_local_admin_sync_conflict_returns_409(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.local_admin.get_settings",
+        lambda: SimpleNamespace(
+            allow_dev_tma_auth=True,
+            admin_sync_from_server_enabled=True,
+        ),
+    )
+
+    def fake_sync_admin_files_from_server(_settings):
+        raise AdminPublishError("ADMIN_SYNC_LOCAL_DIRTY", "dirty")
+
+    monkeypatch.setattr(
+        "app.routers.local_admin.sync_admin_files_from_server",
+        fake_sync_admin_files_from_server,
+    )
+
+    response = TestClient(app).get("/api/admin/speech")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "ADMIN_SYNC_LOCAL_DIRTY",
+        "message": "dirty",
+    }
 
 
 def test_local_admin_saves_json_and_makes_backup(monkeypatch, tmp_path) -> None:

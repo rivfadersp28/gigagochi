@@ -10,6 +10,7 @@ from app.services.local_admin_publish import (
     AdminPublishError,
     get_admin_publish_job,
     start_admin_publish,
+    sync_admin_files_from_server,
 )
 from app.services.local_admin_store import read_admin_manifest, save_admin_files
 
@@ -52,6 +53,15 @@ router = APIRouter(
 def speech_admin_manifest() -> dict[str, Any]:
     settings = get_settings()
     deploy_enabled = bool(getattr(settings, "admin_publish_enabled", False))
+    sync_result = None
+    if getattr(settings, "admin_sync_from_server_enabled", False):
+        try:
+            sync_result = sync_admin_files_from_server(settings)
+        except AdminPublishError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
     deploy_message = (
         (
             "Публикация отправит изменения в GitHub "
@@ -63,7 +73,11 @@ def speech_admin_manifest() -> dict[str, Any]:
             "Задай ADMIN_PUBLISH_ENABLED=true и SSH-настройки."
         )
     )
-    return read_admin_manifest(deploy_enabled=deploy_enabled, deploy_message=deploy_message)
+    return read_admin_manifest(
+        deploy_enabled=deploy_enabled,
+        deploy_message=deploy_message,
+        sync_result=sync_result,
+    )
 
 
 @router.put("/speech")
