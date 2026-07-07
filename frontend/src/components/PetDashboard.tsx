@@ -2147,14 +2147,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
         {isFeedMode ? (
           <div className="feed-mode-layer" aria-label="Кормление">
-            <button
-              type="button"
-              className="feed-mode-close"
-              aria-label="Закрыть кормление"
-              onClick={closeFeedMode}
-            >
-              <X className="size-[22px]" aria-hidden="true" />
-            </button>
             {feedSuccessId > 0 ? (
               <span key={feedSuccessId} className="feed-drop-pulse" aria-hidden="true" />
             ) : null}
