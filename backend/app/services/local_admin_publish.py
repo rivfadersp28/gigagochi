@@ -5,6 +5,7 @@ import shlex
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
@@ -22,6 +23,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 PublishStatus = Literal["pending", "running", "succeeded", "failed"]
 TERMINAL_STATUSES = {"succeeded", "failed"}
+HEALTH_CHECK_ATTEMPTS = 30
+HEALTH_CHECK_DELAY_SECONDS = 2.0
 
 
 class AdminPublishError(RuntimeError):
@@ -371,18 +374,34 @@ def _check_health(job: AdminPublishJob, health_url: str) -> None:
         )
         return
     job.log(f"Проверяю health-check: {health_url}.")
-    try:
-        with urllib.request.urlopen(health_url, timeout=20) as response:
-            status = response.status
-            body = response.read(300).decode("utf-8", errors="replace")
-    except Exception as exc:
-        raise AdminPublishError("ADMIN_PUBLISH_HEALTH_FAILED", str(exc)) from exc
-    if status < 200 or status >= 400:
-        raise AdminPublishError(
-            "ADMIN_PUBLISH_HEALTH_FAILED",
-            f"Health-check вернул HTTP {status}: {body}",
-        )
-    job.log(f"Health-check OK: HTTP {status}.")
+    last_error = ""
+    for attempt in range(1, HEALTH_CHECK_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(health_url, timeout=20) as response:
+                status = response.status
+                body = response.read(300).decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            body = exc.read(300).decode("utf-8", errors="replace")
+            last_error = f"HTTP {exc.code}: {body}"
+        except Exception as exc:
+            last_error = str(exc)
+        else:
+            if 200 <= status < 400:
+                job.log(f"Health-check OK: HTTP {status}.")
+                return
+            last_error = f"HTTP {status}: {body}"
+
+        if attempt < HEALTH_CHECK_ATTEMPTS:
+            job.log(
+                f"Health-check не готов ({attempt}/{HEALTH_CHECK_ATTEMPTS}): {last_error}",
+                level="warning",
+            )
+            time.sleep(HEALTH_CHECK_DELAY_SECONDS)
+
+    raise AdminPublishError(
+        "ADMIN_PUBLISH_HEALTH_FAILED",
+        f"Health-check не прошёл: {last_error}",
+    )
 
 
 def _commit_message(message: str | None) -> str:
