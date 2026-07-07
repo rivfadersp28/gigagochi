@@ -226,11 +226,16 @@ const petTapParticleConfig = {
 
 function PetTapParticleBurst({ id, targetRef, onComplete }: PetTapParticleBurstProps) {
   const { reward } = useReward(targetRef, "bubbles", petTapParticleConfig);
+  const rewardRef = useRef(reward);
+
+  useEffect(() => {
+    rewardRef.current = reward;
+  }, [reward]);
 
   useEffect(() => {
     let shouldComplete = true;
     const timeoutId = window.setTimeout(() => {
-      void reward().finally(() => {
+      void rewardRef.current().finally(() => {
         if (shouldComplete) {
           onComplete(id);
         }
@@ -241,7 +246,7 @@ function PetTapParticleBurst({ id, targetRef, onComplete }: PetTapParticleBurstP
       shouldComplete = false;
       window.clearTimeout(timeoutId);
     };
-  }, [id, onComplete, reward]);
+  }, [id, onComplete]);
 
   return null;
 }
