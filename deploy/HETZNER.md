@@ -114,7 +114,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml --profile l
 
 ```bash
 cd /opt/gigagochi
-git pull --ff-only
+git pull --ff-only origin main
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
 docker image prune -f
 ```
@@ -138,8 +138,8 @@ ADMIN_PUBLISH_HEALTH_URL=https://gigagochi.serega.works/health
 
 The `Опубликовать` button saves dirty admin drafts, validates all managed `backend/data` files,
 commits only those managed data paths, pushes `HEAD:main` to GitHub, then runs the same update
-command on Hetzner over SSH and checks `/health`. Keep `ADMIN_PUBLISH_ENABLED=false` on the
-production server.
+command on Hetzner over SSH (`git pull --ff-only origin main` plus compose rebuild) and checks
+`/health`. Keep `ADMIN_PUBLISH_ENABLED=false` on the production server.
 
 ## Verify
 

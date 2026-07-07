@@ -346,9 +346,11 @@ def _deploy_on_hetzner(job: AdminPublishJob, settings: Any, timeout: float) -> N
     ssh_key = _setting(settings, "admin_publish_ssh_key_path")
     if ssh_key:
         ssh_args.extend(["-i", str(Path(str(ssh_key)).expanduser())])
+    git_remote = shlex.quote(str(_setting(settings, "admin_publish_git_remote", "origin")))
+    git_branch = shlex.quote(str(_setting(settings, "admin_publish_git_branch", "main")))
     remote_command = (
         f"set -e; cd {shlex.quote(remote_path)}; "
-        "git pull --ff-only; "
+        f"git pull --ff-only {git_remote} {git_branch}; "
         "docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build; "
         "docker compose --env-file .env.production -f docker-compose.prod.yml ps"
     )

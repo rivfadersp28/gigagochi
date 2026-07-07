@@ -24,6 +24,8 @@
 - Admin publish is local-only and opt-in. Keep `ADMIN_PUBLISH_ENABLED=false` on
   Hetzner; the publish job must stage only `managed_admin_git_paths()` and never
   `.admin-backups/` or unrelated dirty/untracked files.
+- Hetzner `/opt/gigagochi` may not have branch upstream tracking configured.
+  Use explicit `git pull --ff-only origin main` in deploy commands.
 - Local speech admin uses the Next same-origin proxy. Keep
   `frontend/.env.local` `BACKEND_URL` aligned with the local backend port
   (`8000` in the current dev setup), and keep `127.0.0.1`/`localhost` in
