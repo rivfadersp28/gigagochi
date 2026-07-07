@@ -1350,17 +1350,21 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
   useTelegramBackButton(handleTelegramBack, isChatMode || isFeedMode);
 
-  const handlePetTap = useCallback(() => {
-    void playPetTapSound();
-
+  const triggerPetTapVisualFeedback = useCallback(() => {
     if (shouldReduceMotion()) {
       return;
     }
+
     const nextBurstId = petTapParticleBurstIdRef.current + 1;
     petTapParticleBurstIdRef.current = nextBurstId;
     setPetTapParticleBursts((currentBursts) => [...currentBursts, nextBurstId]);
     setPetTapPulseId((currentId) => currentId + 1);
   }, []);
+
+  const handlePetTap = useCallback(() => {
+    void playPetTapSound();
+    triggerPetTapVisualFeedback();
+  }, [triggerPetTapVisualFeedback]);
 
   const removePetTapParticleBurst = useCallback((burstId: number) => {
     setPetTapParticleBursts((currentBursts) =>
@@ -1503,7 +1507,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     }
 
     setFeedSuccessId((currentId) => currentId + 1);
-    setPetTapPulseId((currentId) => currentId + 1);
+    triggerPetTapVisualFeedback();
     hapticNotification("success");
     window.setTimeout(() => setIsFeeding(false), 420);
     return true;
