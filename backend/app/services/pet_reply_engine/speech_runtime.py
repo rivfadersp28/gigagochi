@@ -40,9 +40,7 @@ DEFAULT_SPEECH_RUNTIME: dict[str, Any] = {
         "proactiveRules": [
             "Личная память пользователя может быть поводом, но не превращай реплику в уведомление.",
         ],
-        "ambientRules": [
-            "Idle-фраза должна давать владельцу вход в диалог, а не просто заполнять паузу.",
-        ],
+        "ambientRules": [],
         "babyExamplesIntro": (
             "Примеры детской манеры из датасета. Можно брать ритм и характер, "
             "но не обязательно копировать дословно:"
@@ -220,8 +218,7 @@ def _bool_record(value: Any, fallback: dict[str, bool]) -> dict[str, bool]:
 def _string_list(value: Any, fallback: list[str]) -> list[str]:
     if not isinstance(value, list):
         return list(fallback)
-    result = [_compact_spaces(item) for item in value if isinstance(item, str) and item.strip()]
-    return result or list(fallback)
+    return [_compact_spaces(item) for item in value if isinstance(item, str) and item.strip()]
 
 
 def _template_replace(template: str, values: dict[str, str]) -> str:

@@ -258,6 +258,7 @@ def test_speech_runtime_config_controls_reply_and_extractor_prompts(
                 "visibleReply": {
                     "globalRules": ["CUSTOM_VISIBLE_RULE"],
                     "chatRules": ["CUSTOM_CHAT_RULE"],
+                    "ambientRules": [],
                 },
                 "characterMemory": {
                     "factExtractionSystem": "CUSTOM_FACT_EXTRACTION_PROMPT",
@@ -297,6 +298,15 @@ def test_speech_runtime_config_controls_reply_and_extractor_prompts(
 
     try:
         system_message = build_lite_chat_messages(lite_payload())[0]["content"]
+        ambient_system_message = build_ambient_messages(
+            LocalAmbientRequest.model_validate(
+                {
+                    "pet": lite_payload().pet.model_dump(),
+                    "history": [],
+                    "replyMaxChars": 120,
+                }
+            )
+        )[0]["content"]
         extraction_messages = build_lite_fact_extraction_messages(
             LiteFactExtractionRequest.model_validate(
                 {
@@ -314,6 +324,7 @@ def test_speech_runtime_config_controls_reply_and_extractor_prompts(
     assert "CUSTOM_CHAT_RULE" in system_message
     assert "CUSTOM_ADULT_AGE" in system_message
     assert "CUSTOM_HUNGRY_STATE" in system_message
+    assert "Idle-фраза должна давать владельцу вход в диалог" not in ambient_system_message
     assert extraction_messages[0]["content"] == "CUSTOM_FACT_EXTRACTION_PROMPT"
 
 
@@ -535,6 +546,7 @@ def test_ambient_prompt_uses_same_phrase_engine_without_forced_world_context() -
     assert "VOICE_CONTROL" not in system_message
     assert "WORLD_CONTEXT" not in system_message
     assert "лист шепчет" not in system_message
+    assert "Idle-фраза должна давать владельцу вход в диалог" not in system_message
     assert "заинтересоваться его миром" not in system_message
     assert "автоматическое сообщение" not in system_message
     assert "STORY_LIBRARY" not in system_message

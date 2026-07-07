@@ -27,6 +27,9 @@
   defaults. Proactive keeps only a neutral reason context line; ambient is
   steered by `ambientSelfPrompt`, visible reply rules, state, memory and
   optional world context.
+- Empty rule arrays in `speech_runtime.json` are intentional overrides, not a
+  signal to use Python fallback defaults. This matters for admin-cleared
+  `visibleReply.ambientRules`.
 - `speech_runtime.json` `worldContext.blockTemplate` must keep `{mode_rule}`
   and `{lines}`. Without them, selected story bricks are computed but not shown
   to the model.
