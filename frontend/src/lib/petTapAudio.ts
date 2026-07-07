@@ -6,12 +6,15 @@ type BrowserAudioWindow = Window &
     webkitAudioContext?: typeof AudioContext;
   };
 
-let petTapAudio: HTMLAudioElement | null = null;
+let petTapPreloadAudio: HTMLAudioElement | null = null;
 let petTapAudioContext: AudioContext | null = null;
 let petTapBuffer: AudioBuffer | null = null;
 let petTapBufferPromise: Promise<AudioBuffer> | null = null;
-let activePetTapSource: AudioBufferSourceNode | null = null;
-let activePetTapGain: GainNode | null = null;
+const activePetTapSources = new Set<{
+  source: AudioBufferSourceNode;
+  gain: GainNode;
+}>();
+const activeFallbackPetTapAudios = new Set<HTMLAudioElement>();
 
 function getPetTapAudioContext() {
   if (typeof window === "undefined") {
@@ -32,17 +35,27 @@ function getPetTapAudioContext() {
   return petTapAudioContext;
 }
 
-function getFallbackAudio() {
+function getFallbackAudioPreloader() {
   if (typeof Audio === "undefined") {
     return null;
   }
 
-  if (!petTapAudio) {
-    petTapAudio = new Audio(PET_TAP_SOUND_SRC);
-    petTapAudio.preload = "auto";
+  if (!petTapPreloadAudio) {
+    petTapPreloadAudio = new Audio(PET_TAP_SOUND_SRC);
+    petTapPreloadAudio.preload = "auto";
   }
 
-  return petTapAudio;
+  return petTapPreloadAudio;
+}
+
+function createFallbackAudio() {
+  if (typeof Audio === "undefined") {
+    return null;
+  }
+
+  const audio = new Audio(PET_TAP_SOUND_SRC);
+  audio.preload = "auto";
+  return audio;
 }
 
 async function loadPetTapBuffer(context: AudioContext) {
@@ -52,79 +65,108 @@ async function loadPetTapBuffer(context: AudioContext) {
 
   if (!petTapBufferPromise) {
     petTapBufferPromise = fetch(PET_TAP_SOUND_SRC)
-      .then((response) => response.arrayBuffer())
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to load pet tap sound: ${response.status}`);
+        }
+        return response.arrayBuffer();
+      })
       .then((audioData) => context.decodeAudioData(audioData))
       .then((buffer) => {
         petTapBuffer = buffer;
         return buffer;
+      })
+      .catch((error) => {
+        petTapBufferPromise = null;
+        throw error;
       });
   }
 
   return petTapBufferPromise;
 }
 
-function stopActivePetTapSource() {
+function disconnectPetTapSource(source: AudioBufferSourceNode, gain: GainNode) {
   try {
-    activePetTapSource?.stop();
-  } catch {
-    // Source may have already ended.
-  }
-
-  try {
-    activePetTapSource?.disconnect();
+    source.disconnect();
   } catch {
     // Source may have already disconnected.
   }
 
   try {
-    activePetTapGain?.disconnect();
+    gain.disconnect();
   } catch {
     // Gain may have already disconnected.
   }
-
-  activePetTapSource = null;
-  activePetTapGain = null;
 }
 
 function playPetTapBuffer(context: AudioContext, buffer: AudioBuffer) {
-  stopActivePetTapSource();
-
   const source = context.createBufferSource();
   const gain = context.createGain();
+  const activeSource = { source, gain };
+  let cleanedUp = false;
+
+  const cleanup = () => {
+    if (cleanedUp) {
+      return;
+    }
+
+    cleanedUp = true;
+    activePetTapSources.delete(activeSource);
+    disconnectPetTapSource(source, gain);
+  };
 
   source.buffer = buffer;
   gain.gain.value = PET_TAP_GAIN;
   source.connect(gain);
   gain.connect(context.destination);
-  source.start();
+  activePetTapSources.add(activeSource);
 
-  activePetTapSource = source;
-  activePetTapGain = gain;
-
-  source.onended = () => {
-    if (activePetTapSource === source) {
-      stopActivePetTapSource();
-    }
-  };
+  source.onended = cleanup;
+  try {
+    source.start();
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
 }
 
-function playFallbackPetTapSound() {
-  try {
-    const audio = getFallbackAudio();
-    if (!audio) {
-      return;
-    }
+async function playFallbackPetTapSound() {
+  const audio = createFallbackAudio();
+  if (!audio) {
+    return false;
+  }
 
-    audio.currentTime = 0;
-    void audio.play().catch(() => undefined);
+  const cleanup = () => {
+    activeFallbackPetTapAudios.delete(audio);
+    audio.removeEventListener("ended", cleanup);
+    audio.removeEventListener("error", cleanup);
+  };
+
+  activeFallbackPetTapAudios.add(audio);
+  audio.addEventListener("ended", cleanup, { once: true });
+  audio.addEventListener("error", cleanup, { once: true });
+
+  try {
+    await audio.play();
+    return true;
   } catch {
     // Audio feedback is optional and can be blocked by the client.
+    cleanup();
+    return false;
   }
+}
+
+async function resumePetTapAudioContext(context: AudioContext) {
+  if (context.state === "suspended") {
+    await context.resume();
+  }
+
+  return context.state === "running";
 }
 
 export function primePetTapSound() {
   try {
-    getFallbackAudio()?.load();
+    getFallbackAudioPreloader()?.load();
 
     const context = getPetTapAudioContext();
     if (context) {
@@ -135,25 +177,26 @@ export function primePetTapSound() {
   }
 }
 
-export function playPetTapSound() {
+export async function playPetTapSound() {
   const context = getPetTapAudioContext();
   if (!context) {
-    playFallbackPetTapSound();
-    return;
+    return playFallbackPetTapSound();
   }
 
   try {
-    if (petTapBuffer) {
-      if (context.state === "suspended") {
-        void context.resume().catch(() => undefined);
-      }
-      playPetTapBuffer(context, petTapBuffer);
-      return;
+    if (!(await resumePetTapAudioContext(context))) {
+      return playFallbackPetTapSound();
     }
 
-    void loadPetTapBuffer(context).catch(() => undefined);
-    playFallbackPetTapSound();
+    if (!petTapBuffer) {
+      void loadPetTapBuffer(context).catch(() => undefined);
+      return playFallbackPetTapSound();
+    }
+
+    playPetTapBuffer(context, petTapBuffer);
+    return true;
   } catch {
     // Audio feedback is optional and can be blocked by the client.
+    return playFallbackPetTapSound();
   }
 }

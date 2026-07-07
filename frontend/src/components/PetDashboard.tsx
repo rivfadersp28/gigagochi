@@ -9,7 +9,6 @@ import type {
   CSSProperties,
   FormEvent,
   MouseEvent,
-  PointerEvent,
   ReactNode,
   RefObject,
 } from "react";
@@ -1033,7 +1032,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const chatInputRef = useRef<HTMLInputElement>(null);
   const petTapTargetRef = useRef<HTMLButtonElement>(null);
   const petTapParticleBurstIdRef = useRef(0);
-  const petTapSoundStartedOnPointerRef = useRef(false);
   const isSendingChatRef = useRef(false);
   const isTravelGeneratingRef = useRef(false);
   const conversationFullHeightRef = useRef(0);
@@ -1072,11 +1070,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   useTelegramBackButton(closeChatMode, isChatMode);
 
   const handlePetTap = useCallback(() => {
-    if (petTapSoundStartedOnPointerRef.current) {
-      petTapSoundStartedOnPointerRef.current = false;
-    } else {
-      playPetTapSound();
-    }
+    void playPetTapSound();
 
     if (shouldReduceMotion()) {
       return;
@@ -1091,15 +1085,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     setPetTapParticleBursts((currentBursts) =>
       currentBursts.filter((currentBurstId) => currentBurstId !== burstId),
     );
-  }, []);
-
-  const handlePetTapPointerDown = useCallback((event: PointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0) {
-      return;
-    }
-
-    petTapSoundStartedOnPointerRef.current = true;
-    playPetTapSound();
   }, []);
 
   useEffect(() => {
@@ -1737,7 +1722,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               }`}
               style={petTapTargetStyle}
               onClick={handlePetTap}
-              onPointerDown={handlePetTapPointerDown}
               data-button-press-sound="off"
               aria-label="Погладить персонажа"
             >
