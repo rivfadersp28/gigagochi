@@ -402,6 +402,10 @@ def test_proactive_prompt_does_not_include_character_voice_control() -> None:
     assert "VOICE_CONTROL" not in system_message
     assert "говорит через маленькие бытовые детали" not in system_message
     assert "нос подсказывает" not in system_message
+    assert "Повод для самостоятельной реплики: пользователь обещал вернуться вечером" in system_message
+    assert "Ты сам решил написать пользователю первым" not in system_message
+    assert "Напиши одну живую реплику" not in system_message
+    assert "автоматическое сообщение" not in system_message
 
 
 def test_proactive_prompt_skips_world_context_without_story_signal() -> None:
@@ -518,7 +522,6 @@ def test_ambient_prompt_uses_same_phrase_engine_without_forced_world_context() -
     messages = build_ambient_messages(payload)
     system_message = messages[0]["content"]
 
-    assert "idle-фразу на главном экране" in system_message
     assert "IDLE_SELF_PROMPT" in system_message
     assert "IDLE_DIALOGUE_ENGINE" not in system_message
     assert "Спроси меня что-нибудь" not in system_message
@@ -532,7 +535,8 @@ def test_ambient_prompt_uses_same_phrase_engine_without_forced_world_context() -
     assert "VOICE_CONTROL" not in system_message
     assert "WORLD_CONTEXT" not in system_message
     assert "лист шепчет" not in system_message
-    assert "заинтересоваться его миром" in system_message
+    assert "заинтересоваться его миром" not in system_message
+    assert "автоматическое сообщение" not in system_message
     assert "STORY_LIBRARY" not in system_message
     assert messages[-1]["content"] != "Скажи одну короткую idle-фразу сейчас."
     assert "выбранному диалоговому ходу" not in messages[-1]["content"]

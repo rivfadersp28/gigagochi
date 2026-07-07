@@ -56,7 +56,6 @@ from app.services.pet_reply_engine.speech_runtime import (
     recent_ambient_replies_rule,
     story_library_extraction_system_prompt,
     state_layer_surface_flags,
-    surface_rules,
     user_memory_consolidation_system_prompt,
     user_memory_extraction_system_prompt,
     visible_reply_rules,
@@ -509,6 +508,11 @@ def _recent_ambient_replies_block(replies: list[str]) -> str | None:
     if not lines:
         return None
     return f"{recent_ambient_replies_rule()}\n" + "\n".join(lines)
+
+
+def _proactive_reason_block(reason: str) -> str | None:
+    reason_text = _clean_optional_text(reason, 240)
+    return f"Повод для самостоятельной реплики: {reason_text}" if reason_text else None
 
 
 def _extract_hidden_reaction(raw_reply: str) -> tuple[str, str | None, str | None]:
@@ -1827,10 +1831,8 @@ def build_proactive_messages(
         persona_contract=_lite_persona_contract(),
         world_block=context_bundle.prompt_block or None,
         memory_block=memory_block,
-        extra_rules=(
-            *visible_reply_rules("proactive"),
-            *surface_rules("proactive", reason=reason),
-        ),
+        dialogue_block=_proactive_reason_block(reason),
+        extra_rules=visible_reply_rules("proactive"),
     )
     return [
         {
@@ -1928,10 +1930,7 @@ def build_ambient_messages(
         memory_block=memory_block,
         recent_ambient_block=recent_ambient_block,
         dialogue_block=ambient_self_prompt(),
-        extra_rules=(
-            *visible_reply_rules("ambient"),
-            *surface_rules("ambient"),
-        ),
+        extra_rules=visible_reply_rules("ambient"),
     )
     return [
         {

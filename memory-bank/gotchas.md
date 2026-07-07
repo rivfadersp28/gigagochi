@@ -23,6 +23,10 @@
 - Main-screen ambient must not reintroduce fixed dialogue moves or prompt
   examples such as inner weather/day map/mini quest. Use the open
   `ambientSelfPrompt` plus recent idle replies as anti-repeat context.
+- Do not reintroduce `surfaceRules` in `speech_runtime.json` or Python
+  defaults. Proactive keeps only a neutral reason context line; ambient is
+  steered by `ambientSelfPrompt`, visible reply rules, state, memory and
+  optional world context.
 - `speech_runtime.json` `worldContext.blockTemplate` must keep `{mode_rule}`
   and `{lines}`. Without them, selected story bricks are computed but not shown
   to the model.

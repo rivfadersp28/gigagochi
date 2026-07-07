@@ -334,6 +334,12 @@ function RuntimeConfigEditor({
           value={stringAt(config, ["personaContract"])}
           onChange={(value) => updatePath(["personaContract"], value)}
         />
+        <RuntimeField
+          label="Memory usage rule"
+          value={stringAt(config, ["memoryUsageRule"])}
+          rows={2}
+          onChange={(value) => updatePath(["memoryUsageRule"], value)}
+        />
         <RuntimeLineList
           label="Общие правила видимых реплик"
           values={stringListAt(config, ["visibleReply", "globalRules"])}
@@ -445,6 +451,12 @@ function RuntimeConfigEditor({
           value={stringAt(config, ["ambientSelfPrompt"])}
           rows={7}
           onChange={(value) => updatePath(["ambientSelfPrompt"], value)}
+        />
+        <RuntimeField
+          label="Recent idle anti-repeat"
+          value={stringAt(config, ["recentAmbientRepliesRule"])}
+          rows={2}
+          onChange={(value) => updatePath(["recentAmbientRepliesRule"], value)}
         />
       </RuntimeSection>
 

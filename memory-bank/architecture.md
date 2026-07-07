@@ -6,15 +6,19 @@
 - Chat, proactive and ambient replies are assembled through the same `PhrasePlan` structure: identity, persona contract, optional world context, memory and surface-specific rules.
 - `backend/app/services/context_assembler.py` decides whether story context is needed before the model call. It returns selected `WORLD_CONTEXT` bricks plus debug metadata instead of embedding the full story dataset.
 - Story retrieval is heuristic-gated by story-sphere signals. Generic small talk should not retrieve world bricks.
-- Ambient replies use an open `IDLE_SELF_PROMPT` inside the same phrase engine. There is no selected dialogue move; the model can choose a natural micro-moment, observation, check-in, or question. Recent idle replies are still passed as anti-repeat context.
+- Ambient replies use an open `IDLE_SELF_PROMPT` inside the same phrase engine. There is no selected dialogue move and no extra `surfaceRules` layer; the model can choose a natural micro-moment, observation, check-in, or question. Recent idle replies are still passed as anti-repeat context.
 - New durable story entities can be extracted after a chat reply by `story_library_extraction` and returned as `debug.storyLibraryPatch`. Frontend applies that patch into the local per-pet story-library overlay.
 - Runtime speech regulator text that used to be hardcoded in the reply engine now lives in
   `backend/data/speech_runtime.json` and is read by
   `backend/app/services/pet_reply_engine/speech_runtime.py`. It covers persona
-  contract, memory usage rule, ambient self-prompt, surface rules,
-  visible reply rules, character/user memory extractor prompts, world seeding,
+  contract, memory usage rule, ambient self-prompt, visible reply rules,
+  character/user memory extractor prompts, world seeding,
   `WORLD_CONTEXT` prompt framing, and the visible age/mood/hunger/energy
   `stateLayer` used by chat/proactive/ambient identity lines.
+- Proactive replies keep their memory-derived reason as a neutral context line
+  inside the phrase plan. The old configurable `surfaceRules` layer was removed
+  so proactive/ambient behavior is shaped by visible reply rules, state, memory,
+  world context and the idle self-prompt only.
 - Backend chat/proactive/ambient prompts no longer inject `VOICE_CONTROL` from
   `characterBible.voice` / `dialogue_style`; the identity line and character
   description are the prompt source of voice. `voice_profile.py` remains in the
@@ -60,7 +64,9 @@
   reads the current Git commit from Hetzner over SSH and refreshes the local
   managed data files from that commit before returning the manifest.
 - The admin manifest also exposes a dialogue influence map with prompt
-  modifiers and RAG/memory/dataset collections. The `/admin/speech` UI has a
+  modifiers and RAG/memory/dataset collections, including runtime-only sources
+  such as character profile overlays, recent history, proactive reason, tool
+  definitions, reply limits and WORLD_CONTEXT gating. The `/admin/speech` UI has a
   `Local / Production` switch: local mode edits current `backend/data`, while
   production mode reads current Hetzner `backend/data` over SSH and applies
   changes only through the publish/deploy pipeline.

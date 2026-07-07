@@ -99,26 +99,6 @@ DEFAULT_SPEECH_RUNTIME: dict[str, Any] = {
         "Память и лор используй только когда они органично складываются в реплику; "
         "не натягивай их на каждую паузу."
     ),
-    "surfaceRules": {
-        "proactive": [
-            "Ты сам решил написать пользователю первым.",
-            "Повод: {reason}. Напиши одну живую реплику.",
-            "Не объясняй, что это напоминание или автоматическое сообщение.",
-        ],
-        "ambient": [
-            "Ты произносишь idle-фразу на главном экране без прямого вопроса пользователя.",
-            (
-                "Скажи одну живую реплику владельцу: можешь обратиться к нему напрямую, "
-                "поделиться маленьким наблюдением, заинтересоваться его миром или задать "
-                "короткий естественный вопрос."
-            ),
-            "Не объясняй, что это автоматическое сообщение.",
-            (
-                "Не превращай каждую idle-фразу в одинаковый вопрос и не повторяй "
-                "одни и те же обороты."
-            ),
-        ],
-    },
     "worldContext": {
         "blockTemplate": (
             "WORLD_CONTEXT: ниже уже выбранные кирпичики мира для этой реплики. "
@@ -188,7 +168,6 @@ DEFAULT_SPEECH_RUNTIME: dict[str, Any] = {
     },
 }
 
-Surface = Literal["proactive", "ambient"]
 VisibleSurface = Literal["chat", "proactive", "ambient"]
 
 
@@ -365,14 +344,6 @@ def dialogue_state_modifier(
 def ambient_self_prompt() -> str:
     config = speech_runtime_config()
     return _string(config.get("ambientSelfPrompt"), DEFAULT_SPEECH_RUNTIME["ambientSelfPrompt"])
-
-
-def surface_rules(surface: Surface, *, reason: str = "") -> tuple[str, ...]:
-    fallback = DEFAULT_SPEECH_RUNTIME["surfaceRules"][surface]
-    rules = _record(speech_runtime_config().get("surfaceRules")).get(surface)
-    return tuple(
-        _template_replace(rule, {"reason": reason}) for rule in _string_list(rules, fallback)
-    )
 
 
 def world_context_mode_rule(mode: str) -> str:
