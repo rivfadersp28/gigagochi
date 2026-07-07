@@ -19,6 +19,7 @@ import { resetLocalPetMemory } from "./localPetMemoryStorage";
 import type { LocalPetAssetSet, LocalPetState, PetMood } from "./types";
 
 type LocalPetStateStatus = "loading" | "ready" | "empty" | "error";
+const LOCAL_PET_TICK_MS = 60_000;
 
 type UseLocalPetStateResult = {
   pet: LocalPetState | null;
@@ -44,10 +45,16 @@ function saveAndReturn(state: LocalPetState) {
   return writeLocalPetState(state);
 }
 
+function readProgressedPet(fallback: LocalPetState | null) {
+  const currentPet = readLocalPetState() ?? fallback;
+  return currentPet ? applyOfflineProgress(currentPet) : null;
+}
+
 export function useLocalPetState(): UseLocalPetStateResult {
   const [pet, setPet] = useState<LocalPetState | null>(null);
   const [status, setStatus] = useState<LocalPetStateStatus>("loading");
   const [error, setError] = useState<string | null>(null);
+  const activePetId = pet?.petId;
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -73,6 +80,27 @@ export function useLocalPetState(): UseLocalPetStateResult {
     return () => window.clearTimeout(timeoutId);
   }, []);
 
+  useEffect(() => {
+    if (!activePetId) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      const currentPet = readLocalPetState();
+      if (!currentPet) {
+        return;
+      }
+
+      const progressed = applyOfflineProgress(currentPet);
+      saveAndReturn(progressed);
+      setPet(progressed);
+      setStatus("ready");
+      setError(null);
+    }, LOCAL_PET_TICK_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [activePetId]);
+
   const create = useCallback((description: string, assetSet?: LocalPetAssetSet) => {
     clearLocalChatHistory();
     const nextPet = saveAndReturn(createLocalPetState(description, assetSet));
@@ -87,8 +115,13 @@ export function useLocalPetState(): UseLocalPetStateResult {
       return null;
     }
 
+    const currentPet = readProgressedPet(pet);
+    if (!currentPet) {
+      return null;
+    }
+
     const nextPet = saveAndReturn(
-      withPetInteraction(pet, (stats) => ({
+      withPetInteraction(currentPet, (stats) => ({
         ...stats,
         hunger: stats.hunger + 25,
         happiness: stats.happiness + 4,
@@ -103,8 +136,13 @@ export function useLocalPetState(): UseLocalPetStateResult {
       return null;
     }
 
+    const currentPet = readProgressedPet(pet);
+    if (!currentPet) {
+      return null;
+    }
+
     const nextPet = saveAndReturn(
-      withPetInteraction(pet, (stats) => ({
+      withPetInteraction(currentPet, (stats) => ({
         ...stats,
         happiness: stats.happiness + 18,
         energy: stats.energy - 8,
@@ -124,7 +162,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
   }, [pet?.petId]);
 
   const resetStats = useCallback(() => {
-    const currentPet = readLocalPetState() ?? pet;
+    const currentPet = readProgressedPet(pet);
     if (!currentPet) {
       return null;
     }
@@ -140,6 +178,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
       ...currentPet,
       updatedAt: now.toISOString(),
       lastInteractionAt: now.toISOString(),
+      lastStatsTickAt: now.toISOString(),
       stage: calculatePetStage(currentPet.createdAt, now),
       mood: calculatePetMood(stats),
       stats,
@@ -156,7 +195,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
       return null;
     }
 
-    const currentPet = readLocalPetState() ?? pet;
+    const currentPet = readProgressedPet(pet);
     if (!currentPet) {
       return null;
     }
@@ -179,13 +218,18 @@ export function useLocalPetState(): UseLocalPetStateResult {
       return null;
     }
 
+    const currentPet = readProgressedPet(pet);
+    if (!currentPet) {
+      return null;
+    }
+
     const now = new Date();
     const nextPet = saveAndReturn({
-      ...pet,
+      ...currentPet,
       assetSet,
       updatedAt: now.toISOString(),
-      stage: calculatePetStage(pet.createdAt, now),
-      mood: calculatePetMood(pet.stats),
+      stage: calculatePetStage(currentPet.createdAt, now),
+      mood: calculatePetMood(currentPet.stats),
     });
     setPet(nextPet);
     return nextPet;
@@ -196,7 +240,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
     liteOverlayPatch?: Record<string, unknown>,
     storyLibraryPatch?: Record<string, unknown>,
   ) => {
-    const currentPet = readLocalPetState() ?? pet;
+    const currentPet = readProgressedPet(pet);
     if (!currentPet) {
       return null;
     }
@@ -210,6 +254,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
       ...currentPet,
       updatedAt: now.toISOString(),
       lastInteractionAt: now.toISOString(),
+      lastStatsTickAt: now.toISOString(),
       stage: calculatePetStage(currentPet.createdAt, now),
       mood: moodHint ?? calculatePetMood(stats),
       stats,

@@ -203,6 +203,19 @@ function delay(ms: number): Promise<void> {
   });
 }
 
+function statForApi(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function petStatsForApi(stats: LocalPetState["stats"]) {
+  return {
+    hunger: statForApi(stats.hunger),
+    happiness: statForApi(stats.happiness),
+    energy: statForApi(stats.energy),
+    cleanliness: statForApi(stats.cleanliness),
+  };
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const url = `${API_URL}${path}`;
   let response: Response;
@@ -395,7 +408,7 @@ export async function generatePetTravel(
         assetImages: publicAssetImagesForApi(pet.assetSet?.images),
         stage: pet.stage,
         mood: pet.mood,
-        stats: pet.stats,
+        stats: petStatsForApi(pet.stats),
       },
     },
   });
@@ -470,7 +483,7 @@ export async function sendLocalChatMessage(
         characterBible: pet.assetSet?.characterBible,
         stage: pet.stage,
         mood: pet.mood,
-        stats: pet.stats,
+        stats: petStatsForApi(pet.stats),
       },
       history: history.slice(-12).map((item) => ({
         role: item.role,
@@ -505,7 +518,7 @@ export async function extractLocalUserMemory(
         characterBible: pet.assetSet?.characterBible,
         stage: pet.stage,
         mood: pet.mood,
-        stats: pet.stats,
+        stats: petStatsForApi(pet.stats),
       },
       history: history.slice(-12).map((item) => ({
         role: item.role,
@@ -553,7 +566,7 @@ export async function generateLocalProactiveMessage(
         characterBible: pet.assetSet?.characterBible,
         stage: pet.stage,
         mood: pet.mood,
-        stats: pet.stats,
+        stats: petStatsForApi(pet.stats),
       },
     },
   });
@@ -585,7 +598,7 @@ export async function generateLocalAmbientMessage(
         characterBible: pet.assetSet?.characterBible,
         stage: pet.stage,
         mood: pet.mood,
-        stats: pet.stats,
+        stats: petStatsForApi(pet.stats),
       },
       history: (options.history ?? []).slice(-12).map((item) => ({
         role: item.role,
@@ -615,7 +628,7 @@ export async function extractLocalLiteFacts(
         characterBible: pet.assetSet?.characterBible,
         stage: pet.stage,
         mood: pet.mood,
-        stats: pet.stats,
+        stats: petStatsForApi(pet.stats),
       },
       history: history.slice(-12).map((item) => ({
         role: item.role,

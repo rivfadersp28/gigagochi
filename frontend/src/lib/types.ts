@@ -43,6 +43,7 @@ export type LocalPetStateV2 = {
   createdAt: string;
   updatedAt: string;
   lastInteractionAt: string;
+  lastStatsTickAt: string;
   stage: PetLifeStage;
   mood: PetMood;
   stats: {

@@ -21,6 +21,8 @@ const MAX_CHAT_MESSAGE_TEXT = 8000;
 const MAX_STORY_LIBRARY_BRICKS = 80;
 const MIN_STAT = 0;
 const MAX_STAT = 100;
+const STAT_FULL_DECAY_HOURS = 24;
+const STAT_DECAY_PER_HOUR = MAX_STAT / STAT_FULL_DECAY_HOURS;
 const MOODS: PetMood[] = ["idle", "happy", "hungry", "sad"];
 const STAGES: PetLifeStage[] = ["baby", "teen", "adult"];
 const LITE_FACT_SPHERES = ["character", "appearance", "world", "relationship"] as const;
@@ -74,7 +76,7 @@ export function writeLocalPetSettings(settings: LocalPetSettings) {
 
 export function clampStat(value: unknown): number {
   const numericValue = typeof value === "number" && Number.isFinite(value) ? value : 0;
-  return Math.max(MIN_STAT, Math.min(MAX_STAT, Math.round(numericValue)));
+  return Math.max(MIN_STAT, Math.min(MAX_STAT, numericValue));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -416,6 +418,7 @@ function normalizePetState(value: unknown): LocalPetStateV2 | null {
   const now = new Date().toISOString();
   const createdAt = isIsoDate(value.createdAt) ? value.createdAt : now;
   const updatedAt = isIsoDate(value.updatedAt) ? value.updatedAt : createdAt;
+  const lastStatsTickAt = isIsoDate(value.lastStatsTickAt) ? value.lastStatsTickAt : updatedAt;
   const stats = normalizeStats(value.stats);
   const assetSet = normalizeAssetSet(value.assetSet);
 
@@ -430,6 +433,7 @@ function normalizePetState(value: unknown): LocalPetStateV2 | null {
     createdAt,
     updatedAt,
     lastInteractionAt: isIsoDate(value.lastInteractionAt) ? value.lastInteractionAt : updatedAt,
+    lastStatsTickAt,
     stage: normalizeStage(value.stage),
     mood: normalizeMood(value.mood ?? calculatePetMood(stats)),
     stats,
@@ -492,6 +496,7 @@ export function createLocalPetState(
     createdAt: now,
     updatedAt: now,
     lastInteractionAt: now,
+    lastStatsTickAt: now,
     stage: "baby",
     mood: "idle",
     stats: {
@@ -505,17 +510,17 @@ export function createLocalPetState(
 }
 
 export function applyOfflineProgress(state: LocalPetState, now = new Date()): LocalPetState {
-  const updatedAt = Date.parse(state.updatedAt);
-  if (Number.isNaN(updatedAt)) {
+  const lastStatsTickAt = Date.parse(state.lastStatsTickAt);
+  if (Number.isNaN(lastStatsTickAt)) {
     return {
       ...state,
-      updatedAt: now.toISOString(),
+      lastStatsTickAt: now.toISOString(),
       stage: calculatePetStage(state.createdAt, now),
       mood: calculatePetMood(state.stats),
     };
   }
 
-  const elapsedHours = Math.max(0, (now.getTime() - updatedAt) / 3_600_000);
+  const elapsedHours = Math.max(0, (now.getTime() - lastStatsTickAt) / 3_600_000);
   if (elapsedHours <= 0) {
     return {
       ...state,
@@ -524,16 +529,17 @@ export function applyOfflineProgress(state: LocalPetState, now = new Date()): Lo
     };
   }
 
+  const decay = elapsedHours * STAT_DECAY_PER_HOUR;
   const stats = {
-    hunger: clampStat(state.stats.hunger - elapsedHours * 4),
-    happiness: clampStat(state.stats.happiness - elapsedHours * 2),
-    energy: clampStat(state.stats.energy - elapsedHours * 1.5),
-    cleanliness: clampStat(state.stats.cleanliness - elapsedHours),
+    ...state.stats,
+    hunger: clampStat(state.stats.hunger - decay),
+    happiness: clampStat(state.stats.happiness - decay),
+    energy: clampStat(state.stats.energy - decay),
   };
 
   return {
     ...state,
-    updatedAt: now.toISOString(),
+    lastStatsTickAt: now.toISOString(),
     stage: calculatePetStage(state.createdAt, now),
     mood: calculatePetMood(stats),
     stats,
@@ -550,6 +556,7 @@ export function withPetInteraction(
     ...state,
     updatedAt: now.toISOString(),
     lastInteractionAt: now.toISOString(),
+    lastStatsTickAt: now.toISOString(),
     stage: calculatePetStage(state.createdAt, now),
     mood: calculatePetMood(stats),
     stats,

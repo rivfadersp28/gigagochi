@@ -181,13 +181,8 @@ const SPEECH_BUBBLE_RADIUS = 43;
 const SPEECH_BUBBLE_TAIL_HEIGHT = 21;
 const SPEECH_BUBBLE_TAIL_HALF_WIDTH = 22;
 const ACTION_ICON_CACHE_VERSION = "20260706-action-colors-4";
-const TOP_STATUS_ASSET_CACHE_VERSION = "20260707-top-status-icons-1";
 const MAIN_PET_BACKDROP_CACHE_VERSION = "20260706-main-pet-bg-1";
 const mainPetBackdropSrc = `/figma/main-pet-bg.png?v=${MAIN_PET_BACKDROP_CACHE_VERSION}`;
-const topStatusIconSrc = {
-  mood: `/figma/top-status-mood.svg?v=${TOP_STATUS_ASSET_CACHE_VERSION}`,
-  energy: `/figma/top-status-energy.svg?v=${TOP_STATUS_ASSET_CACHE_VERSION}`,
-} as const;
 const actionIconSrc = {
   chat: `/figma/action-chat-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
   feed: `/figma/action-feed-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
@@ -360,8 +355,16 @@ const petMessageUnitStyle: CSSProperties = {
   willChange: "transform, opacity",
 };
 
-const HUNGER_RING_RADIUS = 23.5;
-const HUNGER_RING_CIRCUMFERENCE = 2 * Math.PI * HUNGER_RING_RADIUS;
+const STAT_RING_RADIUS = 23.5;
+const STAT_RING_CIRCUMFERENCE = 2 * Math.PI * STAT_RING_RADIUS;
+const statGlyphPath = {
+  hunger:
+    "M22.5576 39.2633C21.5408 39.2633 20.8871 38.6719 20.9078 37.7173L21.1257 26.2C21.1361 25.5878 21.0323 25.4321 20.6277 25.235C19.1232 24.519 18.3969 23.7512 18.511 21.5515L18.8223 15.5957C18.8534 15.0146 19.1958 14.6515 19.725 14.6515C20.2645 14.6515 20.5758 15.025 20.5654 15.6268L20.472 21.3544C20.4617 21.7694 20.6692 21.9977 21.0116 21.9977C21.354 21.9977 21.5615 21.7694 21.5719 21.3855L21.686 15.4089C21.6964 14.8486 22.0284 14.4647 22.5576 14.4647C23.0868 14.4647 23.4188 14.8486 23.4292 15.4089L23.5433 21.3855C23.5537 21.7798 23.7405 21.9977 24.1036 21.9977C24.4357 21.9977 24.6432 21.7694 24.6328 21.3544L24.5498 15.6268C24.5394 15.025 24.8507 14.6515 25.3799 14.6515C25.9194 14.6515 26.2411 15.0043 26.2826 15.5957L26.5835 21.5515C26.708 23.7512 25.9921 24.519 24.4772 25.235C24.0725 25.4321 23.9791 25.5878 23.9895 26.2L24.197 37.7173C24.2074 38.6615 23.5848 39.2633 22.5576 39.2633ZM30.8584 30.0702C30.8792 29.5825 30.7546 29.3646 30.3604 29.0948L30.0698 28.9081C29.3124 28.3893 29.0945 27.9327 29.0945 27.1234V26.4282C29.0945 22.5476 30.4226 17.5153 32.1035 15.191C32.4667 14.693 32.7572 14.4647 33.1722 14.4647C33.6807 14.4647 34.0127 14.8175 34.0127 15.3467V37.7277C34.0127 38.6719 33.4109 39.2633 32.3733 39.2633C31.3564 39.2633 30.7131 38.6719 30.7235 37.7069L30.8584 30.0702Z",
+  mood:
+    "M26.8477 38.6953C20.7569 38.6953 15.8155 33.7539 15.8155 27.6631C15.8155 21.5723 20.7569 16.6309 26.8477 16.6309C32.9385 16.6309 37.8799 21.5723 37.8799 27.6631C37.8799 33.7539 32.9385 38.6953 26.8477 38.6953ZM23.6895 26.5996C24.3448 26.5996 24.9356 25.998 24.9356 25.1816C24.9356 24.3438 24.3448 23.7529 23.6895 23.7529C23.0235 23.7529 22.4756 24.3438 22.4756 25.1816C22.4756 25.998 23.0235 26.5996 23.6895 26.5996ZM29.9844 26.5996C30.6397 26.5996 31.2305 25.998 31.2305 25.1816C31.2305 24.3438 30.6397 23.7529 29.9844 23.7529C29.3077 23.7529 28.7598 24.3438 28.7598 25.1816C28.7598 25.998 29.3077 26.5996 29.9844 26.5996ZM26.8477 32.6045C29.168 32.6045 30.7256 31.0791 30.7256 30.3164C30.7256 30.0264 30.4356 29.8975 30.1456 30.0156C29.3077 30.3809 28.4268 30.875 26.8477 30.875C25.2579 30.875 24.3448 30.4131 23.5391 30.0156C23.2491 29.8867 22.959 30.0264 22.959 30.3164C22.959 31.0791 24.5059 32.6045 26.8477 32.6045Z",
+  energy:
+    "M18.5997 28.9736C18.5997 28.6836 18.6963 28.415 18.9219 28.1572L29.4385 15.5996C30.3516 14.5146 31.7588 15.2344 31.2325 16.5771L27.8809 25.2891H34.3584C34.9063 25.2891 35.3145 25.665 35.3145 26.2021C35.3145 26.4922 35.2178 26.75 34.9922 27.0186L24.4756 39.5762C23.5625 40.6504 22.1553 39.9414 22.6817 38.5986L26.0332 29.8867H19.5557C19.0079 29.8867 18.5997 29.5107 18.5997 28.9736Z",
+} as const;
 
 const defaultIdleAnimationSettings: IdleAnimationSettings = {
   speed: 1.5,
@@ -492,34 +495,37 @@ function MainPetBackdrop({ src }: { src: string }) {
   );
 }
 
-function HungerProgressRing({ value }: { value: number }) {
+function StatProgressRing({
+  value,
+  kind,
+}: {
+  value: number;
+  kind: keyof typeof statGlyphPath;
+}) {
   const progress = Math.max(0, Math.min(100, value));
-  const dashOffset = HUNGER_RING_CIRCUMFERENCE * (1 - progress / 100);
+  const dashOffset = STAT_RING_CIRCUMFERENCE * (1 - progress / 100);
   const tone = progress < 30 ? "low" : progress >= 70 ? "high" : "mid";
 
   return (
-    <span className={`hunger-progress-ring hunger-progress-ring--${tone}`} aria-hidden="true">
+    <span className={`stat-progress-ring stat-progress-ring--${tone}`} aria-hidden="true">
       <svg viewBox="0 0 54 54" focusable="false">
         <circle
-          className="hunger-progress-ring__track"
+          className="stat-progress-ring__track"
           cx="27"
           cy="27"
-          r={HUNGER_RING_RADIUS}
-          pathLength={HUNGER_RING_CIRCUMFERENCE}
+          r={STAT_RING_RADIUS}
+          pathLength={STAT_RING_CIRCUMFERENCE}
         />
         <circle
-          className="hunger-progress-ring__progress"
+          className="stat-progress-ring__progress"
           cx="27"
           cy="27"
-          r={HUNGER_RING_RADIUS}
-          pathLength={HUNGER_RING_CIRCUMFERENCE}
-          strokeDasharray={HUNGER_RING_CIRCUMFERENCE}
+          r={STAT_RING_RADIUS}
+          pathLength={STAT_RING_CIRCUMFERENCE}
+          strokeDasharray={STAT_RING_CIRCUMFERENCE}
           strokeDashoffset={dashOffset}
         />
-        <path
-          className="hunger-progress-ring__glyph"
-          d="M22.5576 39.2633C21.5408 39.2633 20.8871 38.6719 20.9078 37.7173L21.1257 26.2C21.1361 25.5878 21.0323 25.4321 20.6277 25.235C19.1232 24.519 18.3969 23.7512 18.511 21.5515L18.8223 15.5957C18.8534 15.0146 19.1958 14.6515 19.725 14.6515C20.2645 14.6515 20.5758 15.025 20.5654 15.6268L20.472 21.3544C20.4617 21.7694 20.6692 21.9977 21.0116 21.9977C21.354 21.9977 21.5615 21.7694 21.5719 21.3855L21.686 15.4089C21.6964 14.8486 22.0284 14.4647 22.5576 14.4647C23.0868 14.4647 23.4188 14.8486 23.4292 15.4089L23.5433 21.3855C23.5537 21.7798 23.7405 21.9977 24.1036 21.9977C24.4357 21.9977 24.6432 21.7694 24.6328 21.3544L24.5498 15.6268C24.5394 15.025 24.8507 14.6515 25.3799 14.6515C25.9194 14.6515 26.2411 15.0043 26.2826 15.5957L26.5835 21.5515C26.708 23.7512 25.9921 24.519 24.4772 25.235C24.0725 25.4321 23.9791 25.5878 23.9895 26.2L24.197 37.7173C24.2074 38.6615 23.5848 39.2633 22.5576 39.2633ZM30.8584 30.0702C30.8792 29.5825 30.7546 29.3646 30.3604 29.0948L30.0698 28.9081C29.3124 28.3893 29.0945 27.9327 29.0945 27.1234V26.4282C29.0945 22.5476 30.4226 17.5153 32.1035 15.191C32.4667 14.693 32.7572 14.4647 33.1722 14.4647C33.6807 14.4647 34.0127 14.8175 34.0127 15.3467V37.7277C34.0127 38.6719 33.4109 39.2633 32.3733 39.2633C31.3564 39.2633 30.7131 38.6719 30.7235 37.7069L30.8584 30.0702Z"
-        />
+        <path className="stat-progress-ring__glyph" d={statGlyphPath[kind]} />
       </svg>
     </span>
   );
@@ -1833,7 +1839,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const shouldShowConversationReply =
     isChatMode && conversationReplyMessageId === displayedReply.id;
   const displayedPetName = pet.name?.trim() || DEFAULT_STATUS_NAME;
-  const hungerPercent = Math.max(0, Math.min(100, Math.round(pet.stats.hunger)));
+  const hungerPercent = Math.max(0, Math.min(100, pet.stats.hunger));
+  const moodPercent = Math.max(0, Math.min(100, pet.stats.happiness));
+  const energyPercent = Math.max(0, Math.min(100, pet.stats.energy));
+  const roundedHungerPercent = Math.round(hungerPercent);
+  const roundedMoodPercent = Math.round(moodPercent);
+  const roundedEnergyPercent = Math.round(energyPercent);
   const transformOrigin = `${animationSettings.originX}% ${animationSettings.originY}%`;
   const idleStretchStyle: IdleStretchStyle = {
     "--pet-idle-duration": `${(
@@ -1934,8 +1945,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
         <div className="sr-only" aria-live="polite">
           Stage {stageLabels[pet.stage]}. State {stateLabels[pet.mood]}. Hunger{" "}
-          {pet.stats.hunger}/100. Happiness {pet.stats.happiness}/100. Energy{" "}
-          {pet.stats.energy}/100. Cleanliness {pet.stats.cleanliness}/100.
+          {roundedHungerPercent}/100. Happiness {roundedMoodPercent}/100. Energy{" "}
+          {roundedEnergyPercent}/100. Cleanliness {Math.round(pet.stats.cleanliness)}/100.
         </div>
 
         <div className="pet-status-name conversation-fade-target">
@@ -1944,25 +1955,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
         <div
           className="top-status-strip conversation-fade-target"
-          aria-label={`Голод ${hungerPercent} из 100`}
+          aria-label={`Голод ${roundedHungerPercent} из 100, настроение ${roundedMoodPercent} из 100, энергия ${roundedEnergyPercent} из 100`}
         >
-          <div className="feed-hunger-meter">
-            <HungerProgressRing value={hungerPercent} />
-          </div>
-          <img
-            src={topStatusIconSrc.mood}
-            alt=""
-            className="top-status-icon top-status-icon--mood"
-            draggable={false}
-            aria-hidden="true"
-          />
-          <img
-            src={topStatusIconSrc.energy}
-            alt=""
-            className="top-status-icon top-status-icon--energy"
-            draggable={false}
-            aria-hidden="true"
-          />
+          <StatProgressRing value={hungerPercent} kind="hunger" />
+          <StatProgressRing value={moodPercent} kind="mood" />
+          <StatProgressRing value={energyPercent} kind="energy" />
         </div>
 
         <div
