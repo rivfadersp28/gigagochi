@@ -152,7 +152,6 @@ const INITIAL_PET_REPLY_MAX_CHARS = 40;
 const INITIAL_PET_REPLY_FALLBACK = "День был ярким.";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 120;
 const DEFAULT_STATUS_NAME = "Челепиздрик";
-const PET_RENAME_MAX_CHARS = 32;
 const SPEECH_BUBBLE_MIN_WIDTH = 190;
 const SPEECH_BUBBLE_MIN_HEIGHT = 86;
 const SPEECH_BUBBLE_RADIUS = 43;
@@ -247,44 +246,6 @@ function PetTapParticleBurst({ id, targetRef, onComplete }: PetTapParticleBurstP
       window.clearTimeout(timeoutId);
     };
   }, [id, onComplete]);
-
-  return null;
-}
-
-const PET_RENAME_PATTERNS = [
-  /(?:^|[.!?]\s*)(?:теперь|отныне|с этого момента)\s+тебя\s+зовут\s+(.+)$/i,
-  /(?:^|[.!?]\s*)тебя\s+зовут\s+(.+)$/i,
-  /(?:^|[.!?]\s*)давай\s+(?:я\s+)?(?:буду\s+)?(?:звать|называть)\s+тебя\s+(.+)$/i,
-  /(?:^|[.!?]\s*)(?:я\s+)?(?:назову|называю)\s+тебя\s+(.+)$/i,
-  /(?:^|[.!?]\s*)тво[её]\s+имя\s*[:=—-]?\s+(.+)$/i,
-  /(?:^|[.!?]\s*)будешь\s+зваться\s+(.+)$/i,
-] as const;
-
-function normalizeRequestedPetName(value: string) {
-  const firstClause = value.split(/[,.!?;:]/)[0] ?? "";
-  const name = firstClause
-    .trim()
-    .replace(/^["'«»“”„]+|["'«»“”„]+$/g, "")
-    .replace(/\s+(?:пожалуйста|плиз|окей|ок)$/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (!name || name.length > PET_RENAME_MAX_CHARS || !/[0-9A-Za-zА-Яа-яЁё]/.test(name)) {
-    return null;
-  }
-
-  return name;
-}
-
-function extractRequestedPetName(message: string) {
-  const normalizedMessage = message.trim().replace(/\s+/g, " ");
-  for (const pattern of PET_RENAME_PATTERNS) {
-    const match = pattern.exec(normalizedMessage);
-    const name = match?.[1] ? normalizeRequestedPetName(match[1]) : null;
-    if (name) {
-      return name;
-    }
-  }
 
   return null;
 }
@@ -1368,7 +1329,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     const history = latestChatMessages(12);
     const memoryBeforeMessage = readLocalPetMemory(pet.petId);
     const memoryContext = buildMemoryContextForMessage(memoryBeforeMessage, message);
-    const requestedPetName = extractRequestedPetName(message);
 
     if (includePromptDebug) {
       console.log("[memory-debug] dashboard quick chat recall context", memoryContext);
@@ -1395,8 +1355,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
       showPetReplyMessage(response.reply, true, { showInConversation: true });
       localPet.applyMoodHint(response.moodHint, response.debug?.liteOverlayPatch);
-      if (requestedPetName) {
-        localPet.updateName(requestedPetName);
+      if (response.petPatch?.name) {
+        localPet.updateName(response.petPatch.name);
       }
 
       const selectedMemoryIds = memoryContext.relevantMemories.map((item) => item.id);

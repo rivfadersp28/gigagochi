@@ -82,10 +82,11 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
         "Сейчас ты взрослый, сформировавшийся представитель такого существа. "
         "Ответ максимум 300 символов; можно короче, даже одной фразой."
     )
+    assert "вызови update_pet_name" in system_message
     assert "Отвечай владельцу естественно, кратко и своим голосом." in system_message
     assert "Верни только JSON" not in system_message
     assert "response_format" not in request
-    assert "tools" not in request
+    assert [tool["function"]["name"] for tool in request["tools"]] == ["update_pet_name"]
 
 
 def test_lite_prompt_includes_age_role_hint() -> None:
@@ -273,6 +274,11 @@ def test_lite_tools_read_and_append_overlay_fact() -> None:
     assert len(completions.calls) == 2
     assert "tools" in completions.calls[0]
     assert response.debug is not None
+    assert [tool["function"]["name"] for tool in completions.calls[0]["tools"]] == [
+        "update_pet_name",
+        "read_character_json",
+        "update_character_json",
+    ]
     assert [call["name"] for call in response.debug.liteToolCalls] == [
         "read_character_json",
         "update_character_json",
@@ -281,6 +287,38 @@ def test_lite_tools_read_and_append_overlay_fact() -> None:
     assert read_result["characterBible"]["lore"]["home"]["story"] == "каменная балка"
     assert response.debug.liteOverlayPatch is not None
     assert response.debug.liteOverlayPatch["facts"][0]["kind"] == "preference"
+
+
+def test_lite_tool_updates_pet_name() -> None:
+    rename_call = SimpleNamespace(
+        id="call_rename",
+        function=SimpleNamespace(
+            name="update_pet_name",
+            arguments=json.dumps({"name": "Дружок"}),
+        ),
+    )
+    client, completions = fake_lite_client(
+        SimpleNamespace(content="", tool_calls=[rename_call]),
+        SimpleNamespace(content="Дружок звучит тепло.", tool_calls=None),
+    )
+
+    response = generate_lite_pet_reply(
+        lite_payload(message="буду звать тебя как-нибудь по-домашнему: Дружок"),
+        client=client,
+        model="gpt-5.5",
+        timeout=10,
+    )
+
+    assert len(completions.calls) == 2
+    assert response.reply == "Дружок звучит тепло."
+    assert response.petPatch is not None
+    assert response.petPatch.name == "Дружок"
+    assert response.debug is not None
+    assert response.debug.liteToolCalls[0]["name"] == "update_pet_name"
+    assert response.debug.liteToolCalls[0]["result"] == {
+        "saved": True,
+        "petPatch": {"name": "Дружок"},
+    }
 
 
 def test_lite_world_tool_bootstraps_missing_world_from_chatgpt() -> None:

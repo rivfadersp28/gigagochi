@@ -123,6 +123,10 @@ class LocalChatDebug(BaseModel):
     memoryDebug: dict[str, Any] | None = None
 
 
+class LocalPetPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=32)
+
+
 class TravelStoryScene(BaseModel):
     index: int = Field(ge=1, le=7)
     arc: Literal["beginning", "exploration", "discovery", "reward", "final"]
@@ -160,6 +164,7 @@ class LocalChatResponse(BaseModel):
     moodHint: PetStateValue | None = None
     innerThought: str | None = Field(default=None, max_length=80)
     faceHint: FaceHintValue | None = None
+    petPatch: LocalPetPatch | None = None
     debug: LocalChatDebug | None = None
 
 

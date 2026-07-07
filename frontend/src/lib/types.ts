@@ -84,11 +84,16 @@ export type ChatPromptDebug = {
   response_format?: unknown;
 };
 
+export type LocalChatPetPatch = {
+  name?: string;
+};
+
 export type LocalChatResponse = {
   reply: string;
   moodHint?: PetMood;
   innerThought?: string;
   faceHint?: "happy" | "excited" | "curious" | "content" | "grumpy" | "sleepy";
+  petPatch?: LocalChatPetPatch;
   debug?: {
     usedFallback?: boolean;
     validationFlags?: string[];

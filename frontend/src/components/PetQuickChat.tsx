@@ -27,12 +27,13 @@ import {
 } from "@/lib/debugPanelStorage";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification } from "@/lib/telegram";
-import type { LocalChatResponse, LocalPetState } from "@/lib/types";
+import type { LocalChatPetPatch, LocalChatResponse, LocalPetState } from "@/lib/types";
 
 type PetQuickChatProps = {
   pet: LocalPetState;
   includePromptDebug: boolean;
   onChatResponse: (response: LocalChatResponse) => void;
+  onPetPatch?: (patch?: LocalChatPetPatch) => void;
   onLiteOverlayPatch?: (patch?: Record<string, unknown>) => void;
 };
 
@@ -44,6 +45,7 @@ export function PetQuickChat({
   pet,
   includePromptDebug,
   onChatResponse,
+  onPetPatch,
   onLiteOverlayPatch,
 }: PetQuickChatProps) {
   const [input, setInput] = useState("");
@@ -92,6 +94,7 @@ export function PetQuickChat({
       };
       appendLocalChatMessages([assistantMessage]);
       onChatResponse(response);
+      onPetPatch?.(response.petPatch);
       recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
       const selectedMemoryIds = memoryContext.relevantMemories.map((item) => item.id);
       if (selectedMemoryIds.length) {

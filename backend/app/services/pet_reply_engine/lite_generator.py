@@ -105,7 +105,38 @@ TECHNICAL_WORLD_TEXT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-LITE_TOOLS: list[dict[str, Any]] = [
+PET_STATE_TOOLS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "update_pet_name",
+            "description": (
+                "Update the current pet display name only when the current user clearly "
+                "asks to rename this pet or assigns a new official name to you. Accept "
+                "any wording and language, but do not call for questions about the "
+                "current name, casual nicknames, insults, jokes, or ambiguous phrasing."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 32,
+                        "description": (
+                            "The new display name exactly as the user wants it shown, "
+                            "without surrounding quotes or extra instruction words."
+                        ),
+                    }
+                },
+                "required": ["name"],
+            },
+        },
+    }
+]
+
+LITE_CHARACTER_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
@@ -499,7 +530,10 @@ def _baby_phrase_examples_for_prompt(payload: LocalChatRequest) -> str | None:
 
 
 def _lite_tools_for_message(text: str) -> list[dict[str, Any]] | None:
-    return LITE_TOOLS if LITE_RAG_REQUEST_PATTERN.search(text) else None
+    tools = list(PET_STATE_TOOLS)
+    if LITE_RAG_REQUEST_PATTERN.search(text):
+        tools.extend(LITE_CHARACTER_TOOLS)
+    return tools
 
 
 def _history_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
@@ -524,6 +558,10 @@ def build_lite_chat_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     system_content = (
         f"{system_content} Ответ максимум {reply_limit} символов; "
         "можно короче, даже одной фразой."
+    )
+    system_content = (
+        f"{system_content} Если пользователь явно переименовывает тебя, "
+        "вызови update_pet_name с новым отображаемым именем."
     )
     if payload.replyMaxChars is not None:
         system_content = (
@@ -889,6 +927,25 @@ def _append_lite_fact(
     return {"saved": True, "fact": fact}
 
 
+def _normalized_pet_name(value: Any) -> str | None:
+    name = _compact_spaces(str(value or ""))
+    name = name.strip("\"'«»“”„")
+    if not name or not re.search(r"[0-9A-Za-zА-Яа-яЁё]", name):
+        return None
+    return _truncate_text(name, 32)
+
+
+def _update_pet_name_patch(
+    pet_patch: dict[str, Any],
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    name = _normalized_pet_name(arguments.get("name"))
+    if not name:
+        return {"saved": False, "reason": "empty_name"}
+    pet_patch["name"] = name
+    return {"saved": True, "petPatch": {"name": name}}
+
+
 def _lite_fact_path_hint(sphere: str) -> str:
     return f"lite_overlay.spheres.{sphere}"
 
@@ -1077,6 +1134,7 @@ def _handle_tool_call(
     payload: LocalChatRequest,
     tool_call: Any,
     overlay_patch: dict[str, Any],
+    pet_patch: dict[str, Any],
     *,
     client: Any,
     model: str,
@@ -1099,6 +1157,8 @@ def _handle_tool_call(
         )
     elif name == "update_character_json":
         result = _append_lite_fact(overlay_patch, arguments)
+    elif name == "update_pet_name":
+        result = _update_pet_name_patch(pet_patch, arguments)
     else:
         result = {"error": f"unknown_tool:{name}"}
     debug["result"] = result
@@ -1119,6 +1179,7 @@ def generate_lite_pet_reply(
     messages: list[dict[str, Any]] = build_lite_chat_messages(payload)
     tools = _lite_tools_for_message(payload.message)
     overlay_patch: dict[str, Any] = {}
+    pet_patch: dict[str, Any] = {}
     tool_debug: list[dict[str, Any]] = []
     prompt_debug: list[dict[str, Any]] = []
     reply = ""
@@ -1158,6 +1219,7 @@ def generate_lite_pet_reply(
                 payload,
                 tool_call,
                 overlay_patch,
+                pet_patch,
                 client=openai_client,
                 model=model,
                 timeout=timeout,
@@ -1178,6 +1240,7 @@ def generate_lite_pet_reply(
         moodHint=None,
         innerThought=inner_thought,
         faceHint=face_hint,
+        petPatch=pet_patch or None,
         debug=debug,
     )
 
