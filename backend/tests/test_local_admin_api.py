@@ -296,6 +296,43 @@ def test_local_admin_publish_starts_job_when_enabled(monkeypatch) -> None:
     assert captured["commit_message"] == "Update admin data"
 
 
+def test_local_admin_sends_manual_push(monkeypatch) -> None:
+    captured = {}
+
+    monkeypatch.setattr(
+        "app.routers.local_admin.get_settings",
+        lambda: SimpleNamespace(allow_dev_tma_auth=True),
+    )
+
+    def fake_send_manual_push(*, telegram_id, reason, include_debug):
+        captured["telegram_id"] = telegram_id
+        captured["reason"] = reason
+        captured["include_debug"] = include_debug
+        return {
+            "sent": True,
+            "manual": True,
+            "telegramId": 42,
+            "petId": "pet-1",
+            "reply": "Я тут.",
+            "sentAt": "2026-07-07T12:00:00Z",
+        }
+
+    monkeypatch.setattr("app.routers.local_admin.send_manual_push", fake_send_manual_push)
+
+    response = TestClient(app).post(
+        "/api/admin/push/send",
+        json={"reason": "debug reason", "includeDebug": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "Я тут."
+    assert captured == {
+        "telegram_id": None,
+        "reason": "debug reason",
+        "include_debug": True,
+    }
+
+
 def test_publish_path_filter_rejects_backups_and_unrelated_files() -> None:
     assert unexpected_publish_paths(["backend/data/story_library.json"]) == []
     assert unexpected_publish_paths(

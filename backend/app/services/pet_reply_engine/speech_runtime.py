@@ -7,13 +7,14 @@ from typing import Any, Literal
 
 DATA_PATH = Path(__file__).resolve().parents[3] / "data" / "speech_runtime.json"
 
-VisibleSurface = Literal["chat", "proactive", "ambient"]
+VisibleSurface = Literal["chat", "proactive", "ambient", "push"]
 
-SURFACES: tuple[VisibleSurface, ...] = ("chat", "proactive", "ambient")
+SURFACES: tuple[VisibleSurface, ...] = ("chat", "proactive", "ambient", "push")
 SURFACE_PROMPT_KEYS: dict[VisibleSurface, str] = {
     "chat": "chat",
     "proactive": "proactive",
     "ambient": "idle",
+    "push": "push",
 }
 STATE_FLAGS = ("age", "mood", "hunger", "energy")
 AGE_STAGES = ("baby", "teen", "adult")
@@ -29,6 +30,7 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("surfacePrompts", "chat"),
     ("surfacePrompts", "idle"),
     ("surfacePrompts", "proactive"),
+    ("surfacePrompts", "push"),
     ("contextRouting", "systemPrompt"),
     ("identityTemplate",),
     ("memoryUsageRule",),

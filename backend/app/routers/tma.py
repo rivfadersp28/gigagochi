@@ -28,6 +28,8 @@ from app.schemas import (
     LocalAmbientRequest,
     LocalChatRequest,
     LocalChatResponse,
+    LocalPetPushSnapshotRequest,
+    LocalPetPushSnapshotResponse,
     LocalProactiveRequest,
     LocalProactiveResponse,
     MemoryConsolidationRequest,
@@ -52,6 +54,7 @@ from app.services.prompt_debug import (
 )
 from app.services.rate_limit_service import rate_limiter
 from app.services.telegram_auth_service import TelegramUserContext
+from app.services.telegram_push_service import register_push_snapshot
 from app.services.travel_service import generate_travel
 
 router = APIRouter(prefix="/api", tags=["telegram-mini-app"])
@@ -475,6 +478,14 @@ def chat(payload: LocalChatRequest, user: TelegramUser) -> LocalChatResponse:
         ) from exc
     finally:
         reset_prompt_log_context(prompt_log_token)
+
+
+@router.post("/push/snapshot", response_model=LocalPetPushSnapshotResponse)
+def push_snapshot(
+    payload: LocalPetPushSnapshotRequest,
+    user: TelegramUser,
+) -> LocalPetPushSnapshotResponse:
+    return register_push_snapshot(user, payload)
 
 
 @router.post("/travel", response_model=GenerateTravelResponse, response_model_exclude_none=True)

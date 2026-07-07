@@ -572,6 +572,35 @@ export async function generateLocalProactiveMessage(
   });
 }
 
+export async function registerPetPushSnapshot(
+  pet: LocalPetState,
+  memoryContext?: LocalPetMemoryContext,
+): Promise<{ registered: boolean; telegramId: number; updatedAt: string }> {
+  return request<{ registered: boolean; telegramId: number; updatedAt: string }>(
+    "/api/push/snapshot",
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      body: {
+        petId: pet.petId,
+        createdAt: pet.createdAt,
+        updatedAt: pet.updatedAt,
+        lastStatsTickAt: pet.lastStatsTickAt,
+        timezone: browserTimezone(),
+        memoryContext,
+        pet: {
+          name: pet.name,
+          description: pet.description,
+          characterBible: pet.assetSet?.characterBible,
+          stage: pet.stage,
+          mood: pet.mood,
+          stats: petStatsForApi(pet.stats),
+        },
+      },
+    },
+  );
+}
+
 export async function generateLocalAmbientMessage(
   pet: LocalPetState,
   options: {

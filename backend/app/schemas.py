@@ -224,6 +224,15 @@ class LocalProactiveRequest(BaseModel):
     includeDebug: bool = False
 
 
+class LocalPushRequest(BaseModel):
+    pet: LocalPetChatContext
+    memoryContext: LocalPetMemoryContext | None = None
+    reason: str | None = Field(default=None, max_length=280)
+    nowIso: str | None = Field(default=None, max_length=80)
+    timezone: str | None = Field(default=None, max_length=80)
+    includeDebug: bool = False
+
+
 class LocalAmbientRequest(BaseModel):
     pet: LocalPetChatContext
     history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
@@ -241,3 +250,19 @@ class LocalProactiveResponse(BaseModel):
     innerThought: str | None = Field(default=None, max_length=80)
     faceHint: FaceHintValue | None = None
     debug: LocalChatDebug | None = None
+
+
+class LocalPetPushSnapshotRequest(BaseModel):
+    petId: str = Field(min_length=1, max_length=120)
+    pet: LocalPetChatContext
+    memoryContext: LocalPetMemoryContext | None = None
+    createdAt: str | None = Field(default=None, max_length=80)
+    updatedAt: str | None = Field(default=None, max_length=80)
+    lastStatsTickAt: str | None = Field(default=None, max_length=80)
+    timezone: str | None = Field(default=None, max_length=80)
+
+
+class LocalPetPushSnapshotResponse(BaseModel):
+    registered: bool
+    telegramId: int
+    updatedAt: str

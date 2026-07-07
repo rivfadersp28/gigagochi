@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -8,10 +9,22 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.routers import local_admin, tma
+from app.services.telegram_push_service import start_daily_push_scheduler
 
 settings = get_settings()
 
-app = FastAPI(title="AI Tamagotchi API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    push_task = start_daily_push_scheduler()
+    try:
+        yield
+    finally:
+        if push_task:
+            push_task.cancel()
+
+
+app = FastAPI(title="AI Tamagotchi API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

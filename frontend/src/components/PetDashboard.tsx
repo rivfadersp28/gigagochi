@@ -17,10 +17,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ApiError,
+  canUseTmaApi,
   consolidateLocalUserMemory,
   generateLocalAmbientMessage,
   generatePetTravel,
   generateLocalProactiveMessage,
+  registerPetPushSnapshot,
 } from "@/lib/api";
 import {
   appendLocalChatMessages,
@@ -169,6 +171,7 @@ const KEYBOARD_EAGER_SYNC_MS = 750;
 const INITIAL_PET_REPLY_FALLBACK = "…";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 120;
 const DEFAULT_STATUS_NAME = "Челепиздрик";
+const PUSH_SNAPSHOT_SYNC_MIN_INTERVAL_MS = 10 * 60_000;
 const AMBIENT_MEMORY_KINDS = new Set<string>([
   "preference",
   "relationship",
@@ -244,6 +247,33 @@ const speechBubbleGlassStyle = {
   backdropFilter: "blur(20px)",
   WebkitBackdropFilter: "blur(20px)",
 } satisfies CSSProperties;
+
+function buildPushSnapshotMemoryContext(petId: string) {
+  const memory = readLocalPetMemory(petId);
+  const now = Date.now();
+  const relevantMemories = memory.memories
+    .filter((item) => !item.expiresAt || Date.parse(item.expiresAt) >= now)
+    .sort((left, right) => {
+      const importanceDelta = right.importance - left.importance;
+      if (importanceDelta !== 0) {
+        return importanceDelta;
+      }
+      return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    })
+    .slice(0, 5)
+    .map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      text: item.text,
+      dueAt: item.dueAt,
+    }));
+
+  return {
+    summary: memory.summary,
+    userProfile: memory.userProfile,
+    relevantMemories,
+  };
+}
 
 const petTapParticleConfig = {
   particleCount: 24,
@@ -1234,6 +1264,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const proactiveAttemptedRef = useRef(false);
   const ambientRequestIdRef = useRef(0);
   const ambientReplyHistoryRef = useRef<string[]>([]);
+  const pushSnapshotSyncRef = useRef<{
+    petId: string;
+    syncedAt: number;
+    updatedAt: string;
+  } | null>(null);
   const petReplyMessageRef = useRef<PetReplyMessage | null>(null);
   const activeDialogueHookRef = useRef<string | null>(null);
   const speechBubbleRef = useRef<HTMLDivElement>(null);
@@ -1488,6 +1523,32 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       router.replace("/");
     }
   }, [localPet.status, pet, petId, router]);
+
+  useEffect(() => {
+    if (localPet.status !== "ready" || !pet || pet.petId !== petId || !canUseTmaApi()) {
+      return;
+    }
+
+    const now = Date.now();
+    const lastSync = pushSnapshotSyncRef.current;
+    if (
+      lastSync?.petId === pet.petId &&
+      lastSync.updatedAt === pet.updatedAt &&
+      now - lastSync.syncedAt < PUSH_SNAPSHOT_SYNC_MIN_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    pushSnapshotSyncRef.current = {
+      petId: pet.petId,
+      syncedAt: now,
+      updatedAt: pet.updatedAt,
+    };
+
+    void registerPetPushSnapshot(pet, buildPushSnapshotMemoryContext(pet.petId)).catch(
+      () => undefined,
+    );
+  }, [localPet.status, pet, petId]);
 
   function handleFeed() {
     if (!pet) {

@@ -15,6 +15,7 @@ from app.services.local_admin_publish import (
     sync_admin_files_from_server,
 )
 from app.services.local_admin_store import read_admin_manifest, save_admin_files
+from app.services.telegram_push_service import TelegramPushError, push_status, send_manual_push
 
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
@@ -31,6 +32,12 @@ class AdminSaveRequest(BaseModel):
 class AdminPublishRequest(BaseModel):
     files: list[AdminFileUpdate] = Field(default_factory=list, max_length=16)
     message: str | None = Field(default=None, max_length=180)
+
+
+class AdminPushSendRequest(BaseModel):
+    telegramId: int | None = None
+    reason: str | None = Field(default=None, max_length=280)
+    includeDebug: bool = True
 
 
 AdminSource = Literal["local", "production"]
@@ -154,3 +161,28 @@ def speech_admin_publish_job(job_id: str) -> dict[str, Any]:
             detail={"code": "ADMIN_PUBLISH_JOB_NOT_FOUND", "message": "Publish job not found."},
         )
     return result
+
+
+@router.get("/push/status")
+def admin_push_status() -> dict[str, Any]:
+    return push_status()
+
+
+@router.post("/push/send")
+def admin_send_push(payload: AdminPushSendRequest) -> dict[str, Any]:
+    try:
+        return send_manual_push(
+            telegram_id=payload.telegramId,
+            reason=payload.reason,
+            include_debug=payload.includeDebug,
+        )
+    except TelegramPushError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": "PUSH_SEND_FAILED", "message": str(exc)},
+        ) from exc

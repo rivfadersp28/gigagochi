@@ -216,7 +216,7 @@ def _file_entry(spec: ManagedFile) -> dict[str, Any]:
 
 
 def dialogue_influence_manifest() -> dict[str, Any]:
-    surfaces = ["chat", "proactive", "ambient"]
+    surfaces = ["chat", "proactive", "ambient", "push"]
     return {
         "modifiers": [
             {
@@ -261,14 +261,14 @@ def dialogue_influence_manifest() -> dict[str, Any]:
             {
                 "id": "proactive_reason",
                 "label": "Proactive reason",
-                "surfaces": ["proactive"],
-                "source": "localStorage memory recall",
+                "surfaces": ["proactive", "push"],
+                "source": "localStorage memory recall / push scheduler",
                 "editable": False,
                 "fileId": None,
-                "configPath": "memoryContext.proactiveCandidate.reason",
+                "configPath": "memoryContext.proactiveCandidate.reason / push.reason",
                 "summary": (
-                    "Повод для самостоятельной proactive-реплики передается как контекст, "
-                    "без отдельного набора surface rules."
+                    "Повод для самостоятельной proactive-реплики или Telegram push "
+                    "передается как контекст, без отдельного набора hidden rules."
                 ),
             },
             {
@@ -293,8 +293,8 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "fileId": "speech_runtime",
                 "configPath": "surfacePrompts",
                 "summary": (
-                    "Единые prompt-поля для chat, proactive и idle без отдельных "
-                    "hidden rules/user prompts."
+                    "Единые prompt-поля для chat, proactive, idle и Telegram push "
+                    "без отдельных hidden rules/user prompts."
                 ),
             },
             {
@@ -425,7 +425,7 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "fileId": None,
                 "configPath": "LocalPetMemoryStateV1",
                 "summary": (
-                    "Память владельца: recall для chat/proactive и мягко "
+                    "Память владельца: recall для chat/proactive/push и мягко "
                     "отфильтрованный контекст для idle."
                 ),
             },

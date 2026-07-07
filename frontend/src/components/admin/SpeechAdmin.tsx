@@ -2,6 +2,7 @@
 
 import {
   AlertCircle,
+  Bell,
   Check,
   Code2,
   Database,
@@ -21,10 +22,13 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  fetchAdminPushStatus,
   fetchAdminSpeechManifest,
   fetchAdminSpeechPublishJob,
   saveAdminSpeechFiles,
+  sendAdminPush,
   startAdminSpeechPublish,
+  type AdminPushStatus,
   type AdminSpeechFile,
   type AdminSpeechManifest,
   type AdminSpeechPublishJob,
@@ -349,7 +353,7 @@ function SurfaceFlags({
   onChange,
 }: {
   config: JsonRecord;
-  surface: "chat" | "proactive" | "ambient";
+  surface: "chat" | "proactive" | "ambient" | "push";
   onChange: (path: string[], value: unknown) => void;
 }) {
   return (
@@ -448,6 +452,16 @@ function SpeechRuntimeEditor({
           onChange={(value) => updatePath(["surfacePrompts", "proactive"], value)}
         />
         <SurfaceFlags config={config} surface="proactive" onChange={updatePath} />
+      </Section>
+
+      <Section title="Telegram push" meta={<Badge variant="outline">1 раз в день</Badge>}>
+        <RuntimeField
+          label="Push prompt"
+          value={stringAt(config, ["surfacePrompts", "push"])}
+          rows={7}
+          onChange={(value) => updatePath(["surfacePrompts", "push"], value)}
+        />
+        <SurfaceFlags config={config} surface="push" onChange={updatePath} />
       </Section>
 
       <Section title="Context routing" meta={<Badge variant="outline">единый gate</Badge>}>
@@ -807,7 +821,9 @@ export function SpeechAdmin() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isSendingPush, setIsSendingPush] = useState(false);
   const [publishJob, setPublishJob] = useState<AdminSpeechPublishJob | null>(null);
+  const [pushStatus, setPushStatus] = useState<AdminPushStatus | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -816,8 +832,12 @@ export function SpeechAdmin() {
     setError(null);
     const clearNotice = options.clearNotice ?? true;
     try {
-      const nextManifest = await fetchAdminSpeechManifest();
+      const [nextManifest, nextPushStatus] = await Promise.all([
+        fetchAdminSpeechManifest(),
+        fetchAdminPushStatus().catch(() => null),
+      ]);
       setManifest(nextManifest);
+      setPushStatus(nextPushStatus);
       setDrafts(Object.fromEntries(nextManifest.files.map((file) => [file.id, file.content])));
       setValidation({});
       setSelectedAuxId((current) => {
@@ -843,12 +863,16 @@ export function SpeechAdmin() {
   useEffect(() => {
     let ignore = false;
 
-    fetchAdminSpeechManifest()
-      .then((nextManifest) => {
+    Promise.all([
+      fetchAdminSpeechManifest(),
+      fetchAdminPushStatus().catch(() => null),
+    ])
+      .then(([nextManifest, nextPushStatus]) => {
         if (ignore) {
           return;
         }
         setManifest(nextManifest);
+        setPushStatus(nextPushStatus);
         setDrafts(
           Object.fromEntries(nextManifest.files.map((file) => [file.id, file.content])),
         );
@@ -915,14 +939,14 @@ export function SpeechAdmin() {
     return files.filter((file) => dirtyIds.includes(file.id));
   }
 
-  async function saveAll() {
+  async function saveDirtyDraftsForAction() {
     if (!manifest || !dirtyIds.length) {
-      return;
+      return true;
     }
 
     const targetFiles = validateFiles(dirtyFiles());
     if (!targetFiles) {
-      return;
+      return false;
     }
 
     setIsSaving(true);
@@ -936,10 +960,38 @@ export function SpeechAdmin() {
       );
       await loadManifest({ clearNotice: false });
       setNotice(`Сохранено: ${result.files.map((file) => file.path).join(", ")}`);
+      return true;
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      return false;
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function saveAll() {
+    await saveDirtyDraftsForAction();
+  }
+
+  async function sendDebugPush() {
+    if (!manifest) {
+      return;
+    }
+    setIsSendingPush(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const saved = await saveDirtyDraftsForAction();
+      if (!saved) {
+        return;
+      }
+      const result = await sendAdminPush();
+      setNotice(`Push отправлен: ${result.reply}`);
+      setPushStatus(await fetchAdminPushStatus().catch(() => null));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      setIsSaving(false);
+      setIsSendingPush(false);
     }
   }
 
@@ -990,13 +1042,14 @@ export function SpeechAdmin() {
     }
   }
 
-  const isBusy = isSaving || isPublishing || isLoading;
+  const isBusy = isSaving || isPublishing || isSendingPush || isLoading;
   const saveDisabled = !dirtyIds.length || hasValidationError || isBusy;
   const deployDisabled =
     !manifest?.deploy.enabled ||
     (!dirtyIds.length && !hasUndeployedChanges) ||
     hasValidationError ||
     isBusy;
+  const pushDisabled = hasValidationError || isBusy;
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -1050,9 +1103,22 @@ export function SpeechAdmin() {
               <Button
                 type="button"
                 variant="outline"
+                onClick={() => void sendDebugPush()}
+                disabled={pushDisabled}
+              >
+                {isSendingPush ? (
+                  <RefreshCw className="size-4 animate-spin" />
+                ) : (
+                  <Bell className="size-4" />
+                )}
+                Отправить push
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
                 size="icon"
                 onClick={() => void loadManifest()}
-                disabled={isLoading || isSaving || isPublishing}
+                disabled={isLoading || isSaving || isPublishing || isSendingPush}
                 aria-label="Обновить"
               >
                 <RefreshCw className={cn("size-4", isLoading && "animate-spin")} />
@@ -1152,6 +1218,35 @@ export function SpeechAdmin() {
                 <p className="mt-2 leading-5 text-muted-foreground">
                   {manifest?.deploy.message ?? "Нет данных deploy."}
                 </p>
+              </section>
+
+              <section className="rounded-lg border border-border/70 p-4 text-sm">
+                <div className="mb-3 flex items-center gap-2 font-semibold">
+                  <Bell className="size-4" />
+                  Telegram push
+                </div>
+                <div className="grid gap-2 text-muted-foreground">
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Снапшоты</span>
+                    <Badge variant="outline">{pushStatus?.count ?? "?"}</Badge>
+                  </div>
+                  {pushStatus?.latest ? (
+                    <>
+                      <div className="truncate">
+                        Последний pet: {pushStatus.latest.petId}
+                      </div>
+                      <div>Telegram ID: {pushStatus.latest.telegramId}</div>
+                      <div>Обновлен: {formatDate(pushStatus.latest.registeredAt)}</div>
+                      <div>
+                        Debug push: {formatDate(pushStatus.latest.lastDebugPushAt ?? null)}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="leading-5">
+                      Нет snapshot. Открой Mini App в Telegram после деплоя.
+                    </p>
+                  )}
+                </div>
               </section>
             </aside>
           </div>

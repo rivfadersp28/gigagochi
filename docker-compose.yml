@@ -10,6 +10,7 @@ services:
       - postgres
     volumes:
       - generated_assets:/app/static/generated
+      - push_data:/app/data/push
 
   frontend:
     build:
@@ -36,3 +37,4 @@ services:
 volumes:
   postgres_data:
   generated_assets:
+  push_data:

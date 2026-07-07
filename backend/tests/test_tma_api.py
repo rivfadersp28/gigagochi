@@ -17,6 +17,7 @@ from app.schemas import (
     GeneratePetAssetResponse,
     GenerateTravelResponse,
     LocalChatResponse,
+    LocalPetPushSnapshotResponse,
     LocalProactiveResponse,
     MemoryConsolidationResponse,
     MemoryExtractionResponse,
@@ -702,6 +703,65 @@ def test_proactive_endpoint_returns_reply(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"reply": "Ну что, как экзамен?", "faceHint": "curious"}
+
+    app.dependency_overrides.clear()
+
+
+def test_push_snapshot_endpoint_registers_pet(monkeypatch) -> None:
+    captured = {}
+
+    def fake_register_push_snapshot(user, payload):
+        captured["telegram_id"] = user.telegram_id
+        captured["pet_id"] = payload.petId
+        captured["memory_count"] = len(payload.memoryContext.relevantMemories)
+        return LocalPetPushSnapshotResponse(
+            registered=True,
+            telegramId=user.telegram_id,
+            updatedAt="2026-07-07T12:00:00Z",
+        )
+
+    monkeypatch.setattr("app.routers.tma.register_push_snapshot", fake_register_push_snapshot)
+    client = tma_client()
+
+    response = client.post(
+        "/api/push/snapshot",
+        json={
+            "petId": "pet-1",
+            "createdAt": "2026-07-06T12:00:00Z",
+            "updatedAt": "2026-07-07T12:00:00Z",
+            "lastStatsTickAt": "2026-07-07T12:00:00Z",
+            "timezone": "Europe/Moscow",
+            "pet": {
+                "name": "Громм",
+                "description": "гигантский земляной великан",
+                "stage": "adult",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 70,
+                    "energy": 60,
+                    "cleanliness": 90,
+                },
+            },
+            "memoryContext": {
+                "relevantMemories": [
+                    {
+                        "id": "m1",
+                        "kind": "preference",
+                        "text": "Пользователь любит короткие сообщения.",
+                    }
+                ]
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["telegramId"] == 42
+    assert captured == {
+        "telegram_id": 42,
+        "pet_id": "pet-1",
+        "memory_count": 1,
+    }
 
     app.dependency_overrides.clear()
 

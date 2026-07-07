@@ -216,7 +216,7 @@ def test_lite_prompt_uses_request_reply_limit() -> None:
     system_message = build_lite_chat_messages(lite_payload(replyMaxChars=40))[0]["content"]
 
     assert "Ответ максимум 40 символов" in system_message
-    assert "Сгенерируй законченную реплику сразу в этом лимите" in system_message
+    assert "сгенерируй законченную реплику сразу в этом лимите" in system_message.lower()
     assert "не сокращай ее многоточием" in system_message
 
 

@@ -17,6 +17,7 @@ from app.schemas import (
     LocalPetMemoryContext,
     LocalProactiveRequest,
     LocalProactiveResponse,
+    LocalPushRequest,
     MemoryConsolidationRequest,
     MemoryConsolidationResponse,
     MemoryExtractionRequest,
@@ -93,7 +94,7 @@ MAX_MEMORY_CONTEXT_ITEMS = 5
 MAX_RECENT_AMBIENT_REPLIES = 5
 AMBIENT_MEMORY_KINDS = {"preference", "relationship", "routine", "boundary"}
 
-PhraseSurface = Literal["chat", "proactive", "ambient"]
+PhraseSurface = Literal["chat", "proactive", "ambient", "push"]
 
 
 @dataclass(frozen=True)
@@ -598,9 +599,7 @@ def _context_routing_user_payload(
     surface_prompt_text: str,
 ) -> dict[str, Any]:
     memory_context = getattr(payload, "memoryContext", None)
-    proactive_reason = ""
-    if memory_context and getattr(memory_context, "proactiveCandidate", None):
-        proactive_reason = memory_context.proactiveCandidate.reason
+    proactive_reason = _reason_from_payload(payload)
     return {
         "surface": surface,
         "surfacePrompt": surface_prompt_text,
@@ -624,6 +623,24 @@ def _context_routing_user_payload(
     }
 
 
+def _reason_from_payload(payload: Any) -> str:
+    raw_reason = getattr(payload, "reason", None)
+    if isinstance(raw_reason, str) and raw_reason.strip():
+        return _clean_optional_text(raw_reason, 240) or ""
+    memory_context = getattr(payload, "memoryContext", None)
+    if memory_context and getattr(memory_context, "proactiveCandidate", None):
+        return _clean_optional_text(memory_context.proactiveCandidate.reason, 240) or ""
+    return ""
+
+
+def _surface_prompt_for_payload(surface: PhraseSurface, payload: Any) -> str:
+    if surface == "ambient":
+        return _ambient_context_prompt()
+    if surface in ("proactive", "push"):
+        return surface_prompt(surface, {"reason": _reason_from_payload(payload)})
+    return surface_prompt(surface)
+
+
 def _route_contexts_for_visible_reply(
     *,
     surface: PhraseSurface,
@@ -632,9 +649,7 @@ def _route_contexts_for_visible_reply(
     model: str,
     timeout: float,
 ) -> tuple[ContextRoutingDecision, dict[str, Any]]:
-    surface_prompt_text = (
-        _ambient_context_prompt() if surface == "ambient" else surface_prompt(surface)
-    )
+    surface_prompt_text = _surface_prompt_for_payload(surface, payload)
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -704,6 +719,7 @@ def _story_context_for_routing(
     payload: Any,
     context_routing: ContextRoutingDecision,
 ) -> AssembledPetContext:
+    context_mode = "proactive" if surface == "push" else surface
     if surface == "chat":
         user_message = payload.message
         history = payload.history
@@ -711,14 +727,10 @@ def _story_context_for_routing(
         user_message = _ambient_context_prompt()
         history = []
     else:
-        user_message = (
-            payload.memoryContext.proactiveCandidate.reason
-            if payload.memoryContext and payload.memoryContext.proactiveCandidate
-            else surface_prompt("proactive", {"reason": ""})
-        )
+        user_message = _reason_from_payload(payload) or surface_prompt(surface, {"reason": ""})
         history = []
     return assemble_pet_context(
-        mode=surface,
+        mode=context_mode,
         pet=payload.pet,
         user_message=user_message,
         history=history,
@@ -2070,9 +2082,7 @@ def build_proactive_messages(
             payload=payload,
             context_routing=context_routing or ContextRoutingDecision(surface="proactive"),
         )
-    reason = ""
-    if payload.memoryContext.proactiveCandidate:
-        reason = _clean_optional_text(payload.memoryContext.proactiveCandidate.reason, 240) or ""
+    reason = _reason_from_payload(payload)
     plan = PhrasePlan(
         surface="proactive",
         reply_limit=MAX_REPLY_CHARS,
@@ -2083,6 +2093,45 @@ def build_proactive_messages(
             reply_limit=MAX_REPLY_CHARS,
         ),
         persona_contract=surface_prompt("proactive", {"reason": reason}),
+        world_block=context_bundle.prompt_block or None,
+        character_block=_character_context_block(payload.pet, context_routing),
+        memory_block=memory_block,
+    )
+    return [
+        {
+            "role": "system",
+            "content": plan.system_content(),
+        }
+    ]
+
+
+def build_push_messages(
+    payload: LocalPushRequest,
+    *,
+    context_bundle: AssembledPetContext | None = None,
+    context_routing: ContextRoutingDecision | None = None,
+) -> list[dict[str, str]]:
+    memory_block = (
+        _memory_context_block(payload.memoryContext)
+        if _routing_enabled(context_routing, "userMemory", default=True)
+        else None
+    )
+    if context_bundle is None:
+        context_bundle = _story_context_for_routing(
+            surface="push",
+            payload=payload,
+            context_routing=context_routing or ContextRoutingDecision(surface="push"),
+        )
+    plan = PhrasePlan(
+        surface="push",
+        reply_limit=180,
+        identity_line=_identity_line_for_pet(
+            surface="push",
+            pet=payload.pet,
+            description=_short_pet_description(payload.pet),
+            reply_limit=180,
+        ),
+        persona_contract=surface_prompt("push", {"reason": _reason_from_payload(payload)}),
         world_block=context_bundle.prompt_block or None,
         character_block=_character_context_block(payload.pet, context_routing),
         memory_block=memory_block,
@@ -2166,6 +2215,73 @@ def generate_proactive_pet_message(
         )
     return LocalProactiveResponse(
         reply=reply,
+        moodHint=None,
+        innerThought=inner_thought,
+        faceHint=face_hint,
+        debug=debug,
+    )
+
+
+def generate_push_pet_message(
+    payload: LocalPushRequest,
+    *,
+    client: Any | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+) -> LocalProactiveResponse:
+    settings = get_settings()
+    model = model or get_chat_model(settings)
+    timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
+    openai_client = client or get_openai_client()
+    prompt_debug: list[dict[str, Any]] = []
+    context_routing, context_routing_prompt_debug = _route_contexts_for_visible_reply(
+        surface="push",
+        payload=payload,
+        client=openai_client,
+        model=model,
+        timeout=timeout,
+    )
+    prompt_debug.append(context_routing_prompt_debug)
+    context_bundle = _story_context_for_routing(
+        surface="push",
+        payload=payload,
+        context_routing=context_routing,
+    )
+
+    request_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": build_push_messages(
+            payload,
+            context_bundle=context_bundle,
+            context_routing=context_routing,
+        ),
+        "timeout": timeout,
+        **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
+    }
+    prompt_debug.append(log_chat_completion_prompt("pet_reply/push", request_kwargs))
+    completion = openai_client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("pet_reply/push", completion)
+    reply, inner_thought, face_hint = _extract_hidden_reaction(
+        completion.choices[0].message.content or ""
+    )
+    debug = None
+    if payload.includeDebug or prompt_debug:
+        debug = LocalChatDebug(
+            usedFallback=False,
+            validationFlags=[],
+            promptDebug=prompt_debug,
+            memoryDebug={"pushReason": _reason_from_payload(payload)},
+            storyLibraryDebug=_story_context_debug(context_bundle),
+            contextRoutingDebug={
+                "surface": context_routing.surface,
+                "enabledSources": sorted(context_routing.enabled_sources),
+                "queries": context_routing.queries,
+                "reason": context_routing.reason,
+                "raw": context_routing.raw,
+            },
+        )
+    return LocalProactiveResponse(
+        reply=clamp_reply_text(reply, 180),
         moodHint=None,
         innerThought=inner_thought,
         faceHint=face_hint,

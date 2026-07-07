@@ -81,6 +81,27 @@ export type AdminSpeechPublishJob = {
   commitSha: string | null;
 };
 
+export type AdminPushStatus = {
+  count: number;
+  latest: {
+    telegramId: number;
+    petId: string;
+    registeredAt: string;
+    lastPushAt?: string | null;
+    lastDebugPushAt?: string | null;
+  } | null;
+};
+
+export type AdminPushSendResponse = {
+  sent: boolean;
+  manual: boolean;
+  telegramId: number;
+  petId: string;
+  reply: string;
+  sentAt: string;
+  debug?: unknown;
+};
+
 async function adminRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -139,4 +160,15 @@ export function startAdminSpeechPublish(
 
 export function fetchAdminSpeechPublishJob(jobId: string): Promise<AdminSpeechPublishJob> {
   return adminRequest<AdminSpeechPublishJob>(`/api/admin/speech/publish/${jobId}`);
+}
+
+export function fetchAdminPushStatus(): Promise<AdminPushStatus> {
+  return adminRequest<AdminPushStatus>("/api/admin/push/status");
+}
+
+export function sendAdminPush(reason?: string): Promise<AdminPushSendResponse> {
+  return adminRequest<AdminPushSendResponse>("/api/admin/push/send", {
+    method: "POST",
+    body: JSON.stringify({ reason, includeDebug: true }),
+  });
 }
