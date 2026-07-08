@@ -114,10 +114,12 @@ def test_background_story_image_uses_story_and_pet_identity(monkeypatch) -> None
     assert "След под кроной" in prompt
     assert "древний дуб отвечает шепотом листа" in prompt
     assert "чел с листом вместо лица" in prompt
-    assert "Japanese fantasy manga illustration" in prompt
-    assert "classic JRPG key visual" in prompt
-    assert "dense visual storytelling" in prompt
-    assert "Do not redesign the pet into a human" in prompt
+    assert "Детальная японская фэнтези-манга" in prompt
+    assert "японской ролевой игры" in prompt
+    assert "магическая повседневность" in prompt
+    assert "Не превращай питомца в человека" in prompt
+    assert "тон: позитивный" in prompt
+    assert len(prompt) <= background_story_service.KANDINSKY_IMAGE_PROMPT_MAX_CHARS
     assert "Листики выпускают запахи-сигналы опасности" not in prompt
 
 
@@ -179,9 +181,10 @@ def test_background_story_image_passes_current_sprite_reference(monkeypatch) -> 
         }
     ]
     prompt = str(calls[0]["prompt"])
-    assert "A character reference image is attached to this image-generation task" in prompt
-    assert "Use that reference image as the primary source for the pet design" in prompt
-    assert "do not invent a new character design" in prompt
+    assert "Приложено изображение персонажа" in prompt
+    assert "главный источник дизайна" in prompt
+    assert "новый дизайн не придумывай" in prompt
+    assert len(prompt) <= background_story_service.KANDINSKY_IMAGE_PROMPT_MAX_CHARS
 
 
 def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) -> None:

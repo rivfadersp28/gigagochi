@@ -56,32 +56,15 @@ MAX_AFTERMATH_CONTEXT_CHARS = 12000
 AFTERMATH_CONFIDENCE_THRESHOLD = 0.7
 BACKGROUND_ROUTING_SOURCE_IDS = CONTEXT_ROUTING_SOURCE_IDS
 LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+KANDINSKY_IMAGE_PROMPT_MAX_CHARS = 1900
 BACKGROUND_STORY_IMAGE_STYLE = """
-Create a highly detailed Japanese fantasy manga illustration in the style of a cozy
-light novel cover or classic JRPG key visual. Clean expressive ink lineart with
-subtle line weight variation, soft cel shading, and vibrant but slightly muted colors.
-Warm earthy palette featuring cream, ochre, honey, wood brown, olive green, muted teal,
-and small red accents. Soft natural daylight with gentle ambient illumination, minimal
-harsh shadows, and a welcoming atmosphere.
-
-Characters have classic anime proportions with expressive eyes, friendly faces,
-slightly oversized heads, simple readable silhouettes, and charming everyday expressions.
-Clothing and equipment feature medieval fantasy designs with handcrafted details.
-Materials are illustrated rather than realistic, using flat colors with simple painted
-shadows instead of photorealistic textures.
-
-The environment is rich with small storytelling details, including food, furniture,
-market goods, tools, decorations, plants, and lively background characters, making every
-part of the image interesting to explore. Composition resembles a Japanese fantasy book
-cover: one or several large foreground characters surrounded by numerous smaller scenes
-and supporting characters that create a bustling living world.
-
-The overall mood is wholesome, cozy, adventurous, optimistic, and slice-of-life,
-celebrating everyday life in a magical fantasy setting rather than epic battles.
-Highly polished manga illustration, dense visual storytelling, premium print-quality
-artwork, clean composition, intricate background details, timeless Japanese fantasy
-aesthetic, no photorealism, no 3D rendering, no painterly brush strokes, no cinematic
-realism.
+Детальная японская фэнтези-манга, уютная обложка ранобэ или ключевой арт
+японской ролевой игры. Чистый контур, мягкая аниме-заливка, тёплые приглушённые
+цвета: кремовый, охра, мёд, древесный коричневый, оливковый, бирюза, малые
+красные акценты. Мягкий дневной свет, уютная атмосфера. Рисованные материалы,
+плоские цвета, мягкие тени. Фон с бытовыми деталями, растениями, инструментами,
+украшениями и живыми второстепенными персонажами. Настроение: уютное
+приключение, оптимизм, магическая повседневность.
 """.strip()
 BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -311,6 +294,47 @@ def _select_record(value: Any, keys: tuple[str, ...], *, limit: int = 800) -> di
     return result
 
 
+def _stage_label(stage: str) -> str:
+    return {
+        "baby": "малыш",
+        "teen": "подросток",
+        "adult": "взрослый",
+    }.get(stage, stage)
+
+
+def _mood_label(mood: str) -> str:
+    return {
+        "idle": "спокойный",
+        "happy": "радостный",
+        "hungry": "голодный",
+        "sad": "грустный",
+    }.get(mood, mood)
+
+
+def _valence_label(valence: str) -> str:
+    return {
+        "positive": "позитивный",
+        "negative": "негативный",
+        "neutral": "нейтральный",
+        "mixed": "смешанный",
+    }.get(valence, valence)
+
+
+def _visual_phrase(value: Any, *, limit: int = 220) -> str:
+    if isinstance(value, list):
+        return ", ".join(_string_list(value, limit=5))[:limit].rstrip()
+    if isinstance(value, dict):
+        return _truncate_text(
+            "; ".join(
+                f"{_text_value(key, limit=40)}: {_text_value(item, limit=120)}"
+                for key, item in value.items()
+                if _text_value(item, limit=120)
+            ),
+            limit,
+        )
+    return _text_value(value, limit=limit)
+
+
 def _background_story_image_identity(pet: LocalPetChatContext) -> str:
     bible = pet.characterBible if _is_record(pet.characterBible) else {}
     identity = _select_record(
@@ -333,20 +357,33 @@ def _background_story_image_identity(pet: LocalPetChatContext) -> str:
         )
         if bible.get(key) not in (None, "", [], {})
     }
-    name = _text_value(pet.name) or _text_value(identity.get("name")) or "unnamed pet"
-    lines = [
-        f"Current name: {name}",
-        f"User description: {_text_value(pet.description)}",
-        f"Current growth stage: {pet.stage}",
-        f"Current mood: {pet.mood}",
+    name = _text_value(pet.name) or _text_value(identity.get("name")) or "безымянный питомец"
+    visual_source = visual or legacy_visual
+    details = [
+        _visual_phrase(identity.get("species"), limit=120),
+        _visual_phrase(identity.get("one_liner"), limit=140),
+        _visual_phrase(visual_source.get("anchors"), limit=160),
+        _visual_phrase(visual_source.get("colors"), limit=120),
+        _visual_phrase(visual_source.get("features"), limit=180),
+        _visual_phrase(visual_source.get("materials"), limit=120),
+        _visual_phrase(visual_source.get("proportions"), limit=160),
     ]
-    identity_text = _compact_json(identity)
-    visual_text = _compact_json(visual or legacy_visual)
-    if identity_text:
-        lines.append(f"Identity: {identity_text}")
-    if visual_text:
-        lines.append(f"Visual anchors: {visual_text}")
-    return "\n".join(lines)
+    unique_details: list[str] = []
+    seen: set[str] = set()
+    for detail in details:
+        normalized = _compact_spaces(detail).casefold()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_details.append(detail)
+    return _truncate_text(
+        (
+            f"{name}: {_text_value(pet.description, limit=120)}. "
+            f"Стадия: {_stage_label(pet.stage)}, настроение: {_mood_label(pet.mood)}. "
+            f"Опорный дизайн: {'; '.join(unique_details)}."
+        ),
+        360,
+    )
 
 
 def _current_asset_image_url(pet: LocalPetChatContext) -> str:
@@ -406,69 +443,43 @@ def build_background_story_image_prompt(
     reference_url = _current_asset_reference_url(pet)
     reference_text = (
         (
-            "A character reference image is attached to this image-generation task.\n"
-            f"Reference URL for logging only: {reference_url}\n"
-            "Use that reference image as the primary source for the pet design: preserve the "
-            "same silhouette, face placement, colors, material feel, proportions, signature "
-            "features, and current growth-stage/mood design. Repose and integrate the pet "
-            "into the story scene, but do not invent a new character design."
+            "Приложено изображение персонажа: это главный источник дизайна. Сохрани "
+            "силуэт, пропорции, лицо, цвета, материал, особые признаки, стадию и "
+            "настроение. Меняй только позу и сцену; новый дизайн не придумывай."
         )
         if reference_url
         else (
-            "No character reference image was provided. Follow the text identity and visual "
-            "anchors exactly, and keep the pet design stable."
+            "Изображение персонажа не приложено. Следуй текстовому описанию и опорным "
+            "признакам, сохрани стабильный дизайн питомца."
         )
     )
     tags = ", ".join(story.tags)
-    return f"""
-Create one polished illustration for a generated background story about the pet.
-The image is sent to the owner in Telegram with the story text, so show the central
-story moment clearly in one frame.
+    story_brief = _truncate_text(
+        f"{story.summary} Главный момент: {story.story_text}",
+        280,
+    )
+    prompt = f"""
+Создай одну цельную законченную иллюстрацию к истории питомца для отправки в Телеграм.
+Покажи центральный момент ясно в одном кадре.
 
-REFERENCE IMAGE USAGE:
-{reference_text}
+Референс персонажа: {reference_text}
 
-STORY TITLE:
-{story.title}
+История: «{_truncate_text(story.title, 90)}».
+Сцена: {story_brief}
+Тип события: {_truncate_text(story.event_type, 60)}; тон: {_valence_label(story.valence)}.
+Теги: {_truncate_text(tags or "нет", 120)}.
 
-STORY SUMMARY:
-{story.summary}
+Дизайн персонажа: {_background_story_image_identity(pet)}
 
-STORY TEXT:
-{story.story_text}
+Стиль: {BACKGROUND_STORY_IMAGE_STYLE}
 
-EVENT TYPE:
-{story.event_type}
-
-VALENCE:
-{story.valence}
-
-TAGS:
-{tags or "none"}
-
-CHARACTER APPEARANCE TO PRESERVE:
-{_background_story_image_identity(pet)}
-
-CHARACTER REFERENCE:
-See REFERENCE IMAGE USAGE above.
-
-SHARED ART STYLE:
-{BACKGROUND_STORY_IMAGE_STYLE}
-
-Composition rules:
-- One complete illustration, not a storyboard, card, UI, split panel or collage.
-- Keep the pet clearly visible as the main character.
-- Preserve the pet species, silhouette, colors, face placement, materials and signature features.
-- If a reference image is attached, it overrides generic anime character defaults
-  for the pet design.
-- Apply anime human proportions only to humanoid/background characters.
-- Do not redesign the pet into a human unless the original pet identity is humanoid.
-- Keep story action, environment, lighting and costume additions compatible with
-  the reference design.
-- Show the story environment and the main action without adding unrelated lore.
-- No text, captions, speech bubbles, watermarks, logos or interface elements inside the image.
-- No graphic violence, blood, weapons, horror, adult themes or copyrighted characters.
+Правила: один законченный кадр, не раскадровка, не коллаж, не интерфейс.
+Питомец хорошо виден как главный герой. Не превращай питомца в человека, если он
+не гуманоидный. Аниме-пропорции только для гуманоидов фона. Сцена, свет и поза
+не ломают дизайн персонажа. Без текста, подписей, речевых пузырей, водяных
+знаков, логотипов, крови, оружия, хоррора, взрослых тем и чужих персонажей.
 """.strip()
+    return _truncate_text(prompt, KANDINSKY_IMAGE_PROMPT_MAX_CHARS)
 
 
 def generate_background_story_image_bytes(
