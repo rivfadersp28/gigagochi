@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.prompts.pet_image_prompts import (
     build_pet_single_sprite_prompt,
+    build_pet_single_sprite_safety_retry_prompt,
     build_pet_sprite_sheet_prompt,
     build_pet_state_strip_prompt,
     build_pet_state_strip_safety_retry_prompt,
@@ -74,6 +75,20 @@ def test_single_sprite_prompt_forbids_grid_and_multiple_characters() -> None:
     assert "Stage: Small growth form" in prompt
     assert "State: Happy" in prompt
     assert "крупный лист вместо лица" in prompt
+
+
+def test_single_sprite_safety_retry_forbids_grid_and_multiple_characters() -> None:
+    prompt = build_pet_single_sprite_safety_retry_prompt(
+        "электрический дракон",
+        {"signature_features": ["мягкие рога", "светящийся хвост"]},
+        stage="teen",
+        state="sad",
+    )
+
+    assert "Create one standalone sprite" in prompt
+    assert "No sprite sheet, no grid, no panels, no multiple characters" in prompt
+    assert "Growth form: middle rounded form" in prompt
+    assert "Pose and expression: mildly sad or sleepy pose" in prompt
 
 
 def test_single_sprite_prompt_avoids_minor_age_words_for_middle_growth_form() -> None:

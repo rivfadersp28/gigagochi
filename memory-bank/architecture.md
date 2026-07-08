@@ -138,7 +138,11 @@
   local client host.
 - Managed files are defined in `backend/app/services/local_admin_store.py` and
   include `speech_runtime.json`, `tone_runtime.json`, story datasets, age speech
-  examples, world descriptions, and the character-bible template.
+  examples, world descriptions, and the character-bible template. New character
+  creation currently uses a model-only content path: `TONE_PROFILE`, schema and
+  template rules still shape the output, but world-description datasets,
+  few-shot habitat anchors and random lore seed fragments are not injected into
+  the character bible prompt.
 - Publishing those local admin data edits is a separate opt-in flow. The
   frontend calls `/api/admin/speech/publish`, backed by
   `backend/app/services/local_admin_publish.py`; the job saves dirty drafts,

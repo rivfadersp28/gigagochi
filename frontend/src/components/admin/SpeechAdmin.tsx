@@ -996,10 +996,10 @@ function CharacterBibleTemplateEditor({
         ))}
       </div>
       <RuntimeField
-        label="World anchors rule"
-        value={stringAt(config, ["prompt", "worldAnchorsRule"])}
+        label="Model generation rule"
+        value={stringAt(config, ["prompt", "generationRule"])}
         rows={3}
-        onChange={(value) => updatePath(["prompt", "worldAnchorsRule"], value)}
+        onChange={(value) => updatePath(["prompt", "generationRule"], value)}
       />
     </Section>
   );

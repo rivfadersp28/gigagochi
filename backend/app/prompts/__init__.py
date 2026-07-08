@@ -3,6 +3,7 @@ from .pet_image_prompts import (
     STYLE_FRAME,
     build_character_bible_prompt,
     build_pet_single_sprite_prompt,
+    build_pet_single_sprite_safety_retry_prompt,
     build_pet_sprite_sheet_prompt,
     rewrite_known_character_references,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "VISUAL_STYLE_FRAME",
     "build_character_bible_prompt",
     "build_pet_single_sprite_prompt",
+    "build_pet_single_sprite_safety_retry_prompt",
     "build_pet_sprite_sheet_prompt",
     "rewrite_known_character_references",
 ]

@@ -11,11 +11,6 @@ from PIL import Image, ImageDraw
 from app.prompts.pet_image_prompts import (
     build_character_bible_prompt,
     build_pet_state_strip_prompt,
-    create_lore_seed,
-)
-from app.prompts.world_description_anchors import (
-    format_world_description_anchors_for_prompt,
-    select_world_description_anchors,
 )
 from app.services.image_service import (
     BACKGROUND_REMOVAL_SCRIPT,
@@ -564,7 +559,7 @@ def test_generate_kandinsky_image_bytes_retries_create_timeout(monkeypatch) -> N
     assert post_calls[1]["timeout"] == 180
 
 
-def test_generate_pet_asset_set_generates_only_three_teen_skins(monkeypatch, tmp_path) -> None:
+def test_generate_pet_asset_set_generates_three_separate_teen_skins(monkeypatch, tmp_path) -> None:
     generated_prompts: list[str] = []
 
     monkeypatch.setattr(
@@ -576,19 +571,22 @@ def test_generate_pet_asset_set_generates_only_three_teen_skins(monkeypatch, tmp
         lambda _description: {"species": "дракончик"},
     )
 
-    def fake_prompt(_description, _character_bible, *, stage):
-        return f"strip:{stage}"
+    def fake_prompt(_description, _character_bible, *, stage, state):
+        return f"single:{stage}:{state}"
 
     def fake_image_bytes(prompt):
         generated_prompts.append(prompt)
-        image = Image.new("RGBA", (300, 100), (255, 255, 255, 255))
+        image = Image.new("RGBA", (100, 100), (255, 255, 255, 255))
         draw = ImageDraw.Draw(image)
-        draw.rectangle((30, 30, 70, 70), fill=(20, 140, 70, 255))
-        draw.rectangle((130, 30, 170, 70), fill=(220, 180, 40, 255))
-        draw.rectangle((230, 30, 270, 70), fill=(40, 90, 190, 255))
+        color = {
+            "single:teen:idle": (20, 140, 70, 255),
+            "single:teen:happy": (220, 180, 40, 255),
+            "single:teen:sad": (40, 90, 190, 255),
+        }[prompt]
+        draw.rectangle((30, 30, 70, 70), fill=color)
         return png_bytes(image)
 
-    monkeypatch.setattr("app.services.image_service.build_pet_state_strip_prompt", fake_prompt)
+    monkeypatch.setattr("app.services.image_service.build_pet_single_sprite_prompt", fake_prompt)
     monkeypatch.setattr(
         "app.services.image_service.generate_image_bytes",
         fake_image_bytes,
@@ -600,7 +598,11 @@ def test_generate_pet_asset_set_generates_only_three_teen_skins(monkeypatch, tmp
 
     result = generate_pet_asset_set("электрический дракон")
 
-    assert generated_prompts == ["strip:teen"]
+    assert generated_prompts == [
+        "single:teen:idle",
+        "single:teen:happy",
+        "single:teen:sad",
+    ]
     assert sorted(path.name for path in next(tmp_path.iterdir()).iterdir()) == [
         "teen-happy.png",
         "teen-idle.png",
@@ -650,12 +652,12 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
         lambda asset_id: tmp_path / str(asset_id),
     )
     monkeypatch.setattr(
-        "app.services.image_service.build_pet_state_strip_prompt",
-        lambda _description, _character_bible, *, stage: f"standard:{stage}",
+        "app.services.image_service.build_pet_single_sprite_prompt",
+        lambda _description, _character_bible, *, stage, state: f"standard:{stage}:{state}",
     )
     monkeypatch.setattr(
-        "app.services.image_service.build_pet_state_strip_safety_retry_prompt",
-        lambda _description, _character_bible, *, stage: f"safe-retry:{stage}",
+        "app.services.image_service.build_pet_single_sprite_safety_retry_prompt",
+        lambda _description, _character_bible, *, stage, state: f"safe-retry:{stage}:{state}",
     )
     monkeypatch.setattr(
         "app.services.image_service.generation_error_code",
@@ -664,13 +666,11 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
 
     def fake_image_bytes(prompt):
         calls.append(prompt)
-        if prompt.startswith("standard"):
+        if prompt == "standard:teen:happy":
             raise RuntimeError("blocked")
-        image = Image.new("RGBA", (300, 100), (255, 255, 255, 255))
+        image = Image.new("RGBA", (100, 100), (255, 255, 255, 255))
         draw = ImageDraw.Draw(image)
         draw.rectangle((30, 30, 70, 70), fill=(20, 140, 70, 255))
-        draw.rectangle((130, 30, 170, 70), fill=(220, 180, 40, 255))
-        draw.rectangle((230, 30, 270, 70), fill=(40, 90, 190, 255))
         return png_bytes(image)
 
     monkeypatch.setattr("app.services.image_service.generate_image_bytes", fake_image_bytes)
@@ -685,7 +685,12 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
         {"species": "дракончик"},
     )
 
-    assert calls == ["standard:teen", "safe-retry:teen"]
+    assert calls == [
+        "standard:teen:idle",
+        "standard:teen:happy",
+        "safe-retry:teen:happy",
+        "standard:teen:sad",
+    ]
     assert sorted(path.name for path, _prompt in result.values()) == [
         "teen-happy.png",
         "teen-idle.png",
@@ -733,12 +738,13 @@ def test_create_character_bible_uses_character_timeout(monkeypatch) -> None:
 
     assert result["schema_version"] == 2
     assert result["species"] == "дракончик"
-    assert result["extensions"]["world_description_anchors_used"]
+    assert "world_description_anchors_used" not in result["extensions"]
     assert all(call["timeout"] == 180 for call in calls)
     assert len(calls) == 1
     assert calls[0]["model"] == "gpt-5-mini"
     assert calls[0]["reasoning_effort"] == "minimal"
-    assert "WORLD_DESCRIPTION_ANCHORS" in calls[0]["messages"][1]["content"]
+    assert "WORLD_DESCRIPTION_ANCHORS" not in calls[0]["messages"][1]["content"]
+    assert "LORE_VARIATION_SEED" not in calls[0]["messages"][1]["content"]
 
 
 def test_character_reasoning_effort_only_for_supported_models() -> None:
@@ -753,30 +759,14 @@ def test_character_reasoning_effort_only_for_supported_models() -> None:
     assert _character_reasoning_effort_kwargs(settings, "gpt-4.1-mini") == {}
 
 
-def test_world_description_anchors_select_habitat_from_description() -> None:
-    anchors = select_world_description_anchors("маленький огненный дракон с угольками", count=3)
+def test_character_bible_prompt_omits_curated_generation_context() -> None:
+    prompt = build_character_bible_prompt("водяной зверек с ракушкой")
 
-    assert anchors
-    assert anchors[0].habitat == "volcanic"
-    assert anchors[0].id.startswith("world:volcanic:")
-    assert anchors[0].source_text
-
-
-def test_character_bible_prompt_uses_world_description_anchors() -> None:
-    anchors = select_world_description_anchors("водяной зверек с ракушкой", count=2)
-    block = format_world_description_anchors_for_prompt(anchors)
-    prompt = build_character_bible_prompt(
-        "водяной зверек с ракушкой",
-        lore_seed=create_lore_seed(),
-        world_description_anchors=block,
-    )
-
-    assert "WORLD_DESCRIPTION_ANCHORS" in prompt
     assert "TONE_PROFILE" in prompt
     assert "Ironic fantasy" in prompt
-    assert "source_text_do_not_copy" in prompt
-    assert "Do not copy them" in prompt
-    assert "world:waters-edge:" in prompt
+    assert "WORLD_DESCRIPTION_ANCHORS" not in prompt
+    assert "source_text_do_not_copy" not in prompt
+    assert "LORE_VARIATION_SEED" not in prompt
 
 
 def test_generation_error_code_defaults_to_generic() -> None:
@@ -834,42 +824,6 @@ def test_character_bible_prompt_requests_species_specific_lore() -> None:
     assert "короткие просьбы" not in prompt
     assert "larger concrete setting" not in prompt
     assert "бюро забытых вещей" not in prompt
-
-
-def test_character_bible_prompt_accepts_private_lore_seed() -> None:
-    lore_seed = {
-        "body_mechanism": "заметная часть тела хранит энергию и меняется от состояния",
-        "behavior_trigger": "при радости признак становится ярче или активнее",
-        "habitat_pressure": "домом служит простое место, где удобно поддерживать главный элемент",
-        "growth_clue": "каждая стадия добавляет одну простую способность",
-    }
-
-    prompt = build_character_bible_prompt(
-        "сонное облако с маленьким ключом",
-        lore_seed=lore_seed,
-    )
-    plain_prompt = build_character_bible_prompt("сонное облако с маленьким ключом")
-
-    assert "LORE_VARIATION_SEED" in prompt
-    assert "body_mechanism" in prompt
-    assert "behavior triggers, habitat pressure, and growth clues" in prompt
-    assert "LORE_VARIATION_SEED" not in plain_prompt
-
-
-def test_create_lore_seed_uses_curated_dimensions() -> None:
-    class FirstChoice:
-        def choice(self, values):
-            return values[0]
-
-    seed = create_lore_seed(FirstChoice())
-
-    assert set(seed) == {
-        "body_mechanism",
-        "behavior_trigger",
-        "habitat_pressure",
-        "growth_clue",
-    }
-    assert seed["body_mechanism"] == "заметная часть тела хранит энергию и меняется от состояния"
 
 
 def test_character_bible_quality_flags_overused_defaults_and_bad_physics() -> None:
@@ -969,17 +923,7 @@ def test_create_character_bible_does_not_run_repair_or_initial_overlay(monkeypat
         lambda: SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
     )
 
-    result = create_character_bible(
-        "маленький паровой дракончик",
-        lore_seed={
-            "body_mechanism": "заметная часть тела хранит энергию и меняется от состояния",
-            "behavior_trigger": "при усталости элемент тускнеет, остывает или затихает",
-            "habitat_pressure": (
-                "домом служит простое место, где удобно поддерживать главный элемент"
-            ),
-            "growth_clue": "каждая стадия добавляет одну простую способность",
-        },
-    )
+    result = create_character_bible("маленький паровой дракончик")
 
     assert result["schema_version"] == 2
     assert result["species"] == "паровой дракончик"
@@ -989,6 +933,6 @@ def test_create_character_bible_does_not_run_repair_or_initial_overlay(monkeypat
     assert "dialogue_moves" in result
     assert "lite_overlay" not in result["extensions"]
     assert len(calls) == 1
-    assert "LORE_VARIATION_SEED" in calls[0][1]["content"]
-    assert "body_mechanism" in calls[0][1]["content"]
+    assert "LORE_VARIATION_SEED" not in calls[0][1]["content"]
+    assert "WORLD_DESCRIPTION_ANCHORS" not in calls[0][1]["content"]
     assert "Repair this character bible" not in calls[0][1]["content"]

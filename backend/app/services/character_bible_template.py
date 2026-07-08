@@ -57,7 +57,7 @@ def validate_character_bible_template_config(config: Any) -> None:
     _string_at(config, ("systemPrompt",))
     _string_at(config, ("prompt", "intro"))
     _string_list_at(config, ("prompt", "personaShape"))
-    _string_at(config, ("prompt", "worldAnchorsRule"))
+    _string_at(config, ("prompt", "generationRule"))
     _string_list_at(config, ("prompt", "topLevelFields"))
     _string_list_at(config, ("prompt", "languageRules"))
     _string_list_at(config, ("prompt", "rules"))

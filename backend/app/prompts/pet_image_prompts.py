@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import random
 import re
 from typing import Any
 
@@ -10,38 +9,6 @@ from app.services.character_bible_template import character_bible_prompt_config
 from app.services.tone_runtime import tone_prompt_block, tone_visual_style
 
 PROMPT_MAX_LENGTH = 300
-
-LORE_SEED_OPTIONS: dict[str, tuple[str, ...]] = {
-    "body_mechanism": (
-        "заметная часть тела хранит энергию и меняется от состояния",
-        "защитная оболочка влияет на движение и поведение",
-        "хвост, рога, крылья или плавник показывают настроение",
-        "поверхность тела реагирует на погоду, свет или прикосновение",
-        "маленький орган чувств помогает заранее замечать опасность",
-        "внутренний запас элемента расходуется и восстанавливается",
-    ),
-    "behavior_trigger": (
-        "при радости признак становится ярче или активнее",
-        "при страхе creature прячется, сжимается или выпускает защитный эффект",
-        "при усталости элемент тускнеет, остывает или затихает",
-        "при голоде creature ищет конкретный природный источник энергии",
-        "в дождь, жару, холод или темноту способность проявляется иначе",
-    ),
-    "habitat_pressure": (
-        "домом служит простое место, где удобно поддерживать главный элемент",
-        "среда дает энергию, но иногда создает бытовые трудности",
-        "creature выбирает укрытия, которые подходят его форме тела",
-        "рядом есть один-два природных объекта, важные для привычек",
-        "опасность связана с противоположным элементом или потерей запаса энергии",
-    ),
-    "growth_clue": (
-        "baby учится управлять признаком, teen проверяет его силу, adult использует уверенно",
-        "по мере роста меняется размер, цвет, звук или устойчивость главного признака",
-        "growth arc должен быть биологическим или элементальным, а не социальной карьерой",
-        "каждая стадия добавляет одну простую способность или более точный контроль",
-        "future reveal касается свойства тела, привычки, habitat или element limit",
-    ),
-}
 
 STYLE_FRAME = VISUAL_STYLE_FRAME
 
@@ -223,72 +190,8 @@ def _sanitize_retry_image_prompt_value(value: Any) -> Any:
     return value
 
 
-def create_lore_seed(rng: random.Random | None = None) -> dict[str, str]:
-    chooser = rng or random.SystemRandom()
-    return {key: chooser.choice(values) for key, values in LORE_SEED_OPTIONS.items()}
-
-
-def _lore_seed_block(lore_seed: dict[str, str] | None) -> str:
-    if not lore_seed:
-        return ""
-    ordered_keys = ("body_mechanism", "behavior_trigger", "habitat_pressure", "growth_clue")
-    lines = [f"- {key}: {lore_seed[key]}" for key in ordered_keys if lore_seed.get(key)]
-    if not lines:
-        return ""
-    return """
-LORE_VARIATION_SEED:
-Use this private seed only as a lens for the creature-description logic. It is not user-visible
-text. It may shape body mechanism, behavior triggers, habitat pressure, and growth clues without
-adding random settings, jobs, object societies, or proper-name lore. Do not copy it verbatim.
-{lines}
-""".strip().format(lines="\n".join(lines))
-
-
-CREATURE_DESCRIPTION_STYLE_GUIDE = """
-Internal style guide distilled from the local creature-description corpus.
-
-Write the clean-generated character like an original species entry expanded into chat canon:
-- Start from one physical anchor: seed, flame, shell, horn, fin, fur, crystal, mist, wing, tail,
-  pouch, antenna, scale, bulb, core, leaf, ember, frost plate, cloud tuft, or another feature
-  implied by the user's description.
-- Give that anchor a practical function: stores energy, shows health, senses danger, protects,
-  balances movement, releases scent, changes color, cools, warms, sheds, absorbs light, gathers
-  water, conducts sparks, hardens, softens, or helps it hide.
-- Tie emotion and needs to observable changes in the body. Good pattern: "when happy, X glows";
-  "when tired, X droops"; "when scared, it withdraws into Y"; "when hungry, it seeks Z".
-- The physical anchor is a foundation, not a verbal tic. Do not make the creature mention the
-  same ability, field, glow, charge, flame, frost, shell, or body mechanism in most replies.
-  Character can also show through relationship, opinions, routines, sensory noticing, small
-  choices, hesitation, jokes, care, and tiny discoveries.
-- Use habitat as ecology, not plot. Habitat is where this body makes sense: warm stones, shallow
-  pools, cold caves, storm nests, berry roots, moonlit ledges, pantry corners, snowy hollows,
-  quiet reeds, charging nooks. Avoid arbitrary towns, guilds, offices, drawers, labels, travel
-  cases, maps, or jobs unless the user explicitly asked for an object/social premise.
-- Keep every fact short, reusable, and sensory. The user should be able to ask "why?", "where?",
-  "what do you eat?", "what are you afraid of?", and get answers grounded in the same mechanism.
-- Growth is biological or elemental: the feature gets larger, brighter, steadier, heavier,
-  sharper, calmer, more accurate, or easier to control. Do not turn growth into a career,
-  bureaucracy, school rank, or completed past incident.
-- Prefer 2-3 compact factual sentences over decorative paragraphs. No event logs. No proper-name
-  cast by default. No moral lesson. No "I am useful in a drawer" unless the user asked for drawer
-  creature.
-- Do not copy or name real Pokemon, franchises, species names, or source descriptions. Use the
-  structural style only.
-
-For each generated pet, produce this chain before filling the JSON:
-user idea -> physical anchor -> mechanism -> behavior trigger -> habitat -> want/conflict -> voice.
-Every section of the JSON must stay compatible with that chain, but do not repeat the same
-mechanism as the explanation for everything.
-""".strip()
-
-
-def build_character_bible_prompt(
-    user_description: str,
-    lore_seed: dict[str, str] | None = None,
-    world_description_anchors: str | None = None,
-) -> str:
+def build_character_bible_prompt(user_description: str) -> str:
     safe_description = rewrite_known_character_references(user_description.strip())
-    lore_seed_block = _lore_seed_block(lore_seed)
     template = character_bible_prompt_config()
     persona_shape = "\n".join(f"- {item}" for item in template["personaShape"])
     top_level_fields = "\n".join(f"- {item}" for item in template["topLevelFields"])
@@ -306,12 +209,8 @@ USER_CHARACTER_DESCRIPTION:
 
 {tone_prompt_block("characterBible")}
 
-{lore_seed_block}
-
-WORLD_DESCRIPTION_ANCHORS:
-{world_description_anchors or "нет"}
-
-{template["worldAnchorsRule"]}
+GENERATION_RULE:
+{template["generationRule"]}
 
 Return JSON only with these top-level fields:
 {top_level_fields}
@@ -529,6 +428,65 @@ OUTPUT_REQUIREMENTS:
 - No cast shadow, contact shadow, ground shadow, floor shadow, drop shadow, glow, halo, vignette, or backdrop.
 - Keep only internal 3D form shading on the character itself; the white background must stay clean and shadow-free.
 - No text, no labels, no UI, no logo, no watermark, no borders.
+        """.strip()
+
+
+def build_pet_single_sprite_safety_retry_prompt(
+    user_description: str,
+    character_bible: str | dict[str, Any],
+    *,
+    stage: str,
+    state: str,
+) -> str:
+    safe_description = _sanitize_retry_image_prompt_text(
+        rewrite_known_character_references(user_description.strip())
+    )
+    bible_text = _sprite_bible_retry_text(character_bible, active_stage=stage)
+    stage_labels = {
+        "baby": "small rounded form",
+        "teen": "middle rounded form, a little taller but still simple",
+        "adult": "mature rounded form with the same friendly toy identity",
+    }
+    state_labels = {
+        "idle": "calm neutral pose",
+        "happy": "happy friendly pose",
+        "sad": "mildly sad or sleepy pose",
+        "hungry": "hungry expression or gentle food-wanting gesture",
+    }
+
+    return f"""
+Create one standalone sprite of a harmless rounded collectible toy mascot.
+
+CORE_CONCEPT:
+{safe_description}
+
+STYLE_FRAME:
+{STYLE_FRAME}
+
+VISUAL_ANCHORS:
+{bible_text}
+
+VARIANT:
+- Growth form: {stage_labels.get(stage, stage)}
+- Pose and expression: {state_labels.get(state, state)}
+
+VISUAL_RULES:
+- Rounded stylized 3D vinyl-toy mascot, full body, centered in the image.
+- Soft simple shapes, oversized head or body, tiny limbs, large clean color areas.
+- All tips and decorative details are rounded and toy-like.
+- Energy or element cues appear only as small markings, material accents, or gentle color
+  details on the character itself.
+- Friendly cute expression only; no scary creature styling, no action scene, no external effects.
+- Preserve the core colors, silhouette, tiny wings if present, rounded split tail tip if present,
+  and soft zigzag antenna-like horns if present.
+
+OUTPUT_REQUIREMENTS:
+- Exactly one character in one square app viewport composition.
+- No sprite sheet, no grid, no panels, no multiple characters, no alternate poses.
+- Complete character fits comfortably inside the square image with visible padding on all sides.
+- Flat pure white background.
+- No text, labels, UI, logo, watermark, border, shadow, glow, halo, background scene, or props
+  beyond one tiny harmless decorative object if it is part of the visual anchors.
         """.strip()
 
 

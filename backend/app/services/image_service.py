@@ -29,15 +29,8 @@ from PIL import Image, ImageFilter
 from app.config import get_settings
 from app.prompts.pet_image_prompts import (
     build_character_bible_prompt,
-    build_pet_state_strip_prompt,
-    build_pet_state_strip_safety_retry_prompt,
-    create_lore_seed,
-)
-from app.prompts.style_direction import CHARACTER_BIBLE_STYLE_DIRECTION
-from app.prompts.world_description_anchors import (
-    WorldDescriptionAnchor,
-    format_world_description_anchors_for_prompt,
-    select_world_description_anchors,
+    build_pet_single_sprite_prompt,
+    build_pet_single_sprite_safety_retry_prompt,
 )
 from app.services.character_bible_template import (
     character_bible_legacy_defaults,
@@ -62,7 +55,6 @@ from app.services.prompt_debug import (
     log_image_generation_prompt,
     log_image_generation_response,
 )
-from app.services.tone_runtime import tone_prompt_block
 
 logger = logging.getLogger(__name__)
 
@@ -209,72 +201,6 @@ def _character_reasoning_effort_kwargs(settings: Any, model: str) -> dict[str, s
             getattr(settings, "openai_chat_reasoning_effort", None),
         )
     )
-
-
-def _repair_character_bible_prompt(
-    description: str,
-    character_bible: dict[str, Any],
-    issues: tuple[str, ...],
-    lore_seed: dict[str, str] | None = None,
-    world_description_anchors: str | None = None,
-) -> str:
-    lore_seed_text = (
-        "\nLORE_VARIATION_SEED_USED:\n" + json.dumps(lore_seed, ensure_ascii=False, indent=2)
-        if lore_seed
-        else ""
-    )
-    return f"""
-Repair this character bible. Return the full corrected JSON only.
-
-USER_CHARACTER_DESCRIPTION:
-{description}
-{lore_seed_text}
-
-WORLD_DESCRIPTION_ANCHORS_USED:
-{world_description_anchors or "нет"}
-
-CHARACTER_BIBLE_STYLE_DIRECTION:
-{CHARACTER_BIBLE_STYLE_DIRECTION}
-
-{tone_prompt_block("characterBible")}
-
-CREATURE_DESCRIPTION_STYLE_GUIDE:
-Use the same clean creature-description logic as the original prompt: physical anchor,
-mechanism, behavior trigger, habitat, want/conflict, and voice.
-
-QUALITY_ISSUES:
-{", ".join(issues)}
-
-Repair rules:
-- Keep the repaired lore, personality, voice, openings, sample replies, and lorebook entries
-  aligned with CHARACTER_BIBLE_STYLE_DIRECTION.
-- Preserve the same visual identity and all required schema fields.
-- Preserve Character Profile V2 fields: identity, voice, inner_state, world, dialogue_moves,
-  openings, provenance, extensions, and schema_version=2.
-- Keep 8-12 voice.sample_replies, 5-8 lorebook entries, and 3-5 dialogue_moves.
-- Preserve the transformed habitat logic from WORLD_DESCRIPTION_ANCHORS_USED when repairing
-  world, home, origin, routines, objects, sensory details, and story seeds. Do not copy anchor
-  text verbatim.
-- Remove fake-life phrases like "короткие просьбы", "добрые слова", "урок", "норма",
-  "важно быть", or "быть собой". Replace them with concrete pet-owned objects, places,
-  habits, dislikes, and contradictions from the creature's body, element, habitat, and needs.
-- If the pet is not plant/garden/window/shelf-based, remove greenhouse, shelf, moss, dew,
-  warm-lamp, seed, and tiny-garden defaults from lore.
-- Replace generic cozy-corner lore with a compact habitat that follows the pet's own premise.
-- Remove random bureaus, boxes, labels, maps, travel cases, schools, guilds, workshops, relatives,
-  neighbors, jobs, and object societies unless the user description explicitly asks for them.
-- Fix physical nonsense. Steam can hiss, warm, curl, fog, or tickle; steam itself is not loud.
-  If something makes sound, name the valve, kettle, vent, bell, shell, gear, or creature doing it.
-- Keep world, home, origin, relationships, and inner_life connected by clear cause and effect.
-- If one ability, field, glow, charge, flame, frost, shell, or body mechanism appears in too many
-  fields, keep it as the core mechanism but replace repeated mentions with routines, sensory
-  details, small wants, comfort actions, relationship behavior, flaws, or open story seeds.
-- Ensure voice.sample_replies do not all mention the same ability; most should express character
-  through emotion, relationship, observation, opinion, rhythm, or a tiny compatible invention.
-
-CURRENT_CHARACTER_BIBLE:
-{json.dumps(character_bible, ensure_ascii=False, indent=2)}
-""".strip()
 
 
 STAGE_ROWS = ("baby", "teen", "adult")
@@ -514,17 +440,6 @@ def extract_state_strip_cells(
     return cell_images
 
 
-def _attach_world_anchor_trace(
-    character_bible: dict[str, Any],
-    anchors: tuple[WorldDescriptionAnchor, ...],
-) -> dict[str, Any]:
-    extensions = character_bible.get("extensions")
-    if not isinstance(extensions, dict):
-        extensions = {}
-    extensions["world_description_anchors_used"] = [anchor.debug_dict() for anchor in anchors[:8]]
-    return {**character_bible, "extensions": extensions}
-
-
 def _dict_value(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -742,15 +657,9 @@ def expand_compact_character_bible(
     return bible
 
 
-def create_character_bible(
-    user_description: str,
-    lore_seed: dict[str, str] | None = None,
-) -> dict[str, Any]:
+def create_character_bible(user_description: str) -> dict[str, Any]:
     settings = get_settings()
     client = get_openai_client()
-    effective_lore_seed = lore_seed or create_lore_seed()
-    world_anchors = select_world_description_anchors(user_description, count=2)
-    world_anchor_block = format_world_description_anchors_for_prompt(world_anchors)
     system_message = {
         "role": "system",
         "content": character_bible_system_prompt(),
@@ -763,11 +672,7 @@ def create_character_bible(
             system_message,
             {
                 "role": "user",
-                "content": build_character_bible_prompt(
-                    user_description,
-                    lore_seed=effective_lore_seed,
-                    world_description_anchors=world_anchor_block,
-                ),
+                "content": build_character_bible_prompt(user_description),
             },
         ],
     )
@@ -779,7 +684,6 @@ def create_character_bible(
         character_bible,
         raw_description=user_description,
     )
-    character_bible = _attach_world_anchor_trace(character_bible, world_anchors)
     issues = character_bible_quality_issues(user_description, character_bible)
     if issues:
         logger.info("Compact character bible quality flags: %s", issues)
@@ -1347,29 +1251,30 @@ def generate_individual_sprite_paths(
     output_dir = generated_dir_for(asset_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_paths: dict[tuple[str, str], tuple[Path, str]] = {}
-    prompt = build_pet_state_strip_prompt(
-        description,
-        character_bible,
-        stage=FAST_GENERATION_STAGE,
-    )
-    try:
-        strip_bytes = remove_image_background(generate_image_bytes(prompt))
-    except Exception as exc:
-        if generation_error_code(exc) != "IMAGE_PROMPT_REJECTED":
-            raise
-        logger.info("Retrying image generation with safety-constrained sprite prompt")
-        prompt = build_pet_state_strip_safety_retry_prompt(
-            description,
-            character_bible,
-            stage=FAST_GENERATION_STAGE,
-        )
-        strip_bytes = remove_image_background(generate_image_bytes(prompt))
-    with Image.open(BytesIO(strip_bytes)) as strip_image:
-        cell_images = extract_state_strip_cells(strip_image, stage=FAST_GENERATION_STAGE)
 
     for stage, state in FAST_GENERATION_SKINS:
+        prompt = build_pet_single_sprite_prompt(
+            description,
+            character_bible,
+            stage=stage,
+            state=state,
+        )
+        try:
+            sprite_bytes = generate_single_sprite_image_bytes(prompt)
+        except Exception as exc:
+            if generation_error_code(exc) != "IMAGE_PROMPT_REJECTED":
+                raise
+            logger.info("Retrying image generation with safety-constrained single sprite prompt")
+            prompt = build_pet_single_sprite_safety_retry_prompt(
+                description,
+                character_bible,
+                stage=stage,
+                state=state,
+            )
+            sprite_bytes = generate_single_sprite_image_bytes(prompt)
+
         path = output_dir / f"{stage}-{state}.png"
-        cell_images[(stage, state)].save(path, format="PNG")
+        path.write_bytes(sprite_bytes)
         output_paths[(stage, state)] = (path, prompt)
 
     return output_paths

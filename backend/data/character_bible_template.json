@@ -14,7 +14,7 @@
       "inner_state = wants, tension, fears, comfort",
       "world = where it lives and what facts can be revealed later"
     ],
-    "worldAnchorsRule": "Use WORLD_DESCRIPTION_ANCHORS only as weak habitat hints. Do not copy them. Do not add jobs, schools, guilds, towns, politics, offices, maps, or long backstory unless the user asked for it.",
+    "generationRule": "Generate identity, visual anchors, voice, inner_state, world, habitat, home, routines, conflicts, openings, and lorebook entries directly from USER_CHARACTER_DESCRIPTION and TONE_PROFILE. Do not use local datasets, few-shot examples, fixed habitat templates, random seed fragments, or copied source prose.",
     "topLevelFields": [
       "schema_version",
       "identity",
