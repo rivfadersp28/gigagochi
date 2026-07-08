@@ -55,10 +55,31 @@ MAX_AFTERMATH_CONTEXT_CHARS = 12000
 AFTERMATH_CONFIDENCE_THRESHOLD = 0.7
 BACKGROUND_ROUTING_SOURCE_IDS = CONTEXT_ROUTING_SOURCE_IDS
 BACKGROUND_STORY_IMAGE_STYLE = """
-warm cinematic family-animation illustration, handcrafted storybook texture,
-soft expressive lighting, rich but clean environment, readable foreground action,
-cute mobile game pet character consistency, painterly details, no photorealism,
-no 3D plastic toy look, no clutter.
+Create a highly detailed Japanese fantasy manga illustration in the style of a cozy
+light novel cover or classic JRPG key visual. Clean expressive ink lineart with
+subtle line weight variation, soft cel shading, and vibrant but slightly muted colors.
+Warm earthy palette featuring cream, ochre, honey, wood brown, olive green, muted teal,
+and small red accents. Soft natural daylight with gentle ambient illumination, minimal
+harsh shadows, and a welcoming atmosphere.
+
+Characters have classic anime proportions with expressive eyes, friendly faces,
+slightly oversized heads, simple readable silhouettes, and charming everyday expressions.
+Clothing and equipment feature medieval fantasy designs with handcrafted details.
+Materials are illustrated rather than realistic, using flat colors with simple painted
+shadows instead of photorealistic textures.
+
+The environment is rich with small storytelling details, including food, furniture,
+market goods, tools, decorations, plants, and lively background characters, making every
+part of the image interesting to explore. Composition resembles a Japanese fantasy book
+cover: one or several large foreground characters surrounded by numerous smaller scenes
+and supporting characters that create a bustling living world.
+
+The overall mood is wholesome, cozy, adventurous, optimistic, and slice-of-life,
+celebrating everyday life in a magical fantasy setting rather than epic battles.
+Highly polished manga illustration, dense visual storytelling, premium print-quality
+artwork, clean composition, intricate background details, timeless Japanese fantasy
+aesthetic, no photorealism, no 3D rendering, no painterly brush strokes, no cinematic
+realism.
 """.strip()
 BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -393,6 +414,8 @@ Composition rules:
 - One complete illustration, not a storyboard, card, UI, split panel or collage.
 - Keep the pet clearly visible as the main character.
 - Preserve the pet species, silhouette, colors, face placement, materials and signature features.
+- Apply anime human proportions only to humanoid/background characters.
+- Do not redesign the pet into a human unless the original pet identity is humanoid.
 - Show the story environment and the main action without adding unrelated lore.
 - No text, captions, speech bubbles, watermarks, logos or interface elements inside the image.
 - No graphic violence, blood, weapons, horror, adult themes or copyrighted characters.

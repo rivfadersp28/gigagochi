@@ -114,6 +114,10 @@ def test_background_story_image_uses_story_and_pet_identity(monkeypatch) -> None
     assert "След под кроной" in prompt
     assert "древний дуб отвечает шепотом листа" in prompt
     assert "чел с листом вместо лица" in prompt
+    assert "Japanese fantasy manga illustration" in prompt
+    assert "classic JRPG key visual" in prompt
+    assert "dense visual storytelling" in prompt
+    assert "Do not redesign the pet into a human" in prompt
     assert "Листики выпускают запахи-сигналы опасности" not in prompt
 
 
