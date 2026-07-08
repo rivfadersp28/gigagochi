@@ -49,6 +49,9 @@
   semantic `params`. Do not put `pet.description` there; it belongs to
   `characterProfile` so the admin `Профиль` toggle actually controls
   descriptive identity.
+- Do not feed previous generated per-pet stories back into `/story`. They are
+  useful as conversational RAG for chat/idle/proactive/push, but using them as
+  `/story` source material creates self-reinforcing repetition.
 - `/api/admin/speech` is intentionally local-dev only. It should stay disabled
   in production by requiring `ALLOW_DEV_TMA_AUTH=true` plus a local client host.
 - Speech/dataset saves validate JSON or JSONL, create backups under
@@ -70,7 +73,7 @@
   signal to use Python fallback defaults. This matters for admin-cleared
   `visibleReply.ambientRules`.
 - `speech_runtime.json` `worldContext.template` must keep `{lines}`. Without it,
-  selected story bricks are computed but not shown to the model.
+  selected stories are computed but not shown to the model.
 - Avoid putting literal `WORLD_CONTEXT` into generic visible reply rules. Tests
   use that marker to distinguish actual injected world context from normal
   speech instructions.

@@ -229,26 +229,6 @@ def _lite_overlay_facts(extensions: dict[str, Any]) -> list[str]:
     return result
 
 
-def _story_overlay_briefs(extensions: dict[str, Any]) -> list[dict[str, str]]:
-    overlay = (
-        extensions.get("story_library_overlay")
-        if _is_record(extensions.get("story_library_overlay"))
-        else {}
-    )
-    bricks = overlay.get("bricks") if _is_record(overlay) else []
-    if not isinstance(bricks, list):
-        return []
-    result: list[dict[str, str]] = []
-    for brick in bricks[-MAX_DOSSIER_LIST_ITEMS:]:
-        if not _is_record(brick):
-            continue
-        name = _text_value(brick.get("name") or brick.get("title"), limit=120)
-        text = _text_value(brick.get("text") or brick.get("description"), limit=360)
-        if name or text:
-            result.append({"name": name, "text": text})
-    return result
-
-
 def _global_story_briefs(
     *,
     pet: LocalPetChatContext,
@@ -337,10 +317,31 @@ def _state_params_brief(pet: LocalPetChatContext) -> dict[str, Any]:
 
 
 def _background_context_modes() -> dict[str, str]:
-    return {
+    modes = {
         source: context_source_mode("backgroundStory", source)
         for source in CONTEXT_SOURCE_KEYS
     }
+    # Previous generated pet stories are conversation memory only. Feeding them
+    # back into /story makes the story generator repeat its own past outputs.
+    modes["storyOverlay"] = "disabled"
+    return modes
+
+
+def _background_context_source_enabled(
+    surface: str,
+    source: str,
+    *,
+    router_enabled: bool | None = None,
+    auto_default: bool = False,
+) -> bool:
+    if surface == "backgroundStory" and source == "storyOverlay":
+        return False
+    return context_source_enabled(
+        surface,
+        source,
+        router_enabled=router_enabled,
+        auto_default=auto_default,
+    )
 
 
 def _background_context_plan_from_routing(
@@ -352,7 +353,7 @@ def _background_context_plan_from_routing(
         surface="backgroundStory",
         modes=modes or _background_context_modes(),
         routing=routing,
-        source_enabled=context_source_enabled,
+        source_enabled=_background_context_source_enabled,
     )
 
 
@@ -583,8 +584,6 @@ def character_dossier_for_background_story(
         )
     if enabled("liteOverlay"):
         dossier["liteFacts"] = _lite_overlay_facts(extensions)
-    if enabled("storyOverlay"):
-        dossier["recentStoryBricks"] = _story_overlay_briefs(extensions)
     if include_story_library is None:
         include_story_library = context_source_enabled(
             "backgroundStory",

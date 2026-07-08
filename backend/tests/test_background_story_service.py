@@ -234,6 +234,7 @@ def test_background_story_context_sources_policy_controls_dossier(monkeypatch) -
     assert "Листики выпускают запахи-сигналы опасности." not in prompt
     assert "стеклянный шорох" not in prompt
     assert "Сергей принес листовой амулет" not in prompt
+    assert "Каменная тропа" not in prompt
 
 
 def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
@@ -340,10 +341,54 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     prompt = completions.calls[1]["messages"][1]["content"]
     assert captured_story_queries == ["лор мира"]
     assert "Кристаллическая капля" in prompt
-    assert "Каменная тропа" in prompt
+    assert "Каменная тропа" not in prompt
     assert "Лист на лице стук" not in prompt
     assert "Листики выпускают запахи-сигналы опасности." not in prompt
     assert "Сергей принес листовой амулет" not in prompt
+
+
+def test_background_story_never_uses_previous_generated_stories(monkeypatch) -> None:
+    content = json.dumps(
+        {
+            "title": "Новая история",
+            "summary": "На Олега напали у миски.",
+            "storyText": "На Олега напали у миски.",
+            "eventType": "attack",
+            "valence": "negative",
+            "tags": [],
+            "ragText": "На Олега напали у миски.",
+        },
+        ensure_ascii=False,
+    )
+    completions = FakeBackgroundStoryCompletions(content)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    def fake_enabled(surface, source, *, router_enabled=None, auto_default=False):
+        if surface == "backgroundStory" and source == "storyOverlay":
+            return True
+        if surface == "backgroundStory" and source == "storyLibrary":
+            return False
+        return auto_default
+
+    monkeypatch.setattr(
+        background_story_service,
+        "get_settings",
+        lambda: SimpleNamespace(openai_chat_timeout_seconds=10, openai_chat_reasoning_effort=None),
+    )
+    monkeypatch.setattr(background_story_service, "context_source_enabled", fake_enabled)
+
+    background_story_service.generate_background_story(
+        pet=_pet(),
+        now_iso="2026-07-08T07:40:00Z",
+        timezone="Europe/Moscow",
+        client=client,
+        model="test-model",
+        timeout=10,
+    )
+
+    prompt = completions.calls[-1]["messages"][1]["content"]
+    assert "recentStoryBricks" not in prompt
+    assert "Каменная тропа" not in prompt
 
 
 def test_background_story_uses_snapshot_history_when_story_toggles_allow(

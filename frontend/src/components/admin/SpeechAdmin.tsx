@@ -98,7 +98,7 @@ const CONTEXT_SOURCE_ROWS = [
   { id: "stateParams", label: "Параметры" },
   { id: "liteOverlay", label: "Развитие" },
   { id: "storyLibrary", label: "Мир" },
-  { id: "storyOverlay", label: "Лор" },
+  { id: "storyOverlay", label: "Истории" },
   { id: "userMemory", label: "Память" },
   { id: "chatHistory", label: "История" },
   { id: "recentReplies", label: "Антиповтор" },
@@ -124,6 +124,9 @@ function unsupportedContextSourceCell(sourceId: string, surfaceId: string): stri
   }
   if (sourceId === "recentReplies" && !["ambient", "backgroundStory"].includes(surfaceId)) {
     return "Антиповтор используется только в Idle и Story.";
+  }
+  if (sourceId === "storyOverlay" && surfaceId === "backgroundStory") {
+    return "Предыдущие истории не используются для генерации новых Story.";
   }
   return null;
 }
@@ -749,7 +752,7 @@ function SpeechRuntimeEditor({
           onChange={(value) => updatePath(["characterMemory", "factExtractionSystem"], value)}
         />
         <RuntimeField
-          label="Story bricks extraction"
+          label="Stories extraction"
           value={stringAt(config, ["characterMemory", "storyExtractionSystem"])}
           rows={5}
           onChange={(value) => updatePath(["characterMemory", "storyExtractionSystem"], value)}

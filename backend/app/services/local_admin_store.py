@@ -55,7 +55,7 @@ MANAGED_FILES: tuple[ManagedFile, ...] = (
         "Лор в диалоге",
         "story_library.json",
         "json",
-        "Глобальные story bricks, которые подтягиваются в chat/proactive/ambient по сигналам.",
+        "Глобальные stories, которые подтягиваются в chat/proactive/ambient по сигналам.",
     ),
     ManagedFile(
         "story_constructor",
@@ -324,7 +324,7 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": True,
                 "fileId": "speech_runtime",
                 "configPath": "worldContext",
-                "summary": "Обертка для уже выбранных story bricks перед финальной генерацией.",
+                "summary": "Обертка для уже выбранных stories перед финальной генерацией.",
             },
             {
                 "id": "context_routing",
@@ -384,7 +384,7 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "fileId": "speech_runtime",
                 "configPath": "characterMemory / userMemory",
                 "summary": (
-                    "После ответа сохраняют новые факты персонажа, story bricks и "
+                    "После ответа сохраняют новые факты персонажа, stories и "
                     "память владельца."
                 ),
             },
@@ -419,7 +419,7 @@ def dialogue_influence_manifest() -> dict[str, Any]:
             },
             {
                 "id": "story_library_overlay",
-                "label": "Per-pet story overlay",
+                "label": "Per-pet stories",
                 "role": "rag",
                 "surfaces": surfaces,
                 "source": "localStorage",
@@ -427,8 +427,8 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "fileId": None,
                 "configPath": "characterBible.extensions.story_library_overlay",
                 "summary": (
-                    "Личный лор конкретного питомца, накопленный из диалога; при поиске "
-                    "идет перед global."
+                    "Личные stories конкретного питомца, накопленные из диалога; при поиске "
+                    "идут перед global. Для /story не используются."
                 ),
             },
             {
