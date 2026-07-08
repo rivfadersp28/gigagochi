@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import { APP_BACKGROUND_COLOR } from "@/lib/theme";
 
@@ -169,6 +169,12 @@ export function setTelegramViewportCssVars() {
 }
 
 export function useTelegramBackButton(onBack: () => void, enabled = true) {
+  const onBackRef = useRef(onBack);
+
+  useEffect(() => {
+    onBackRef.current = onBack;
+  }, [onBack]);
+
   useEffect(() => {
     if (!enabled) {
       return;
@@ -179,12 +185,14 @@ export function useTelegramBackButton(onBack: () => void, enabled = true) {
       return;
     }
 
+    const handleBackClick = () => onBackRef.current();
+
     backButton.show();
-    backButton.onClick(onBack);
+    backButton.onClick(handleBackClick);
 
     return () => {
-      backButton.offClick(onBack);
+      backButton.offClick(handleBackClick);
       backButton.hide();
     };
-  }, [enabled, onBack]);
+  }, [enabled]);
 }
