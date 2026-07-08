@@ -45,6 +45,10 @@
   Do not re-add duplicate per-surface mood/hunger/energy toggles under prompt
   sections, and do not expose `auto` for `stateParams` unless it gets a real
   router signal.
+- `/story` `currentState` must stay minimal: `name`, `stage`, and optional
+  semantic `params`. Do not put `pet.description` there; it belongs to
+  `characterProfile` so the admin `Профиль` toggle actually controls
+  descriptive identity.
 - `/api/admin/speech` is intentionally local-dev only. It should stay disabled
   in production by requiring `ALLOW_DEV_TMA_AUTH=true` plus a local client host.
 - Speech/dataset saves validate JSON or JSONL, create backups under

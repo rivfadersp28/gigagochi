@@ -367,7 +367,6 @@ def _background_routing_payload(
 ) -> dict[str, Any]:
     pet_payload: dict[str, Any] = {
         "name": pet.name,
-        "description": pet.description,
         "stage": pet.stage,
     }
     if context_source_enabled("backgroundStory", "stateParams", auto_default=True):
@@ -516,7 +515,6 @@ def character_dossier_for_background_story(
 
     current_state: dict[str, Any] = {
         "name": pet.name,
-        "description": pet.description,
         "stage": pet.stage,
     }
     if enabled("stateParams"):
@@ -530,6 +528,7 @@ def character_dossier_for_background_story(
     if enabled("characterProfile"):
         dossier.update(
             {
+                "description": pet.description,
                 "identity": _select_record(
                     bible.get("identity"),
                     ("name", "nickname", "one_liner", "role", "species"),

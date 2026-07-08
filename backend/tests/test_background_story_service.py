@@ -136,7 +136,6 @@ def test_generate_background_story_creates_events_story_patch(monkeypatch) -> No
     request = completions.calls[-1]
     assert request["response_format"]["json_schema"]["name"] == "background_story"
     prompt = request["messages"][1]["content"]
-    assert "чел с листом вместо лица" in prompt
     assert "наевшийся" in prompt
     assert "счастливый" in prompt
     assert "энергичный" in prompt
@@ -146,6 +145,36 @@ def test_generate_background_story_creates_events_story_patch(monkeypatch) -> No
         "Листики выпускают запахи-сигналы опасности."
         in prompt
     )
+
+
+def test_background_story_profile_toggle_controls_description() -> None:
+    source_flags = {
+        "characterProfile": False,
+        "stateParams": False,
+        "liteOverlay": False,
+        "storyOverlay": False,
+        "userMemory": False,
+        "chatHistory": False,
+        "recentReplies": False,
+    }
+
+    without_profile = background_story_service.character_dossier_for_background_story(
+        pet=_pet(),
+        source_flags=source_flags,
+        include_story_library=False,
+        now_iso="2026-07-08T07:40:00Z",
+        timezone="Europe/Moscow",
+    )
+    with_profile = background_story_service.character_dossier_for_background_story(
+        pet=_pet(),
+        source_flags={**source_flags, "characterProfile": True},
+        include_story_library=False,
+        now_iso="2026-07-08T07:40:00Z",
+        timezone="Europe/Moscow",
+    )
+
+    assert "чел с листом вместо лица" not in without_profile
+    assert '"description": "чел с листом вместо лица"' in with_profile
 
 
 def test_background_story_context_sources_policy_controls_dossier(monkeypatch) -> None:
@@ -198,7 +227,7 @@ def test_background_story_context_sources_policy_controls_dossier(monkeypatch) -
     )
 
     prompt = completions.calls[-1]["messages"][1]["content"]
-    assert "чел с листом вместо лица" in prompt
+    assert "чел с листом вместо лица" not in prompt
     assert "params" not in prompt
     assert "наевшийся" not in prompt
     assert "Лист на лице стук" not in prompt

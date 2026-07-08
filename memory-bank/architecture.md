@@ -49,7 +49,10 @@
 - The `/story` character dossier uses the same `ContextPlan` / `contextSources`
   matrix as visible replies for optional sources: character profile, semantic
   state params, lite overlay, global story library, per-pet story overlay, user
-  memory, chat history and recent replies. It does not pass raw numeric `stats`.
+  memory, chat history and recent replies. Its `currentState` is intentionally
+  minimal (`name`, `stage`, optional semantic `params`); descriptive
+  `pet.description` belongs to `characterProfile`, not `currentState`. It does
+  not pass raw numeric `stats`.
 - Runtime speech regulator text that used to be hardcoded in the reply engine now lives in
   `backend/data/speech_runtime.json` and is read by
   `backend/app/services/pet_reply_engine/speech_runtime.py`. It covers persona
