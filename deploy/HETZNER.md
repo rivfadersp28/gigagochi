@@ -119,8 +119,9 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d --bui
 docker image prune -f
 ```
 
-For admin data-only updates (`backend/data/*`), production mounts `./backend/data` into the
-backend image, while `push_data` still owns `/app/data/push`. A faster update is enough:
+For admin data-only updates (`backend/data/*`), production mounts managed data files/directories
+from `./backend/data` into the backend image as read-only binds, while `push_data` still owns
+`/app/data/push`. A faster update is enough:
 
 ```bash
 cd /opt/gigagochi

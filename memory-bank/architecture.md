@@ -118,9 +118,10 @@
   `backend/app/services/local_admin_publish.py`; the job saves dirty drafts,
   commits only managed `backend/data` paths to GitHub, runs a Hetzner data-only
   deploy over SSH (`up -d --no-build backend bot`), and exposes polling
-  logs/status back to the admin UI. Production compose bind-mounts
-  `./backend/data` into backend and bot containers, while `push_data` remains a
-  separate `/app/data/push` volume.
+  logs/status back to the admin UI. Production compose bind-mounts individual
+  managed `./backend/data` files/directories into backend and bot containers as
+  read-only mounts, while `push_data` remains a separate writable
+  `/app/data/push` volume.
 - With `ADMIN_SYNC_FROM_SERVER_ENABLED=true`, `GET /api/admin/speech` first
   reads the current Git commit from Hetzner over SSH and refreshes the local
   managed data files from that commit before returning the manifest.

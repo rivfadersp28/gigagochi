@@ -40,7 +40,13 @@ services:
     volumes:
       - generated_assets:/app/static/generated
       - backend_logs:/app/logs
-      - ./backend/data:/app/data:ro
+      - ./backend/data/speech_runtime.json:/app/data/speech_runtime.json:ro
+      - ./backend/data/story_library.json:/app/data/story_library.json:ro
+      - ./backend/data/story_constructor.json:/app/data/story_constructor.json:ro
+      - ./backend/data/travel_story_templates.json:/app/data/travel_story_templates.json:ro
+      - ./backend/data/character_bible_template.json:/app/data/character_bible_template.json:ro
+      - ./backend/data/age_speech_examples:/app/data/age_speech_examples:ro
+      - ./backend/data/world_descriptions:/app/data/world_descriptions:ro
       - push_data:/app/data/push
     healthcheck:
       test:
@@ -67,7 +73,13 @@ services:
     command: ["python", "-m", "app.bot"]
     volumes:
       - backend_logs:/app/logs
-      - ./backend/data:/app/data:ro
+      - ./backend/data/speech_runtime.json:/app/data/speech_runtime.json:ro
+      - ./backend/data/story_library.json:/app/data/story_library.json:ro
+      - ./backend/data/story_constructor.json:/app/data/story_constructor.json:ro
+      - ./backend/data/travel_story_templates.json:/app/data/travel_story_templates.json:ro
+      - ./backend/data/character_bible_template.json:/app/data/character_bible_template.json:ro
+      - ./backend/data/age_speech_examples:/app/data/age_speech_examples:ro
+      - ./backend/data/world_descriptions:/app/data/world_descriptions:ro
       - push_data:/app/data/push
 
   frontend:

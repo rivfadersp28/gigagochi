@@ -100,9 +100,12 @@
   Hetzner; the publish job must stage only `managed_admin_git_paths()` and never
   `.admin-backups/` or unrelated dirty/untracked files.
 - Admin publish is a data-only deploy path. Production compose bind-mounts
-  `./backend/data` into backend and bot containers and keeps `push_data` mounted
-  at `/app/data/push`. Use `up -d --no-build backend bot` for admin data
-  publishes; use full `--build` only for code/dependency/image changes.
+  individual managed `./backend/data` files/directories into backend and bot
+  containers and keeps `push_data` mounted at `/app/data/push`. Do not mount
+  the whole `/app/data` parent as read-only: Docker cannot create the nested
+  `/app/data/push` volume mountpoint and backend startup fails. Use
+  `up -d --no-build backend bot` for admin data publishes; use full `--build`
+  only for code/dependency/image changes.
 - Admin server-sync is also local-only and opt-in. Keep
   `ADMIN_SYNC_FROM_SERVER_ENABLED=false` on Hetzner; local sync should refuse to
   overwrite managed data files when they already differ from the server commit.
