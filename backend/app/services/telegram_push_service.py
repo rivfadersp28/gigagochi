@@ -19,7 +19,9 @@ from app.schemas import (
     LocalPetPushSnapshotResponse,
     LocalPushRequest,
 )
+from app.services.background_story_service import generate_background_story
 from app.services.pet_reply_engine.lite_generator import generate_push_pet_message
+from app.services.story_library import merge_story_library_patch
 from app.services.telegram_auth_service import TelegramUserContext
 
 STORE_VERSION = 1
@@ -114,6 +116,48 @@ def _save_record(record: dict[str, Any]) -> None:
         _write_store_unlocked(store)
 
 
+def _record_story_library_patch(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(record, dict):
+        return None
+    pet = record.get("pet") if isinstance(record.get("pet"), dict) else {}
+    bible = pet.get("characterBible") if isinstance(pet.get("characterBible"), dict) else {}
+    extensions = bible.get("extensions") if isinstance(bible.get("extensions"), dict) else {}
+    overlay = (
+        extensions.get("story_library_overlay")
+        if isinstance(extensions.get("story_library_overlay"), dict)
+        else {}
+    )
+    bricks = overlay.get("bricks") if isinstance(overlay, dict) else None
+    if not isinstance(bricks, list) or not bricks:
+        return None
+    return {"version": 1, "bricks": bricks}
+
+
+def _merge_record_story_library_patch(
+    record: dict[str, Any],
+    patch: dict[str, Any] | None,
+) -> None:
+    if not isinstance(patch, dict):
+        return
+    pet = record.setdefault("pet", {})
+    if not isinstance(pet, dict):
+        pet = {}
+        record["pet"] = pet
+    bible = pet.setdefault("characterBible", {})
+    if not isinstance(bible, dict):
+        bible = {}
+        pet["characterBible"] = bible
+    extensions = bible.setdefault("extensions", {})
+    if not isinstance(extensions, dict):
+        extensions = {}
+        bible["extensions"] = extensions
+    overlay = extensions.setdefault("story_library_overlay", {})
+    if not isinstance(overlay, dict):
+        overlay = {}
+        extensions["story_library_overlay"] = overlay
+    merge_story_library_patch(overlay, patch)
+
+
 def _clamp_stat(value: Any) -> int:
     numeric = value if isinstance(value, (int, float)) else 0
     return max(0, min(100, round(numeric)))
@@ -165,6 +209,7 @@ def register_push_snapshot(
         "registeredAt": now_iso,
     }
     existing = _read_store().get("records", {}).get(str(user.telegram_id))
+    story_library_patch = _record_story_library_patch(existing)
     if isinstance(existing, dict):
         for key in (
             "lastPushAt",
@@ -177,13 +222,17 @@ def register_push_snapshot(
             "chatStartedAt",
             "lastChatSeenAt",
             "chatReachable",
+            "lastStoryAt",
+            "lastStory",
         ):
             record[key] = existing.get(key)
+    _merge_record_story_library_patch(record, story_library_patch)
     _save_record(record)
     return LocalPetPushSnapshotResponse(
         registered=True,
         telegramId=user.telegram_id,
         updatedAt=now_iso,
+        storyLibraryPatch=story_library_patch,
     )
 
 
@@ -433,6 +482,62 @@ def send_manual_push(
         manual=True,
         include_debug=include_debug,
     )
+
+
+def generate_story_for_telegram_user(
+    *,
+    telegram_id: int,
+    include_debug: bool = True,
+) -> dict[str, Any]:
+    record = _record_by_telegram_id(telegram_id)
+    if not _is_debug_push_target(record):
+        raise TelegramPushError(
+            "STORY_TARGET_RESTRICTED",
+            (
+                "Debug story временно разрешен только "
+                "пользователю "
+                f"{DEBUG_PUSH_TARGET_FIRST_NAME} ({DEBUG_PUSH_TARGET_TELEGRAM_ID})."
+            ),
+        )
+
+    payload = _build_push_payload(
+        record,
+        reason="Фоновое событие питомца.",
+        include_debug=include_debug,
+    )
+    result = generate_background_story(
+        pet=payload.pet,
+        memory_context=payload.memoryContext,
+        now_iso=payload.nowIso,
+        timezone=payload.timezone,
+    )
+    now_iso = _iso()
+    next_record = {
+        **record,
+        "pet": payload.pet.model_dump(mode="json"),
+        "lastStatsTickAt": now_iso,
+        "lastStoryAt": now_iso,
+        "lastStory": {
+            "title": result.title,
+            "summary": result.summary,
+            "storyText": result.story_text,
+            "eventType": result.event_type,
+            "valence": result.valence,
+            "tags": list(result.tags),
+            "ragText": result.rag_text,
+        },
+    }
+    _merge_record_story_library_patch(next_record, result.story_library_patch)
+    _save_record(next_record)
+    return {
+        "generated": True,
+        "telegramId": record.get("telegramId"),
+        "petId": record.get("petId"),
+        "generatedAt": now_iso,
+        "story": next_record["lastStory"],
+        "storyLibraryPatch": result.story_library_patch,
+        "debug": {"promptDebug": result.prompt_debug} if include_debug else None,
+    }
 
 
 def _snapshot_records() -> list[dict[str, Any]]:

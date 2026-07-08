@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -231,6 +232,84 @@ def test_current_pet_record_decays_stats_and_recomputes_stage() -> None:
         "energy": 0,
         "cleanliness": 90,
     }
+
+
+def test_background_story_is_saved_and_preserved_on_next_snapshot(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    story_patch = {
+        "version": 1,
+        "bricks": [
+            {
+                "id": "pet:events:test-story",
+                "source": "pet_overlay",
+                "pool": "events",
+                "poolLabel": "Фоновые события",
+                "name": "Нападение меловой тени",
+                "text": (
+                    "На Громма напала меловая тень у каменного порога."
+                ),
+                "attributes": {
+                    "eventType": "attack",
+                    "generatedBy": "background_story",
+                },
+                "createdAt": "2026-07-08T07:40:00Z",
+            }
+        ],
+    }
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_background_story",
+        lambda **kwargs: SimpleNamespace(
+            title="Нападение меловой тени",
+            summary=(
+                "Меловая тень попыталась стереть следы Громма."
+            ),
+            story_text=(
+                "На Громма напала меловая тень у каменного порога."
+            ),
+            event_type="attack",
+            valence="negative",
+            tags=("тень",),
+            rag_text=(
+                "На Громма напала меловая тень у каменного порога."
+            ),
+            story_library_patch=story_patch,
+            prompt_debug=[],
+        ),
+    )
+
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    result = telegram_push_service.generate_story_for_telegram_user(
+        telegram_id=DEBUG_TARGET_TELEGRAM_ID,
+        include_debug=False,
+    )
+
+    assert result["storyLibraryPatch"] == story_patch
+    store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
+    overlay = store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["pet"]["characterBible"][
+        "extensions"
+    ]["story_library_overlay"]
+    assert overlay["bricks"][0]["name"] == "Нападение меловой тени"
+
+    response = telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+
+    assert response.storyLibraryPatch is not None
+    assert (
+        response.storyLibraryPatch["bricks"][0]["name"]
+        == "Нападение меловой тени"
+    )
+    assert response.storyLibraryPatch["bricks"][0]["pool"] == "events"
+    store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
+    overlay = store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["pet"]["characterBible"][
+        "extensions"
+    ]["story_library_overlay"]
+    assert len(overlay["bricks"]) == 1
+    assert overlay["bricks"][0]["pool"] == "events"
 
 
 def test_telegram_send_error_is_sanitized(monkeypatch, tmp_path) -> None:

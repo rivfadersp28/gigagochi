@@ -18,6 +18,12 @@
   question. Recent idle replies are passed only when `contextRouting.recentReplies`
   enables the anti-repeat context.
 - New durable story entities can be extracted after a chat reply by `story_library_extraction` and returned as `debug.storyLibraryPatch`. Frontend applies that patch into the local per-pet story-library overlay.
+- Background story events generated from the Telegram bot `/story` command use
+  the same per-pet story overlay instead of a separate events store. The
+  backend stores generated event bricks under
+  `characterBible.extensions.story_library_overlay.bricks` with pool `events`,
+  returns a `storyLibraryPatch` from `/api/push/snapshot`, and the frontend
+  applies that patch into localStorage so normal chat RAG can recall the event.
 - Runtime speech regulator text that used to be hardcoded in the reply engine now lives in
   `backend/data/speech_runtime.json` and is read by
   `backend/app/services/pet_reply_engine/speech_runtime.py`. It covers persona

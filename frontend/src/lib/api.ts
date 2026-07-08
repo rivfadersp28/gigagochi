@@ -45,6 +45,13 @@ type LocalChatOptions = {
   replyMaxChars?: number;
 };
 
+type PushSnapshotResponse = {
+  registered: boolean;
+  telegramId: number;
+  updatedAt: string;
+  storyLibraryPatch?: Record<string, unknown> | null;
+};
+
 const REQUIRED_STAGES = ["baby", "teen", "adult"] as const satisfies readonly PetStage[];
 const REQUIRED_MOODS = ["idle", "happy", "hungry", "sad"] as const satisfies readonly PetMood[];
 const MAX_ERROR_BODY_CHARS = 900;
@@ -575,8 +582,8 @@ export async function generateLocalProactiveMessage(
 export async function registerPetPushSnapshot(
   pet: LocalPetState,
   memoryContext?: LocalPetMemoryContext,
-): Promise<{ registered: boolean; telegramId: number; updatedAt: string }> {
-  return request<{ registered: boolean; telegramId: number; updatedAt: string }>(
+): Promise<PushSnapshotResponse> {
+  return request<PushSnapshotResponse>(
     "/api/push/snapshot",
     {
       method: "POST",

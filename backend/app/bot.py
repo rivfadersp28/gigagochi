@@ -74,6 +74,20 @@ def send_message(
         raise TelegramAPIError(method, response)
 
 
+def _message_command(text: str) -> str:
+    first = text.strip().split(maxsplit=1)[0] if text.strip() else ""
+    return first.split("@", 1)[0].lower()
+
+
+def _format_story_message(story: dict[str, Any]) -> str:
+    title = str(story.get("title") or "Фоновое событие").strip()
+    story_text = str(story.get("storyText") or story.get("summary") or "").strip()
+    if not story_text:
+        story_text = "История сгенерировалась, но текст пустой."
+    text = f"{title}\n\n{story_text}"
+    return text[:3500].rstrip()
+
+
 def handle_update(client: httpx.Client, update: dict[str, Any]) -> None:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
@@ -86,7 +100,8 @@ def handle_update(client: httpx.Client, update: dict[str, Any]) -> None:
         return
 
     keyboard = mini_app_keyboard(settings.webapp_url)
-    if text.startswith("/help"):
+    command = _message_command(text)
+    if command == "/help":
         send_message(
             client,
             chat_id,
@@ -95,7 +110,41 @@ def handle_update(client: httpx.Client, update: dict[str, Any]) -> None:
         )
         return
 
-    if text.startswith("/start") or text.startswith("/app"):
+    if command == "/story":
+        from app.services.openai_service import MissingOpenAIAPIKey
+        from app.services.telegram_push_service import (
+            TelegramPushError,
+            generate_story_for_telegram_user,
+        )
+
+        try:
+            result = generate_story_for_telegram_user(telegram_id=chat_id, include_debug=False)
+        except TelegramPushError as exc:
+            send_message(client, chat_id, exc.message, keyboard)
+            return
+        except MissingOpenAIAPIKey:
+            send_message(
+                client,
+                chat_id,
+                "На сервере не настроен AI API key.",
+                keyboard,
+            )
+            return
+        except Exception:
+            logger.exception("Telegram /story generation failed")
+            send_message(
+                client,
+                chat_id,
+                "Не удалось сгенерировать историю. Попробуй позже.",
+                keyboard,
+            )
+            return
+
+        story = result.get("story") if isinstance(result.get("story"), dict) else {}
+        send_message(client, chat_id, _format_story_message(story), keyboard)
+        return
+
+    if command in {"/start", "/app"}:
         from app.services.telegram_push_service import mark_chat_started
 
         username = sender.get("username")

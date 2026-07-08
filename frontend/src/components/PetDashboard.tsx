@@ -326,6 +326,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const conversationFullHeightRef = useRef(0);
   const keyboardSyncUntilRef = useRef(0);
   const pet = localPet.pet;
+  const applyStoryLibraryPatch = localPet.applyStoryLibraryPatch;
   const includePromptDebug = promptSettings.includePromptDebug;
 
   useEffect(() => {
@@ -590,10 +591,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       updatedAt: pet.updatedAt,
     };
 
-    void registerPetPushSnapshot(pet, buildPushSnapshotMemoryContext(pet.petId)).catch(
-      () => undefined,
-    );
-  }, [localPet.status, pet, petId]);
+    void registerPetPushSnapshot(pet, buildPushSnapshotMemoryContext(pet.petId))
+      .then((response) => {
+        applyStoryLibraryPatch(response.storyLibraryPatch ?? undefined);
+      })
+      .catch(() => undefined);
+  }, [applyStoryLibraryPatch, localPet.status, pet, petId]);
 
   function handleFeed() {
     if (!pet) {

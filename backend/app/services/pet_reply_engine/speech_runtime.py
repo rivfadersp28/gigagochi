@@ -52,6 +52,9 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("phraseTemplates", "userMemoryExtractionUserMessage"),
     ("phraseTemplates", "userMemoryConsolidationUserMessage"),
     ("storyContext", "defaultQuery"),
+    ("backgroundStory", "systemPrompt"),
+    ("backgroundStory", "userTemplate"),
+    ("backgroundStory", "defaultEventType"),
     ("ageExamplePlaceholders", "petName"),
     ("ageExamplePlaceholders", "food"),
     ("ageExamplePlaceholders", "fear"),
@@ -120,6 +123,11 @@ def validate_speech_runtime_config(config: Any) -> None:
         _required_string(config, ("stateLayer", "ageRoleHints", stage))
     _required_int(config, ("stateLayer", "thresholds", "hungerLowMax"))
     _required_int(config, ("stateLayer", "thresholds", "energyLowMax"))
+    _required_int(config, ("backgroundStory", "maxStoryChars"))
+    _required_int(config, ("backgroundStory", "maxRagChars"))
+    background_template = _required_string(config, ("backgroundStory", "userTemplate"))
+    if "{character}" not in background_template:
+        raise ValueError("backgroundStory.userTemplate must include {character}")
     for key in STATE_MODIFIER_KEYS:
         _required_string(config, ("stateLayer", "stateModifiers", key))
     for source in CONTEXT_ROUTING_SOURCE_KEYS:
@@ -279,6 +287,27 @@ def user_memory_consolidation_system_prompt() -> str:
 
 def story_context_default_query(_mode: str) -> str:
     return _required_string(speech_runtime_config(), ("storyContext", "defaultQuery"))
+
+
+def background_story_system_prompt() -> str:
+    return _required_string(speech_runtime_config(), ("backgroundStory", "systemPrompt"))
+
+
+def background_story_user_prompt(values: dict[str, str]) -> str:
+    template = _required_string(speech_runtime_config(), ("backgroundStory", "userTemplate"))
+    return _template_replace(template, values)
+
+
+def background_story_default_event_type() -> str:
+    return _required_string(speech_runtime_config(), ("backgroundStory", "defaultEventType"))
+
+
+def background_story_max_story_chars() -> int:
+    return _required_int(speech_runtime_config(), ("backgroundStory", "maxStoryChars"))
+
+
+def background_story_max_rag_chars() -> int:
+    return _required_int(speech_runtime_config(), ("backgroundStory", "maxRagChars"))
 
 
 def age_example_placeholder_defaults() -> dict[str, Any]:

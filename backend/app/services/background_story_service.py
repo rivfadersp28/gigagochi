@@ -1,0 +1,477 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
+
+from app.config import get_settings
+from app.schemas import LocalPetChatContext, LocalPetMemoryContext
+from app.services.openai_service import (
+    chat_reasoning_effort_kwargs,
+    get_chat_model,
+    get_openai_client,
+)
+from app.services.pet_reply_engine.speech_runtime import (
+    background_story_default_event_type,
+    background_story_max_rag_chars,
+    background_story_max_story_chars,
+    background_story_system_prompt,
+    background_story_user_prompt,
+)
+from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
+
+MAX_CHARACTER_DOSSIER_CHARS = 12000
+MAX_DOSSIER_LIST_ITEMS = 12
+BACKGROUND_STORY_POOL = "events"
+BACKGROUND_STORY_POOL_LABEL = "Фоновые события"
+BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "title": {"type": "string", "maxLength": 120},
+        "summary": {"type": "string", "maxLength": 360},
+        "storyText": {"type": "string", "maxLength": 2000},
+        "eventType": {"type": "string", "maxLength": 60},
+        "valence": {
+            "type": "string",
+            "enum": ["negative", "neutral", "positive", "mixed"],
+        },
+        "tags": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {"type": "string", "maxLength": 40},
+        },
+        "ragText": {"type": "string", "maxLength": 900},
+    },
+    "required": [
+        "title",
+        "summary",
+        "storyText",
+        "eventType",
+        "valence",
+        "tags",
+        "ragText",
+    ],
+}
+
+
+@dataclass(frozen=True)
+class BackgroundStoryResult:
+    title: str
+    summary: str
+    story_text: str
+    event_type: str
+    valence: str
+    tags: tuple[str, ...]
+    rag_text: str
+    story_library_patch: dict[str, Any]
+    prompt_debug: list[dict[str, Any]]
+
+    def model_dump(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "summary": self.summary,
+            "storyText": self.story_text,
+            "eventType": self.event_type,
+            "valence": self.valence,
+            "tags": list(self.tags),
+            "ragText": self.rag_text,
+            "storyLibraryPatch": self.story_library_patch,
+            "promptDebug": self.prompt_debug,
+        }
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _is_record(value: Any) -> bool:
+    return isinstance(value, dict)
+
+
+def _compact_spaces(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _text_value(value: Any, *, limit: int = 500) -> str:
+    if value is None:
+        return ""
+    text = _compact_spaces(str(value))
+    return text[:limit].rstrip()
+
+
+def _truncate_text(value: str, limit: int) -> str:
+    text = _compact_spaces(value)
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip()
+
+
+def _string_list(value: Any, *, limit: int = MAX_DOSSIER_LIST_ITEMS) -> list[str]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = _text_value(item, limit=220)
+        key = text.casefold()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _select_record(value: Any, keys: tuple[str, ...], *, limit: int = 800) -> dict[str, Any]:
+    if not _is_record(value):
+        return {}
+    result: dict[str, Any] = {}
+    for key in keys:
+        item = value.get(key)
+        if item in (None, "", [], {}):
+            continue
+        if isinstance(item, str):
+            text = _text_value(item, limit=limit)
+            if text:
+                result[key] = text
+        elif isinstance(item, list):
+            values = _string_list(item)
+            if values:
+                result[key] = values
+        elif isinstance(item, dict):
+            nested = _clean_context_value(item)
+            if nested not in (None, "", [], {}):
+                result[key] = nested
+        else:
+            result[key] = item
+    return result
+
+
+def _clean_context_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _text_value(value, limit=500)
+    if isinstance(value, list):
+        cleaned = [_clean_context_value(item) for item in value[:MAX_DOSSIER_LIST_ITEMS]]
+        return [item for item in cleaned if item not in (None, "", [], {})]
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            if key in {"source_urls", "provenance", "dialogue_moves"}:
+                continue
+            cleaned = _clean_context_value(item)
+            if cleaned not in (None, "", [], {}):
+                result[str(key)] = cleaned
+        return result
+    return value
+
+
+def _lite_overlay_facts(extensions: dict[str, Any]) -> list[str]:
+    overlay = extensions.get("lite_overlay") if _is_record(extensions.get("lite_overlay")) else {}
+    facts = overlay.get("facts") if _is_record(overlay) else []
+    if not isinstance(facts, list):
+        return []
+    result: list[str] = []
+    for fact in facts[-MAX_DOSSIER_LIST_ITEMS:]:
+        if not _is_record(fact):
+            continue
+        text = _text_value(fact.get("text"), limit=360)
+        if text:
+            result.append(text)
+    return result
+
+
+def _story_overlay_briefs(extensions: dict[str, Any]) -> list[dict[str, str]]:
+    overlay = (
+        extensions.get("story_library_overlay")
+        if _is_record(extensions.get("story_library_overlay"))
+        else {}
+    )
+    bricks = overlay.get("bricks") if _is_record(overlay) else []
+    if not isinstance(bricks, list):
+        return []
+    result: list[dict[str, str]] = []
+    for brick in bricks[-MAX_DOSSIER_LIST_ITEMS:]:
+        if not _is_record(brick):
+            continue
+        name = _text_value(brick.get("name") or brick.get("title"), limit=120)
+        text = _text_value(brick.get("text") or brick.get("description"), limit=360)
+        if name or text:
+            result.append({"name": name, "text": text})
+    return result
+
+
+def _memory_brief(memory_context: LocalPetMemoryContext | None) -> dict[str, Any] | None:
+    if not memory_context:
+        return None
+    memories = [
+        {
+            "kind": item.kind,
+            "text": _text_value(item.text, limit=260),
+            "dueAt": item.dueAt,
+        }
+        for item in memory_context.relevantMemories[:5]
+        if _text_value(item.text, limit=260)
+    ]
+    result = {
+        "summary": _text_value(memory_context.summary, limit=600),
+        "userProfile": _text_value(memory_context.userProfile, limit=600),
+        "relevantMemories": memories,
+    }
+    return {key: value for key, value in result.items() if value not in ("", [], None)}
+
+
+def character_dossier_for_background_story(
+    *,
+    pet: LocalPetChatContext,
+    memory_context: LocalPetMemoryContext | None = None,
+    now_iso: str | None = None,
+    timezone: str | None = None,
+) -> str:
+    bible = pet.characterBible if _is_record(pet.characterBible) else {}
+    extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
+    lore = bible.get("lore") if _is_record(bible.get("lore")) else {}
+
+    dossier: dict[str, Any] = {
+        "now": now_iso or _now_iso(),
+        "timezone": timezone,
+        "currentState": {
+            "name": pet.name,
+            "description": pet.description,
+            "stage": pet.stage,
+            "mood": pet.mood,
+            "stats": pet.stats.model_dump(mode="json"),
+        },
+        "identity": _select_record(
+            bible.get("identity"),
+            ("name", "nickname", "one_liner", "role", "species"),
+        ),
+        "signature": _text_value(bible.get("signature"), limit=300),
+        "species": _text_value(bible.get("species"), limit=200),
+        "visual": _select_record(
+            bible.get("visual"),
+            ("anchors", "colors", "features", "growth_forms", "materials", "proportions"),
+        ),
+        "innerState": _select_record(
+            bible.get("inner_state"),
+            (
+                "core_want",
+                "inner_conflict",
+                "fears",
+                "comfort_actions",
+                "drives",
+            ),
+        ),
+        "lore": _select_record(
+            lore,
+            (
+                "origin",
+                "home",
+                "world",
+                "relationships",
+                "inner_life",
+                "story_seeds",
+                "growth_arc",
+            ),
+        ),
+        "world": _select_record(
+            bible.get("world"),
+            ("habitat", "home", "objects", "relationships", "routines", "story_seeds"),
+        ),
+        "liteFacts": _lite_overlay_facts(extensions),
+        "recentStoryBricks": _story_overlay_briefs(extensions),
+    }
+    memory = _memory_brief(memory_context)
+    if memory:
+        dossier["userMemory"] = memory
+
+    compact = {
+        key: value
+        for key, value in dossier.items()
+        if value not in (None, "", [], {})
+    }
+    return _truncate_text(
+        json.dumps(compact, ensure_ascii=False, indent=2, default=str),
+        MAX_CHARACTER_DOSSIER_CHARS,
+    )
+
+
+def _json_record_from_text(value: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value or "{}")
+    except json.JSONDecodeError:
+        start = value.find("{")
+        end = value.rfind("}")
+        if start < 0 or end <= start:
+            return {}
+        try:
+            parsed = json.loads(value[start : end + 1])
+        except json.JSONDecodeError:
+            return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _hash_id(*parts: str) -> str:
+    digest = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+    return digest[:12]
+
+
+def _clean_tags(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = _text_value(item, limit=40)
+        key = text.casefold()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+        if len(result) >= 8:
+            break
+    return tuple(result)
+
+
+def _story_patch(
+    *,
+    title: str,
+    summary: str,
+    story_text: str,
+    event_type: str,
+    valence: str,
+    tags: tuple[str, ...],
+    rag_text: str,
+) -> dict[str, Any]:
+    brick = {
+        "id": f"pet:{BACKGROUND_STORY_POOL}:{_hash_id(title, rag_text)}",
+        "source": "pet_overlay",
+        "pool": BACKGROUND_STORY_POOL,
+        "poolLabel": BACKGROUND_STORY_POOL_LABEL,
+        "name": title,
+        "text": rag_text,
+        "attributes": {
+            "summary": summary,
+            "fullStory": story_text,
+            "eventType": event_type,
+            "valence": valence,
+            "tags": list(tags),
+            "generatedBy": "background_story",
+        },
+        "basedOnBrickIds": [],
+        "createdAt": _now_iso(),
+    }
+    return {"version": 1, "bricks": [brick]}
+
+
+def _normalize_story_payload(payload: dict[str, Any]) -> BackgroundStoryResult:
+    max_story_chars = max(200, background_story_max_story_chars())
+    max_rag_chars = max(120, background_story_max_rag_chars())
+    fallback_event_type = background_story_default_event_type()
+
+    title = _text_value(payload.get("title"), limit=120) or "Фоновое событие"
+    summary = _text_value(payload.get("summary"), limit=360)
+    story_text = _truncate_text(_text_value(payload.get("storyText"), limit=2200), max_story_chars)
+    event_type = _text_value(payload.get("eventType"), limit=60) or fallback_event_type
+    valence = _text_value(payload.get("valence"), limit=20) or "mixed"
+    if valence not in {"negative", "neutral", "positive", "mixed"}:
+        valence = "mixed"
+    tags = _clean_tags(payload.get("tags"))
+    rag_text = _truncate_text(_text_value(payload.get("ragText"), limit=1000), max_rag_chars)
+
+    if not summary:
+        summary = _truncate_text(story_text, 260) if story_text else title
+    if not story_text:
+        story_text = summary
+    if not rag_text:
+        rag_text = summary
+
+    patch = _story_patch(
+        title=title,
+        summary=summary,
+        story_text=story_text,
+        event_type=event_type,
+        valence=valence,
+        tags=tags,
+        rag_text=rag_text,
+    )
+    return BackgroundStoryResult(
+        title=title,
+        summary=summary,
+        story_text=story_text,
+        event_type=event_type,
+        valence=valence,
+        tags=tags,
+        rag_text=rag_text,
+        story_library_patch=patch,
+        prompt_debug=[],
+    )
+
+
+def generate_background_story(
+    *,
+    pet: LocalPetChatContext,
+    memory_context: LocalPetMemoryContext | None = None,
+    now_iso: str | None = None,
+    timezone: str | None = None,
+    client: Any | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+) -> BackgroundStoryResult:
+    settings = get_settings()
+    model = model or get_chat_model(settings)
+    timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
+    openai_client = client or get_openai_client()
+    character = character_dossier_for_background_story(
+        pet=pet,
+        memory_context=memory_context,
+        now_iso=now_iso,
+        timezone=timezone,
+    )
+    request_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": background_story_system_prompt()},
+            {
+                "role": "user",
+                "content": background_story_user_prompt(
+                    {
+                        "character": character,
+                        "event_type": background_story_default_event_type(),
+                    }
+                ),
+            },
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "background_story",
+                "schema": BACKGROUND_STORY_SCHEMA,
+                "strict": True,
+            },
+        },
+        "timeout": timeout,
+        **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
+    }
+    prompt_debug = [log_chat_completion_prompt("background_story/generate", request_kwargs)]
+    completion = openai_client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("background_story/generate", completion)
+    content = completion.choices[0].message.content or "{}"
+    result = _normalize_story_payload(_json_record_from_text(content))
+    return BackgroundStoryResult(
+        title=result.title,
+        summary=result.summary,
+        story_text=result.story_text,
+        event_type=result.event_type,
+        valence=result.valence,
+        tags=result.tags,
+        rag_text=result.rag_text,
+        story_library_patch=result.story_library_patch,
+        prompt_debug=prompt_debug,
+    )

@@ -378,6 +378,19 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                     "память владельца."
                 ),
             },
+            {
+                "id": "background_story_prompt",
+                "label": "Фоновые истории",
+                "surfaces": ["background_story"],
+                "source": "speech_runtime",
+                "editable": True,
+                "fileId": "speech_runtime",
+                "configPath": "backgroundStory",
+                "summary": (
+                    "Prompt генерации фонового события питомца и лимиты текста для "
+                    "сохранения в personal story RAG."
+                ),
+            },
         ],
         "collections": [
             {

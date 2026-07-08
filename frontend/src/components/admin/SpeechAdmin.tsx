@@ -465,6 +465,39 @@ function SpeechRuntimeEditor({
         <SurfaceFlags config={config} surface="push" onChange={updatePath} />
       </Section>
 
+      <Section title="Фоновые истории" meta={<Badge variant="outline">/story</Badge>}>
+        <RuntimeField
+          label="System prompt"
+          value={stringAt(config, ["backgroundStory", "systemPrompt"])}
+          rows={6}
+          onChange={(value) => updatePath(["backgroundStory", "systemPrompt"], value)}
+        />
+        <RuntimeField
+          label="User template"
+          value={stringAt(config, ["backgroundStory", "userTemplate"])}
+          rows={5}
+          onChange={(value) => updatePath(["backgroundStory", "userTemplate"], value)}
+        />
+        <div className="grid gap-4 md:grid-cols-3">
+          <RuntimeField
+            label="Default event type"
+            value={stringAt(config, ["backgroundStory", "defaultEventType"])}
+            rows={2}
+            onChange={(value) => updatePath(["backgroundStory", "defaultEventType"], value)}
+          />
+          <RuntimeNumberField
+            label="Max story chars"
+            value={numberAt(config, ["backgroundStory", "maxStoryChars"])}
+            onChange={(value) => updatePath(["backgroundStory", "maxStoryChars"], value)}
+          />
+          <RuntimeNumberField
+            label="Max RAG chars"
+            value={numberAt(config, ["backgroundStory", "maxRagChars"])}
+            onChange={(value) => updatePath(["backgroundStory", "maxRagChars"], value)}
+          />
+        </div>
+      </Section>
+
       <Section title="Context routing" meta={<Badge variant="outline">единый gate</Badge>}>
         <RuntimeField
           label="AI router prompt"

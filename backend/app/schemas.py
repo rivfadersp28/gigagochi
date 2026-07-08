@@ -266,3 +266,4 @@ class LocalPetPushSnapshotResponse(BaseModel):
     registered: bool
     telegramId: int
     updatedAt: str
+    storyLibraryPatch: dict[str, Any] | None = None

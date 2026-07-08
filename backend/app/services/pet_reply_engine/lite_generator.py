@@ -290,7 +290,14 @@ STORY_LIBRARY_EXTRACTION_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "pool": {
                         "type": "string",
-                        "enum": ["items", "locations", "neighbors", "creatures", "threats"],
+                        "enum": [
+                            "items",
+                            "locations",
+                            "neighbors",
+                            "creatures",
+                            "threats",
+                            "events",
+                        ],
                     },
                     "name": {"type": "string", "maxLength": 120},
                     "description": {"type": "string", "maxLength": 500},

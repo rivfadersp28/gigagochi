@@ -80,6 +80,17 @@ POOL_KEYWORDS: dict[str, tuple[str, ...]] = {
         "бабоч",
         "дух",
     ),
+    "events": (
+        "событ",
+        "случ",
+        "истор",
+        "приключ",
+        "напал",
+        "атак",
+        "фон",
+        "ноч",
+        "вчера",
+    ),
 }
 
 ALL_POOL_HINTS: tuple[str, ...] = tuple(POOL_KEYWORDS.keys())
