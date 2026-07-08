@@ -275,15 +275,21 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     )
     monkeypatch.setattr(background_story_service, "context_source_mode", fake_mode)
     monkeypatch.setattr(background_story_service, "context_source_enabled", fake_enabled)
-    monkeypatch.setattr(
-        background_story_service,
-        "_global_story_briefs",
-        lambda *, pet: [
+    captured_story_queries: list[str | None] = []
+
+    def fake_global_story_briefs(*, pet, query=None):
+        captured_story_queries.append(query)
+        return [
             {
                 "name": "Кристаллическая капля",
                 "text": "Капля удерживает чужой свет на тропе.",
             }
-        ],
+        ]
+
+    monkeypatch.setattr(
+        background_story_service,
+        "_global_story_briefs",
+        fake_global_story_briefs,
     )
 
     result = background_story_service.generate_background_story(
@@ -303,6 +309,7 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     )
     assert completions.calls[1]["response_format"]["json_schema"]["name"] == "background_story"
     prompt = completions.calls[1]["messages"][1]["content"]
+    assert captured_story_queries == ["лор мира"]
     assert "Кристаллическая капля" in prompt
     assert "Каменная тропа" in prompt
     assert "Лист на лице стук" not in prompt

@@ -48,6 +48,7 @@ CONTEXT_SOURCE_KEYS = (
     "recentReplies",
 )
 CONTEXT_SOURCE_MODES: tuple[ContextSourceMode, ...] = ("disabled", "auto", "always")
+STATE_PARAM_CONTEXT_SOURCE_MODES: tuple[ContextSourceMode, ...] = ("disabled", "always")
 
 REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("surfacePrompts", "chat"),
@@ -159,10 +160,15 @@ def validate_speech_runtime_config(config: Any) -> None:
     for surface in CONTEXT_SURFACES:
         for source in CONTEXT_SOURCE_KEYS:
             mode = _required_string(config, ("contextSources", "surfaces", surface, source))
-            if mode not in CONTEXT_SOURCE_MODES:
+            allowed_modes = (
+                STATE_PARAM_CONTEXT_SOURCE_MODES
+                if source == "stateParams"
+                else CONTEXT_SOURCE_MODES
+            )
+            if mode not in allowed_modes:
                 raise ValueError(
                     f"contextSources.surfaces.{surface}.{source} must be one of "
-                    f"{', '.join(CONTEXT_SOURCE_MODES)}"
+                    f"{', '.join(allowed_modes)}"
                 )
     for key in STATE_MODIFIER_KEYS:
         _required_string(config, ("stateLayer", "stateModifiers", key))

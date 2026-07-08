@@ -11,7 +11,12 @@
   Generic wording like `фан-факт`, `вопрос`, or `скажи что-нибудь` must not be a
   hidden world-context trigger.
 - Do not add a post-check/regenerate loop for replies unless explicitly requested. The current architecture avoids point 5 and keeps generation single-pass, with optional background extraction only for new story entities.
-- `storyLibraryPatch` is returned under `debug`, but frontend uses it as data, not just debug UI. Removing debug payload can break local story-library persistence.
+- `storyLibraryPatch` is data, not debug UI. Visible chat responses and
+  `/api/push/snapshot` should expose it as a top-level field; keep
+  `debug.storyLibraryPatch` only as a backward-compatible diagnostic copy.
+- Story-library extraction after chat is best-effort, but failures should be
+  logged. Do not use silent `except Exception` around it; otherwise lost
+  patches are impossible to diagnose.
 - The worktree may contain unrelated dirty frontend/deploy files. Do not stage or revert them unless the task explicitly targets them.
 - Pet creation intentionally keeps generated sprite stage fallbacks fake/cheap
   for now. Do not change `FAST_GENERATION_STATE_FALLBACKS` unless the visual
@@ -22,11 +27,24 @@
 - Do not add per-feature source toggles outside `speech_runtime.contextSources`.
   Chat, idle, proactive, push, and `/story` must use the same matrix:
   `disabled` / `auto` / `always`.
+- Not every cell in the admin "Копилки" matrix has a runtime path. Do not add
+  editable cells for `chatHistory` on Idle/Pro/Push or `recentReplies` on
+  Chat/Pro/Push unless the backend actually starts consuming those sources on
+  those surfaces.
+- Visible reply `contextRouting` is only useful when at least one
+  router-controlled source is `auto`. If all visible sources are forced
+  `disabled`/`always`, skip the router call instead of spending an extra LLM
+  request that cannot change inclusion.
+- In `ContextPlan`, `routing=None` means no router was available and selected
+  direct builders may use their legacy `auto_default` sources. An empty
+  `ContextRoutingDecision` means the router ran or was intentionally skipped and
+  enabled nothing. Do not collapse these two states.
 - `Параметры` in the admin context matrix is `contextSources.stateParams`.
   It controls hunger/happiness/energy injection. Story prompts must receive
   semantic labels from `stateLayer.stateParamLabels`, not raw numeric stats.
   Do not re-add duplicate per-surface mood/hunger/energy toggles under prompt
-  sections.
+  sections, and do not expose `auto` for `stateParams` unless it gets a real
+  router signal.
 - `/api/admin/speech` is intentionally local-dev only. It should stay disabled
   in production by requiring `ALLOW_DEV_TMA_AUTH=true` plus a local client host.
 - Speech/dataset saves validate JSON or JSONL, create backups under

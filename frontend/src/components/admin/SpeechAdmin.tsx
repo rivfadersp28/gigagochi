@@ -118,6 +118,23 @@ const CONTEXT_SOURCE_MODES = [
   { id: "always", label: "вкл" },
 ] as const;
 
+function unsupportedContextSourceCell(sourceId: string, surfaceId: string): string | null {
+  if (sourceId === "chatHistory" && !["chat", "backgroundStory"].includes(surfaceId)) {
+    return "История используется только в Chat и Story.";
+  }
+  if (sourceId === "recentReplies" && !["ambient", "backgroundStory"].includes(surfaceId)) {
+    return "Антиповтор используется только в Idle и Story.";
+  }
+  return null;
+}
+
+function contextSourceModeOptions(sourceId: string) {
+  if (sourceId === "stateParams") {
+    return CONTEXT_SOURCE_MODES.filter((mode) => mode.id !== "auto");
+  }
+  return CONTEXT_SOURCE_MODES;
+}
+
 const CHARACTER_BIBLE_LEGACY_DEFAULTS = [
   { id: "identityRole", label: "identity.role default" },
   { id: "voiceRhythm", label: "voice rhythm default" },
@@ -466,20 +483,31 @@ function ContextSourcesMatrix({
                 </th>
                 {CONTEXT_SOURCE_SURFACES.map((surface) => {
                   const path = ["contextSources", "surfaces", surface.id, source.id];
+                  const unsupportedReason = unsupportedContextSourceCell(source.id, surface.id);
                   return (
                     <td key={surface.id} className="px-2 py-1">
-                      <select
-                        value={contextModeAt(config, path)}
-                        onChange={(event) => onChange(path, event.target.value)}
-                        className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
-                        aria-label={`${surface.label}: ${source.label}`}
-                      >
-                        {CONTEXT_SOURCE_MODES.map((mode) => (
-                          <option key={mode.id} value={mode.id}>
-                            {mode.label}
-                          </option>
-                        ))}
-                      </select>
+                      {unsupportedReason ? (
+                        <div
+                          className="flex h-8 w-full items-center rounded-md border border-dashed border-input px-2 text-xs text-muted-foreground"
+                          title={unsupportedReason}
+                          aria-label={`${surface.label}: ${source.label} не используется`}
+                        >
+                          не исп.
+                        </div>
+                      ) : (
+                        <select
+                          value={contextModeAt(config, path)}
+                          onChange={(event) => onChange(path, event.target.value)}
+                          className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                          aria-label={`${surface.label}: ${source.label}`}
+                        >
+                          {contextSourceModeOptions(source.id).map((mode) => (
+                            <option key={mode.id} value={mode.id}>
+                              {mode.label}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </td>
                   );
                 })}

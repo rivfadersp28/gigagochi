@@ -272,6 +272,19 @@ def test_context_sources_policy_disables_state_params(monkeypatch, tmp_path) -> 
     assert "Ты сейчас радостный" not in system_message
 
 
+def test_speech_runtime_rejects_state_params_auto() -> None:
+    runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))
+    runtime["contextSources"]["surfaces"]["chat"]["stateParams"] = "auto"
+
+    try:
+        speech_runtime.validate_speech_runtime_config(runtime)
+    except ValueError as exc:
+        assert "contextSources.surfaces.chat.stateParams" in str(exc)
+        assert "disabled, always" in str(exc)
+    else:
+        raise AssertionError("stateParams=auto must be rejected")
+
+
 def test_lite_prompt_does_not_include_character_voice_control() -> None:
     payload = lite_payload(
         pet={
@@ -451,6 +464,85 @@ def test_context_sources_policy_disables_chat_sources(monkeypatch, tmp_path) -> 
     assert "WORLD_CONTEXT" not in system_message
     assert len(messages) == 2
     assert messages[1]["content"] == "что ты ешь?"
+
+
+def test_chat_history_auto_uses_context_router(monkeypatch, tmp_path) -> None:
+    runtime_path = tmp_path / "speech_runtime.json"
+    runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))
+    runtime["contextSources"]["surfaces"]["chat"]["chatHistory"] = "auto"
+    runtime_path.write_text(json.dumps(runtime, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(speech_runtime, "DATA_PATH", runtime_path)
+    speech_runtime.speech_runtime_config.cache_clear()
+
+    try:
+        client, completions = fake_lite_client(
+            SimpleNamespace(content="Я тут.", tool_calls=None),
+        )
+        response = generate_lite_pet_reply(
+            lite_payload(
+                message="привет",
+                history=[{"role": "pet", "text": "Я уже говорил про базальт."}],
+            ),
+            client=client,
+            model="gpt-5.5",
+            timeout=10,
+        )
+    finally:
+        speech_runtime.speech_runtime_config.cache_clear()
+
+    assert response.reply == "Я тут."
+    assert len(completions.calls) == 2
+    assert response.debug is not None
+    assert response.debug.contextRoutingDebug is not None
+    assert "includedSources" in response.debug.contextRoutingDebug
+    assert "chatHistory" not in response.debug.contextRoutingDebug["includedSources"]
+    final_messages = completions.calls[1]["messages"]
+    assert [message["role"] for message in final_messages] == ["system", "user"]
+    assert "Я уже говорил про базальт." not in json.dumps(
+        final_messages,
+        ensure_ascii=False,
+    )
+
+
+def test_visible_context_router_is_skipped_without_auto_sources(monkeypatch, tmp_path) -> None:
+    runtime_path = tmp_path / "speech_runtime.json"
+    runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))
+    runtime["contextSources"]["surfaces"]["chat"].update(
+        {
+            "characterProfile": "disabled",
+            "liteOverlay": "disabled",
+            "storyLibrary": "disabled",
+            "storyOverlay": "disabled",
+            "userMemory": "disabled",
+            "chatHistory": "disabled",
+            "recentReplies": "disabled",
+        }
+    )
+    runtime_path.write_text(json.dumps(runtime, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(speech_runtime, "DATA_PATH", runtime_path)
+    speech_runtime.speech_runtime_config.cache_clear()
+
+    try:
+        client, completions = fake_lite_client(
+            SimpleNamespace(content="Без лишнего контекста.", tool_calls=None),
+        )
+        response = generate_lite_pet_reply(
+            lite_payload(message="привет"),
+            client=client,
+            model="gpt-5.5",
+            timeout=10,
+        )
+    finally:
+        speech_runtime.speech_runtime_config.cache_clear()
+
+    assert response.reply == "Без лишнего контекста."
+    assert len(completions.calls) == 1
+    assert completions.calls[0]["messages"][0]["content"].startswith("Отвечай мне как")
+    assert response.debug is not None
+    assert response.debug.contextRoutingDebug is not None
+    assert response.debug.contextRoutingDebug["reason"] == "no_auto_context_sources"
+    assert response.debug.contextRoutingDebug["raw"]["skipped"] is True
+    assert response.debug.contextRoutingDebug["includedSources"] == ["stateParams"]
 
 
 def test_speech_runtime_config_controls_reply_and_extractor_prompts(
@@ -963,8 +1055,10 @@ def test_lite_story_library_extraction_returns_personal_patch() -> None:
         "story_library_extraction"
     )
     assert response.debug is not None
+    assert response.storyLibraryPatch is not None
     assert response.debug.storyLibraryPatch is not None
-    brick = response.debug.storyLibraryPatch["bricks"][0]
+    assert response.storyLibraryPatch == response.debug.storyLibraryPatch
+    brick = response.storyLibraryPatch["bricks"][0]
     assert brick["source"] == "pet_overlay"
     assert brick["pool"] == "creatures"
     assert brick["name"] == "стеклянный шуршун"

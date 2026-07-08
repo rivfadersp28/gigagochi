@@ -14,7 +14,15 @@ from app.services.openai_service import (
     get_chat_model,
     get_openai_client,
 )
+from app.services.pet_reply_engine.context_plan import (
+    CONTEXT_ROUTING_SOURCE_IDS,
+    ContextPlan,
+    ContextRoutingDecision,
+    build_context_plan,
+    router_sources_for_auto_modes,
+)
 from app.services.pet_reply_engine.speech_runtime import (
+    CONTEXT_SOURCE_KEYS,
     background_story_default_event_type,
     background_story_max_rag_chars,
     background_story_max_story_chars,
@@ -35,13 +43,7 @@ MAX_CHARACTER_DOSSIER_CHARS = 12000
 MAX_DOSSIER_LIST_ITEMS = 12
 BACKGROUND_STORY_POOL = "events"
 BACKGROUND_STORY_POOL_LABEL = "Фоновые события"
-BACKGROUND_ROUTING_SOURCE_IDS = (
-    "worldContext",
-    "characterProfile",
-    "userMemory",
-    "chatHistory",
-    "recentReplies",
-)
+BACKGROUND_ROUTING_SOURCE_IDS = CONTEXT_ROUTING_SOURCE_IDS
 BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -247,10 +249,16 @@ def _story_overlay_briefs(extensions: dict[str, Any]) -> list[dict[str, str]]:
     return result
 
 
-def _global_story_briefs(*, pet: LocalPetChatContext) -> list[dict[str, str]]:
-    query = _compact_spaces(" ".join([pet.name or "", pet.description, pet.stage, pet.mood]))
+def _global_story_briefs(
+    *,
+    pet: LocalPetChatContext,
+    query: str | None = None,
+) -> list[dict[str, str]]:
+    query_text = _compact_spaces(
+        query or " ".join([pet.name or "", pet.description, pet.stage, pet.mood])
+    )
     result = search_story_library(
-        query=query,
+        query=query_text,
         pool_hints=[],
         limit=5,
         character_bible=pet.characterBible,
@@ -328,46 +336,23 @@ def _state_params_brief(pet: LocalPetChatContext) -> dict[str, Any]:
     }
 
 
-def _background_auto_sources() -> set[str]:
-    sources = {
-        "characterProfile",
-        "stateParams",
-        "liteOverlay",
-        "storyLibrary",
-        "storyOverlay",
-        "userMemory",
-        "chatHistory",
-        "recentReplies",
-    }
+def _background_context_modes() -> dict[str, str]:
     return {
-        source
-        for source in sources
-        if context_source_mode("backgroundStory", source) == "auto"
+        source: context_source_mode("backgroundStory", source)
+        for source in CONTEXT_SOURCE_KEYS
     }
 
 
-def _background_router_source(source: str) -> str | None:
-    if source in {"characterProfile", "liteOverlay"}:
-        return "characterProfile"
-    if source in {"storyLibrary", "storyOverlay"}:
-        return "worldContext"
-    if source == "userMemory":
-        return "userMemory"
-    if source == "chatHistory":
-        return "chatHistory"
-    if source == "recentReplies":
-        return "recentReplies"
-    return None
-
-
-def _background_source_enabled(source: str, routing: dict[str, bool] | None) -> bool:
-    router_source = _background_router_source(source)
-    router_enabled = routing.get(router_source) if routing and router_source else None
-    return context_source_enabled(
-        "backgroundStory",
-        source,
-        router_enabled=router_enabled,
-        auto_default=source == "stateParams",
+def _background_context_plan_from_routing(
+    *,
+    modes: dict[str, str] | None = None,
+    routing: ContextRoutingDecision | None,
+) -> ContextPlan:
+    return build_context_plan(
+        surface="backgroundStory",
+        modes=modes or _background_context_modes(),
+        routing=routing,
+        source_enabled=context_source_enabled,
     )
 
 
@@ -401,22 +386,35 @@ def _background_routing_payload(
     }
 
 
-def _parse_background_routing_payload(value: str) -> dict[str, bool]:
+def _parse_background_routing_payload(value: str) -> ContextRoutingDecision:
     parsed = _json_record_from_text(value)
     sources = parsed.get("sources") if _is_record(parsed.get("sources")) else {}
-    result: dict[str, bool] = {}
+    enabled: set[str] = set()
+    queries: dict[str, str] = {}
     for source in BACKGROUND_ROUTING_SOURCE_IDS:
         item = sources.get(source)
+        source_enabled = False
+        query = ""
         if isinstance(item, bool):
-            result[source] = item
+            source_enabled = item
         elif _is_record(item):
-            result[source] = bool(item.get("enabled"))
-        else:
-            result[source] = False
-    return result
+            source_enabled = bool(item.get("enabled"))
+            query = _text_value(item.get("query"), limit=500)
+        if source_enabled:
+            enabled.add(source)
+        if query:
+            queries[source] = query
+    reason = parsed.get("reason")
+    return ContextRoutingDecision(
+        surface="backgroundStory",
+        enabled_sources=frozenset(enabled),
+        queries=queries,
+        reason=_text_value(reason) if isinstance(reason, str) else "",
+        raw=parsed or {"parseError": True, "raw": value[:1000]},
+    )
 
 
-def _route_background_story_sources(
+def _plan_background_story_context(
     *,
     pet: LocalPetChatContext,
     memory_context: LocalPetMemoryContext | None,
@@ -427,9 +425,20 @@ def _route_background_story_sources(
     client: Any,
     model: str,
     timeout: float,
-) -> tuple[dict[str, bool], dict[str, Any] | None]:
-    if not _background_auto_sources():
-        return {}, None
+) -> tuple[ContextPlan, dict[str, Any] | None]:
+    modes = _background_context_modes()
+    if not router_sources_for_auto_modes(modes):
+        return (
+            _background_context_plan_from_routing(
+                modes=modes,
+                routing=ContextRoutingDecision(
+                    surface="backgroundStory",
+                    reason="no_auto_context_sources",
+                    raw={"skipped": True, "sourceModes": modes},
+                ),
+            ),
+            None,
+        )
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -464,7 +473,12 @@ def _route_background_story_sources(
     completion = client.chat.completions.create(**request_kwargs)
     log_chat_completion_response("background_story/context_routing", completion)
     return (
-        _parse_background_routing_payload(completion.choices[0].message.content or "{}"),
+        _background_context_plan_from_routing(
+            modes=modes,
+            routing=_parse_background_routing_payload(
+                completion.choices[0].message.content or "{}"
+            ),
+        ),
         prompt_debug,
     )
 
@@ -477,13 +491,25 @@ def character_dossier_for_background_story(
     recent_replies: list[str] | None = None,
     now_iso: str | None = None,
     timezone: str | None = None,
+    context_plan: ContextPlan | None = None,
     source_flags: dict[str, bool] | None = None,
     include_story_library: bool | None = None,
+    story_library_query: str | None = None,
 ) -> str:
     bible = pet.characterBible if _is_record(pet.characterBible) else {}
     extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
     lore = bible.get("lore") if _is_record(bible.get("lore")) else {}
-    sources = source_flags if source_flags is not None else background_story_source_flags()
+    if context_plan is not None:
+        sources = {
+            source: context_plan.includes(source)
+            for source in CONTEXT_SOURCE_KEYS
+        }
+        if include_story_library is None:
+            include_story_library = context_plan.includes("storyLibrary")
+        if story_library_query is None:
+            story_library_query = context_plan.query("worldContext")
+    else:
+        sources = source_flags if source_flags is not None else background_story_source_flags()
 
     def enabled(source: str) -> bool:
         return sources.get(source, True)
@@ -567,7 +593,10 @@ def character_dossier_for_background_story(
             auto_default=False,
         )
     if include_story_library:
-        dossier["globalStoryBricks"] = _global_story_briefs(pet=pet)
+        dossier["globalStoryBricks"] = _global_story_briefs(
+            pet=pet,
+            query=story_library_query,
+        )
     memory = _memory_brief(memory_context) if enabled("userMemory") else None
     if memory:
         dossier["userMemory"] = memory
@@ -717,7 +746,7 @@ def generate_background_story(
     model = model or get_chat_model(settings)
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
-    routing, routing_debug = _route_background_story_sources(
+    context_plan, routing_debug = _plan_background_story_context(
         pet=pet,
         memory_context=memory_context,
         history=history,
@@ -728,16 +757,6 @@ def generate_background_story(
         model=model,
         timeout=timeout,
     )
-    source_flags = {
-        "characterProfile": _background_source_enabled("characterProfile", routing),
-        "stateParams": _background_source_enabled("stateParams", routing),
-        "liteOverlay": _background_source_enabled("liteOverlay", routing),
-        "storyOverlay": _background_source_enabled("storyOverlay", routing),
-        "userMemory": _background_source_enabled("userMemory", routing),
-        "chatHistory": _background_source_enabled("chatHistory", routing),
-        "recentReplies": _background_source_enabled("recentReplies", routing),
-    }
-    include_story_library = _background_source_enabled("storyLibrary", routing)
     character = character_dossier_for_background_story(
         pet=pet,
         memory_context=memory_context,
@@ -745,8 +764,7 @@ def generate_background_story(
         recent_replies=recent_replies,
         now_iso=now_iso,
         timezone=timezone,
-        source_flags=source_flags,
-        include_story_library=include_story_library,
+        context_plan=context_plan,
     )
     request_kwargs: dict[str, Any] = {
         "model": model,

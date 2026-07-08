@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -37,6 +38,13 @@ from app.services.pet_reply_engine.age_message_examples import (
     categories_for_reply,
     phrases_for_categories,
 )
+from app.services.pet_reply_engine.context_plan import (
+    CONTEXT_ROUTING_SOURCE_IDS,
+    ContextPlan,
+    ContextRoutingDecision,
+    build_context_plan,
+    router_sources_for_auto_modes,
+)
 from app.services.pet_reply_engine.models import (
     PetPersonality,
     PetRecentMessage,
@@ -71,6 +79,8 @@ from app.services.prompt_debug import (
     log_chat_completion_response,
 )
 from app.services.story_library import story_library_patch_for_new_brick
+
+logger = logging.getLogger(__name__)
 
 MAX_LITE_TOOL_ROUNDS = 3
 MAX_LITE_BABY_EXAMPLES = 8
@@ -130,32 +140,6 @@ class PhrasePlan:
             self.persona_contract,
         ]
         return "\n\n".join(section for section in sections if section)
-
-
-CONTEXT_SOURCE_IDS = (
-    "worldContext",
-    "characterProfile",
-    "userMemory",
-    "chatHistory",
-    "recentReplies",
-)
-
-
-@dataclass(frozen=True)
-class ContextRoutingDecision:
-    surface: PhraseSurface
-    enabled_sources: frozenset[str] = frozenset()
-    queries: dict[str, str] = field(default_factory=dict)
-    reason: str = ""
-    raw: dict[str, Any] | None = None
-
-    def enabled(self, source: str, *, default: bool = False) -> bool:
-        if source not in CONTEXT_SOURCE_IDS:
-            return default
-        return source in self.enabled_sources
-
-    def query(self, source: str) -> str:
-        return self.queries.get(source, "")
 
 
 STORY_LIBRARY_QUERY_PATTERN = re.compile(
@@ -360,9 +344,9 @@ CONTEXT_ROUTING_SCHEMA: dict[str, Any] = {
                     },
                     "required": ["enabled", "query"],
                 }
-                for source in CONTEXT_SOURCE_IDS
+                for source in CONTEXT_ROUTING_SOURCE_IDS
             },
-            "required": list(CONTEXT_SOURCE_IDS),
+            "required": list(CONTEXT_ROUTING_SOURCE_IDS),
         },
         "reason": {"type": "string", "maxLength": 500},
     },
@@ -586,7 +570,7 @@ def _parse_context_routing_decision(
     raw_sources = parsed.get("sources") if _is_record(parsed.get("sources")) else {}
     enabled: set[str] = set()
     queries: dict[str, str] = {}
-    for source in CONTEXT_SOURCE_IDS:
+    for source in CONTEXT_ROUTING_SOURCE_IDS:
         value = raw_sources.get(source)
         source_enabled = False
         query = ""
@@ -660,14 +644,56 @@ def _surface_prompt_for_payload(surface: PhraseSurface, payload: Any) -> str:
     return surface_prompt(surface)
 
 
-def _route_contexts_for_visible_reply(
+def _visible_context_plan_auto_defaults(surface: PhraseSurface) -> frozenset[str]:
+    if surface == "chat":
+        return frozenset({"userMemory", "chatHistory"})
+    if surface in ("proactive", "push"):
+        return frozenset({"userMemory"})
+    if surface == "ambient":
+        return frozenset({"userMemory", "recentReplies"})
+    return frozenset()
+
+
+def _context_plan_from_routing(
+    *,
+    surface: PhraseSurface,
+    routing: ContextRoutingDecision | None,
+) -> ContextPlan:
+    return build_context_plan(
+        surface=surface,
+        modes=context_source_modes(surface),
+        routing=routing,
+        source_enabled=context_source_enabled,
+        auto_default_sources=_visible_context_plan_auto_defaults(surface),
+    )
+
+
+def _plan_contexts_for_visible_reply(
     *,
     surface: PhraseSurface,
     payload: Any,
     client: Any,
     model: str,
     timeout: float,
-) -> tuple[ContextRoutingDecision, dict[str, Any]]:
+) -> tuple[ContextPlan, dict[str, Any] | None]:
+    modes = context_source_modes(surface)
+    auto_router_sources = router_sources_for_auto_modes(modes)
+    if not auto_router_sources:
+        return (
+            build_context_plan(
+                surface=surface,
+                modes=modes,
+                routing=ContextRoutingDecision(
+                    surface=surface,
+                    reason="no_auto_context_sources",
+                    raw={"skipped": True, "sourceModes": modes},
+                ),
+                source_enabled=context_source_enabled,
+                auto_default_sources=_visible_context_plan_auto_defaults(surface),
+            ),
+            None,
+        )
+
     surface_prompt_text = _surface_prompt_for_payload(surface, payload)
     request_kwargs: dict[str, Any] = {
         "model": model,
@@ -700,28 +726,29 @@ def _route_contexts_for_visible_reply(
     completion = client.chat.completions.create(**request_kwargs)
     log_chat_completion_response("pet_reply/context_routing", completion)
     content = completion.choices[0].message.content or "{}"
-    return _parse_context_routing_decision(surface=surface, raw_content=content), prompt_debug
-
-
-def _routing_enabled(
-    routing: ContextRoutingDecision | None,
-    source: str,
-    *,
-    default: bool,
-) -> bool:
-    if routing is None:
-        return default
-    return routing.enabled(source)
+    routing = _parse_context_routing_decision(surface=surface, raw_content=content)
+    return (
+        build_context_plan(
+            surface=surface,
+            modes=modes,
+            routing=routing,
+            source_enabled=context_source_enabled,
+            auto_default_sources=_visible_context_plan_auto_defaults(surface),
+        ),
+        prompt_debug,
+    )
 
 
 def _source_enabled(
     surface: PhraseSurface,
     source: str,
-    routing: ContextRoutingDecision | None,
+    routing: ContextRoutingDecision | ContextPlan | None,
     *,
     router_source: str | None = None,
     auto_default: bool = False,
 ) -> bool:
+    if isinstance(routing, ContextPlan):
+        return routing.includes(source)
     router_enabled = None
     if router_source and routing is not None:
         router_enabled = routing.enabled(router_source)
@@ -736,7 +763,7 @@ def _source_enabled(
 def _character_context_block(
     pet: Any,
     surface: PhraseSurface,
-    routing: ContextRoutingDecision | None,
+    routing: ContextRoutingDecision | ContextPlan | None,
 ) -> str | None:
     include_profile = _source_enabled(
         surface,
@@ -771,7 +798,7 @@ def _story_context_for_routing(
     *,
     surface: PhraseSurface,
     payload: Any,
-    context_routing: ContextRoutingDecision,
+    context_routing: ContextRoutingDecision | ContextPlan,
 ) -> AssembledPetContext:
     context_mode = "proactive" if surface == "push" else surface
     include_story_library = _source_enabled(
@@ -920,7 +947,7 @@ def _baby_phrase_examples_for_prompt(payload: LocalChatRequest) -> str | None:
 
 
 def _lite_tools_for_routing(
-    context_routing: ContextRoutingDecision,
+    context_routing: ContextRoutingDecision | ContextPlan,
 ) -> list[dict[str, Any]] | None:
     tools = list(PET_STATE_TOOLS)
     if _source_enabled(
@@ -985,7 +1012,7 @@ def _phrase_plan_for_chat(
     payload: LocalChatRequest,
     *,
     context_bundle: AssembledPetContext,
-    context_routing: ContextRoutingDecision | None = None,
+    context_routing: ContextRoutingDecision | ContextPlan | None = None,
 ) -> PhrasePlan:
     reply_limit = payload.replyMaxChars or MAX_REPLY_CHARS
     return PhrasePlan(
@@ -1013,18 +1040,23 @@ def build_lite_chat_messages(
     payload: LocalChatRequest,
     *,
     context_bundle: AssembledPetContext | None = None,
-    context_routing: ContextRoutingDecision | None = None,
+    context_plan: ContextPlan | None = None,
+    context_routing: ContextRoutingDecision | ContextPlan | None = None,
 ) -> list[dict[str, str]]:
+    context_plan = context_plan or _context_plan_from_routing(
+        surface="chat",
+        routing=context_routing,
+    )
     if context_bundle is None:
         context_bundle = _story_context_for_routing(
             surface="chat",
             payload=payload,
-            context_routing=context_routing or ContextRoutingDecision(surface="chat"),
+            context_routing=context_plan,
         )
     plan = _phrase_plan_for_chat(
         payload,
         context_bundle=context_bundle,
-        context_routing=context_routing,
+        context_routing=context_plan,
     )
     system_content = plan.system_content()
     baby_examples = _baby_phrase_examples_for_prompt(payload)
@@ -1032,7 +1064,13 @@ def build_lite_chat_messages(
         system_content = f"{system_content}\n\n{baby_examples}"
     history_messages = (
         _history_messages(payload)
-        if context_source_enabled("chat", "chatHistory", auto_default=True)
+        if _source_enabled(
+            "chat",
+            "chatHistory",
+            context_plan,
+            router_source="chatHistory",
+            auto_default=True,
+        )
         else []
     )
 
@@ -1285,7 +1323,7 @@ def _read_character_json(
     arguments: dict[str, Any],
     overlay_patch: dict[str, Any] | None = None,
     *,
-    context_routing: ContextRoutingDecision | None = None,
+    context_routing: ContextRoutingDecision | ContextPlan | None = None,
     client: Any | None = None,
     model: str | None = None,
     timeout: float | None = None,
@@ -1548,7 +1586,7 @@ def _handle_tool_call(
     overlay_patch: dict[str, Any],
     pet_patch: dict[str, Any],
     *,
-    context_routing: ContextRoutingDecision,
+    context_routing: ContextRoutingDecision | ContextPlan,
     client: Any,
     model: str,
     timeout: float,
@@ -1724,7 +1762,7 @@ def generate_lite_pet_reply(
     model = model or get_chat_model(settings)
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
-    context_routing, context_routing_prompt_debug = _route_contexts_for_visible_reply(
+    context_plan, context_routing_prompt_debug = _plan_contexts_for_visible_reply(
         surface="chat",
         payload=payload,
         client=openai_client,
@@ -1734,18 +1772,20 @@ def generate_lite_pet_reply(
     context_bundle = _story_context_for_routing(
         surface="chat",
         payload=payload,
-        context_routing=context_routing,
+        context_routing=context_plan,
     )
     messages: list[dict[str, Any]] = build_lite_chat_messages(
         payload,
         context_bundle=context_bundle,
-        context_routing=context_routing,
+        context_plan=context_plan,
     )
-    tools = _lite_tools_for_routing(context_routing)
+    tools = _lite_tools_for_routing(context_plan)
     overlay_patch: dict[str, Any] = {}
     pet_patch: dict[str, Any] = {}
     tool_debug: list[dict[str, Any]] = []
-    prompt_debug: list[dict[str, Any]] = [context_routing_prompt_debug]
+    prompt_debug: list[dict[str, Any]] = [
+        item for item in (context_routing_prompt_debug,) if item is not None
+    ]
     reply = ""
     inner_thought: str | None = None
     face_hint: str | None = None
@@ -1784,7 +1824,7 @@ def generate_lite_pet_reply(
                 tool_call,
                 overlay_patch,
                 pet_patch,
-                context_routing=context_routing,
+                context_routing=context_plan,
                 client=openai_client,
                 model=model,
                 timeout=timeout,
@@ -1806,6 +1846,7 @@ def generate_lite_pet_reply(
                 prompt_debug=prompt_debug,
             )
         except Exception:
+            logger.exception("story_library_extraction failed")
             story_library_patch = None
 
     debug = LocalChatDebug(
@@ -1816,14 +1857,7 @@ def generate_lite_pet_reply(
         liteOverlayPatch=overlay_patch or None,
         storyLibraryPatch=story_library_patch,
         storyLibraryDebug=_story_context_debug(context_bundle),
-        contextRoutingDebug={
-            "surface": context_routing.surface,
-            "sourceModes": context_source_modes("chat"),
-            "enabledSources": sorted(context_routing.enabled_sources),
-            "queries": context_routing.queries,
-            "reason": context_routing.reason,
-            "raw": context_routing.raw,
-        },
+        contextRoutingDebug=context_plan.debug,
     )
     return LocalChatResponse(
         reply=reply,
@@ -1831,6 +1865,7 @@ def generate_lite_pet_reply(
         innerThought=inner_thought,
         faceHint=face_hint,
         petPatch=pet_patch or None,
+        storyLibraryPatch=story_library_patch,
         debug=debug,
     )
 
@@ -2172,14 +2207,19 @@ def build_proactive_messages(
     payload: LocalProactiveRequest,
     *,
     context_bundle: AssembledPetContext | None = None,
+    context_plan: ContextPlan | None = None,
     context_routing: ContextRoutingDecision | None = None,
 ) -> list[dict[str, str]]:
+    context_plan = context_plan or _context_plan_from_routing(
+        surface="proactive",
+        routing=context_routing,
+    )
     memory_block = (
         _memory_context_block(payload.memoryContext)
         if _source_enabled(
             "proactive",
             "userMemory",
-            context_routing,
+            context_plan,
             router_source="userMemory",
             auto_default=True,
         )
@@ -2189,7 +2229,7 @@ def build_proactive_messages(
         context_bundle = _story_context_for_routing(
             surface="proactive",
             payload=payload,
-            context_routing=context_routing or ContextRoutingDecision(surface="proactive"),
+            context_routing=context_plan,
         )
     reason = _reason_from_payload(payload)
     plan = PhrasePlan(
@@ -2203,7 +2243,7 @@ def build_proactive_messages(
         ),
         persona_contract=surface_prompt("proactive", {"reason": reason}),
         world_block=context_bundle.prompt_block or None,
-        character_block=_character_context_block(payload.pet, "proactive", context_routing),
+        character_block=_character_context_block(payload.pet, "proactive", context_plan),
         memory_block=memory_block,
     )
     return [
@@ -2218,14 +2258,19 @@ def build_push_messages(
     payload: LocalPushRequest,
     *,
     context_bundle: AssembledPetContext | None = None,
+    context_plan: ContextPlan | None = None,
     context_routing: ContextRoutingDecision | None = None,
 ) -> list[dict[str, str]]:
+    context_plan = context_plan or _context_plan_from_routing(
+        surface="push",
+        routing=context_routing,
+    )
     memory_block = (
         _memory_context_block(payload.memoryContext)
         if _source_enabled(
             "push",
             "userMemory",
-            context_routing,
+            context_plan,
             router_source="userMemory",
             auto_default=True,
         )
@@ -2235,7 +2280,7 @@ def build_push_messages(
         context_bundle = _story_context_for_routing(
             surface="push",
             payload=payload,
-            context_routing=context_routing or ContextRoutingDecision(surface="push"),
+            context_routing=context_plan,
         )
     plan = PhrasePlan(
         surface="push",
@@ -2248,7 +2293,7 @@ def build_push_messages(
         ),
         persona_contract=surface_prompt("push", {"reason": _reason_from_payload(payload)}),
         world_block=context_bundle.prompt_block or None,
-        character_block=_character_context_block(payload.pet, "push", context_routing),
+        character_block=_character_context_block(payload.pet, "push", context_plan),
         memory_block=memory_block,
     )
     return [
@@ -2271,18 +2316,19 @@ def generate_proactive_pet_message(
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
     prompt_debug: list[dict[str, Any]] = []
-    context_routing, context_routing_prompt_debug = _route_contexts_for_visible_reply(
+    context_plan, context_routing_prompt_debug = _plan_contexts_for_visible_reply(
         surface="proactive",
         payload=payload,
         client=openai_client,
         model=model,
         timeout=timeout,
     )
-    prompt_debug.append(context_routing_prompt_debug)
+    if context_routing_prompt_debug is not None:
+        prompt_debug.append(context_routing_prompt_debug)
     context_bundle = _story_context_for_routing(
         surface="proactive",
         payload=payload,
-        context_routing=context_routing,
+        context_routing=context_plan,
     )
 
     request_kwargs: dict[str, Any] = {
@@ -2290,7 +2336,7 @@ def generate_proactive_pet_message(
         "messages": build_proactive_messages(
             payload,
             context_bundle=context_bundle,
-            context_routing=context_routing,
+            context_plan=context_plan,
         ),
         "timeout": timeout,
         **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
@@ -2320,14 +2366,7 @@ def generate_proactive_pet_message(
                 ),
             },
             storyLibraryDebug=_story_context_debug(context_bundle),
-            contextRoutingDebug={
-                "surface": context_routing.surface,
-                "sourceModes": context_source_modes("proactive"),
-                "enabledSources": sorted(context_routing.enabled_sources),
-                "queries": context_routing.queries,
-                "reason": context_routing.reason,
-                "raw": context_routing.raw,
-            },
+            contextRoutingDebug=context_plan.debug,
         )
     return LocalProactiveResponse(
         reply=reply,
@@ -2350,18 +2389,19 @@ def generate_push_pet_message(
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
     prompt_debug: list[dict[str, Any]] = []
-    context_routing, context_routing_prompt_debug = _route_contexts_for_visible_reply(
+    context_plan, context_routing_prompt_debug = _plan_contexts_for_visible_reply(
         surface="push",
         payload=payload,
         client=openai_client,
         model=model,
         timeout=timeout,
     )
-    prompt_debug.append(context_routing_prompt_debug)
+    if context_routing_prompt_debug is not None:
+        prompt_debug.append(context_routing_prompt_debug)
     context_bundle = _story_context_for_routing(
         surface="push",
         payload=payload,
-        context_routing=context_routing,
+        context_routing=context_plan,
     )
 
     request_kwargs: dict[str, Any] = {
@@ -2369,7 +2409,7 @@ def generate_push_pet_message(
         "messages": build_push_messages(
             payload,
             context_bundle=context_bundle,
-            context_routing=context_routing,
+            context_plan=context_plan,
         ),
         "timeout": timeout,
         **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
@@ -2388,14 +2428,7 @@ def generate_push_pet_message(
             promptDebug=prompt_debug,
             memoryDebug={"pushReason": _reason_from_payload(payload)},
             storyLibraryDebug=_story_context_debug(context_bundle),
-            contextRoutingDebug={
-                "surface": context_routing.surface,
-                "sourceModes": context_source_modes("push"),
-                "enabledSources": sorted(context_routing.enabled_sources),
-                "queries": context_routing.queries,
-                "reason": context_routing.reason,
-                "raw": context_routing.raw,
-            },
+            contextRoutingDebug=context_plan.debug,
         )
     return LocalProactiveResponse(
         reply=clamp_reply_text(reply, 180),
@@ -2410,15 +2443,20 @@ def build_ambient_messages(
     payload: LocalAmbientRequest,
     *,
     context_bundle: AssembledPetContext | None = None,
+    context_plan: ContextPlan | None = None,
     context_routing: ContextRoutingDecision | None = None,
 ) -> list[dict[str, str]]:
+    context_plan = context_plan or _context_plan_from_routing(
+        surface="ambient",
+        routing=context_routing,
+    )
     reply_limit = payload.replyMaxChars or 160
     memory_block = (
         _ambient_memory_context_block(payload.memoryContext)
         if _source_enabled(
             "ambient",
             "userMemory",
-            context_routing,
+            context_plan,
             router_source="userMemory",
             auto_default=True,
         )
@@ -2428,14 +2466,14 @@ def build_ambient_messages(
         context_bundle = _story_context_for_routing(
             surface="ambient",
             payload=payload,
-            context_routing=context_routing or ContextRoutingDecision(surface="ambient"),
+            context_routing=context_plan,
         )
     recent_ambient_replies = (
         _recent_ambient_replies_text(payload.recentAmbientReplies)
         if _source_enabled(
             "ambient",
             "recentReplies",
-            context_routing,
+            context_plan,
             router_source="recentReplies",
             auto_default=True,
         )
@@ -2452,7 +2490,7 @@ def build_ambient_messages(
         ),
         persona_contract=surface_prompt("ambient", {"recent_replies": recent_ambient_replies}),
         world_block=context_bundle.prompt_block or None,
-        character_block=_character_context_block(payload.pet, "ambient", context_routing),
+        character_block=_character_context_block(payload.pet, "ambient", context_plan),
         memory_block=memory_block,
     )
     return [{"role": "system", "content": plan.system_content()}]
@@ -2470,18 +2508,19 @@ def generate_ambient_pet_message(
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
     prompt_debug: list[dict[str, Any]] = []
-    context_routing, context_routing_prompt_debug = _route_contexts_for_visible_reply(
+    context_plan, context_routing_prompt_debug = _plan_contexts_for_visible_reply(
         surface="ambient",
         payload=payload,
         client=openai_client,
         model=model,
         timeout=timeout,
     )
-    prompt_debug.append(context_routing_prompt_debug)
+    if context_routing_prompt_debug is not None:
+        prompt_debug.append(context_routing_prompt_debug)
     context_bundle = _story_context_for_routing(
         surface="ambient",
         payload=payload,
-        context_routing=context_routing,
+        context_routing=context_plan,
     )
 
     request_kwargs: dict[str, Any] = {
@@ -2489,7 +2528,7 @@ def generate_ambient_pet_message(
         "messages": build_ambient_messages(
             payload,
             context_bundle=context_bundle,
-            context_routing=context_routing,
+            context_plan=context_plan,
         ),
         "timeout": timeout,
         **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
@@ -2512,14 +2551,7 @@ def generate_ambient_pet_message(
             validationFlags=[],
             promptDebug=prompt_debug,
             storyLibraryDebug=_story_context_debug(context_bundle),
-            contextRoutingDebug={
-                "surface": context_routing.surface,
-                "sourceModes": context_source_modes("ambient"),
-                "enabledSources": sorted(context_routing.enabled_sources),
-                "queries": context_routing.queries,
-                "reason": context_routing.reason,
-                "raw": context_routing.raw,
-            },
+            contextRoutingDebug=context_plan.debug,
         )
     return LocalChatResponse(
         reply=clamp_reply_text(reply, payload.replyMaxChars or 160),

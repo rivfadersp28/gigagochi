@@ -79,7 +79,7 @@
       },
       "backgroundStory": {
         "characterProfile": "auto",
-        "stateParams": "auto",
+        "stateParams": "always",
         "liteOverlay": "auto",
         "storyLibrary": "auto",
         "storyOverlay": "auto",

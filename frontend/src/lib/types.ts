@@ -94,6 +94,7 @@ export type LocalChatResponse = {
   innerThought?: string;
   faceHint?: "happy" | "excited" | "curious" | "content" | "grumpy" | "sleepy";
   petPatch?: LocalChatPetPatch;
+  storyLibraryPatch?: Record<string, unknown>;
   debug?: {
     usedFallback?: boolean;
     validationFlags?: string[];

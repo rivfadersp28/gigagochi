@@ -4,11 +4,17 @@
 
 - Backend phrase generation lives in `backend/app/services/pet_reply_engine/lite_generator.py`.
 - Chat, proactive and ambient replies are assembled through the same `PhrasePlan` structure: identity, persona contract, optional world context, memory and surface-specific rules.
+- Context source resolution is centralized in
+  `backend/app/services/pet_reply_engine/context_plan.py`. `ContextPlan` stores
+  the surface, runtime source modes, router decision, final included source ids,
+  router queries, and debug payload. Visible replies and `/story` both build this
+  plan before prompt assembly.
 - Before visible chat/proactive/ambient generation, `lite_generator.py` calls a
-  `contextRouting` LLM gate configured in `backend/data/speech_runtime.json`.
-  The gate returns enabled router sources for `worldContext`,
-  `characterProfile`, `userMemory`, and `recentReplies`; the final inclusion is
-  gated by the shared `contextSources` matrix.
+  `contextRouting` LLM gate configured in `backend/data/speech_runtime.json`
+  only when at least one router-controlled source is set to `auto`. The gate
+  returns enabled router sources for `worldContext`, `characterProfile`,
+  `userMemory`, `chatHistory`, and `recentReplies`; `ContextPlan` then resolves
+  final inclusion through the shared `contextSources` matrix.
 - `speech_runtime.contextSources.surfaces` is the unified source policy for
   `chat`, `ambient`, `proactive`, `push`, and `backgroundStory`. Each source is
   `disabled`, `auto`, or `always`. The shared source ids are
@@ -18,7 +24,9 @@
   hunger/happiness/energy are converted to admin-configured semantic labels in
   `stateLayer.stateParamLabels`; thresholds and optional usage rule live in
   `stateLayer`. Age/stage wording remains in `stateLayer.ageRoleHints`; the
-  per-surface age flag is still under `stateLayer.surfaces`.
+  per-surface age flag is still under `stateLayer.surfaces`. It has no router
+  source, so runtime validation and the admin UI allow only off/on modes for
+  `stateParams`.
 - `backend/app/services/context_assembler.py` no longer decides whether story
   context is needed from keywords. It only retrieves selected `WORLD_CONTEXT`
   bricks when `contextRouting.worldContext` enables it, then returns prompt text
@@ -33,12 +41,15 @@
   the same per-pet story overlay instead of a separate events store. The
   backend stores generated event bricks under
   `characterBible.extensions.story_library_overlay.bricks` with pool `events`,
-  returns a `storyLibraryPatch` from `/api/push/snapshot`, and the frontend
-  applies that patch into localStorage so normal chat RAG can recall the event.
-- The `/story` character dossier uses the same `contextSources` matrix as
-  visible replies for optional sources: character profile, semantic state
-  params, lite overlay, global story library, per-pet story overlay and user
-  memory. It does not pass raw numeric `stats`.
+  returns a top-level `storyLibraryPatch` from chat responses and
+  `/api/push/snapshot`, and the frontend applies that patch into localStorage so
+  normal chat RAG can recall the event. `/story` also preserves the
+  `contextRouting.worldContext.query` when selecting global story bricks for
+  the background-story dossier.
+- The `/story` character dossier uses the same `ContextPlan` / `contextSources`
+  matrix as visible replies for optional sources: character profile, semantic
+  state params, lite overlay, global story library, per-pet story overlay, user
+  memory, chat history and recent replies. It does not pass raw numeric `stats`.
 - Runtime speech regulator text that used to be hardcoded in the reply engine now lives in
   `backend/data/speech_runtime.json` and is read by
   `backend/app/services/pet_reply_engine/speech_runtime.py`. It covers persona
@@ -103,3 +114,7 @@
 - The `/admin/speech` UI edits local managed data and shows separate `Save` and
   `Deploy` actions. Local diffs from the server are a normal `local_dirty` state,
   not an error; deploy is the explicit production apply step.
+- The "Копилки" matrix hides source/surface cells that have no runtime path:
+  `chatHistory` is meaningful only for Chat and Story, while `recentReplies` is
+  meaningful only for Idle and Story. `Параметры` (`stateParams`) validates and
+  displays only `выкл` / `вкл`, because `auto` has no runtime routing signal.

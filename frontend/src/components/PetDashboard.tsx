@@ -400,7 +400,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         localPet.applyMoodHint(
           response.moodHint,
           response.debug?.liteOverlayPatch,
-          response.debug?.storyLibraryPatch,
+          response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
         );
       })
       .catch(() => {
@@ -792,7 +792,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       localPet.applyMoodHint(
         response.moodHint,
         response.debug?.liteOverlayPatch,
-        response.debug?.storyLibraryPatch,
+        response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
       );
       if (response.petPatch?.name) {
         localPet.updateName(response.petPatch.name);
@@ -914,7 +914,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           localPet.applyMoodHint(
             response.moodHint,
             response.debug?.liteOverlayPatch,
-            response.debug?.storyLibraryPatch,
+            response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
           );
         })
         .catch(() => undefined);

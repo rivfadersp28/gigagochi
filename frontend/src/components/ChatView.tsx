@@ -147,7 +147,7 @@ export function ChatView({ petId }: ChatViewProps) {
         localPet.applyMoodHint(
           response.moodHint,
           response.debug?.liteOverlayPatch,
-          response.debug?.storyLibraryPatch,
+          response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
         );
       })
       .catch(() => undefined);
@@ -186,7 +186,7 @@ export function ChatView({ petId }: ChatViewProps) {
       localPet.applyMoodHint(
         response.moodHint,
         response.debug?.liteOverlayPatch,
-        response.debug?.storyLibraryPatch,
+        response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
       );
       if (response.petPatch?.name) {
         localPet.updateName(response.petPatch.name);

@@ -167,6 +167,7 @@ class LocalChatResponse(BaseModel):
     innerThought: str | None = Field(default=None, max_length=80)
     faceHint: FaceHintValue | None = None
     petPatch: LocalPetPatch | None = None
+    storyLibraryPatch: dict[str, Any] | None = None
     debug: LocalChatDebug | None = None
 
 
