@@ -278,6 +278,8 @@ def image_generation_prompt_snapshot(
         "model": request_kwargs.get("model"),
         "prompt": request_kwargs.get("prompt"),
         "size": request_kwargs.get("size"),
+        "resolution": request_kwargs.get("resolution"),
+        "aspect_ratio": request_kwargs.get("aspect_ratio"),
         "quality": request_kwargs.get("quality"),
         "n": request_kwargs.get("n"),
         "output_format": request_kwargs.get("output_format"),

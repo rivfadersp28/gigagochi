@@ -56,6 +56,35 @@ def test_story_command_sends_generated_image_as_photo(monkeypatch) -> None:
     assert "text" not in sent
 
 
+def test_send_photo_uses_detected_jpeg_mime(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        bot,
+        "get_settings",
+        lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
+    )
+
+    class FakeClient:
+        def post(self, url, **kwargs):
+            captured["url"] = url
+            captured.update(kwargs)
+            return SimpleNamespace(is_success=True)
+
+    bot.send_photo(
+        FakeClient(),
+        123,
+        b"\xff\xd8\xff\xe0jpeg-bytes",
+        "caption",
+        {"inline_keyboard": []},
+    )
+
+    assert captured["files"]["photo"] == (
+        "story.jpg",
+        b"\xff\xd8\xff\xe0jpeg-bytes",
+        "image/jpeg",
+    )
+
+
 def test_story_command_falls_back_to_message_without_image(monkeypatch) -> None:
     sent: dict[str, object] = {}
     monkeypatch.setattr(

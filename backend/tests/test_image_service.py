@@ -252,7 +252,8 @@ def test_generate_image_bytes_uses_openrouter_image_endpoint(monkeypatch) -> Non
     assert captured["json"] == {
         "model": "bytedance-seed/seedream-4.5",
         "prompt": "sprite prompt",
-        "size": "1536x1152",
+        "resolution": "4K",
+        "aspect_ratio": "4:3",
         "quality": "medium",
         "n": 1,
         "output_format": "png",
@@ -356,8 +357,15 @@ def test_generate_openrouter_image_bytes_uses_openrouter_with_openai_provider(
     assert result == b"story-image"
     assert captured["url"] == "https://openrouter.ai/api/v1/images"
     assert captured["headers"]["Authorization"] == "Bearer sk-or-test"
-    assert captured["json"]["model"] == "bytedance-seed/seedream-4.5"
-    assert captured["json"]["prompt"] == "story prompt"
+    assert captured["json"] == {
+        "model": "bytedance-seed/seedream-4.5",
+        "prompt": "story prompt",
+        "resolution": "4K",
+        "aspect_ratio": "4:3",
+        "quality": "medium",
+        "n": 1,
+        "output_format": "png",
+    }
 
 
 def test_generate_pet_asset_set_generates_only_three_teen_skins(monkeypatch, tmp_path) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import math
 import re
 import subprocess
 import uuid
@@ -91,6 +92,27 @@ WEAK_LIFE_LESSON_PATTERN = re.compile(
 )
 
 CHARACTER_BIBLE_SCHEMA: dict[str, Any] = character_bible_schema()
+OPENROUTER_SEEDREAM_IMAGE_RESOLUTION = "4K"
+OPENROUTER_IMAGE_ASPECT_RATIOS = {
+    "1:1",
+    "1:2",
+    "2:1",
+    "2:3",
+    "3:2",
+    "3:4",
+    "4:3",
+    "4:5",
+    "5:4",
+    "9:16",
+    "16:9",
+    "9:19.5",
+    "19.5:9",
+    "9:20",
+    "20:9",
+    "9:21",
+    "21:9",
+    "auto",
+}
 
 
 def _collect_character_bible_text(value: Any) -> str:
@@ -770,6 +792,53 @@ def build_image_generate_kwargs(
     return kwargs
 
 
+def _is_seedream_image_model(model: Any) -> bool:
+    return "seedream" in str(model or "").lower()
+
+
+def _aspect_ratio_from_size(size: Any) -> str | None:
+    match = re.fullmatch(r"\s*(\d+)x(\d+)\s*", str(size or ""))
+    if not match:
+        return None
+    width = int(match.group(1))
+    height = int(match.group(2))
+    if width <= 0 or height <= 0:
+        return None
+    divisor = math.gcd(width, height)
+    ratio = f"{width // divisor}:{height // divisor}"
+    return ratio if ratio in OPENROUTER_IMAGE_ASPECT_RATIOS else None
+
+
+def _openrouter_image_generate_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(kwargs)
+    if not _is_seedream_image_model(normalized.get("model")):
+        return normalized
+
+    size = normalized.pop("size", None)
+    normalized["resolution"] = OPENROUTER_SEEDREAM_IMAGE_RESOLUTION
+    normalized["aspect_ratio"] = _aspect_ratio_from_size(size) or "auto"
+    return normalized
+
+
+def build_openrouter_image_generate_kwargs(
+    settings: Any,
+    prompt: str,
+    *,
+    model: str | None = None,
+    size: str | None = None,
+    input_references: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return _openrouter_image_generate_kwargs(
+        build_image_generate_kwargs(
+            settings,
+            prompt,
+            model=model or get_openrouter_image_model(settings),
+            size=size,
+            input_references=input_references,
+        )
+    )
+
+
 def _image_result_bytes(first: Any) -> bytes:
     b64_json = (
         first.get("b64_json") if isinstance(first, dict) else getattr(first, "b64_json", None)
@@ -795,7 +864,7 @@ def _generate_openrouter_image_bytes(
     size: str | None = None,
     input_references: list[dict[str, Any]] | None = None,
 ) -> bytes:
-    kwargs = build_image_generate_kwargs(
+    kwargs = build_openrouter_image_generate_kwargs(
         settings,
         prompt,
         model=model or get_openrouter_image_model(settings),
@@ -816,7 +885,17 @@ def _generate_openrouter_image_bytes(
         json=request_body,
         timeout=settings.openai_image_timeout_seconds,
     )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError:
+        logger.error(
+            "openrouter_image_generation failed label=%s model=%s status=%s response=%s",
+            label,
+            request_body.get("model"),
+            response.status_code,
+            response.text[:2000],
+        )
+        raise
     response_payload = response.json()
     log_image_generation_response(
         label,
@@ -839,7 +918,7 @@ def generate_image_bytes(
 ) -> bytes:
     settings = get_settings()
     if is_openrouter_provider(settings):
-        openrouter_kwargs = build_image_generate_kwargs(
+        openrouter_kwargs = build_openrouter_image_generate_kwargs(
             settings,
             prompt,
             model=get_openrouter_image_model(settings),
@@ -874,7 +953,7 @@ def generate_openrouter_image_bytes(
 ) -> bytes:
     settings = get_settings()
     model = get_openrouter_image_model(settings)
-    openrouter_kwargs = build_image_generate_kwargs(
+    openrouter_kwargs = build_openrouter_image_generate_kwargs(
         settings,
         prompt,
         model=model,

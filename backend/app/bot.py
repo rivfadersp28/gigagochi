@@ -85,6 +85,7 @@ def send_photo(
     if not settings.bot_token:
         raise RuntimeError("BOT_TOKEN is not configured")
 
+    filename, mime_type = _photo_file_info(photo)
     method = "sendPhoto"
     response = client.post(
         telegram_api_url(method, settings.bot_token),
@@ -93,11 +94,21 @@ def send_photo(
             "caption": caption[:TELEGRAM_PHOTO_CAPTION_LIMIT].rstrip(),
             "reply_markup": json.dumps(reply_markup, ensure_ascii=False),
         },
-        files={"photo": ("story.png", photo, "image/png")},
+        files={"photo": (filename, photo, mime_type)},
         timeout=30,
     )
     if not response.is_success:
         raise TelegramAPIError(method, response)
+
+
+def _photo_file_info(photo: bytes) -> tuple[str, str]:
+    if photo.startswith(b"\xff\xd8\xff"):
+        return "story.jpg", "image/jpeg"
+    if photo.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "story.png", "image/png"
+    if photo.startswith(b"RIFF") and photo[8:12] == b"WEBP":
+        return "story.webp", "image/webp"
+    return "story.bin", "application/octet-stream"
 
 
 def _message_command(text: str) -> str:
