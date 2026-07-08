@@ -266,14 +266,14 @@ def dialogue_influence_manifest() -> dict[str, Any]:
             },
             {
                 "id": "state_layer",
-                "label": "Возраст, настроение, голод, энергия",
+                "label": "Возраст, настроение, голод, здоровье",
                 "surfaces": surfaces,
                 "source": "speech_runtime",
                 "editable": True,
                 "fileId": "speech_runtime",
                 "configPath": "stateLayer",
                 "summary": (
-                    "Age hints, пороги и словесные подписи голода/счастья/энергии, "
+                    "Age hints, пороги и словесные подписи голода/настроения/здоровья, "
                     "а также короткие state-модификаторы."
                 ),
             },

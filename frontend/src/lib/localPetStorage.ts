@@ -4,6 +4,9 @@ import type {
   LocalPetAssetSet,
   LocalPetState,
   LocalPetStateV2,
+  PetStatKey,
+  PetStatsPatch,
+  PetStatTickMap,
   PetLifeStage,
   PetMood,
 } from "./types";
@@ -22,8 +25,14 @@ const MAX_STORY_LIBRARY_BRICKS = 80;
 const MAX_RECENT_STORY_EVENTS = 10;
 const MIN_STAT = 0;
 const MAX_STAT = 100;
-const STAT_FULL_DECAY_HOURS = 24;
+const STAT_FULL_DECAY_HOURS = 6;
 const STAT_DECAY_PER_HOUR = MAX_STAT / STAT_FULL_DECAY_HOURS;
+const STAT_KEYS = ["hunger", "happiness", "energy"] as const satisfies readonly PetStatKey[];
+const STAT_DECAY_PHASE_MS = {
+  hunger: 0,
+  happiness: 2 * 3_600_000,
+  energy: 4 * 3_600_000,
+} satisfies Record<PetStatKey, number>;
 const MOODS: PetMood[] = ["idle", "happy", "hungry", "sad"];
 const STAGES: PetLifeStage[] = ["baby", "teen", "adult"];
 const LITE_FACT_SPHERES = ["character", "appearance", "world", "relationship"] as const;
@@ -109,6 +118,32 @@ function normalizeStats(value: unknown): PetStats {
     happiness: clampStat(stats.happiness ?? 80),
     energy: clampStat(stats.energy ?? 80),
   };
+}
+
+function staggeredStatTicks(now = new Date()): PetStatTickMap {
+  return {
+    hunger: new Date(now.getTime() + STAT_DECAY_PHASE_MS.hunger).toISOString(),
+    happiness: new Date(now.getTime() + STAT_DECAY_PHASE_MS.happiness).toISOString(),
+    energy: new Date(now.getTime() + STAT_DECAY_PHASE_MS.energy).toISOString(),
+  };
+}
+
+function normalizeStatTickMap(value: unknown, fallbackIso: string): PetStatTickMap {
+  const ticks = isRecord(value) ? value : {};
+  return STAT_KEYS.reduce<PetStatTickMap>((result, key) => {
+    const tick = ticks[key];
+    result[key] = isIsoDate(tick) ? tick : fallbackIso;
+    return result;
+  }, {
+    hunger: fallbackIso,
+    happiness: fallbackIso,
+    energy: fallbackIso,
+  });
+}
+
+function legacyStatsTick(ticks: PetStatTickMap): string {
+  const timestamps = STAT_KEYS.map((key) => Date.parse(ticks[key])).filter((value) => !Number.isNaN(value));
+  return timestamps.length ? new Date(Math.min(...timestamps)).toISOString() : new Date().toISOString();
 }
 
 function normalizeAssetSet(value: unknown): LocalPetAssetSet | undefined {
@@ -480,6 +515,46 @@ export function applyRecentStoryEventsPatch(
   };
 }
 
+export function applyStatsPatch(
+  state: LocalPetState,
+  patch: PetStatsPatch | undefined,
+): LocalPetState {
+  if (!patch || !isRecord(patch.stats)) {
+    return state;
+  }
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const stats = { ...state.stats };
+  const lastStatTickAt = normalizeStatTickMap(state.lastStatTickAt, state.lastStatsTickAt);
+  const nextTicks = { ...lastStatTickAt };
+  let changed = false;
+
+  for (const key of STAT_KEYS) {
+    const value = patch.stats[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const patchedTick = patch.lastStatTickAt?.[key];
+      stats[key] = clampStat(value);
+      nextTicks[key] = isIsoDate(patchedTick) ? patchedTick : nowIso;
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return state;
+  }
+
+  return {
+    ...state,
+    updatedAt: nowIso,
+    lastStatsTickAt: legacyStatsTick(nextTicks),
+    lastStatTickAt: nextTicks,
+    stage: calculatePetStage(state.createdAt, now),
+    mood: calculatePetMood(stats),
+    stats,
+  };
+}
+
 export function calculatePetStage(createdAt: string, now = new Date()): PetLifeStage {
   const createdTime = Date.parse(createdAt);
   if (Number.isNaN(createdTime)) {
@@ -521,6 +596,7 @@ function normalizePetState(value: unknown): LocalPetStateV2 | null {
   const createdAt = isIsoDate(value.createdAt) ? value.createdAt : now;
   const updatedAt = isIsoDate(value.updatedAt) ? value.updatedAt : createdAt;
   const lastStatsTickAt = isIsoDate(value.lastStatsTickAt) ? value.lastStatsTickAt : updatedAt;
+  const lastStatTickAt = normalizeStatTickMap(value.lastStatTickAt, lastStatsTickAt);
   const stats = normalizeStats(value.stats);
   const assetSet = normalizeAssetSet(value.assetSet);
 
@@ -535,7 +611,8 @@ function normalizePetState(value: unknown): LocalPetStateV2 | null {
     createdAt,
     updatedAt,
     lastInteractionAt: isIsoDate(value.lastInteractionAt) ? value.lastInteractionAt : updatedAt,
-    lastStatsTickAt,
+    lastStatsTickAt: legacyStatsTick(lastStatTickAt),
+    lastStatTickAt,
     stage: normalizeStage(value.stage),
     mood: normalizeMood(value.mood ?? calculatePetMood(stats)),
     stats,
@@ -589,6 +666,7 @@ export function createLocalPetState(
   assetSet?: LocalPetAssetSet,
 ): LocalPetState {
   const now = new Date().toISOString();
+  const lastStatTickAt = staggeredStatTicks(new Date(now));
   const characterAssetSet = assetSet ? normalizeCharacterAssetSet(assetSet, now) : undefined;
   return {
     version: 2,
@@ -598,7 +676,8 @@ export function createLocalPetState(
     createdAt: now,
     updatedAt: now,
     lastInteractionAt: now,
-    lastStatsTickAt: now,
+    lastStatsTickAt: legacyStatsTick(lastStatTickAt),
+    lastStatTickAt,
     stage: "baby",
     mood: "idle",
     stats: {
@@ -611,39 +690,35 @@ export function createLocalPetState(
 }
 
 export function applyOfflineProgress(state: LocalPetState, now = new Date()): LocalPetState {
-  const lastStatsTickAt = Date.parse(state.lastStatsTickAt);
-  if (Number.isNaN(lastStatsTickAt)) {
-    return {
-      ...state,
-      lastStatsTickAt: now.toISOString(),
-      stage: calculatePetStage(state.createdAt, now),
-      mood: calculatePetMood(state.stats),
-    };
-  }
+  const nowIso = now.toISOString();
+  const lastStatTickAt = normalizeStatTickMap(state.lastStatTickAt, state.lastStatsTickAt);
+  const nextTicks = { ...lastStatTickAt };
+  const stats = { ...state.stats };
+  let changed = false;
 
-  const elapsedHours = Math.max(0, (now.getTime() - lastStatsTickAt) / 3_600_000);
-  if (elapsedHours <= 0) {
-    return {
-      ...state,
-      stage: calculatePetStage(state.createdAt, now),
-      mood: calculatePetMood(state.stats),
-    };
+  for (const key of STAT_KEYS) {
+    const lastTick = Date.parse(lastStatTickAt[key]);
+    if (Number.isNaN(lastTick)) {
+      nextTicks[key] = nowIso;
+      changed = true;
+      continue;
+    }
+    const elapsedHours = Math.max(0, (now.getTime() - lastTick) / 3_600_000);
+    if (elapsedHours <= 0) {
+      continue;
+    }
+    stats[key] = clampStat(stats[key] - elapsedHours * STAT_DECAY_PER_HOUR);
+    nextTicks[key] = nowIso;
+    changed = true;
   }
-
-  const decay = elapsedHours * STAT_DECAY_PER_HOUR;
-  const stats = {
-    ...state.stats,
-    hunger: clampStat(state.stats.hunger - decay),
-    happiness: clampStat(state.stats.happiness - decay),
-    energy: clampStat(state.stats.energy - decay),
-  };
 
   return {
     ...state,
-    lastStatsTickAt: now.toISOString(),
+    lastStatsTickAt: legacyStatsTick(nextTicks),
+    lastStatTickAt: nextTicks,
     stage: calculatePetStage(state.createdAt, now),
     mood: calculatePetMood(stats),
-    stats,
+    stats: changed ? stats : state.stats,
   };
 }
 
@@ -652,12 +727,21 @@ export function withPetInteraction(
   updateStats: (stats: PetStats) => PetStats,
 ): LocalPetState {
   const now = new Date();
+  const nowIso = now.toISOString();
   const stats = normalizeStats(updateStats(state.stats));
+  const lastStatTickAt = normalizeStatTickMap(state.lastStatTickAt, state.lastStatsTickAt);
+  const nextTicks = { ...lastStatTickAt };
+  for (const key of STAT_KEYS) {
+    if (stats[key] !== state.stats[key]) {
+      nextTicks[key] = nowIso;
+    }
+  }
   return {
     ...state,
-    updatedAt: now.toISOString(),
-    lastInteractionAt: now.toISOString(),
-    lastStatsTickAt: now.toISOString(),
+    updatedAt: nowIso,
+    lastInteractionAt: nowIso,
+    lastStatsTickAt: legacyStatsTick(nextTicks),
+    lastStatTickAt: nextTicks,
     stage: calculatePetStage(state.createdAt, now),
     mood: calculatePetMood(stats),
     stats,

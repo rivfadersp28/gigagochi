@@ -11,19 +11,10 @@ from app.services.local_admin_publish import (
     AdminPublishError,
     get_admin_publish_job,
     read_admin_manifest_from_server,
-    read_admin_push_status_from_server,
-    send_admin_push_all_on_server,
-    send_admin_push_on_server,
     start_admin_publish,
     sync_admin_files_from_server,
 )
 from app.services.local_admin_store import read_admin_manifest, save_admin_files
-from app.services.telegram_push_service import (
-    TelegramPushError,
-    push_status,
-    send_manual_push,
-    send_manual_push_to_reachable,
-)
 
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
@@ -40,12 +31,6 @@ class AdminSaveRequest(BaseModel):
 class AdminPublishRequest(BaseModel):
     files: list[AdminFileUpdate] = Field(default_factory=list, max_length=16)
     message: str | None = Field(default=None, max_length=180)
-
-
-class AdminPushSendRequest(BaseModel):
-    telegramId: int | None = None
-    reason: str | None = Field(default=None, max_length=280)
-    includeDebug: bool = True
 
 
 AdminSource = Literal["local", "production"]
@@ -65,13 +50,6 @@ def _sync_warning_result(exc: AdminPublishError) -> dict[str, Any]:
         "serverCommit": None,
         "updatedAt": _now_iso(),
     }
-
-
-def _uses_production_push(settings: Any) -> bool:
-    return bool(
-        getattr(settings, "admin_publish_enabled", False)
-        and getattr(settings, "admin_publish_ssh_target", "")
-    )
 
 
 def require_local_admin(request: Request) -> None:
@@ -151,7 +129,6 @@ def save_speech_admin(payload: AdminSaveRequest, source: AdminSource = "local") 
         )
     return result
 
-
 @router.post("/speech/publish")
 def publish_speech_admin(payload: AdminPublishRequest) -> dict[str, Any]:
     try:
@@ -176,83 +153,3 @@ def speech_admin_publish_job(job_id: str) -> dict[str, Any]:
             detail={"code": "ADMIN_PUBLISH_JOB_NOT_FOUND", "message": "Publish job not found."},
         )
     return result
-
-
-@router.get("/push/status")
-def admin_push_status() -> dict[str, Any]:
-    settings = get_settings()
-    if _uses_production_push(settings):
-        try:
-            result = read_admin_push_status_from_server(settings)
-        except AdminPublishError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={"code": exc.code, "message": exc.message},
-            ) from exc
-        result["source"] = "production"
-        return result
-    return push_status()
-
-
-@router.post("/push/send")
-def admin_send_push(payload: AdminPushSendRequest) -> dict[str, Any]:
-    settings = get_settings()
-    try:
-        if _uses_production_push(settings):
-            return send_admin_push_on_server(
-                settings,
-                telegram_id=payload.telegramId,
-                reason=payload.reason,
-                include_debug=payload.includeDebug,
-            )
-        return send_manual_push(
-            telegram_id=payload.telegramId,
-            reason=payload.reason,
-            include_debug=payload.includeDebug,
-        )
-    except TelegramPushError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": exc.code, "message": exc.message},
-        ) from exc
-    except AdminPublishError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"code": exc.code, "message": exc.message},
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"code": "PUSH_SEND_FAILED", "message": str(exc)},
-        ) from exc
-
-
-@router.post("/push/send-all")
-def admin_send_push_all(payload: AdminPushSendRequest) -> dict[str, Any]:
-    settings = get_settings()
-    try:
-        if _uses_production_push(settings):
-            return send_admin_push_all_on_server(
-                settings,
-                reason=payload.reason,
-                include_debug=payload.includeDebug,
-            )
-        return send_manual_push_to_reachable(
-            reason=payload.reason,
-            include_debug=payload.includeDebug,
-        )
-    except TelegramPushError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": exc.code, "message": exc.message},
-        ) from exc
-    except AdminPublishError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"code": exc.code, "message": exc.message},
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"code": "PUSH_SEND_FAILED", "message": str(exc)},
-        ) from exc

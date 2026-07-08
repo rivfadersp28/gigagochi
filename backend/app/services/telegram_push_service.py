@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from app.bot import TelegramAPIError, mini_app_keyboard, send_message
+from app.bot import TelegramAPIError, mini_app_keyboard, send_message, send_photo
 from app.config import get_settings
 from app.schemas import (
     LocalChatHistoryItem,
@@ -30,12 +30,13 @@ from app.services.pet_reply_engine.lite_generator import generate_push_pet_messa
 from app.services.telegram_auth_service import TelegramUserContext
 
 STORE_VERSION = 1
-STAT_DECAY_PER_HOUR = 100 / 24
+STAT_KEYS = ("hunger", "happiness", "energy")
+STAT_FULL_DECAY_HOURS = 6
+STAT_DECAY_PER_HOUR = 100 / STAT_FULL_DECAY_HOURS
 DAILY_PUSH_REASON = "Ежедневный короткий пуш владельцу от питомца."
 MANUAL_PUSH_REASON = "Ручной debug-триггер из админки."
-DEBUG_PUSH_TARGET_TELEGRAM_ID = 62943754
-DEBUG_PUSH_TARGET_FIRST_NAME = "Сергей"
 MAX_RECENT_STORY_EVENTS = 10
+TELEGRAM_PHOTO_CAPTION_LIMIT = 1024
 
 logger = logging.getLogger(__name__)
 _store_lock = Lock()
@@ -222,20 +223,99 @@ def _clamp_stat(value: Any) -> int:
     return max(0, min(100, round(numeric)))
 
 
+def _stat_tick_map(record: dict[str, Any], fallback: datetime | None = None) -> dict[str, datetime]:
+    fallback_tick = (
+        _parse_iso(record.get("lastStatsTickAt"))
+        or _parse_iso(record.get("updatedAt"))
+        or fallback
+        or _now()
+    )
+    raw_ticks = record.get("lastStatTickAt")
+    raw_ticks = raw_ticks if isinstance(raw_ticks, dict) else {}
+    ticks: dict[str, datetime] = {}
+    for key in STAT_KEYS:
+        ticks[key] = _parse_iso(raw_ticks.get(key)) or fallback_tick
+    return ticks
+
+
+def _stat_tick_iso_map(ticks: dict[str, datetime]) -> dict[str, str]:
+    return {key: _iso(ticks[key]) for key in STAT_KEYS}
+
+
+def _legacy_stats_tick(ticks: dict[str, datetime]) -> str:
+    return _iso(min(ticks.values()))
+
+
+def _record_current_stats(record: dict[str, Any], now: datetime) -> dict[str, int]:
+    pet = record.get("pet") if isinstance(record.get("pet"), dict) else {}
+    stats = pet.get("stats") if isinstance(pet.get("stats"), dict) else {}
+    ticks = _stat_tick_map(record, fallback=now)
+    current_stats: dict[str, int] = {}
+    for key in STAT_KEYS:
+        elapsed_hours = max(0.0, (now - ticks[key]).total_seconds() / 3600)
+        current_stats[key] = _clamp_stat(stats.get(key, 0) - elapsed_hours * STAT_DECAY_PER_HOUR)
+    return current_stats
+
+
+def _all_stat_ticks(now: datetime) -> dict[str, datetime]:
+    return {key: now for key in STAT_KEYS}
+
+
+def _stats_patch(
+    *,
+    stats: dict[str, int],
+    ticks: dict[str, datetime],
+    keys: tuple[str, ...] = STAT_KEYS,
+) -> dict[str, Any]:
+    tick_subset = {key: ticks[key] for key in keys}
+    return {
+        "stats": {key: _clamp_stat(stats.get(key, 0)) for key in keys},
+        "lastStatsTickAt": _legacy_stats_tick(tick_subset),
+        "lastStatTickAt": {key: _iso(ticks[key]) for key in keys},
+    }
+
+
+def _merge_snapshot_stats(
+    incoming_record: dict[str, Any],
+    existing_record: dict[str, Any] | None,
+    *,
+    now: datetime,
+) -> dict[str, Any] | None:
+    if not isinstance(existing_record, dict):
+        return None
+
+    incoming_ticks = _stat_tick_map(incoming_record, fallback=now)
+    existing_ticks = _stat_tick_map(existing_record, fallback=now)
+    incoming_stats = _record_current_stats(incoming_record, now)
+    existing_stats = _record_current_stats(existing_record, now)
+    merged_ticks = incoming_ticks.copy()
+    merged_stats = incoming_stats.copy()
+    changed_keys: list[str] = []
+
+    for key in STAT_KEYS:
+        incoming_comparable = min(incoming_ticks[key], now)
+        existing_comparable = min(existing_ticks[key], now)
+        if existing_comparable > incoming_comparable:
+            merged_ticks[key] = now
+            merged_stats[key] = existing_stats[key]
+            changed_keys.append(key)
+
+    pet = incoming_record.get("pet") if isinstance(incoming_record.get("pet"), dict) else {}
+    pet["stats"] = {key: _clamp_stat(merged_stats.get(key, 0)) for key in STAT_KEYS}
+    incoming_record["pet"] = pet
+    incoming_record["lastStatTickAt"] = _stat_tick_iso_map(merged_ticks)
+    incoming_record["lastStatsTickAt"] = _legacy_stats_tick(merged_ticks)
+
+    return (
+        _stats_patch(stats=merged_stats, ticks=merged_ticks, keys=tuple(changed_keys))
+        if changed_keys
+        else None
+    )
+
+
 def _current_pet_record(record: dict[str, Any], now: datetime) -> dict[str, Any]:
     pet = deepcopy(record.get("pet")) if isinstance(record.get("pet"), dict) else {}
-    stats = pet.get("stats") if isinstance(pet.get("stats"), dict) else {}
-    last_tick = _parse_iso(record.get("lastStatsTickAt")) or _parse_iso(record.get("updatedAt"))
-    if last_tick:
-        elapsed_hours = max(0.0, (now - last_tick).total_seconds() / 3600)
-        decay = elapsed_hours * STAT_DECAY_PER_HOUR
-        for key in ("hunger", "happiness", "energy"):
-            stats[key] = _clamp_stat(stats.get(key, 0) - decay)
-    pet["stats"] = {
-        "hunger": _clamp_stat(stats.get("hunger", 0)),
-        "happiness": _clamp_stat(stats.get("happiness", 0)),
-        "energy": _clamp_stat(stats.get("energy", 0)),
-    }
+    pet["stats"] = _record_current_stats(record, now)
 
     created_at = _parse_iso(record.get("createdAt"))
     if created_at:
@@ -248,7 +328,9 @@ def register_push_snapshot(
     user: TelegramUserContext,
     payload: LocalPetPushSnapshotRequest,
 ) -> LocalPetPushSnapshotResponse:
-    now_iso = _iso()
+    now = _now()
+    now_iso = _iso(now)
+    fallback_stat_tick = payload.lastStatsTickAt or payload.updatedAt or now_iso
     record = {
         "telegramId": user.telegram_id,
         "chatId": user.telegram_id,
@@ -264,13 +346,16 @@ def register_push_snapshot(
         ),
         "createdAt": payload.createdAt,
         "updatedAt": payload.updatedAt,
-        "lastStatsTickAt": payload.lastStatsTickAt or payload.updatedAt or now_iso,
+        "lastStatsTickAt": fallback_stat_tick,
+        "lastStatTickAt": payload.lastStatTickAt
+        or {key: fallback_stat_tick for key in STAT_KEYS},
         "timezone": payload.timezone,
         "registeredAt": now_iso,
     }
     existing = _read_store().get("records", {}).get(str(user.telegram_id))
     same_pet = isinstance(existing, dict) and existing.get("petId") == payload.petId
     lite_overlay_patch = _record_lite_overlay_patch(existing) if same_pet else None
+    stats_patch = _merge_snapshot_stats(record, existing, now=now) if same_pet else None
     if isinstance(existing, dict):
         for key in (
             "lastPushAt",
@@ -284,7 +369,11 @@ def register_push_snapshot(
             "lastChatSeenAt",
             "chatReachable",
             "lastStoryAt",
+            "lastStoryAttemptAt",
             "lastStory",
+            "lastStoryError",
+            "lastStoryErrorCode",
+            "lastStoryErrorAt",
         ):
             record[key] = existing.get(key)
         if same_pet:
@@ -295,6 +384,7 @@ def register_push_snapshot(
         registered=True,
         telegramId=user.telegram_id,
         updatedAt=now_iso,
+        statsPatch=stats_patch,
         liteOverlayPatch=lite_overlay_patch,
         recentStoryEventsPatch=_recent_story_events_patch(record),
     )
@@ -450,15 +540,6 @@ def _send_push_record(
     manual: bool,
     include_debug: bool = False,
 ) -> dict[str, Any]:
-    if not _is_debug_push_target(record):
-        raise TelegramPushError(
-            "PUSH_TARGET_RESTRICTED",
-            (
-                "Debug push временно разрешен только пользователю "
-                f"{DEBUG_PUSH_TARGET_FIRST_NAME} ({DEBUG_PUSH_TARGET_TELEGRAM_ID})."
-            ),
-        )
-
     settings = get_settings()
     if not settings.bot_token:
         raise TelegramPushError("BOT_TOKEN_MISSING", "BOT_TOKEN не настроен.")
@@ -492,11 +573,14 @@ def _send_push_record(
             _save_push_failure(record, push_error)
             raise push_error from exc
 
-    now_iso = _iso()
+    now = _now()
+    now_iso = _iso(now)
+    stat_ticks = _all_stat_ticks(now)
     next_record = {
         **record,
         "pet": payload.pet.model_dump(mode="json"),
-        "lastStatsTickAt": now_iso,
+        "lastStatsTickAt": _legacy_stats_tick(stat_ticks),
+        "lastStatTickAt": _stat_tick_iso_map(stat_ticks),
         "lastPushReply": response.reply,
         "lastPushError": None,
         "lastPushErrorCode": None,
@@ -527,7 +611,7 @@ def _telegram_push_error(exc: TelegramAPIError) -> TelegramPushError:
             "TELEGRAM_CHAT_NOT_FOUND",
             (
                 "Telegram не нашел чат с этим пользователем. Пользователь должен "
-                "открыть диалог с ботом и нажать /start, затем повтори debug push."
+                "открыть диалог с ботом и нажать /start, затем повтори отправку."
             ),
         )
     return TelegramPushError(
@@ -557,6 +641,39 @@ def _save_push_failure(record: dict[str, Any], exc: Exception) -> None:
     _save_record(failed)
 
 
+def _save_story_failure(record: dict[str, Any], exc: Exception) -> None:
+    now_iso = _iso()
+    if isinstance(exc, TelegramPushError):
+        error_code = exc.code
+        message = exc.message
+    else:
+        error_code = "STORY_GENERATION_FAILED"
+        message = str(exc)
+    failed = {
+        **record,
+        "lastStoryError": message,
+        "lastStoryErrorCode": error_code,
+        "lastStoryErrorAt": now_iso,
+        "lastStoryAttemptAt": now_iso,
+    }
+    if error_code == "TELEGRAM_CHAT_NOT_FOUND":
+        failed["chatReachable"] = False
+        failed["chatUnreachableAt"] = now_iso
+    _save_record(failed)
+
+
+def _format_story_message(story: dict[str, Any], *, limit: int = 3500) -> str:
+    title = str(story.get("title") or "Фоновое событие").strip()
+    story_text = str(story.get("storyText") or story.get("summary") or "").strip()
+    if not story_text:
+        story_text = "История сгенерировалась, но текст пустой."
+    return f"{title}\n\n{story_text}"[:limit].rstrip()
+
+
+def _format_story_caption(story: dict[str, Any]) -> str:
+    return _format_story_message(story, limit=TELEGRAM_PHOTO_CAPTION_LIMIT)
+
+
 def send_manual_push(
     *,
     telegram_id: int | None = None,
@@ -572,22 +689,45 @@ def send_manual_push(
     )
 
 
+def _apply_story_stat_impact(
+    record: dict[str, Any],
+    stat_impact: dict[str, Any] | None,
+    *,
+    now: datetime,
+) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, datetime] | None]:
+    pet = deepcopy(record.get("pet")) if isinstance(record.get("pet"), dict) else {}
+    if not isinstance(stat_impact, dict) or stat_impact.get("applies") is not True:
+        return pet, None, None
+
+    stat = stat_impact.get("stat")
+    if stat not in STAT_KEYS:
+        return pet, None, None
+
+    amount = stat_impact.get("amount")
+    impact_amount = amount if isinstance(amount, (int, float)) else 25
+    impact_amount = max(0, min(100, impact_amount))
+    if impact_amount <= 0:
+        return pet, None, None
+
+    current_stats = _record_current_stats(record, now)
+    current_stats[stat] = _clamp_stat(current_stats[stat] - impact_amount)
+    stats = pet.setdefault("stats", {})
+    if not isinstance(stats, dict):
+        stats = {}
+        pet["stats"] = stats
+    stats[stat] = current_stats[stat]
+
+    ticks = _stat_tick_map(record, fallback=now)
+    ticks[stat] = now
+    return pet, _stats_patch(stats=current_stats, ticks=ticks, keys=(stat,)), ticks
+
+
 def generate_story_for_telegram_user(
     *,
     telegram_id: int,
     include_debug: bool = True,
 ) -> dict[str, Any]:
     record = _record_by_telegram_id(telegram_id)
-    if not _is_debug_push_target(record):
-        raise TelegramPushError(
-            "STORY_TARGET_RESTRICTED",
-            (
-                "Debug story временно разрешен только "
-                "пользователю "
-                f"{DEBUG_PUSH_TARGET_FIRST_NAME} ({DEBUG_PUSH_TARGET_TELEGRAM_ID})."
-            ),
-        )
-
     payload = _build_push_payload(
         record,
         reason="Фоновое событие питомца.",
@@ -602,13 +742,23 @@ def generate_story_for_telegram_user(
         now_iso=payload.nowIso,
         timezone=payload.timezone,
     )
-    now_iso = _iso()
+    now = _now()
+    now_iso = _iso(now)
     recent_story_event = getattr(result, "recent_story_event", None)
+    stat_impact = getattr(result, "stat_impact", None)
+    next_pet, stats_patch, stat_ticks = _apply_story_stat_impact(
+        record,
+        stat_impact,
+        now=now,
+    )
     next_record = {
         **record,
-        "pet": payload.pet.model_dump(mode="json"),
-        "lastStatsTickAt": now_iso,
+        "pet": next_pet,
         "lastStoryAt": now_iso,
+        "lastStoryAttemptAt": now_iso,
+        "lastStoryError": None,
+        "lastStoryErrorCode": None,
+        "lastStoryErrorAt": None,
         "lastStory": {
             "title": result.title,
             "summary": result.summary,
@@ -617,9 +767,13 @@ def generate_story_for_telegram_user(
             "valence": result.valence,
             "tags": list(result.tags),
             "ragText": result.rag_text,
+            "statImpact": stat_impact,
         },
         "recentStoryEvents": _append_recent_story_event(record, recent_story_event),
     }
+    if stat_ticks is not None:
+        next_record["lastStatsTickAt"] = _legacy_stats_tick(stat_ticks)
+        next_record["lastStatTickAt"] = _stat_tick_iso_map(stat_ticks)
     _merge_record_lite_overlay_patch(next_record, result.lite_overlay_patch)
     _save_record(next_record)
     story_image: dict[str, Any] | None = None
@@ -647,7 +801,71 @@ def generate_story_for_telegram_user(
         "storyLibraryPatch": None,
         "liteOverlayPatch": result.lite_overlay_patch,
         "recentStoryEvent": recent_story_event,
+        "statsPatch": stats_patch,
+        "statImpact": stat_impact,
         "debug": {"promptDebug": result.prompt_debug} if include_debug else None,
+    }
+
+
+def _fresh_record(record: dict[str, Any]) -> dict[str, Any]:
+    telegram_id = record.get("telegramId")
+    if isinstance(telegram_id, int):
+        fresh = _read_store().get("records", {}).get(str(telegram_id))
+        if isinstance(fresh, dict):
+            return fresh
+    return record
+
+
+def _send_story_record(
+    record: dict[str, Any],
+    *,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.bot_token:
+        raise TelegramPushError("BOT_TOKEN_MISSING", "BOT_TOKEN не настроен.")
+    if not settings.webapp_url:
+        raise TelegramPushError("WEBAPP_URL_MISSING", "WEBAPP_URL не настроен.")
+
+    telegram_id = record.get("telegramId")
+    if not isinstance(telegram_id, int):
+        raise TelegramPushError("STORY_TELEGRAM_ID_MISSING", "Telegram ID не найден.")
+    chat_id = record.get("chatId")
+    if not isinstance(chat_id, int):
+        raise TelegramPushError("STORY_CHAT_ID_MISSING", "chat_id для Telegram story не найден.")
+
+    result = generate_story_for_telegram_user(
+        telegram_id=telegram_id,
+        include_debug=include_debug,
+    )
+    story = result.get("story") if isinstance(result.get("story"), dict) else {}
+    story_image = result.get("storyImage") if isinstance(result.get("storyImage"), dict) else {}
+    image_bytes = story_image.get("bytes") if isinstance(story_image, dict) else None
+    keyboard = mini_app_keyboard(settings.webapp_url)
+
+    with httpx.Client() as client:
+        try:
+            if isinstance(image_bytes, bytes) and image_bytes:
+                send_photo(client, chat_id, image_bytes, _format_story_caption(story), keyboard)
+            else:
+                send_message(client, chat_id, _format_story_message(story), keyboard)
+        except TelegramAPIError as exc:
+            story_error = _telegram_push_error(exc)
+            _save_story_failure(_fresh_record(record), story_error)
+            raise story_error from exc
+        except httpx.HTTPError as exc:
+            story_error = TelegramPushError(
+                "TELEGRAM_SEND_FAILED",
+                f"Telegram story send failed: {exc.__class__.__name__}",
+            )
+            _save_story_failure(_fresh_record(record), story_error)
+            raise story_error from exc
+
+    sent_at = _iso()
+    return {
+        **result,
+        "sent": True,
+        "sentAt": sent_at,
     }
 
 
@@ -673,21 +891,13 @@ def _bulk_error(record: dict[str, Any], exc: Exception) -> dict[str, Any]:
     }
 
 
-def _is_debug_push_target(record: dict[str, Any]) -> bool:
-    return record.get("telegramId") == DEBUG_PUSH_TARGET_TELEGRAM_ID
-
-
 def send_manual_push_to_reachable(
     *,
     reason: str | None = None,
     include_debug: bool = True,
 ) -> dict[str, Any]:
     records = _snapshot_records()
-    reachable = [
-        record
-        for record in records
-        if record.get("chatReachable") is True and _is_debug_push_target(record)
-    ]
+    reachable = [record for record in records if record.get("chatReachable") is True]
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     for record in reachable:
@@ -734,7 +944,6 @@ def _due_records(now: datetime) -> list[dict[str, Any]]:
         if (
             not _has_snapshot(record)
             or record.get("chatReachable") is not True
-            or not _is_debug_push_target(record)
         ):
             continue
         base_time = _latest_time(record.get("lastPushAt"), record.get("lastPushAttemptAt"))
@@ -765,11 +974,57 @@ def send_due_pushes() -> list[dict[str, Any]]:
     return results
 
 
+def _background_story_min_interval(settings: Any) -> timedelta:
+    min_interval_seconds = getattr(settings, "background_story_min_interval_seconds", None)
+    if min_interval_seconds is not None:
+        return timedelta(seconds=max(0, int(min_interval_seconds)))
+    return timedelta(hours=settings.background_story_min_interval_hours)
+
+
+def _due_story_records(now: datetime) -> list[dict[str, Any]]:
+    settings = get_settings()
+    cutoff = now - _background_story_min_interval(settings)
+    records = _read_store().get("records", {})
+    due: list[dict[str, Any]] = []
+    for record in records.values():
+        if not isinstance(record, dict):
+            continue
+        if not _has_snapshot(record) or record.get("chatReachable") is not True:
+            continue
+        base_time = _latest_time(record.get("lastStoryAt"), record.get("lastStoryAttemptAt"))
+        if base_time is None:
+            base_time = _parse_iso(record.get("registeredAt"))
+        if base_time and base_time <= cutoff:
+            due.append(record)
+    return due
+
+
+def send_due_background_stories() -> list[dict[str, Any]]:
+    settings = get_settings()
+    if not settings.background_story_enabled:
+        return []
+    results: list[dict[str, Any]] = []
+    for record in _due_story_records(_now()):
+        try:
+            results.append(_send_story_record(record, include_debug=False))
+        except Exception as exc:
+            _save_story_failure(_fresh_record(record), exc)
+    return results
+
+
 async def _daily_push_loop() -> None:
     settings = get_settings()
     interval = max(60, int(settings.telegram_daily_push_interval_seconds))
     while True:
         await asyncio.to_thread(send_due_pushes)
+        await asyncio.sleep(interval)
+
+
+async def _background_story_loop() -> None:
+    settings = get_settings()
+    interval = max(60, int(settings.background_story_interval_seconds))
+    while True:
+        await asyncio.to_thread(send_due_background_stories)
         await asyncio.sleep(interval)
 
 
@@ -782,3 +1037,14 @@ def start_daily_push_scheduler() -> asyncio.Task[None] | None:
     ):
         return None
     return asyncio.create_task(_daily_push_loop())
+
+
+def start_background_story_scheduler() -> asyncio.Task[None] | None:
+    settings = get_settings()
+    if (
+        not settings.background_story_enabled
+        or not settings.bot_token
+        or not settings.webapp_url
+    ):
+        return None
+    return asyncio.create_task(_background_story_loop())

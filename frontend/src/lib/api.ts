@@ -6,6 +6,7 @@ import type {
   LocalChatMessage,
   LocalChatResponse,
   LocalPetState,
+  PetStatsPatch,
   PetMood,
   PetStage,
 } from "./types";
@@ -49,6 +50,7 @@ type PushSnapshotResponse = {
   registered: boolean;
   telegramId: number;
   updatedAt: string;
+  statsPatch?: PetStatsPatch | null;
   storyLibraryPatch?: Record<string, unknown> | null;
   liteOverlayPatch?: Record<string, unknown> | null;
   recentStoryEventsPatch?: Record<string, unknown> | null;
@@ -598,6 +600,7 @@ export async function registerPetPushSnapshot(
         createdAt: pet.createdAt,
         updatedAt: pet.updatedAt,
         lastStatsTickAt: pet.lastStatsTickAt,
+        lastStatTickAt: pet.lastStatTickAt,
         timezone: browserTimezone(),
         memoryContext,
         history: (options.history ?? []).slice(-12).map((item) => ({

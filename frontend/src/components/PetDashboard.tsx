@@ -329,6 +329,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const applyLiteOverlayPatch = localPet.applyLiteOverlayPatch;
   const applyStoryLibraryPatch = localPet.applyStoryLibraryPatch;
   const applyRecentStoryEventsPatch = localPet.applyRecentStoryEventsPatch;
+  const applyStatsPatch = localPet.applyStatsPatch;
   const includePromptDebug = promptSettings.includePromptDebug;
 
   useEffect(() => {
@@ -598,6 +599,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       recentAmbientReplies: ambientReplyHistoryRef.current,
     })
       .then((response) => {
+        applyStatsPatch(response.statsPatch ?? undefined);
         applyLiteOverlayPatch(response.liteOverlayPatch ?? undefined);
         applyStoryLibraryPatch(response.storyLibraryPatch ?? undefined);
         applyRecentStoryEventsPatch(response.recentStoryEventsPatch ?? undefined);
@@ -606,6 +608,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [
     applyLiteOverlayPatch,
     applyRecentStoryEventsPatch,
+    applyStatsPatch,
     applyStoryLibraryPatch,
     localPet.status,
     pet,
@@ -964,10 +967,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const displayedPetName = pet.name?.trim() || DEFAULT_STATUS_NAME;
   const hungerPercent = Math.max(0, Math.min(100, pet.stats.hunger));
   const moodPercent = Math.max(0, Math.min(100, pet.stats.happiness));
-  const energyPercent = Math.max(0, Math.min(100, pet.stats.energy));
+  const healthPercent = Math.max(0, Math.min(100, pet.stats.energy));
   const roundedHungerPercent = Math.round(hungerPercent);
   const roundedMoodPercent = Math.round(moodPercent);
-  const roundedEnergyPercent = Math.round(energyPercent);
+  const roundedHealthPercent = Math.round(healthPercent);
   const transformOrigin = `${animationSettings.originX}% ${animationSettings.originY}%`;
   const idleStretchStyle: IdleStretchStyle = {
     "--pet-idle-duration": `${(
@@ -1068,8 +1071,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
         <div className="sr-only" aria-live="polite">
           Stage {stageLabels[pet.stage]}. State {stateLabels[pet.mood]}. Hunger{" "}
-          {roundedHungerPercent}/100. Happiness {roundedMoodPercent}/100. Energy{" "}
-          {roundedEnergyPercent}/100.
+          {roundedHungerPercent}/100. Happiness {roundedMoodPercent}/100. Health{" "}
+          {roundedHealthPercent}/100.
         </div>
 
         <div className="pet-status-name conversation-fade-target">
@@ -1078,11 +1081,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
         <div
           className="top-status-strip conversation-fade-target"
-          aria-label={`Голод ${roundedHungerPercent} из 100, настроение ${roundedMoodPercent} из 100, энергия ${roundedEnergyPercent} из 100`}
+          aria-label={`Голод ${roundedHungerPercent} из 100, настроение ${roundedMoodPercent} из 100, здоровье ${roundedHealthPercent} из 100`}
         >
           <StatProgressRing value={hungerPercent} kind="hunger" />
           <StatProgressRing value={moodPercent} kind="mood" />
-          <StatProgressRing value={energyPercent} kind="energy" />
+          <StatProgressRing value={healthPercent} kind="energy" />
         </div>
 
         <div

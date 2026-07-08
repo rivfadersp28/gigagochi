@@ -278,7 +278,7 @@ def test_adventure_story_prompt_uses_compact_story_context_without_asset_urls() 
     assert '"params"' in user_content
     assert "наевшийся" in user_content
     assert "счастливый" in user_content
-    assert "энергичный" in user_content
+    assert "крепкое здоровье" in user_content
     assert '"stats"' not in user_content
     assert "leaf-shaped face" in user_content
     assert "currentReferenceImage" in user_content

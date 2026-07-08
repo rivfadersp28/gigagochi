@@ -7,11 +7,13 @@ import httpx
 from app import bot
 from app.services import telegram_push_service
 
+TEST_TELEGRAM_ID = 62943754
+
 
 def _story_update() -> dict:
     return {
         "message": {
-            "chat": {"id": telegram_push_service.DEBUG_PUSH_TARGET_TELEGRAM_ID},
+            "chat": {"id": TEST_TELEGRAM_ID},
             "from": {"first_name": "Serge"},
             "text": "/story",
         }
@@ -50,7 +52,7 @@ def test_story_command_sends_generated_image_as_photo(monkeypatch) -> None:
     bot.handle_update(httpx.Client(), _story_update())
 
     assert sent["method"] == "photo"
-    assert sent["chat_id"] == telegram_push_service.DEBUG_PUSH_TARGET_TELEGRAM_ID
+    assert sent["chat_id"] == TEST_TELEGRAM_ID
     assert sent["photo"] == b"png"
     assert sent["caption"] == "След под кроной\n\nОлег нашел теплый знак под древним дубом."
     assert "text" not in sent
@@ -116,6 +118,6 @@ def test_story_command_falls_back_to_message_without_image(monkeypatch) -> None:
     bot.handle_update(httpx.Client(), _story_update())
 
     assert sent["method"] == "message"
-    assert sent["chat_id"] == telegram_push_service.DEBUG_PUSH_TARGET_TELEGRAM_ID
+    assert sent["chat_id"] == TEST_TELEGRAM_ID
     assert sent["text"] == "След под кроной\n\nОлег нашел теплый знак под древним дубом."
     assert "photo" not in sent

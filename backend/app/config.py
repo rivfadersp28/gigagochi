@@ -21,10 +21,14 @@ class Settings(BaseSettings):
     lite_facts_rate_limit_per_hour: int = 0
     memory_rate_limit_per_hour: int = 0
     telegram_init_data_max_age_seconds: int = 60 * 60 * 24
-    telegram_daily_push_enabled: bool = True
+    telegram_daily_push_enabled: bool = False
     telegram_daily_push_interval_seconds: int = 300
     telegram_daily_push_min_interval_seconds: int | None = None
-    telegram_daily_push_min_interval_hours: int = 24
+    telegram_daily_push_min_interval_hours: int = 6
+    background_story_enabled: bool = True
+    background_story_interval_seconds: int = 300
+    background_story_min_interval_seconds: int | None = None
+    background_story_min_interval_hours: int = 6
     telegram_push_store_path: str = "data/push/telegram_push_state.json"
     admin_publish_enabled: bool = False
     admin_publish_git_remote: str = "origin"

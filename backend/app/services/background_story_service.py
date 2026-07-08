@@ -188,8 +188,23 @@ BACKGROUND_STORY_AFTERMATH_SCHEMA: dict[str, Any] = {
                 "outcome",
             ],
         },
+        "statImpact": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "applies": {"type": "boolean"},
+                "isNegativeOutcome": {"type": "boolean"},
+                "stat": {
+                    "type": "string",
+                    "enum": ["hunger", "happiness", "energy", "none"],
+                },
+                "amount": {"type": "number", "minimum": 0, "maximum": 100},
+                "reason": {"type": "string", "maxLength": 280},
+            },
+            "required": ["applies", "isNegativeOutcome", "stat", "amount", "reason"],
+        },
     },
-    "required": ["facts", "recentEvent"],
+    "required": ["facts", "recentEvent", "statImpact"],
 }
 BACKGROUND_STORY_IMAGE_SCENE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -217,6 +232,7 @@ class BackgroundStoryResult:
     lite_overlay_patch: dict[str, Any] | None
     recent_story_event: dict[str, Any] | None
     prompt_debug: list[dict[str, Any]]
+    stat_impact: dict[str, Any] | None = None
 
     def model_dump(self) -> dict[str, Any]:
         return {
@@ -231,6 +247,7 @@ class BackgroundStoryResult:
             "liteOverlayPatch": self.lite_overlay_patch,
             "recentStoryEvent": self.recent_story_event,
             "promptDebug": self.prompt_debug,
+            "statImpact": self.stat_impact,
         }
 
 
@@ -727,8 +744,8 @@ def _state_params_brief(pet: LocalPetChatContext) -> dict[str, Any]:
     return {
         "usageRule": state_param_usage_rule(),
         "голод": labels["hunger"],
-        "счастье": labels["happiness"],
-        "энергия": labels["energy"],
+        "настроение": labels["happiness"],
+        "здоровье": labels["energy"],
     }
 
 
@@ -1197,7 +1214,7 @@ def _parse_aftermath_extraction_payload(
     raw_content: str,
     *,
     story: BackgroundStoryResult,
-) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+) -> tuple[dict[str, Any] | None, dict[str, Any], dict[str, Any] | None]:
     parsed = _json_record_from_text(raw_content)
     raw_facts = parsed.get("facts")
 
@@ -1216,7 +1233,30 @@ def _parse_aftermath_extraction_payload(
         default_source="background_story_aftermath",
     )
     recent_event = _normalize_recent_story_event(parsed.get("recentEvent"), story=story)
-    return patch, recent_event
+    stat_impact = _normalize_stat_impact(parsed.get("statImpact"))
+    return patch, recent_event, stat_impact
+
+
+def _normalize_stat_impact(value: Any) -> dict[str, Any] | None:
+    if not _is_record(value):
+        return None
+    stat = _text_value(value.get("stat"), limit=40)
+    applies = value.get("applies") is True and value.get("isNegativeOutcome") is True
+    if not applies or stat not in {"hunger", "happiness", "energy"}:
+        return None
+    try:
+        amount = float(value.get("amount"))
+    except (TypeError, ValueError):
+        amount = 25.0
+    if amount <= 0:
+        amount = 25.0
+    return {
+        "applies": True,
+        "isNegativeOutcome": True,
+        "stat": stat,
+        "amount": min(100.0, amount),
+        "reason": _text_value(value.get("reason"), limit=280),
+    }
 
 
 def _extract_background_story_aftermath_patch(
@@ -1227,7 +1267,7 @@ def _extract_background_story_aftermath_patch(
     model: str,
     timeout: float,
     prompt_debug: list[dict[str, Any]],
-) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+) -> tuple[dict[str, Any] | None, dict[str, Any], dict[str, Any] | None]:
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -1338,14 +1378,17 @@ def generate_background_story(
     result = _normalize_story_payload(_json_record_from_text(content))
     lite_overlay_patch: dict[str, Any] | None = None
     recent_story_event: dict[str, Any] | None = None
+    stat_impact: dict[str, Any] | None = None
     try:
-        lite_overlay_patch, recent_story_event = _extract_background_story_aftermath_patch(
-            pet=pet,
-            story=result,
-            client=openai_client,
-            model=model,
-            timeout=timeout,
-            prompt_debug=prompt_debug,
+        lite_overlay_patch, recent_story_event, stat_impact = (
+            _extract_background_story_aftermath_patch(
+                pet=pet,
+                story=result,
+                client=openai_client,
+                model=model,
+                timeout=timeout,
+                prompt_debug=prompt_debug,
+            )
         )
     except Exception:
         logger.exception("background_story_after_extraction failed")
@@ -1362,4 +1405,5 @@ def generate_background_story(
         lite_overlay_patch=lite_overlay_patch,
         recent_story_event=recent_story_event,
         prompt_debug=prompt_debug,
+        stat_impact=stat_impact,
     )

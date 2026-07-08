@@ -2,6 +2,13 @@ export type PetStage = "baby" | "teen" | "adult";
 export type PetState = "idle" | "happy" | "sad" | "hungry";
 export type PetLifeStage = "baby" | "teen" | "adult";
 export type PetMood = "idle" | "happy" | "hungry" | "sad";
+export type PetStatKey = "hunger" | "happiness" | "energy";
+export type PetStatTickMap = Record<PetStatKey, string>;
+export type PetStatsPatch = {
+  stats?: Partial<Record<PetStatKey, number>>;
+  lastStatsTickAt?: string | null;
+  lastStatTickAt?: Partial<PetStatTickMap> | null;
+};
 
 export type LocalPetAssetSet = {
   assetSetId: string;
@@ -43,6 +50,7 @@ export type LocalPetStateV2 = {
   updatedAt: string;
   lastInteractionAt: string;
   lastStatsTickAt: string;
+  lastStatTickAt: PetStatTickMap;
   stage: PetLifeStage;
   mood: PetMood;
   stats: {

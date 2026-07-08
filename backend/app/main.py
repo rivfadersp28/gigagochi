@@ -9,7 +9,10 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.routers import local_admin, tma
-from app.services.telegram_push_service import start_daily_push_scheduler
+from app.services.telegram_push_service import (
+    start_background_story_scheduler,
+    start_daily_push_scheduler,
+)
 
 settings = get_settings()
 
@@ -17,11 +20,14 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     push_task = start_daily_push_scheduler()
+    story_task = start_background_story_scheduler()
     try:
         yield
     finally:
         if push_task:
             push_task.cancel()
+        if story_task:
+            story_task.cancel()
 
 
 app = FastAPI(title="AI Tamagotchi API", lifespan=lifespan)

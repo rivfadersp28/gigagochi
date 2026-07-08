@@ -401,8 +401,8 @@ def _state_params_context(payload: GenerateTravelRequest) -> dict[str, str]:
     return {
         "usageRule": state_param_usage_rule(),
         "голод": labels["hunger"],
-        "счастье": labels["happiness"],
-        "энергия": labels["energy"],
+        "настроение": labels["happiness"],
+        "здоровье": labels["energy"],
     }
 
 

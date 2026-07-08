@@ -12,7 +12,7 @@ from app.schemas import LocalPetPushSnapshotRequest, LocalProactiveResponse
 from app.services import telegram_push_service
 from app.services.telegram_auth_service import TelegramUserContext
 
-DEBUG_TARGET_TELEGRAM_ID = telegram_push_service.DEBUG_PUSH_TARGET_TELEGRAM_ID
+TEST_TELEGRAM_ID = 62943754
 
 
 def _user_with_id(telegram_id: int, username: str = "serge") -> TelegramUserContext:
@@ -26,7 +26,7 @@ def _user_with_id(telegram_id: int, username: str = "serge") -> TelegramUserCont
 
 
 def _user() -> TelegramUserContext:
-    return _user_with_id(DEBUG_TARGET_TELEGRAM_ID)
+    return _user_with_id(TEST_TELEGRAM_ID)
 
 
 def _snapshot_payload() -> LocalPetPushSnapshotRequest:
@@ -85,8 +85,8 @@ def test_manual_push_uses_registered_telegram_chat(monkeypatch, tmp_path) -> Non
 
     assert result["sent"] is True
     assert result["manual"] is True
-    assert result["telegramId"] == DEBUG_TARGET_TELEGRAM_ID
-    assert captured["chat_id"] == DEBUG_TARGET_TELEGRAM_ID
+    assert result["telegramId"] == TEST_TELEGRAM_ID
+    assert captured["chat_id"] == TEST_TELEGRAM_ID
     assert captured["text"] == "Привет, Громм!"
     assert captured["reply_markup"]["inline_keyboard"][0][0]["web_app"]["url"] == (
         "https://example.com/app"
@@ -97,12 +97,17 @@ def test_manual_push_uses_registered_telegram_chat(monkeypatch, tmp_path) -> Non
 def test_chat_start_marks_snapshot_reachable(monkeypatch, tmp_path) -> None:
     settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
     monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_now",
+        lambda: datetime(2026, 7, 7, 12, 0, tzinfo=UTC),
+    )
 
     telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
     assert telegram_push_service.push_status()["latest"]["chatReachable"] is False
 
     telegram_push_service.mark_chat_started(
-        chat_id=DEBUG_TARGET_TELEGRAM_ID,
+        chat_id=TEST_TELEGRAM_ID,
         username="serge-updated",
         first_name="Serge",
         language_code="ru",
@@ -150,7 +155,7 @@ def test_manual_push_to_reachable_skips_unstarted_chats(monkeypatch, tmp_path) -
     monkeypatch.setattr(telegram_push_service, "send_message", fake_send_message)
 
     telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
-    telegram_push_service.mark_chat_started(chat_id=DEBUG_TARGET_TELEGRAM_ID)
+    telegram_push_service.mark_chat_started(chat_id=TEST_TELEGRAM_ID)
     telegram_push_service.register_push_snapshot(
         _user_with_id(99, username="unstarted"),
         _snapshot_payload(),
@@ -163,14 +168,14 @@ def test_manual_push_to_reachable_skips_unstarted_chats(monkeypatch, tmp_path) -
 
     result = telegram_push_service.send_manual_push_to_reachable()
 
-    assert result["sentCount"] == 1
+    assert result["sentCount"] == 2
     assert result["failedCount"] == 0
-    assert result["skippedCount"] == 2
-    assert result["targetCount"] == 1
-    assert captured_chat_ids == [DEBUG_TARGET_TELEGRAM_ID]
+    assert result["skippedCount"] == 1
+    assert result["targetCount"] == 2
+    assert set(captured_chat_ids) == {TEST_TELEGRAM_ID, 380566596}
 
 
-def test_manual_push_rejects_non_target_user(monkeypatch, tmp_path) -> None:
+def test_manual_push_allows_any_registered_reachable_user(monkeypatch, tmp_path) -> None:
     captured_chat_ids: list[int] = []
     settings = SimpleNamespace(
         bot_token="bot-token",
@@ -195,12 +200,10 @@ def test_manual_push_rejects_non_target_user(monkeypatch, tmp_path) -> None:
     )
     telegram_push_service.mark_chat_started(chat_id=380566596)
 
-    with pytest.raises(telegram_push_service.TelegramPushError) as exc_info:
-        telegram_push_service.send_manual_push(telegram_id=380566596)
+    result = telegram_push_service.send_manual_push(telegram_id=380566596)
 
-    assert exc_info.value.code == "PUSH_TARGET_RESTRICTED"
-    assert str(DEBUG_TARGET_TELEGRAM_ID) in exc_info.value.message
-    assert captured_chat_ids == []
+    assert result["sent"] is True
+    assert captured_chat_ids == [380566596]
 
 
 def test_current_pet_record_decays_stats_and_recomputes_stage() -> None:
@@ -237,6 +240,11 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
 ) -> None:
     settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
     monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_now",
+        lambda: datetime(2026, 7, 7, 12, 0, tzinfo=UTC),
+    )
     lite_overlay_patch = {
         "facts": [
             {
@@ -288,6 +296,13 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
                 "createdAt": "2026-07-08T07:40:00Z",
                 "source": "background_story",
             },
+            stat_impact={
+                "applies": True,
+                "isNegativeOutcome": True,
+                "stat": "energy",
+                "amount": 25,
+                "reason": "Громм получил урон от меловой тени.",
+            },
             prompt_debug=[],
         ),
     )
@@ -305,7 +320,7 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
 
     telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
     result = telegram_push_service.generate_story_for_telegram_user(
-        telegram_id=DEBUG_TARGET_TELEGRAM_ID,
+        telegram_id=TEST_TELEGRAM_ID,
         include_debug=False,
     )
 
@@ -313,15 +328,17 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     assert result["liteOverlayPatch"] == lite_overlay_patch
     assert result["storyImage"] == {"bytes": b"story-png", "mimeType": "image/png"}
     assert result["storyImageError"] is None
+    assert result["statsPatch"]["stats"] == {"energy": 35}
+    assert set(result["statsPatch"]["lastStatTickAt"]) == {"energy"}
     assert image_calls[0]["pet"].name == "Громм"
     assert image_calls[0]["story"].title == "Нападение меловой тени"
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
-    overlay = store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["pet"]["characterBible"][
+    overlay = store["records"][str(TEST_TELEGRAM_ID)]["pet"]["characterBible"][
         "extensions"
     ]["lite_overlay"]
     assert overlay["facts"][0]["source"] == "background_story_aftermath"
     assert "меловые следы" in overlay["facts"][0]["text"]
-    events = store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["recentStoryEvents"]
+    events = store["records"][str(TEST_TELEGRAM_ID)]["recentStoryEvents"]
     assert events[0]["summary"] == "На Громма напала меловая тень у каменного порога."
     assert result["recentStoryEvent"]["eventType"] == "attack"
 
@@ -333,13 +350,13 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     assert response.recentStoryEventsPatch["events"][0]["eventType"] == "attack"
     assert response.liteOverlayPatch["facts"][0]["source"] == "background_story_aftermath"
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
-    overlay = store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["pet"]["characterBible"][
+    overlay = store["records"][str(TEST_TELEGRAM_ID)]["pet"]["characterBible"][
         "extensions"
     ]["lite_overlay"]
     assert len(overlay["facts"]) == 1
     assert overlay["facts"][0]["source"] == "background_story_aftermath"
     assert (
-        store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["recentStoryEvents"][0]["summary"]
+        store["records"][str(TEST_TELEGRAM_ID)]["recentStoryEvents"][0]["summary"]
         == "На Громма напала меловая тень у каменного порога."
     )
 
@@ -401,7 +418,7 @@ def test_telegram_send_error_is_sanitized(monkeypatch, tmp_path) -> None:
     telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
 
     with pytest.raises(telegram_push_service.TelegramPushError) as exc_info:
-        telegram_push_service.send_manual_push(telegram_id=DEBUG_TARGET_TELEGRAM_ID)
+        telegram_push_service.send_manual_push(telegram_id=TEST_TELEGRAM_ID)
 
     assert exc_info.value.code == "TELEGRAM_CHAT_NOT_FOUND"
     assert "/start" in exc_info.value.message
@@ -449,9 +466,9 @@ def test_failed_daily_attempt_delays_next_due_push(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(telegram_push_service, "send_message", fake_send_message)
 
     telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
-    telegram_push_service.mark_chat_started(chat_id=DEBUG_TARGET_TELEGRAM_ID)
+    telegram_push_service.mark_chat_started(chat_id=TEST_TELEGRAM_ID)
     store = telegram_push_service._read_store()
-    record = store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]
+    record = store["records"][str(TEST_TELEGRAM_ID)]
     record["registeredAt"] = (now - timedelta(hours=25)).isoformat().replace("+00:00", "Z")
     telegram_push_service._save_record(record)
 
@@ -473,14 +490,14 @@ def test_due_push_can_use_seconds_interval(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
 
     telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
-    telegram_push_service.mark_chat_started(chat_id=DEBUG_TARGET_TELEGRAM_ID)
+    telegram_push_service.mark_chat_started(chat_id=TEST_TELEGRAM_ID)
     telegram_push_service.register_push_snapshot(
         _user_with_id(380566596, username="dendimitrov"),
         _snapshot_payload(),
     )
     telegram_push_service.mark_chat_started(chat_id=380566596)
     store = telegram_push_service._read_store()
-    record = store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]
+    record = store["records"][str(TEST_TELEGRAM_ID)]
     record["registeredAt"] = (
         (now - timedelta(seconds=119))
         .isoformat()
@@ -501,7 +518,9 @@ def test_due_push_can_use_seconds_interval(monkeypatch, tmp_path) -> None:
     )
     telegram_push_service._save_record(non_target)
 
-    assert telegram_push_service._due_records(now) == []
+    due = telegram_push_service._due_records(now)
+    assert len(due) == 1
+    assert due[0]["telegramId"] == 380566596
 
     record["registeredAt"] = (
         (now - timedelta(seconds=120))
@@ -513,4 +532,4 @@ def test_due_push_can_use_seconds_interval(monkeypatch, tmp_path) -> None:
     )
     telegram_push_service._save_record(record)
 
-    assert len(telegram_push_service._due_records(now)) == 1
+    assert len(telegram_push_service._due_records(now)) == 2

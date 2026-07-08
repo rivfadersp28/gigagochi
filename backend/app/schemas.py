@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 PetStageValue = Literal["baby", "teen", "adult"]
 PetStateValue = Literal["idle", "happy", "sad", "hungry"]
+PetStatKeyValue = Literal["hunger", "happiness", "energy"]
 GeneratePetJobStatusValue = Literal["queued", "running", "succeeded", "failed"]
 UserMemoryKind = Literal[
     "user_fact",
@@ -68,6 +69,12 @@ class LocalPetStats(BaseModel):
     hunger: int = Field(ge=0, le=100)
     happiness: int = Field(ge=0, le=100)
     energy: int = Field(ge=0, le=100)
+
+
+class LocalPetStatsPatch(BaseModel):
+    stats: dict[PetStatKeyValue, int] = Field(default_factory=dict)
+    lastStatsTickAt: str | None = Field(default=None, max_length=80)
+    lastStatTickAt: dict[PetStatKeyValue, str] | None = None
 
 
 class LocalPetChatContext(BaseModel):
@@ -261,6 +268,7 @@ class LocalPetPushSnapshotRequest(BaseModel):
     createdAt: str | None = Field(default=None, max_length=80)
     updatedAt: str | None = Field(default=None, max_length=80)
     lastStatsTickAt: str | None = Field(default=None, max_length=80)
+    lastStatTickAt: dict[PetStatKeyValue, str] | None = None
     timezone: str | None = Field(default=None, max_length=80)
 
 
@@ -268,6 +276,7 @@ class LocalPetPushSnapshotResponse(BaseModel):
     registered: bool
     telegramId: int
     updatedAt: str
+    statsPatch: LocalPetStatsPatch | None = None
     storyLibraryPatch: dict[str, Any] | None = None
     liteOverlayPatch: dict[str, Any] | None = None
     recentStoryEventsPatch: dict[str, Any] | None = None

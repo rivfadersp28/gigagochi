@@ -207,7 +207,10 @@ def test_lite_prompt_includes_age_role_hint() -> None:
     teen = payload.model_copy(update={"pet": payload.pet.model_copy(update={"stage": "teen"})})
     adult = payload.model_copy(update={"pet": payload.pet.model_copy(update={"stage": "adult"})})
 
-    assert "Сейчас ты малыш такого существа." in build_lite_chat_messages(baby)[0]["content"]
+    assert (
+        "Сейчас ты недавно родившийся субъект такого существа."
+        in build_lite_chat_messages(baby)[0]["content"]
+    )
     assert "Сейчас ты подросток такого существа." in build_lite_chat_messages(teen)[0]["content"]
     assert (
         "Сейчас ты взрослый, сформировавшийся представитель такого существа."
@@ -238,7 +241,7 @@ def test_lite_prompt_includes_state_modifier() -> None:
     )
 
     assert (
-        "Ты сейчас радостный, энергичный, полный сил."
+        "Ты сейчас радостный, здоровый, полный сил."
         in build_lite_chat_messages(happy)[0]["content"]
     )
     assert "Ты сейчас голодный." in build_lite_chat_messages(hungry)[0]["content"]

@@ -26,8 +26,9 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      TELEGRAM_DAILY_PUSH_INTERVAL_SECONDS: "120"
-      TELEGRAM_DAILY_PUSH_MIN_INTERVAL_SECONDS: "120"
+      TELEGRAM_DAILY_PUSH_ENABLED: "false"
+      BACKGROUND_STORY_ENABLED: "true"
+      BACKGROUND_STORY_MIN_INTERVAL_HOURS: "6"
     ports:
       - "127.0.0.1:18080:8000"
     expose:

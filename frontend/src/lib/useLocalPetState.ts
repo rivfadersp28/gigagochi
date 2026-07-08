@@ -6,6 +6,7 @@ import {
   applyOfflineProgress,
   applyLiteOverlayPatch as applyStoredLiteOverlayPatch,
   applyRecentStoryEventsPatch as applyStoredRecentStoryEventsPatch,
+  applyStatsPatch as applyStoredStatsPatch,
   applyStoryLibraryPatch as applyStoredStoryLibraryPatch,
   calculatePetMood,
   calculatePetStage,
@@ -17,7 +18,7 @@ import {
   writeLocalPetState,
 } from "./localPetStorage";
 import { resetLocalPetMemory } from "./localPetMemoryStorage";
-import type { LocalPetAssetSet, LocalPetState, PetMood } from "./types";
+import type { LocalPetAssetSet, LocalPetState, PetMood, PetStatsPatch } from "./types";
 
 type LocalPetStateStatus = "loading" | "ready" | "empty" | "error";
 const LOCAL_PET_TICK_MS = 60_000;
@@ -41,6 +42,7 @@ type UseLocalPetStateResult = {
   applyLiteOverlayPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
   applyStoryLibraryPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
   applyRecentStoryEventsPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
+  applyStatsPatch: (patch?: PetStatsPatch) => LocalPetState | null;
 };
 
 function saveAndReturn(state: LocalPetState) {
@@ -170,16 +172,23 @@ export function useLocalPetState(): UseLocalPetStateResult {
     }
 
     const now = new Date();
+    const nowIso = now.toISOString();
     const stats = {
       hunger: 0,
       happiness: 0,
       energy: 0,
     };
+    const lastStatTickAt = {
+      hunger: nowIso,
+      happiness: nowIso,
+      energy: nowIso,
+    };
     const nextPet = saveAndReturn({
       ...currentPet,
-      updatedAt: now.toISOString(),
-      lastInteractionAt: now.toISOString(),
-      lastStatsTickAt: now.toISOString(),
+      updatedAt: nowIso,
+      lastInteractionAt: nowIso,
+      lastStatsTickAt: nowIso,
+      lastStatTickAt,
       stage: calculatePetStage(currentPet.createdAt, now),
       mood: calculatePetMood(stats),
       stats,
@@ -247,15 +256,21 @@ export function useLocalPetState(): UseLocalPetStateResult {
     }
 
     const now = new Date();
+    const nowIso = now.toISOString();
     const stats = {
       ...currentPet.stats,
       happiness: Math.min(100, currentPet.stats.happiness + 5),
     };
+    const lastStatTickAt = {
+      ...currentPet.lastStatTickAt,
+      happiness: nowIso,
+    };
     const nextState = {
       ...currentPet,
-      updatedAt: now.toISOString(),
-      lastInteractionAt: now.toISOString(),
-      lastStatsTickAt: now.toISOString(),
+      updatedAt: nowIso,
+      lastInteractionAt: nowIso,
+      lastStatsTickAt: nowIso,
+      lastStatTickAt,
       stage: calculatePetStage(currentPet.createdAt, now),
       mood: moodHint ?? calculatePetMood(stats),
       stats,
@@ -316,6 +331,21 @@ export function useLocalPetState(): UseLocalPetStateResult {
     return nextPet;
   }, []);
 
+  const applyStatsPatch = useCallback((patch?: PetStatsPatch) => {
+    if (!patch) {
+      return null;
+    }
+
+    const currentPet = readLocalPetState();
+    if (!currentPet) {
+      return null;
+    }
+
+    const nextPet = saveAndReturn(applyStoredStatsPatch(currentPet, patch));
+    setPet(nextPet);
+    return nextPet;
+  }, []);
+
   return {
     pet,
     status,
@@ -331,5 +361,6 @@ export function useLocalPetState(): UseLocalPetStateResult {
     applyLiteOverlayPatch,
     applyStoryLibraryPatch,
     applyRecentStoryEventsPatch,
+    applyStatsPatch,
   };
 }

@@ -2,7 +2,6 @@
 
 import {
   AlertCircle,
-  Bell,
   Check,
   Code2,
   Database,
@@ -10,7 +9,6 @@ import {
   RefreshCw,
   Rocket,
   Save,
-  Users,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
@@ -22,14 +20,10 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  fetchAdminPushStatus,
   fetchAdminSpeechManifest,
   fetchAdminSpeechPublishJob,
   saveAdminSpeechFiles,
-  sendAdminPush,
-  sendAdminPushAll,
   startAdminSpeechPublish,
-  type AdminPushStatus,
   type AdminSpeechFile,
   type AdminSpeechManifest,
   type AdminSpeechPublishJob,
@@ -53,9 +47,9 @@ const AGE_STAGES = [
 const STATE_MODIFIERS = [
   { id: "hungry", label: "Голодный" },
   { id: "happy", label: "Радостный" },
-  { id: "happyLowEnergy", label: "Радостный + устал" },
+  { id: "happyLowEnergy", label: "Радостный + здоровье просело" },
   { id: "sad", label: "Грустный" },
-  { id: "lowEnergy", label: "Усталый" },
+  { id: "lowEnergy", label: "Здоровье просело" },
 ] as const;
 
 const STATE_PARAM_BANDS = [
@@ -73,7 +67,7 @@ const STATE_PARAM_BANDS = [
   },
   {
     id: "energy",
-    label: "Энергия",
+    label: "Здоровье",
     lowMax: "energyLowMax",
     highMin: "energyHighMin",
   },
@@ -590,7 +584,7 @@ function SpeechRuntimeEditor({
         />
       </Section>
 
-      <Section title="Telegram push" meta={<Badge variant="outline">debug: 2 минуты</Badge>}>
+      <Section title="Telegram push">
         <RuntimeField
           label="Push prompt"
           value={stringAt(config, ["surfacePrompts", "push"])}
@@ -698,7 +692,7 @@ function SpeechRuntimeEditor({
         </div>
       </Section>
 
-      <Section title="Настроение, голод, энергия">
+      <Section title="Настроение, голод, здоровье">
         <RuntimeField
           label="Story usage rule"
           value={stringAt(config, ["stateLayer", "stateParamUsageRule"])}
@@ -1002,10 +996,7 @@ export function SpeechAdmin() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
-  const [isSendingPush, setIsSendingPush] = useState(false);
   const [publishJob, setPublishJob] = useState<AdminSpeechPublishJob | null>(null);
-  const [pushStatus, setPushStatus] = useState<AdminPushStatus | null>(null);
-  const [selectedPushTelegramId, setSelectedPushTelegramId] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -1014,16 +1005,8 @@ export function SpeechAdmin() {
     setError(null);
     const clearNotice = options.clearNotice ?? true;
     try {
-      const [nextManifest, nextPushStatus] = await Promise.all([
-        fetchAdminSpeechManifest(),
-        fetchAdminPushStatus().catch(() => null),
-      ]);
+      const nextManifest = await fetchAdminSpeechManifest();
       setManifest(nextManifest);
-      setPushStatus(nextPushStatus);
-      setSelectedPushTelegramId((current) =>
-        current ||
-        String(nextPushStatus?.records[0]?.telegramId ?? nextPushStatus?.latest?.telegramId ?? ""),
-      );
       setDrafts(Object.fromEntries(nextManifest.files.map((file) => [file.id, file.content])));
       setValidation({});
       setSelectedAuxId((current) => {
@@ -1049,19 +1032,12 @@ export function SpeechAdmin() {
   useEffect(() => {
     let ignore = false;
 
-    Promise.all([
-      fetchAdminSpeechManifest(),
-      fetchAdminPushStatus().catch(() => null),
-    ])
-      .then(([nextManifest, nextPushStatus]) => {
+    fetchAdminSpeechManifest()
+      .then((nextManifest) => {
         if (ignore) {
           return;
         }
         setManifest(nextManifest);
-        setPushStatus(nextPushStatus);
-        setSelectedPushTelegramId(
-          String(nextPushStatus?.records[0]?.telegramId ?? nextPushStatus?.latest?.telegramId ?? ""),
-        );
         setDrafts(
           Object.fromEntries(nextManifest.files.map((file) => [file.id, file.content])),
         );
@@ -1162,57 +1138,6 @@ export function SpeechAdmin() {
     await saveDirtyDraftsForAction();
   }
 
-  async function sendDebugPush() {
-    if (!manifest) {
-      return;
-    }
-    setIsSendingPush(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const saved = await saveDirtyDraftsForAction();
-      if (!saved) {
-        return;
-      }
-      const telegramId = Number.parseInt(selectedPushTelegramId, 10);
-      if (!Number.isFinite(telegramId)) {
-        setError("Выбери Telegram ID для debug push.");
-        return;
-      }
-      const result = await sendAdminPush(undefined, telegramId);
-      setNotice(`Push отправлен: ${result.reply}`);
-      setPushStatus(await fetchAdminPushStatus().catch(() => null));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setIsSendingPush(false);
-    }
-  }
-
-  async function sendDebugPushAll() {
-    if (!manifest) {
-      return;
-    }
-    setIsSendingPush(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const saved = await saveDirtyDraftsForAction();
-      if (!saved) {
-        return;
-      }
-      const result = await sendAdminPushAll();
-      setNotice(
-        `Push всем: отправлено ${result.sentCount}, ошибок ${result.failedCount}, пропущено ${result.skippedCount}.`,
-      );
-      setPushStatus(await fetchAdminPushStatus().catch(() => null));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setIsSendingPush(false);
-    }
-  }
-
   async function deployAll() {
     if (!manifest) {
       return;
@@ -1260,22 +1185,13 @@ export function SpeechAdmin() {
     }
   }
 
-  const isBusy = isSaving || isPublishing || isSendingPush || isLoading;
+  const isBusy = isSaving || isPublishing || isLoading;
   const saveDisabled = !dirtyIds.length || hasValidationError || isBusy;
   const deployDisabled =
     !manifest?.deploy.enabled ||
     (!dirtyIds.length && !hasUndeployedChanges) ||
     hasValidationError ||
     isBusy;
-  const pushDisabled = hasValidationError || isBusy;
-  const selectedPushRecord = pushStatus?.records.find(
-    (record) => String(record.telegramId) === selectedPushTelegramId,
-  );
-  const reachablePushCount =
-    pushStatus?.reachableCount ??
-    pushStatus?.records.filter((record) => record.chatReachable).length ??
-    0;
-
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto w-full max-w-[1320px] px-4 py-4 lg:px-6">
@@ -1328,35 +1244,9 @@ export function SpeechAdmin() {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => void sendDebugPush()}
-                disabled={pushDisabled || !selectedPushTelegramId}
-              >
-                {isSendingPush ? (
-                  <RefreshCw className="size-4 animate-spin" />
-                ) : (
-                  <Bell className="size-4" />
-                )}
-                Отправить push
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void sendDebugPushAll()}
-                disabled={pushDisabled || reachablePushCount === 0}
-              >
-                {isSendingPush ? (
-                  <RefreshCw className="size-4 animate-spin" />
-                ) : (
-                  <Users className="size-4" />
-                )}
-                Всем
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
                 size="icon"
                 onClick={() => void loadManifest()}
-                disabled={isLoading || isSaving || isPublishing || isSendingPush}
+                disabled={isLoading || isSaving || isPublishing}
                 aria-label="Обновить"
               >
                 <RefreshCw className={cn("size-4", isLoading && "animate-spin")} />
@@ -1456,77 +1346,6 @@ export function SpeechAdmin() {
                 <p className="mt-2 leading-5 text-muted-foreground">
                   {manifest?.deploy.message ?? "Нет данных deploy."}
                 </p>
-              </section>
-
-              <section className="rounded-lg border border-border/70 p-4 text-sm">
-                <div className="mb-3 flex items-center gap-2 font-semibold">
-                  <Bell className="size-4" />
-                  Telegram push
-                </div>
-                <div className="grid gap-2 text-muted-foreground">
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Снапшоты</span>
-                    <Badge variant="outline">{pushStatus?.count ?? "?"}</Badge>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Источник</span>
-                    <Badge variant="outline">{pushStatus?.source ?? "local"}</Badge>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Чат открыт</span>
-                    <Badge variant="outline">{reachablePushCount}</Badge>
-                  </div>
-                  {pushStatus?.records.length ? (
-                    <div className="grid gap-2">
-                      <Label className="text-xs text-muted-foreground">Кому отправить</Label>
-                      <select
-                        value={selectedPushTelegramId}
-                        onChange={(event) => setSelectedPushTelegramId(event.target.value)}
-                        className="h-10 rounded-md border border-border/70 bg-background px-3 text-sm text-foreground"
-                        disabled={isBusy}
-                      >
-                        {pushStatus.records.map((record) => {
-                          const title =
-                            record.firstName || record.username || String(record.telegramId);
-                          return (
-                            <option key={record.telegramId} value={record.telegramId}>
-                              {title} · {record.telegramId}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </div>
-                  ) : null}
-                  {pushStatus?.latest ? (
-                    <>
-                      <div className="truncate">Pet: {selectedPushRecord?.petId ?? "-"}</div>
-                      <div>Telegram ID: {selectedPushTelegramId || "-"}</div>
-                      <div className="flex items-center justify-between gap-3">
-                        <span>Чат с ботом</span>
-                        <Badge
-                          variant={selectedPushRecord?.chatReachable ? "outline" : "destructive"}
-                        >
-                          {selectedPushRecord?.chatReachable ? "открыт" : "нет /start"}
-                        </Badge>
-                      </div>
-                      <div>
-                        Обновлен: {formatDate(selectedPushRecord?.registeredAt ?? null)}
-                      </div>
-                      <div>
-                        Debug push: {formatDate(selectedPushRecord?.lastDebugPushAt ?? null)}
-                      </div>
-                      {selectedPushRecord?.lastPushError ? (
-                        <div className="rounded-md border border-destructive/30 p-2 text-destructive">
-                          {selectedPushRecord.lastPushError}
-                        </div>
-                      ) : null}
-                    </>
-                  ) : (
-                    <p className="leading-5">
-                      Нет snapshot. Открой Mini App в Telegram после деплоя.
-                    </p>
-                  )}
-                </div>
               </section>
             </aside>
           </div>

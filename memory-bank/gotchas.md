@@ -132,6 +132,10 @@
   `./.next/dev/types/routes.d.ts` to `./.next/types/routes.d.ts`. Treat it as a
   generated build side effect and revert it unless the Next config/source setup
   intentionally changes.
-- Telegram scheduled, bulk, and manual debug push is temporarily hardcoded to
-  `DEBUG_PUSH_TARGET_TELEGRAM_ID=62943754` (Сергей/rivfader). Remove that guard
-  before enabling recurring pushes for broader users.
+- User-facing "здоровье" still uses the legacy internal stat key `energy`.
+  Keep API/storage compatibility and translate only at prompt/UI boundaries
+  unless a deliberate migration is planned.
+- Server-generated story stat changes must sync back to Mini App through a
+  partial `statsPatch`. Do not replace the whole stats object unless every
+  `lastStatTickAt` key is also reset consistently; otherwise independent decay
+  timers will double-decay or collapse into one shared clock.

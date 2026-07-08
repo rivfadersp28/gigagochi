@@ -270,6 +270,13 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
                 "location": "лесная миска",
                 "outcome": "Олег пережил налет.",
             },
+            "statImpact": {
+                "applies": True,
+                "isNegativeOutcome": True,
+                "stat": "energy",
+                "amount": 25,
+                "reason": "Стеклянные улитки повредили лист Олега.",
+            },
         },
         ensure_ascii=False,
     )
@@ -295,6 +302,13 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
     assert result.story_library_patch is None
     assert result.lite_overlay_patch is not None
     assert result.recent_story_event is not None
+    assert result.stat_impact == {
+        "applies": True,
+        "isNegativeOutcome": True,
+        "stat": "energy",
+        "amount": 25,
+        "reason": "Стеклянные улитки повредили лист Олега.",
+    }
     assert result.recent_story_event["summary"] == (
         "Стеклянные улитки поползли к листу Олега у лесной миски."
     )
@@ -308,9 +322,10 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
     prompt = request["messages"][1]["content"]
     assert "наевшийся" in prompt
     assert "счастливый" in prompt
-    assert "энергичный" in prompt
+    assert "крепкое здоровье" in prompt
     assert '"stats"' not in prompt
     assert '"голод"' in prompt
+    assert '"здоровье"' in prompt
     assert "Листики выпускают запахи-сигналы опасности." in prompt
     aftermath_request = _call_by_schema(
         completions,
@@ -653,6 +668,13 @@ def test_background_story_aftermath_ignores_ephemeral_events(monkeypatch) -> Non
                 "objects": [],
                 "location": "",
                 "outcome": "тень исчезла",
+            },
+            "statImpact": {
+                "applies": False,
+                "isNegativeOutcome": False,
+                "stat": "none",
+                "amount": 0,
+                "reason": "Последствий для параметров нет.",
             },
         },
         ensure_ascii=False,
