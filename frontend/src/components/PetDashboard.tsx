@@ -326,6 +326,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const conversationFullHeightRef = useRef(0);
   const keyboardSyncUntilRef = useRef(0);
   const pet = localPet.pet;
+  const applyLiteOverlayPatch = localPet.applyLiteOverlayPatch;
   const applyStoryLibraryPatch = localPet.applyStoryLibraryPatch;
   const includePromptDebug = promptSettings.includePromptDebug;
 
@@ -596,10 +597,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       recentAmbientReplies: ambientReplyHistoryRef.current,
     })
       .then((response) => {
+        applyLiteOverlayPatch(response.liteOverlayPatch ?? undefined);
         applyStoryLibraryPatch(response.storyLibraryPatch ?? undefined);
       })
       .catch(() => undefined);
-  }, [applyStoryLibraryPatch, localPet.status, pet, petId]);
+  }, [applyLiteOverlayPatch, applyStoryLibraryPatch, localPet.status, pet, petId]);
 
   function handleFeed() {
     if (!pet) {

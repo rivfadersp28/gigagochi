@@ -21,8 +21,8 @@ from app.schemas import (
     LocalPushRequest,
 )
 from app.services.background_story_service import generate_background_story
+from app.services.lite_overlay import merge_lite_overlay_patch
 from app.services.pet_reply_engine.lite_generator import generate_push_pet_message
-from app.services.story_library import merge_story_library_patch
 from app.services.telegram_auth_service import TelegramUserContext
 
 STORE_VERSION = 1
@@ -117,24 +117,33 @@ def _save_record(record: dict[str, Any]) -> None:
         _write_store_unlocked(store)
 
 
-def _record_story_library_patch(record: dict[str, Any] | None) -> dict[str, Any] | None:
+def _record_lite_overlay_patch(record: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(record, dict):
         return None
     pet = record.get("pet") if isinstance(record.get("pet"), dict) else {}
     bible = pet.get("characterBible") if isinstance(pet.get("characterBible"), dict) else {}
     extensions = bible.get("extensions") if isinstance(bible.get("extensions"), dict) else {}
     overlay = (
-        extensions.get("story_library_overlay")
-        if isinstance(extensions.get("story_library_overlay"), dict)
+        extensions.get("lite_overlay")
+        if isinstance(extensions.get("lite_overlay"), dict)
         else {}
     )
-    bricks = overlay.get("bricks") if isinstance(overlay, dict) else None
-    if not isinstance(bricks, list) or not bricks:
+    if not isinstance(overlay, dict):
         return None
-    return {"version": 1, "bricks": bricks}
+    patch: dict[str, Any] = {}
+    facts = overlay.get("facts")
+    if isinstance(facts, list) and facts:
+        patch["facts"] = facts
+    spheres = overlay.get("spheres")
+    if isinstance(spheres, dict) and spheres:
+        patch["spheres"] = spheres
+    world_seed = overlay.get("worldSeed")
+    if isinstance(world_seed, dict):
+        patch["worldSeed"] = world_seed
+    return patch or None
 
 
-def _merge_record_story_library_patch(
+def _merge_record_lite_overlay_patch(
     record: dict[str, Any],
     patch: dict[str, Any] | None,
 ) -> None:
@@ -152,11 +161,11 @@ def _merge_record_story_library_patch(
     if not isinstance(extensions, dict):
         extensions = {}
         bible["extensions"] = extensions
-    overlay = extensions.setdefault("story_library_overlay", {})
+    overlay = extensions.setdefault("lite_overlay", {})
     if not isinstance(overlay, dict):
         overlay = {}
-        extensions["story_library_overlay"] = overlay
-    merge_story_library_patch(overlay, patch)
+        extensions["lite_overlay"] = overlay
+    merge_lite_overlay_patch(overlay, patch)
 
 
 def _clamp_stat(value: Any) -> int:
@@ -211,7 +220,11 @@ def register_push_snapshot(
         "registeredAt": now_iso,
     }
     existing = _read_store().get("records", {}).get(str(user.telegram_id))
-    story_library_patch = _record_story_library_patch(existing)
+    lite_overlay_patch = (
+        _record_lite_overlay_patch(existing)
+        if isinstance(existing, dict) and existing.get("petId") == payload.petId
+        else None
+    )
     if isinstance(existing, dict):
         for key in (
             "lastPushAt",
@@ -228,13 +241,13 @@ def register_push_snapshot(
             "lastStory",
         ):
             record[key] = existing.get(key)
-    _merge_record_story_library_patch(record, story_library_patch)
+    _merge_record_lite_overlay_patch(record, lite_overlay_patch)
     _save_record(record)
     return LocalPetPushSnapshotResponse(
         registered=True,
         telegramId=user.telegram_id,
         updatedAt=now_iso,
-        storyLibraryPatch=story_library_patch,
+        liteOverlayPatch=lite_overlay_patch,
     )
 
 
@@ -555,7 +568,7 @@ def generate_story_for_telegram_user(
             "ragText": result.rag_text,
         },
     }
-    _merge_record_story_library_patch(next_record, result.story_library_patch)
+    _merge_record_lite_overlay_patch(next_record, result.lite_overlay_patch)
     _save_record(next_record)
     return {
         "generated": True,
@@ -563,7 +576,8 @@ def generate_story_for_telegram_user(
         "petId": record.get("petId"),
         "generatedAt": now_iso,
         "story": next_record["lastStory"],
-        "storyLibraryPatch": result.story_library_patch,
+        "storyLibraryPatch": None,
+        "liteOverlayPatch": result.lite_overlay_patch,
         "debug": {"promptDebug": result.prompt_debug} if include_debug else None,
     }
 

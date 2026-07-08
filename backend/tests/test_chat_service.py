@@ -1014,31 +1014,66 @@ def test_lite_story_library_context_is_preselected_without_story_tools() -> None
     assert response.debug.storyLibraryDebug["injectedSpheres"]
 
 
-def test_lite_story_library_extraction_returns_personal_patch() -> None:
+def test_lite_character_profile_strips_legacy_story_overlay() -> None:
+    client, completions = fake_lite_client(
+        SimpleNamespace(content="Я Громм, каменный и спокойный.", tool_calls=None),
+    )
+
+    response = generate_lite_pet_reply(
+        lite_payload(
+            message="расскажи о себе",
+            pet={
+                "name": "Громм",
+                "description": "гигантский земляной великан",
+                "stage": "adult",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 80,
+                    "energy": 80,
+                },
+                "characterBible": {
+                    "identity": {"role": "каменный хранитель"},
+                    "extensions": {
+                        "lite_overlay": {
+                            "facts": [
+                                {
+                                    "sphere": "world",
+                                    "kind": "world_fact",
+                                    "text": "Громм живет на теплом уступе.",
+                                }
+                            ]
+                        },
+                        "story_library_overlay": {
+                            "bricks": [
+                                {
+                                    "name": "Тихий колокольный страж",
+                                    "text": "Старая повторяющаяся история.",
+                                }
+                            ]
+                        },
+                    },
+                },
+            },
+        ),
+        client=client,
+        model="gpt-5.5",
+        timeout=10,
+    )
+
+    assert response.reply == "Я Громм, каменный и спокойный."
+    system_message = completions.calls[1]["messages"][0]["content"]
+    assert "CHARACTER_PROFILE" in system_message
+    assert "каменный хранитель" in system_message
+    assert "Громм живет на теплом уступе." in system_message
+    assert "story_library_overlay" not in system_message
+    assert "Тихий колокольный страж" not in system_message
+
+
+def test_lite_reply_does_not_extract_personal_story_patch() -> None:
     client, completions = fake_lite_client(
         SimpleNamespace(
             content="Я встретил стеклянного шуршуна у корня. Он тихо звенит.",
-            tool_calls=None,
-        ),
-        SimpleNamespace(
-            content=json.dumps(
-                {
-                    "bricks": [
-                        {
-                            "pool": "creatures",
-                            "name": "стеклянный шуршун",
-                            "description": (
-                                "Личное существо питомца: маленький стеклянный "
-                                "шуршун, который тихо звенит у корней."
-                            ),
-                            "basedOnBrickIds": ["global:creatures:000"],
-                            "reason": "питомец ввел новое устойчивое существо",
-                            "confidence": 0.92,
-                        }
-                    ]
-                },
-                ensure_ascii=False,
-            ),
             tool_calls=None,
         ),
     )
@@ -1050,21 +1085,18 @@ def test_lite_story_library_extraction_returns_personal_patch() -> None:
         timeout=10,
     )
 
-    assert len(completions.calls) == 3
-    assert completions.calls[2]["response_format"]["json_schema"]["name"] == (
-        "story_library_extraction"
+    assert len(completions.calls) == 2
+    assert all(
+        call.get("response_format", {}).get("json_schema", {}).get("name")
+        != "story_library_extraction"
+        for call in completions.calls
     )
     assert response.debug is not None
-    assert response.storyLibraryPatch is not None
-    assert response.debug.storyLibraryPatch is not None
-    assert response.storyLibraryPatch == response.debug.storyLibraryPatch
-    brick = response.storyLibraryPatch["bricks"][0]
-    assert brick["source"] == "pet_overlay"
-    assert brick["pool"] == "creatures"
-    assert brick["name"] == "стеклянный шуршун"
+    assert response.storyLibraryPatch is None
+    assert response.debug.storyLibraryPatch is None
 
 
-def test_story_library_search_uses_personal_overlay_first() -> None:
+def test_story_library_search_ignores_personal_overlay_by_default() -> None:
     character_bible = {
         "extensions": {
             "story_library_overlay": {
@@ -1089,10 +1121,22 @@ def test_story_library_search_uses_personal_overlay_first() -> None:
         pool_hints=["threats"],
         character_bible=character_bible,
         limit=3,
+        include_global=False,
     )
 
-    assert result["bricks"][0]["id"] == "pet:threats:quiet-bell"
-    assert result["bricks"][0]["source"] == "pet_overlay"
+    assert result["bricks"] == []
+
+    explicit = search_story_library(
+        query="кто такой тихий колокольный страж",
+        pool_hints=["threats"],
+        character_bible=character_bible,
+        limit=3,
+        include_global=False,
+        include_overlay=True,
+    )
+
+    assert explicit["bricks"][0]["id"] == "pet:threats:quiet-bell"
+    assert explicit["bricks"][0]["source"] == "pet_overlay"
 
 
 def test_lite_tool_updates_pet_name() -> None:

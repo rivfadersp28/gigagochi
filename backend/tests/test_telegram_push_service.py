@@ -237,25 +237,34 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
 ) -> None:
     settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
     monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
-    story_patch = {
-        "version": 1,
-        "bricks": [
+    lite_overlay_patch = {
+        "facts": [
             {
-                "id": "pet:events:test-story",
-                "source": "pet_overlay",
-                "pool": "events",
-                "poolLabel": "Фоновые события",
-                "name": "Нападение меловой тени",
-                "text": (
-                    "На Громма напала меловая тень у каменного порога."
-                ),
-                "attributes": {
-                    "eventType": "attack",
-                    "generatedBy": "background_story",
-                },
+                "sphere": "world",
+                "kind": "world_fact",
+                "text": "У каменного порога Громма теперь видны меловые следы тени.",
+                "pathHint": "lite_overlay.spheres.world",
+                "source": "background_story_aftermath",
                 "createdAt": "2026-07-08T07:40:00Z",
             }
         ],
+        "spheres": {
+            "world": {
+                "facts": [
+                    {
+                        "sphere": "world",
+                        "kind": "world_fact",
+                        "text": (
+                            "У каменного порога Громма теперь видны "
+                            "меловые следы тени."
+                        ),
+                        "pathHint": "lite_overlay.spheres.world",
+                        "source": "background_story_aftermath",
+                        "createdAt": "2026-07-08T07:40:00Z",
+                    }
+                ]
+            }
+        },
     }
 
     monkeypatch.setattr(
@@ -275,7 +284,8 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
             rag_text=(
                 "На Громма напала меловая тень у каменного порога."
             ),
-            story_library_patch=story_patch,
+            story_library_patch=None,
+            lite_overlay_patch=lite_overlay_patch,
             prompt_debug=[],
         ),
     )
@@ -286,27 +296,26 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
         include_debug=False,
     )
 
-    assert result["storyLibraryPatch"] == story_patch
+    assert result["storyLibraryPatch"] is None
+    assert result["liteOverlayPatch"] == lite_overlay_patch
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
     overlay = store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["pet"]["characterBible"][
         "extensions"
-    ]["story_library_overlay"]
-    assert overlay["bricks"][0]["name"] == "Нападение меловой тени"
+    ]["lite_overlay"]
+    assert overlay["facts"][0]["source"] == "background_story_aftermath"
+    assert "меловые следы" in overlay["facts"][0]["text"]
 
     response = telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
 
-    assert response.storyLibraryPatch is not None
-    assert (
-        response.storyLibraryPatch["bricks"][0]["name"]
-        == "Нападение меловой тени"
-    )
-    assert response.storyLibraryPatch["bricks"][0]["pool"] == "events"
+    assert response.storyLibraryPatch is None
+    assert response.liteOverlayPatch is not None
+    assert response.liteOverlayPatch["facts"][0]["source"] == "background_story_aftermath"
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
     overlay = store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["pet"]["characterBible"][
         "extensions"
-    ]["story_library_overlay"]
-    assert len(overlay["bricks"]) == 1
-    assert overlay["bricks"][0]["pool"] == "events"
+    ]["lite_overlay"]
+    assert len(overlay["facts"]) == 1
+    assert overlay["facts"][0]["source"] == "background_story_aftermath"
 
 
 def test_telegram_send_error_is_sanitized(monkeypatch, tmp_path) -> None:

@@ -239,7 +239,7 @@ def _combined_bricks(
     story_library_patch: dict[str, Any] | None = None,
     *,
     include_global: bool = True,
-    include_overlay: bool = True,
+    include_overlay: bool = False,
     include_patch: bool = True,
 ) -> list[dict[str, Any]]:
     overlay = story_library_overlay_from_bible(character_bible) if include_overlay else []
@@ -328,7 +328,7 @@ def search_story_library(
     story_library_patch: dict[str, Any] | None = None,
     diverse_pools: bool = False,
     include_global: bool = True,
-    include_overlay: bool = True,
+    include_overlay: bool = False,
     include_patch: bool = True,
 ) -> dict[str, Any]:
     query_text = _text_value(query, limit=300)
@@ -372,61 +372,3 @@ def search_story_library(
         "bricks": bricks,
     }
 
-
-def story_library_patch_for_new_brick(arguments: dict[str, Any]) -> dict[str, Any]:
-    pool = _text_value(arguments.get("pool"), limit=60) or "personal"
-    name = _text_value(arguments.get("name"), limit=120)
-    description = _text_value(arguments.get("description"), limit=MAX_TEXT_CHARS)
-    based_on = _string_list(arguments.get("basedOnBrickIds"), limit=8)
-    reason = _text_value(arguments.get("reason"), limit=240)
-    if not name or not description:
-        return {"saved": False, "reason": "empty_name_or_description"}
-
-    brick = {
-        "id": f"pet:{pool}:{_hash_id(name, description)}",
-        "source": "pet_overlay",
-        "pool": pool,
-        "poolLabel": pool,
-        "name": name,
-        "text": description,
-        "attributes": {"reason": reason} if reason else {},
-        "basedOnBrickIds": based_on,
-        "createdAt": _now_iso(),
-    }
-    return {
-        "saved": True,
-        "patch": {
-            "version": 1,
-            "bricks": [brick],
-        },
-        "brick": brick,
-    }
-
-
-def merge_story_library_patch(target: dict[str, Any], patch: dict[str, Any] | None) -> None:
-    if not _is_record(patch):
-        return
-    raw_bricks = patch.get("bricks")
-    if not isinstance(raw_bricks, list):
-        return
-
-    target["version"] = 1
-    bricks = target.setdefault("bricks", [])
-    if not isinstance(bricks, list):
-        bricks = []
-        target["bricks"] = bricks
-
-    existing_ids = {
-        brick.get("id")
-        for brick in bricks
-        if isinstance(brick, dict) and isinstance(brick.get("id"), str)
-    }
-    for index, raw_brick in enumerate(raw_bricks):
-        brick = _normalize_overlay_brick(raw_brick, index)
-        if not brick or brick["id"] in existing_ids:
-            continue
-        existing_ids.add(brick["id"])
-        bricks.append(brick)
-    if len(bricks) > MAX_OVERLAY_BRICKS:
-        target["bricks"] = bricks[-MAX_OVERLAY_BRICKS:]
-    target["updatedAt"] = _now_iso()

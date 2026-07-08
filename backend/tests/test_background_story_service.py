@@ -19,6 +19,13 @@ class FakeBackgroundStoryCompletions:
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
 
+def _call_by_schema(completions: FakeBackgroundStoryCompletions, schema_name: str) -> dict:
+    for call in completions.calls:
+        if call.get("response_format", {}).get("json_schema", {}).get("name") == schema_name:
+            return call
+    raise AssertionError(f"schema call not found: {schema_name}")
+
+
 def _pet() -> LocalPetChatContext:
     return LocalPetChatContext.model_validate(
         {
@@ -75,7 +82,7 @@ def _pet() -> LocalPetChatContext:
     )
 
 
-def test_generate_background_story_creates_events_story_patch(monkeypatch) -> None:
+def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) -> None:
     routing_content = json.dumps(
         {
             "sources": {
@@ -109,7 +116,27 @@ def test_generate_background_story_creates_events_story_patch(monkeypatch) -> No
         },
         ensure_ascii=False,
     )
-    completions = FakeBackgroundStoryCompletions([routing_content, content])
+    aftermath_content = json.dumps(
+        {
+            "facts": [
+                {
+                    "sphere": "world",
+                    "kind": "world_fact",
+                    "text": (
+                        "У лесной миски Олега водятся стеклянные улитки, "
+                        "которые охотятся за запахами-сигналами листа."
+                    ),
+                    "pathHint": "lite_overlay.spheres.world",
+                    "source": "background_story_aftermath",
+                    "confidence": 0.91,
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+    completions = FakeBackgroundStoryCompletions(
+        [routing_content, content, aftermath_content]
+    )
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     monkeypatch.setattr(
         background_story_service,
@@ -128,12 +155,13 @@ def test_generate_background_story_creates_events_story_patch(monkeypatch) -> No
 
     assert result.title == "Налет стеклянных улиток"
     assert result.event_type == "attack"
-    brick = result.story_library_patch["bricks"][0]
-    assert brick["pool"] == "events"
-    assert brick["poolLabel"] == "Фоновые события"
-    assert brick["attributes"]["generatedBy"] == "background_story"
-    assert brick["attributes"]["fullStory"].startswith("У лесной миски")
-    request = completions.calls[-1]
+    assert result.story_library_patch is None
+    assert result.lite_overlay_patch is not None
+    fact = result.lite_overlay_patch["facts"][0]
+    assert fact["sphere"] == "world"
+    assert fact["source"] == "background_story_aftermath"
+    assert "стеклянные улитки" in fact["text"]
+    request = _call_by_schema(completions, "background_story")
     assert request["response_format"]["json_schema"]["name"] == "background_story"
     prompt = request["messages"][1]["content"]
     assert "наевшийся" in prompt
@@ -145,6 +173,13 @@ def test_generate_background_story_creates_events_story_patch(monkeypatch) -> No
         "Листики выпускают запахи-сигналы опасности."
         in prompt
     )
+    aftermath_request = _call_by_schema(
+        completions,
+        "background_story_aftermath_extraction",
+    )
+    aftermath_prompt = aftermath_request["messages"][1]["content"]
+    assert "Сгенерированная история JSON" in aftermath_prompt
+    assert "Налет стеклянных улиток" in aftermath_prompt
 
 
 def test_background_story_profile_toggle_controls_description() -> None:
@@ -226,7 +261,7 @@ def test_background_story_context_sources_policy_controls_dossier(monkeypatch) -
         timeout=10,
     )
 
-    prompt = completions.calls[-1]["messages"][1]["content"]
+    prompt = _call_by_schema(completions, "background_story")["messages"][1]["content"]
     assert "чел с листом вместо лица" not in prompt
     assert "params" not in prompt
     assert "наевшийся" not in prompt
@@ -333,12 +368,15 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     )
 
     assert result.title == "Световая капля"
-    assert len(completions.calls) == 2
+    assert len(completions.calls) == 3
     assert completions.calls[0]["response_format"]["json_schema"]["name"] == (
         "background_story_context_routing"
     )
     assert completions.calls[1]["response_format"]["json_schema"]["name"] == "background_story"
-    prompt = completions.calls[1]["messages"][1]["content"]
+    assert completions.calls[2]["response_format"]["json_schema"]["name"] == (
+        "background_story_aftermath_extraction"
+    )
+    prompt = _call_by_schema(completions, "background_story")["messages"][1]["content"]
     assert captured_story_queries == ["лор мира"]
     assert "Кристаллическая капля" in prompt
     assert "Каменная тропа" not in prompt
@@ -386,9 +424,63 @@ def test_background_story_never_uses_previous_generated_stories(monkeypatch) -> 
         timeout=10,
     )
 
-    prompt = completions.calls[-1]["messages"][1]["content"]
+    prompt = _call_by_schema(completions, "background_story")["messages"][1]["content"]
     assert "recentStoryBricks" not in prompt
     assert "Каменная тропа" not in prompt
+
+
+def test_background_story_aftermath_ignores_ephemeral_events(monkeypatch) -> None:
+    story_content = json.dumps(
+        {
+            "title": "Меловая тень",
+            "summary": "На Олега напала меловая тень.",
+            "storyText": "На Олега напала меловая тень и исчезла.",
+            "eventType": "attack",
+            "valence": "negative",
+            "tags": ["тень"],
+            "ragText": "На Олега напала меловая тень.",
+        },
+        ensure_ascii=False,
+    )
+    aftermath_content = json.dumps(
+        {
+            "facts": [
+                {
+                    "sphere": "world",
+                    "kind": "world_fact",
+                    "text": "На Олега однажды напала меловая тень.",
+                    "pathHint": "lite_overlay.spheres.world",
+                    "source": "background_story_aftermath",
+                    "confidence": 0.4,
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+    completions = FakeBackgroundStoryCompletions([story_content, aftermath_content])
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    monkeypatch.setattr(
+        background_story_service,
+        "get_settings",
+        lambda: SimpleNamespace(openai_chat_timeout_seconds=10, openai_chat_reasoning_effort=None),
+    )
+    monkeypatch.setattr(
+        background_story_service,
+        "context_source_mode",
+        lambda surface, source: "disabled",
+    )
+
+    result = background_story_service.generate_background_story(
+        pet=_pet(),
+        now_iso="2026-07-08T07:40:00Z",
+        timezone="Europe/Moscow",
+        client=client,
+        model="test-model",
+        timeout=10,
+    )
+
+    assert result.story_library_patch is None
+    assert result.lite_overlay_patch is None
 
 
 def test_background_story_uses_snapshot_history_when_story_toggles_allow(
@@ -445,7 +537,7 @@ def test_background_story_uses_snapshot_history_when_story_toggles_allow(
         timeout=10,
     )
 
-    prompt = completions.calls[-1]["messages"][1]["content"]
+    prompt = _call_by_schema(completions, "background_story")["messages"][1]["content"]
     assert "recentChatHistory" in prompt
     assert "Помнишь стеклянную тропу?" in prompt
     assert "recentReplies" in prompt

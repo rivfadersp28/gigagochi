@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -9,6 +9,11 @@ from typing import Any
 
 from app.config import get_settings
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
+from app.services.lite_overlay import (
+    LITE_FACT_KINDS,
+    LITE_FACT_SPHERES,
+    overlay_patch_from_extracted_facts,
+)
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_chat_model,
@@ -23,6 +28,8 @@ from app.services.pet_reply_engine.context_plan import (
 )
 from app.services.pet_reply_engine.speech_runtime import (
     CONTEXT_SOURCE_KEYS,
+    background_story_aftermath_extraction_system_prompt,
+    background_story_aftermath_extraction_user_prompt,
     background_story_default_event_type,
     background_story_max_rag_chars,
     background_story_max_story_chars,
@@ -39,10 +46,12 @@ from app.services.pet_reply_engine.speech_runtime import (
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
 from app.services.story_library import search_story_library
 
+logger = logging.getLogger(__name__)
+
 MAX_CHARACTER_DOSSIER_CHARS = 12000
 MAX_DOSSIER_LIST_ITEMS = 12
-BACKGROUND_STORY_POOL = "events"
-BACKGROUND_STORY_POOL_LABEL = "Фоновые события"
+MAX_AFTERMATH_CONTEXT_CHARS = 12000
+AFTERMATH_CONFIDENCE_THRESHOLD = 0.7
 BACKGROUND_ROUTING_SOURCE_IDS = CONTEXT_ROUTING_SOURCE_IDS
 BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -98,6 +107,37 @@ BACKGROUND_STORY_ROUTING_SCHEMA: dict[str, Any] = {
     },
     "required": ["sources", "reason"],
 }
+BACKGROUND_STORY_AFTERMATH_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "facts": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "sphere": {"type": "string", "enum": list(LITE_FACT_SPHERES)},
+                    "kind": {"type": "string", "enum": list(LITE_FACT_KINDS)},
+                    "text": {"type": "string", "maxLength": 500},
+                    "pathHint": {"type": "string", "maxLength": 120},
+                    "source": {"type": "string", "maxLength": 80},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                "required": [
+                    "sphere",
+                    "kind",
+                    "text",
+                    "pathHint",
+                    "source",
+                    "confidence",
+                ],
+            },
+        }
+    },
+    "required": ["facts"],
+}
 
 
 @dataclass(frozen=True)
@@ -109,7 +149,8 @@ class BackgroundStoryResult:
     valence: str
     tags: tuple[str, ...]
     rag_text: str
-    story_library_patch: dict[str, Any]
+    story_library_patch: dict[str, Any] | None
+    lite_overlay_patch: dict[str, Any] | None
     prompt_debug: list[dict[str, Any]]
 
     def model_dump(self) -> dict[str, Any]:
@@ -122,6 +163,7 @@ class BackgroundStoryResult:
             "tags": list(self.tags),
             "ragText": self.rag_text,
             "storyLibraryPatch": self.story_library_patch,
+            "liteOverlayPatch": self.lite_overlay_patch,
             "promptDebug": self.prompt_debug,
         }
 
@@ -631,11 +673,6 @@ def _json_record_from_text(value: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _hash_id(*parts: str) -> str:
-    digest = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
-    return digest[:12]
-
-
 def _clean_tags(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()
@@ -651,37 +688,6 @@ def _clean_tags(value: Any) -> tuple[str, ...]:
         if len(result) >= 8:
             break
     return tuple(result)
-
-
-def _story_patch(
-    *,
-    title: str,
-    summary: str,
-    story_text: str,
-    event_type: str,
-    valence: str,
-    tags: tuple[str, ...],
-    rag_text: str,
-) -> dict[str, Any]:
-    brick = {
-        "id": f"pet:{BACKGROUND_STORY_POOL}:{_hash_id(title, rag_text)}",
-        "source": "pet_overlay",
-        "pool": BACKGROUND_STORY_POOL,
-        "poolLabel": BACKGROUND_STORY_POOL_LABEL,
-        "name": title,
-        "text": rag_text,
-        "attributes": {
-            "summary": summary,
-            "fullStory": story_text,
-            "eventType": event_type,
-            "valence": valence,
-            "tags": list(tags),
-            "generatedBy": "background_story",
-        },
-        "basedOnBrickIds": [],
-        "createdAt": _now_iso(),
-    }
-    return {"version": 1, "bricks": [brick]}
 
 
 def _normalize_story_payload(payload: dict[str, Any]) -> BackgroundStoryResult:
@@ -706,15 +712,6 @@ def _normalize_story_payload(payload: dict[str, Any]) -> BackgroundStoryResult:
     if not rag_text:
         rag_text = summary
 
-    patch = _story_patch(
-        title=title,
-        summary=summary,
-        story_text=story_text,
-        event_type=event_type,
-        valence=valence,
-        tags=tags,
-        rag_text=rag_text,
-    )
     return BackgroundStoryResult(
         title=title,
         summary=summary,
@@ -723,9 +720,154 @@ def _normalize_story_payload(payload: dict[str, Any]) -> BackgroundStoryResult:
         valence=valence,
         tags=tags,
         rag_text=rag_text,
-        story_library_patch=patch,
+        story_library_patch=None,
+        lite_overlay_patch=None,
         prompt_debug=[],
     )
+
+
+def _clamp_float(value: Any, default: float = 0.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(0.0, min(1.0, number))
+
+
+def _aftermath_character_context(pet: LocalPetChatContext) -> str:
+    bible = pet.characterBible if _is_record(pet.characterBible) else {}
+    extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
+    lore = bible.get("lore") if _is_record(bible.get("lore")) else {}
+    payload = {
+        "name": pet.name,
+        "description": pet.description,
+        "stage": pet.stage,
+        "currentState": {
+            "name": pet.name,
+            "stage": pet.stage,
+            "params": _state_params_brief(pet),
+        },
+        "identity": _select_record(
+            bible.get("identity"),
+            ("name", "nickname", "one_liner", "role", "species"),
+        ),
+        "signature": _text_value(bible.get("signature"), limit=300),
+        "species": _text_value(bible.get("species"), limit=200),
+        "visual": _select_record(
+            bible.get("visual"),
+            ("anchors", "colors", "features", "growth_forms", "materials", "proportions"),
+        ),
+        "innerState": _select_record(
+            bible.get("inner_state"),
+            ("core_want", "inner_conflict", "fears", "comfort_actions", "drives"),
+        ),
+        "lore": _select_record(
+            lore,
+            ("origin", "home", "world", "relationships", "inner_life", "growth_arc"),
+        ),
+        "world": _select_record(
+            bible.get("world"),
+            ("habitat", "home", "objects", "relationships", "routines"),
+        ),
+        "liteOverlay": _clean_context_value(extensions.get("lite_overlay"))
+        if _is_record(extensions.get("lite_overlay"))
+        else {},
+    }
+    compact = {
+        key: value
+        for key, value in payload.items()
+        if value not in (None, "", [], {})
+    }
+    return _truncate_text(
+        json.dumps(compact, ensure_ascii=False, indent=2, default=str),
+        MAX_AFTERMATH_CONTEXT_CHARS,
+    )
+
+
+def _aftermath_story_payload(result: BackgroundStoryResult) -> str:
+    return _truncate_text(
+        json.dumps(
+            {
+                "title": result.title,
+                "summary": result.summary,
+                "storyText": result.story_text,
+                "eventType": result.event_type,
+                "valence": result.valence,
+                "tags": list(result.tags),
+                "ragText": result.rag_text,
+            },
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        ),
+        MAX_AFTERMATH_CONTEXT_CHARS,
+    )
+
+
+def _parse_aftermath_extraction_payload(raw_content: str) -> dict[str, Any] | None:
+    parsed = _json_record_from_text(raw_content)
+    raw_facts = parsed.get("facts")
+    if not isinstance(raw_facts, list):
+        return None
+
+    facts: list[dict[str, Any]] = []
+    for raw_fact in raw_facts:
+        if not _is_record(raw_fact):
+            continue
+        if _clamp_float(raw_fact.get("confidence"), 0.0) < AFTERMATH_CONFIDENCE_THRESHOLD:
+            continue
+        fact = dict(raw_fact)
+        fact["source"] = "background_story_aftermath"
+        facts.append(fact)
+    return overlay_patch_from_extracted_facts(
+        facts,
+        default_source="background_story_aftermath",
+    )
+
+
+def _extract_background_story_aftermath_patch(
+    *,
+    pet: LocalPetChatContext,
+    story: BackgroundStoryResult,
+    client: Any,
+    model: str,
+    timeout: float,
+    prompt_debug: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    request_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": background_story_aftermath_extraction_system_prompt(),
+            },
+            {
+                "role": "user",
+                "content": background_story_aftermath_extraction_user_prompt(
+                    {
+                        "character_context": _aftermath_character_context(pet),
+                        "story_payload": _aftermath_story_payload(story),
+                    }
+                ),
+            },
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "background_story_aftermath_extraction",
+                "schema": BACKGROUND_STORY_AFTERMATH_SCHEMA,
+                "strict": True,
+            },
+        },
+        "timeout": timeout,
+        **chat_reasoning_effort_kwargs(get_settings().openai_chat_reasoning_effort),
+    }
+    prompt_debug.append(
+        log_chat_completion_prompt("background_story/aftermath_extraction", request_kwargs)
+    )
+    completion = client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("background_story/aftermath_extraction", completion)
+    return _parse_aftermath_extraction_payload(completion.choices[0].message.content or "{}")
 
 
 def generate_background_story(
@@ -795,6 +937,18 @@ def generate_background_story(
     log_chat_completion_response("background_story/generate", completion)
     content = completion.choices[0].message.content or "{}"
     result = _normalize_story_payload(_json_record_from_text(content))
+    lite_overlay_patch: dict[str, Any] | None = None
+    try:
+        lite_overlay_patch = _extract_background_story_aftermath_patch(
+            pet=pet,
+            story=result,
+            client=openai_client,
+            model=model,
+            timeout=timeout,
+            prompt_debug=prompt_debug,
+        )
+    except Exception:
+        logger.exception("background_story_after_extraction failed")
     return BackgroundStoryResult(
         title=result.title,
         summary=result.summary,
@@ -804,5 +958,6 @@ def generate_background_story(
         tags=result.tags,
         rag_text=result.rag_text,
         story_library_patch=result.story_library_patch,
+        lite_overlay_patch=lite_overlay_patch,
         prompt_debug=prompt_debug,
     )

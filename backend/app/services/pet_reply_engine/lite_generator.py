@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -25,9 +24,14 @@ from app.schemas import (
     MemoryExtractionResponse,
 )
 from app.services.context_assembler import (
-    MAX_CONTEXT_BRICKS,
     AssembledPetContext,
     assemble_pet_context,
+)
+from app.services.lite_overlay import (
+    LITE_FACT_KINDS,
+    LITE_FACT_SPHERES,
+    merge_lite_overlay_patch,
+    overlay_patch_from_extracted_facts,
 )
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
@@ -67,7 +71,6 @@ from app.services.pet_reply_engine.speech_runtime import (
     memory_usage_rule,
     speech_template,
     state_layer_surface_flags,
-    story_library_extraction_system_prompt,
     surface_prompt,
     user_memory_consolidation_system_prompt,
     user_memory_extraction_system_prompt,
@@ -78,21 +81,11 @@ from app.services.prompt_debug import (
     log_chat_completion_prompt,
     log_chat_completion_response,
 )
-from app.services.story_library import story_library_patch_for_new_brick
-
-logger = logging.getLogger(__name__)
 
 MAX_LITE_TOOL_ROUNDS = 3
 MAX_LITE_BABY_EXAMPLES = 8
 MAX_LITE_EXTRACTION_CONTEXT_CHARS = 12000
 
-LITE_FACT_SPHERES = ("character", "appearance", "world", "relationship")
-LITE_FACT_KINDS = (
-    "character_fact",
-    "appearance_fact",
-    "world_fact",
-    "relationship_fact",
-)
 USER_MEMORY_KINDS = (
     "user_fact",
     "preference",
@@ -141,22 +134,6 @@ class PhrasePlan:
         ]
         return "\n\n".join(section for section in sections if section)
 
-
-STORY_LIBRARY_QUERY_PATTERN = re.compile(
-    r"("
-    r"мир|мире|существ|монстр|опас|угроз|чудовищ|твар|звер|дух|"
-    r"предмет|вещ|наход|артефакт|мест|локац|лес|грот|пещер|сосед|персонаж"
-    r")",
-    re.IGNORECASE,
-)
-
-STORY_LIBRARY_REPLY_ENTITY_PATTERN = re.compile(
-    r"("
-    r"зовут|называ[ею]|встрет|наш[её]л|водится|обита|пряч|охраня|"
-    r"существ|монстр|страж|чудовищ|твар|звер|дух|артефакт|грот|пещер|сосед"
-    r")",
-    re.IGNORECASE,
-)
 
 TECHNICAL_WORLD_TEXT_PATTERN = re.compile(
     r"("
@@ -267,52 +244,6 @@ LITE_FACT_EXTRACTION_SCHEMA: dict[str, Any] = {
         }
     },
     "required": ["facts"],
-}
-
-STORY_LIBRARY_EXTRACTION_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "bricks": {
-            "type": "array",
-            "maxItems": 3,
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "pool": {
-                        "type": "string",
-                        "enum": [
-                            "items",
-                            "locations",
-                            "neighbors",
-                            "creatures",
-                            "threats",
-                            "events",
-                        ],
-                    },
-                    "name": {"type": "string", "maxLength": 120},
-                    "description": {"type": "string", "maxLength": 500},
-                    "basedOnBrickIds": {
-                        "type": "array",
-                        "maxItems": 6,
-                        "items": {"type": "string", "maxLength": 120},
-                    },
-                    "reason": {"type": "string", "maxLength": 240},
-                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                },
-                "required": [
-                    "pool",
-                    "name",
-                    "description",
-                    "basedOnBrickIds",
-                    "reason",
-                    "confidence",
-                ],
-            },
-        }
-    },
-    "required": ["bricks"],
 }
 
 LITE_WORLD_SEED_SCHEMA: dict[str, Any] = {
@@ -779,7 +710,7 @@ def _character_context_block(
     )
     if not include_profile and not include_lite_overlay:
         return None
-    bible = pet.characterBible if _is_record(pet.characterBible) else {}
+    bible = _sanitized_character_bible(pet.characterBible)
     if not bible and not include_lite_overlay:
         return None
     extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
@@ -807,12 +738,7 @@ def _story_context_for_routing(
         context_routing,
         router_source="worldContext",
     )
-    include_story_overlay = _source_enabled(
-        surface,
-        "storyOverlay",
-        context_routing,
-        router_source="worldContext",
-    )
+    include_story_overlay = False
     if surface == "chat":
         user_message = payload.message
         history = payload.history
@@ -828,7 +754,7 @@ def _story_context_for_routing(
         user_message=user_message,
         history=history,
         memory_context=payload.memoryContext,
-        force_context=include_story_library or include_story_overlay,
+        force_context=include_story_library,
         forced_query=context_routing.query("worldContext"),
         forced_reason="context_routing",
         routing_applied=True,
@@ -1143,6 +1069,17 @@ def _sanitize_technical_world_text(value: Any) -> Any:
     return value
 
 
+def _sanitized_character_bible(value: Any) -> dict[str, Any]:
+    bible = deepcopy(value) if _is_record(value) else {}
+    bible = _sanitize_technical_world_text(bible)
+    extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else None
+    if isinstance(extensions, dict):
+        extensions.pop("story_library_overlay", None)
+        if not extensions:
+            bible.pop("extensions", None)
+    return bible
+
+
 def _existing_world_texts(payload: LocalChatRequest) -> list[str]:
     texts: list[str] = []
     overlay = _lite_overlay_from(payload)
@@ -1239,7 +1176,7 @@ def _world_seed_overlay_patch(
         "pathHint": "lite_overlay.spheres.world",
         "source": "chatgpt_world_seed",
     }
-    patch = _overlay_patch_from_extracted_facts([raw_fact])
+    patch = overlay_patch_from_extracted_facts([raw_fact])
     if not patch:
         return None
     patch["worldSeed"] = {
@@ -1249,51 +1186,11 @@ def _world_seed_overlay_patch(
     return patch
 
 
-def _merge_lite_overlay_patch(target: dict[str, Any], patch: dict[str, Any] | None) -> None:
-    if not patch:
-        return
-
-    existing_keys = {
-        _lite_fact_key(fact) for fact in target.get("facts", []) if isinstance(fact, dict)
-    }
-    facts = target.setdefault("facts", [])
-    if not isinstance(facts, list):
-        facts = []
-        target["facts"] = facts
-    for fact in patch.get("facts", []):
-        if not isinstance(fact, dict):
-            continue
-        key = _lite_fact_key(fact)
-        if key in existing_keys:
-            continue
-        existing_keys.add(key)
-        facts.append(fact)
-
-    spheres = target.setdefault("spheres", {})
-    if not isinstance(spheres, dict):
-        spheres = {}
-        target["spheres"] = spheres
-    patch_spheres = patch.get("spheres")
-    if isinstance(patch_spheres, dict):
-        for sphere, patch_sphere in patch_spheres.items():
-            if not isinstance(patch_sphere, dict):
-                continue
-            target_sphere = spheres.setdefault(sphere, {})
-            if not isinstance(target_sphere, dict):
-                target_sphere = {}
-                spheres[sphere] = target_sphere
-            _merge_lite_overlay_patch(target_sphere, patch_sphere)
-
-    if isinstance(patch.get("worldSeed"), dict):
-        target["worldSeed"] = patch["worldSeed"]
-
-
 def _lite_character_bible_for_read(
     payload: LocalChatRequest,
     world_seed_patch: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    bible = deepcopy(payload.pet.characterBible) if _is_record(payload.pet.characterBible) else {}
-    bible = _sanitize_technical_world_text(bible)
+    bible = _sanitized_character_bible(payload.pet.characterBible)
     if world_seed_patch:
         world_facts = world_seed_patch.get("facts") if isinstance(world_seed_patch, dict) else []
         world_text = ""
@@ -1336,19 +1233,11 @@ def _read_character_json(
 
     should_seed_world = bool(
         context_routing
-        and (
-            _source_enabled(
-                "chat",
-                "storyLibrary",
-                context_routing,
-                router_source="worldContext",
-            )
-            or _source_enabled(
-                "chat",
-                "storyOverlay",
-                context_routing,
-                router_source="worldContext",
-            )
+        and _source_enabled(
+            "chat",
+            "storyLibrary",
+            context_routing,
+            router_source="worldContext",
         )
     ) and not _existing_world_texts(payload)
     world_seed_patch = (
@@ -1363,7 +1252,7 @@ def _read_character_json(
         else None
     )
     if world_seed_patch and overlay_patch is not None:
-        _merge_lite_overlay_patch(overlay_patch, world_seed_patch)
+        merge_lite_overlay_patch(overlay_patch, world_seed_patch)
 
     result: dict[str, Any] = {
         "description": payload.pet.description,
@@ -1375,7 +1264,7 @@ def _read_character_json(
         overlay = _lite_overlay_from(payload)
         if world_seed_patch:
             overlay = dict(overlay)
-            _merge_lite_overlay_patch(overlay, world_seed_patch)
+            merge_lite_overlay_patch(overlay, world_seed_patch)
         result["liteOverlay"] = overlay
     if world_seed_patch:
         result["worldInfo"] = {
@@ -1404,84 +1293,6 @@ def _update_pet_name_patch(
     return {"saved": True, "petPatch": {"name": name}}
 
 
-def _lite_fact_path_hint(sphere: str) -> str:
-    return f"lite_overlay.spheres.{sphere}"
-
-
-def _default_kind_for_sphere(sphere: str) -> str:
-    if sphere == "appearance":
-        return "appearance_fact"
-    if sphere == "world":
-        return "world_fact"
-    if sphere == "relationship":
-        return "relationship_fact"
-    return "character_fact"
-
-
-def _normalized_extracted_fact(value: Any) -> dict[str, Any] | None:
-    if not _is_record(value):
-        return None
-
-    text = _compact_spaces(str(value.get("text") or ""))
-    if not text:
-        return None
-
-    sphere = str(value.get("sphere") or "character").strip()
-    if sphere not in LITE_FACT_SPHERES:
-        sphere = "character"
-
-    kind = str(value.get("kind") or "").strip()
-    if kind not in LITE_FACT_KINDS:
-        kind = _default_kind_for_sphere(sphere)
-
-    path_hint = _compact_spaces(str(value.get("pathHint") or "")) or _lite_fact_path_hint(sphere)
-    source = _compact_spaces(str(value.get("source") or "")) or "lite_post_reply_extractor"
-
-    return {
-        "sphere": sphere,
-        "kind": kind,
-        "text": text,
-        "pathHint": path_hint,
-        "source": source,
-        "createdAt": _now_iso(),
-    }
-
-
-def _lite_fact_key(fact: dict[str, Any]) -> str:
-    return f"{fact.get('sphere', 'character')}:{fact.get('text', '')}".casefold()
-
-
-def _overlay_patch_from_extracted_facts(raw_facts: Any) -> dict[str, Any] | None:
-    if not isinstance(raw_facts, list):
-        return None
-
-    facts: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for raw_fact in raw_facts:
-        fact = _normalized_extracted_fact(raw_fact)
-        if not fact:
-            continue
-        key = _lite_fact_key(fact)
-        if key in seen:
-            continue
-        seen.add(key)
-        facts.append(fact)
-
-    if not facts:
-        return None
-
-    spheres: dict[str, dict[str, Any]] = {}
-    for sphere in LITE_FACT_SPHERES:
-        sphere_facts = [fact for fact in facts if fact["sphere"] == sphere]
-        if sphere_facts:
-            spheres[sphere] = {"facts": sphere_facts}
-
-    return {
-        "facts": facts,
-        "spheres": spheres,
-    }
-
-
 def _parse_lite_fact_extraction_payload(raw_content: str) -> dict[str, Any] | None:
     try:
         parsed = json.loads(raw_content or "{}")
@@ -1489,7 +1300,7 @@ def _parse_lite_fact_extraction_payload(raw_content: str) -> dict[str, Any] | No
         return None
     if not _is_record(parsed):
         return None
-    return _overlay_patch_from_extracted_facts(parsed.get("facts"))
+    return overlay_patch_from_extracted_facts(parsed.get("facts"))
 
 
 def _lite_extraction_context(payload: LiteFactExtractionRequest) -> str:
@@ -1623,134 +1434,6 @@ def _story_context_debug(
     return None
 
 
-def _story_context_brief(context_bundle: AssembledPetContext | None) -> list[dict[str, Any]]:
-    debug = _story_context_debug(context_bundle) or {}
-    bricks = debug.get("injectedSpheres")
-    if not isinstance(bricks, list):
-        return []
-    result: list[dict[str, Any]] = []
-    for brick in bricks[:MAX_CONTEXT_BRICKS]:
-        if not isinstance(brick, dict):
-            continue
-        result.append(
-            {
-                "id": brick.get("id"),
-                "pool": brick.get("pool"),
-                "name": brick.get("name"),
-                "text": brick.get("text"),
-            }
-        )
-    return result
-
-
-def _should_extract_story_library_patch(
-    payload: LocalChatRequest,
-    reply: str,
-    context_bundle: AssembledPetContext | None,
-) -> bool:
-    if not reply.strip():
-        return False
-    if not STORY_LIBRARY_REPLY_ENTITY_PATTERN.search(reply):
-        return False
-    return bool(
-        (context_bundle and context_bundle.prompt_block)
-        or STORY_LIBRARY_QUERY_PATTERN.search(payload.message)
-    )
-
-
-def build_story_library_extraction_messages(
-    payload: LocalChatRequest,
-    reply: str,
-    context_bundle: AssembledPetContext | None,
-) -> list[dict[str, str]]:
-    return [
-        {
-            "role": "system",
-            "content": story_library_extraction_system_prompt(),
-        },
-        {
-            "role": "user",
-            "content": speech_template(
-                "storyExtractionUserMessage",
-                {
-                    "pet_context": _safe_json_context(_lite_pet_context_payload(payload), 1600),
-                    "user_message": payload.message,
-                    "reply": reply,
-                    "story_context": _safe_json_context(
-                        _story_context_brief(context_bundle),
-                        3000,
-                    ),
-                },
-            ),
-        },
-    ]
-
-
-def _parse_story_library_extraction_payload(raw_content: str) -> dict[str, Any] | None:
-    try:
-        parsed = json.loads(raw_content or "{}")
-    except json.JSONDecodeError:
-        return None
-    if not _is_record(parsed) or not isinstance(parsed.get("bricks"), list):
-        return None
-
-    bricks: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for raw_brick in parsed["bricks"]:
-        if not _is_record(raw_brick):
-            continue
-        confidence = _clamp_float(raw_brick.get("confidence"), 0.0)
-        if confidence < 0.6:
-            continue
-        result = story_library_patch_for_new_brick(raw_brick)
-        brick = result.get("brick") if _is_record(result) else None
-        if not _is_record(brick):
-            continue
-        brick_id = str(brick.get("id") or "")
-        if not brick_id or brick_id in seen:
-            continue
-        seen.add(brick_id)
-        bricks.append(brick)
-    if not bricks:
-        return None
-    return {"version": 1, "bricks": bricks}
-
-
-def extract_story_library_patch_from_reply(
-    payload: LocalChatRequest,
-    reply: str,
-    context_bundle: AssembledPetContext | None,
-    *,
-    client: Any,
-    model: str,
-    timeout: float,
-    prompt_debug: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    if not _should_extract_story_library_patch(payload, reply, context_bundle):
-        return None
-
-    request_kwargs: dict[str, Any] = {
-        "model": model,
-        "messages": build_story_library_extraction_messages(payload, reply, context_bundle),
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "story_library_extraction",
-                "schema": STORY_LIBRARY_EXTRACTION_SCHEMA,
-                "strict": True,
-            },
-        },
-        "timeout": timeout,
-        **chat_reasoning_effort_kwargs(get_settings().openai_chat_reasoning_effort),
-    }
-    prompt_debug.append(
-        log_chat_completion_prompt("pet_reply/story_library_extraction", request_kwargs)
-    )
-    completion = client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("pet_reply/story_library_extraction", completion)
-    return _parse_story_library_extraction_payload(completion.choices[0].message.content or "{}")
-
-
 def generate_lite_pet_reply(
     payload: LocalChatRequest,
     *,
@@ -1833,29 +1516,12 @@ def generate_lite_pet_reply(
             tool_debug.append(debug)
             messages.append(_tool_response_message(_tool_call_id(tool_call), result))
 
-    story_library_patch: dict[str, Any] | None = None
-    if reply:
-        try:
-            story_library_patch = extract_story_library_patch_from_reply(
-                payload,
-                reply,
-                context_bundle,
-                client=openai_client,
-                model=model,
-                timeout=timeout,
-                prompt_debug=prompt_debug,
-            )
-        except Exception:
-            logger.exception("story_library_extraction failed")
-            story_library_patch = None
-
     debug = LocalChatDebug(
         usedFallback=False,
         validationFlags=[],
         promptDebug=prompt_debug,
         liteToolCalls=tool_debug,
         liteOverlayPatch=overlay_patch or None,
-        storyLibraryPatch=story_library_patch,
         storyLibraryDebug=_story_context_debug(context_bundle),
         contextRoutingDebug=context_plan.debug,
     )
@@ -1865,7 +1531,6 @@ def generate_lite_pet_reply(
         innerThought=inner_thought,
         faceHint=face_hint,
         petPatch=pet_patch or None,
-        storyLibraryPatch=story_library_patch,
         debug=debug,
     )
 

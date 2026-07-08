@@ -98,7 +98,6 @@ const CONTEXT_SOURCE_ROWS = [
   { id: "stateParams", label: "Параметры" },
   { id: "liteOverlay", label: "Развитие" },
   { id: "storyLibrary", label: "Мир" },
-  { id: "storyOverlay", label: "Истории" },
   { id: "userMemory", label: "Память" },
   { id: "chatHistory", label: "История" },
   { id: "recentReplies", label: "Антиповтор" },
@@ -124,9 +123,6 @@ function unsupportedContextSourceCell(sourceId: string, surfaceId: string): stri
   }
   if (sourceId === "recentReplies" && !["ambient", "backgroundStory"].includes(surfaceId)) {
     return "Антиповтор используется только в Idle и Story.";
-  }
-  if (sourceId === "storyOverlay" && surfaceId === "backgroundStory") {
-    return "Предыдущие истории не используются для генерации новых Story.";
   }
   return null;
 }
@@ -616,6 +612,22 @@ function SpeechRuntimeEditor({
           rows={5}
           onChange={(value) => updatePath(["backgroundStory", "userTemplate"], value)}
         />
+        <RuntimeField
+          label="Aftermath extraction system"
+          value={stringAt(config, ["backgroundStory", "aftermathExtractionSystem"])}
+          rows={6}
+          onChange={(value) =>
+            updatePath(["backgroundStory", "aftermathExtractionSystem"], value)
+          }
+        />
+        <RuntimeField
+          label="Aftermath extraction user template"
+          value={stringAt(config, ["backgroundStory", "aftermathExtractionUserTemplate"])}
+          rows={4}
+          onChange={(value) =>
+            updatePath(["backgroundStory", "aftermathExtractionUserTemplate"], value)
+          }
+        />
         <div className="grid gap-4 md:grid-cols-3">
           <RuntimeField
             label="Default event type"
@@ -750,12 +762,6 @@ function SpeechRuntimeEditor({
           value={stringAt(config, ["characterMemory", "factExtractionSystem"])}
           rows={6}
           onChange={(value) => updatePath(["characterMemory", "factExtractionSystem"], value)}
-        />
-        <RuntimeField
-          label="Stories extraction"
-          value={stringAt(config, ["characterMemory", "storyExtractionSystem"])}
-          rows={5}
-          onChange={(value) => updatePath(["characterMemory", "storyExtractionSystem"], value)}
         />
         <RuntimeField
           label="World seed system"

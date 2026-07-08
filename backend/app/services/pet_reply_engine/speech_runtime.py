@@ -63,7 +63,6 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("worldContext", "template"),
     ("characterMemory", "worldSeedSystem"),
     ("characterMemory", "factExtractionSystem"),
-    ("characterMemory", "storyExtractionSystem"),
     ("userMemory", "extractionSystem"),
     ("userMemory", "consolidationSystem"),
     ("phraseTemplates", "memoryProfileLine"),
@@ -73,12 +72,13 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("phraseTemplates", "emptyValue"),
     ("phraseTemplates", "worldSeedUserMessage"),
     ("phraseTemplates", "liteFactExtractionUserMessage"),
-    ("phraseTemplates", "storyExtractionUserMessage"),
     ("phraseTemplates", "userMemoryExtractionUserMessage"),
     ("phraseTemplates", "userMemoryConsolidationUserMessage"),
     ("storyContext", "defaultQuery"),
     ("backgroundStory", "systemPrompt"),
     ("backgroundStory", "userTemplate"),
+    ("backgroundStory", "aftermathExtractionSystem"),
+    ("backgroundStory", "aftermathExtractionUserTemplate"),
     ("backgroundStory", "defaultEventType"),
     ("ageExamplePlaceholders", "petName"),
     ("ageExamplePlaceholders", "food"),
@@ -157,6 +157,16 @@ def validate_speech_runtime_config(config: Any) -> None:
     background_template = _required_string(config, ("backgroundStory", "userTemplate"))
     if "{character}" not in background_template:
         raise ValueError("backgroundStory.userTemplate must include {character}")
+    aftermath_template = _required_string(
+        config,
+        ("backgroundStory", "aftermathExtractionUserTemplate"),
+    )
+    for placeholder in ("{character_context}", "{story_payload}"):
+        if placeholder not in aftermath_template:
+            raise ValueError(
+                "backgroundStory.aftermathExtractionUserTemplate must include "
+                f"{placeholder}"
+            )
     for surface in CONTEXT_SURFACES:
         for source in CONTEXT_SOURCE_KEYS:
             mode = _required_string(config, ("contextSources", "surfaces", surface, source))
@@ -395,13 +405,6 @@ def character_fact_extraction_system_prompt() -> str:
     )
 
 
-def story_library_extraction_system_prompt() -> str:
-    return _required_string(
-        speech_runtime_config(),
-        ("characterMemory", "storyExtractionSystem"),
-    )
-
-
 def user_memory_extraction_system_prompt() -> str:
     return _required_string(speech_runtime_config(), ("userMemory", "extractionSystem"))
 
@@ -420,6 +423,21 @@ def background_story_system_prompt() -> str:
 
 def background_story_user_prompt(values: dict[str, str]) -> str:
     template = _required_string(speech_runtime_config(), ("backgroundStory", "userTemplate"))
+    return _template_replace(template, values)
+
+
+def background_story_aftermath_extraction_system_prompt() -> str:
+    return _required_string(
+        speech_runtime_config(),
+        ("backgroundStory", "aftermathExtractionSystem"),
+    )
+
+
+def background_story_aftermath_extraction_user_prompt(values: dict[str, str]) -> str:
+    template = _required_string(
+        speech_runtime_config(),
+        ("backgroundStory", "aftermathExtractionUserTemplate"),
+    )
     return _template_replace(template, values)
 
 
@@ -452,11 +470,7 @@ def background_story_source_flags() -> dict[str, bool]:
             "liteOverlay",
             auto_default=True,
         ),
-        "storyOverlay": context_source_enabled(
-            "backgroundStory",
-            "storyOverlay",
-            auto_default=True,
-        ),
+        "storyOverlay": False,
         "userMemory": context_source_enabled(
             "backgroundStory",
             "userMemory",

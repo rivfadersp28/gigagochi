@@ -384,8 +384,9 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "fileId": "speech_runtime",
                 "configPath": "characterMemory / userMemory",
                 "summary": (
-                    "После ответа сохраняют новые факты персонажа, stories и "
-                    "память владельца."
+                    "После ответа сохраняют новые факты персонажа и память "
+                    "владельца; /story дополнительно раскладывает устойчивые "
+                    "последствия в lite_overlay."
                 ),
             },
             {
@@ -415,20 +416,6 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "summary": (
                     "Основная RAG-коллекция для WORLD_CONTEXT; подключается только "
                     "решением contextRouting.worldContext."
-                ),
-            },
-            {
-                "id": "story_library_overlay",
-                "label": "Per-pet stories",
-                "role": "rag",
-                "surfaces": surfaces,
-                "source": "localStorage",
-                "editable": False,
-                "fileId": None,
-                "configPath": "characterBible.extensions.story_library_overlay",
-                "summary": (
-                    "Личные stories конкретного питомца, накопленные из диалога; при поиске "
-                    "идут перед global. Для /story не используются."
                 ),
             },
             {
