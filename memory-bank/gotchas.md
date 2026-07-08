@@ -56,6 +56,13 @@
   is only for durable consequences that remain true after the episode. Store
   the episode itself in `recentStoryEvents` / `extensions.recent_story_events`
   and pass it to `/story` only as `ANTI_REPEAT`.
+- `/story` image generation should keep the pre-image scene extraction step.
+  Do not silently fall back to sending the raw generated story to the image
+  model if `background_story_image_scene` returns an empty scene; let image
+  generation fail so Telegram uses the existing text-only fallback.
+- Direct OpenAI `/story` image generation should not rely on sprite reference
+  images being consumed by the provider. Keep enough compact pet identity and
+  visual detail in the final image prompt.
 - `/api/admin/speech` is intentionally local-dev only. It should stay disabled
   in production by requiring `ALLOW_DEV_TMA_AUTH=true` plus a local client host.
 - Speech/dataset saves validate JSON or JSONL, create backups under

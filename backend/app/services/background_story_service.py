@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from app.config import get_settings
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
-from app.services.image_service import generate_kandinsky_image_bytes
+from app.services.image_service import generate_image_bytes
 from app.services.lite_overlay import (
     LITE_FACT_KINDS,
     LITE_FACT_SPHERES,
@@ -56,7 +56,13 @@ MAX_AFTERMATH_CONTEXT_CHARS = 12000
 AFTERMATH_CONFIDENCE_THRESHOLD = 0.7
 BACKGROUND_ROUTING_SOURCE_IDS = CONTEXT_ROUTING_SOURCE_IDS
 LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
-KANDINSKY_IMAGE_PROMPT_MAX_CHARS = 1900
+BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS = 3000
+BACKGROUND_STORY_IMAGE_SCENE_STORY_MAX_CHARS = 2400
+BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS = 900
+BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION = (
+    "выдели из этого текста основную сцену, которая иллюстрирует сюжет лучше "
+    "всего сюжет должен быть четким как тз для художника"
+)
 BACKGROUND_STORY_IMAGE_STYLE = """
 Детальная японская фэнтези-манга, уютная обложка ранобэ или ключевой арт
 японской ролевой игры. Чистый контур, мягкая аниме-заливка, тёплые приглушённые
@@ -184,6 +190,17 @@ BACKGROUND_STORY_AFTERMATH_SCHEMA: dict[str, Any] = {
         },
     },
     "required": ["facts", "recentEvent"],
+}
+BACKGROUND_STORY_IMAGE_SCENE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "scene": {
+            "type": "string",
+            "maxLength": BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS,
+        },
+    },
+    "required": ["scene"],
 }
 
 
@@ -435,37 +452,91 @@ def _asset_input_references_for_background_story(
     return [{"type": "image_url", "image_url": {"url": image_url}}]
 
 
+def _background_story_text_for_image_scene(story: BackgroundStoryResult) -> str:
+    tags = ", ".join(story.tags)
+    return _truncate_text(
+        f"""
+Название: {story.title}
+Кратко: {story.summary}
+Сюжет: {story.story_text}
+Тип события: {story.event_type}
+Тон: {_valence_label(story.valence)}
+Теги: {tags or "нет"}
+""",
+        BACKGROUND_STORY_IMAGE_SCENE_STORY_MAX_CHARS,
+    )
+
+
+def extract_background_story_image_scene(
+    story: BackgroundStoryResult,
+    *,
+    client: Any | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+    prompt_debug: list[dict[str, Any]] | None = None,
+) -> str:
+    settings = get_settings()
+    openai_client = client or get_openai_client()
+    model = model or get_chat_model(settings)
+    timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
+    request_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Ты арт-директор для генерации иллюстраций. Не отвечай пользователю. "
+                    "Верни только JSON по схеме. Сцена должна быть конкретной, визуальной "
+                    "и пригодной как техническое задание художнику."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"{BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION}\n\n"
+                    f"Текст истории:\n{_background_story_text_for_image_scene(story)}"
+                ),
+            },
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "background_story_image_scene",
+                "schema": BACKGROUND_STORY_IMAGE_SCENE_SCHEMA,
+                "strict": True,
+            },
+        },
+        "timeout": timeout,
+        **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
+    }
+    debug_entry = log_chat_completion_prompt("background_story/image_scene", request_kwargs)
+    if prompt_debug is not None:
+        prompt_debug.append(debug_entry)
+    completion = openai_client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("background_story/image_scene", completion)
+    content = completion.choices[0].message.content or "{}"
+    scene = _text_value(
+        _json_record_from_text(content).get("scene"),
+        limit=BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS,
+    )
+    if not scene:
+        raise RuntimeError("BACKGROUND_STORY_IMAGE_SCENE_EMPTY")
+    return scene
+
+
 def build_background_story_image_prompt(
     *,
     pet: LocalPetChatContext,
     story: BackgroundStoryResult,
+    scene: str,
 ) -> str:
-    reference_url = _current_asset_reference_url(pet)
-    reference_text = (
-        (
-            "Приложено изображение персонажа: это главный источник дизайна. Сохрани "
-            "силуэт, пропорции, лицо, цвета, материал, особые признаки, стадию и "
-            "настроение. Меняй только позу и сцену; новый дизайн не придумывай."
-        )
-        if reference_url
-        else (
-            "Изображение персонажа не приложено. Следуй текстовому описанию и опорным "
-            "признакам, сохрани стабильный дизайн питомца."
-        )
-    )
     tags = ", ".join(story.tags)
-    story_brief = _truncate_text(
-        f"{story.summary} Главный момент: {story.story_text}",
-        280,
-    )
     prompt = f"""
 Создай одну цельную законченную иллюстрацию к истории питомца для отправки в Телеграм.
 Покажи центральный момент ясно в одном кадре.
 
-Референс персонажа: {reference_text}
-
 История: «{_truncate_text(story.title, 90)}».
-Сцена: {story_brief}
+Сцена для иллюстрации: {_truncate_text(scene, BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS)}
 Тип события: {_truncate_text(story.event_type, 60)}; тон: {_valence_label(story.valence)}.
 Теги: {_truncate_text(tags or "нет", 120)}.
 
@@ -479,7 +550,7 @@ def build_background_story_image_prompt(
 не ломают дизайн персонажа. Без текста, подписей, речевых пузырей, водяных
 знаков, логотипов, крови, оружия, хоррора, взрослых тем и чужих персонажей.
 """.strip()
-    return _truncate_text(prompt, KANDINSKY_IMAGE_PROMPT_MAX_CHARS)
+    return _truncate_text(prompt, BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS)
 
 
 def generate_background_story_image_bytes(
@@ -487,8 +558,9 @@ def generate_background_story_image_bytes(
     pet: LocalPetChatContext,
     story: BackgroundStoryResult,
 ) -> bytes:
-    return generate_kandinsky_image_bytes(
-        build_background_story_image_prompt(pet=pet, story=story),
+    scene = extract_background_story_image_scene(story, prompt_debug=story.prompt_debug)
+    return generate_image_bytes(
+        build_background_story_image_prompt(pet=pet, story=story, scene=scene),
         label="background_story/image",
         input_references=_asset_input_references_for_background_story(pet),
     )

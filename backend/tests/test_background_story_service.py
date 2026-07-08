@@ -76,18 +76,38 @@ def _pet() -> LocalPetChatContext:
     )
 
 
-def test_background_story_image_uses_story_and_pet_identity(monkeypatch) -> None:
+def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
+    completions = FakeBackgroundStoryCompletions(
+        json.dumps(
+            {
+                "scene": (
+                    "Олег стоит под древним дубом, лист на его лице светится, "
+                    "а вокруг кружатся теплые золотые знаки."
+                )
+            }
+        )
+    )
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
-    def fake_generate_kandinsky_image_bytes(prompt: str, **kwargs):
+    def fake_generate_image_bytes(prompt: str, **kwargs):
         calls.append({"prompt": prompt, **kwargs})
         return b"story-image"
 
     monkeypatch.setattr(
         background_story_service,
-        "generate_kandinsky_image_bytes",
-        fake_generate_kandinsky_image_bytes,
+        "get_settings",
+        lambda: SimpleNamespace(
+            ai_provider="openai",
+            openai_chat_model="gpt-5.5",
+            openai_chat_timeout_seconds=90,
+            openai_chat_reasoning_effort=None,
+            backend_public_url=None,
+            webapp_url=None,
+        ),
     )
+    monkeypatch.setattr(background_story_service, "get_openai_client", lambda: client)
+    monkeypatch.setattr(background_story_service, "generate_image_bytes", fake_generate_image_bytes)
     story = background_story_service.BackgroundStoryResult(
         title="След под кроной",
         summary="Олег нашел теплый знак под древним дубом.",
@@ -108,22 +128,30 @@ def test_background_story_image_uses_story_and_pet_identity(monkeypatch) -> None
     )
 
     assert image_bytes == b"story-image"
+    scene_request = _call_by_schema(completions, "background_story_image_scene")
+    scene_prompt = scene_request["messages"][1]["content"]
+    assert background_story_service.BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION in scene_prompt
+    assert "Олег заметил, что древний дуб отвечает шепотом листа" in scene_prompt
     assert calls[0]["label"] == "background_story/image"
     assert calls[0]["input_references"] == []
     prompt = str(calls[0]["prompt"])
     assert "След под кроной" in prompt
-    assert "древний дуб отвечает шепотом листа" in prompt
+    assert "лист на его лице светится" in prompt
+    assert "древний дуб отвечает шепотом листа" not in prompt
     assert "чел с листом вместо лица" in prompt
     assert "Детальная японская фэнтези-манга" in prompt
     assert "японской ролевой игры" in prompt
     assert "магическая повседневность" in prompt
     assert "Не превращай питомца в человека" in prompt
     assert "тон: позитивный" in prompt
-    assert len(prompt) <= background_story_service.KANDINSKY_IMAGE_PROMPT_MAX_CHARS
+    assert len(prompt) <= background_story_service.BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS
     assert "Листики выпускают запахи-сигналы опасности" not in prompt
+    assert story.prompt_debug[0]["label"] == "background_story/image_scene"
 
 
-def test_background_story_image_passes_current_sprite_reference(monkeypatch) -> None:
+def test_background_story_image_passes_current_sprite_reference_to_image_helper(
+    monkeypatch,
+) -> None:
     calls: list[dict[str, object]] = []
     pet = _pet().model_copy(
         update={
@@ -135,7 +163,7 @@ def test_background_story_image_passes_current_sprite_reference(monkeypatch) -> 
         }
     )
 
-    def fake_generate_kandinsky_image_bytes(prompt: str, **kwargs):
+    def fake_generate_image_bytes(prompt: str, **kwargs):
         calls.append({"prompt": prompt, **kwargs})
         return b"story-image"
 
@@ -149,9 +177,10 @@ def test_background_story_image_passes_current_sprite_reference(monkeypatch) -> 
     )
     monkeypatch.setattr(
         background_story_service,
-        "generate_kandinsky_image_bytes",
-        fake_generate_kandinsky_image_bytes,
+        "extract_background_story_image_scene",
+        lambda story, **_: "Олег стоит под древним дубом с теплым знаком на листе.",
     )
+    monkeypatch.setattr(background_story_service, "generate_image_bytes", fake_generate_image_bytes)
     story = background_story_service.BackgroundStoryResult(
         title="След под кроной",
         summary="Олег нашел теплый знак под древним дубом.",
@@ -181,10 +210,9 @@ def test_background_story_image_passes_current_sprite_reference(monkeypatch) -> 
         }
     ]
     prompt = str(calls[0]["prompt"])
-    assert "Приложено изображение персонажа" in prompt
-    assert "главный источник дизайна" in prompt
-    assert "новый дизайн не придумывай" in prompt
-    assert len(prompt) <= background_story_service.KANDINSKY_IMAGE_PROMPT_MAX_CHARS
+    assert "Олег стоит под древним дубом" in prompt
+    assert "чел с листом вместо лица" in prompt
+    assert len(prompt) <= background_story_service.BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS
 
 
 def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) -> None:

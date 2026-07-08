@@ -58,6 +58,13 @@
 - `/story` receives `recentStoryEvents` only as an `ANTI_REPEAT` block. That
   block is a negative constraint against repeating the same event shape, not
   context to continue or reuse.
+- `/story` illustrations use `background_story_service.generate_background_story_image_bytes`.
+  Before image generation, the service sends the generated story through a chat
+  completion named `background_story_image_scene` with an artist-brief prompt
+  that extracts one main visual scene. The final image prompt uses that extracted
+  scene, pet identity, and the style template, then calls the shared
+  `image_service.generate_image_bytes` path so production follows
+  `AI_PROVIDER=openai` / `OPENAI_API_KEY` instead of direct Kandinsky tasks.
 - Runtime speech regulator text that used to be hardcoded in the reply engine now lives in
   `backend/data/speech_runtime.json` and is read by
   `backend/app/services/pet_reply_engine/speech_runtime.py`. It covers persona
