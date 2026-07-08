@@ -219,7 +219,6 @@ function petStatsForApi(stats: LocalPetState["stats"]) {
     hunger: statForApi(stats.hunger),
     happiness: statForApi(stats.happiness),
     energy: statForApi(stats.energy),
-    cleanliness: statForApi(stats.cleanliness),
   };
 }
 

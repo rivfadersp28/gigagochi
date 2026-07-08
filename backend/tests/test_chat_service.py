@@ -159,7 +159,6 @@ def lite_payload(**overrides) -> LocalChatRequest:
                 "hunger": 80,
                 "happiness": 80,
                 "energy": 80,
-                "cleanliness": 80,
             },
             "characterBible": {"lore": {"home": {"story": "каменная балка"}}},
         },
@@ -241,6 +240,34 @@ def test_lite_prompt_includes_state_modifier() -> None:
     assert "Ты сейчас голодный." in build_lite_chat_messages(hungry)[0]["content"]
 
 
+def test_context_sources_policy_disables_state_params(monkeypatch, tmp_path) -> None:
+    runtime_path = tmp_path / "speech_runtime.json"
+    runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))
+    runtime["contextSources"]["surfaces"]["chat"]["stateParams"] = "disabled"
+    runtime_path.write_text(json.dumps(runtime, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(speech_runtime, "DATA_PATH", runtime_path)
+    speech_runtime.speech_runtime_config.cache_clear()
+
+    try:
+        payload = lite_payload()
+        hungry = payload.model_copy(
+            update={
+                "pet": payload.pet.model_copy(
+                    update={
+                        "mood": "happy",
+                        "stats": payload.pet.stats.model_copy(update={"hunger": 12}),
+                    }
+                )
+            }
+        )
+        system_message = build_lite_chat_messages(hungry)[0]["content"]
+    finally:
+        speech_runtime.speech_runtime_config.cache_clear()
+
+    assert "Ты сейчас голодный." not in system_message
+    assert "Ты сейчас радостный" not in system_message
+
+
 def test_lite_prompt_does_not_include_character_voice_control() -> None:
     payload = lite_payload(
         pet={
@@ -252,7 +279,6 @@ def test_lite_prompt_does_not_include_character_voice_control() -> None:
                 "hunger": 80,
                 "happiness": 80,
                 "energy": 80,
-                "cleanliness": 80,
             },
             "characterBible": {
                 "voice": {
@@ -296,7 +322,6 @@ def test_lite_prompt_does_not_include_character_seed() -> None:
                     "hunger": 80,
                     "happiness": 80,
                     "energy": 80,
-                    "cleanliness": 80,
                 },
                 "characterBible": {
                     "extensions": {
@@ -348,6 +373,82 @@ def test_lite_prompt_includes_memory_context_only_when_present() -> None:
     assert "Используй это только если уместно." in system_message
 
 
+def test_context_sources_policy_disables_chat_sources(monkeypatch, tmp_path) -> None:
+    runtime_path = tmp_path / "speech_runtime.json"
+    runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))
+    runtime["contextSources"]["surfaces"]["chat"].update(
+        {
+            "characterProfile": "disabled",
+            "liteOverlay": "disabled",
+            "storyLibrary": "disabled",
+            "storyOverlay": "disabled",
+            "userMemory": "disabled",
+            "chatHistory": "disabled",
+        }
+    )
+    runtime_path.write_text(json.dumps(runtime, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(speech_runtime, "DATA_PATH", runtime_path)
+    speech_runtime.speech_runtime_config.cache_clear()
+
+    try:
+        payload = lite_payload(
+            message="что ты ешь?",
+            history=[{"role": "pet", "text": "Я уже говорил про камни."}],
+            memoryContext={
+                "summary": "Пользователь любит камни.",
+                "relevantMemories": [
+                    {
+                        "id": "m1",
+                        "kind": "preference",
+                        "text": "Пользователь любит базальт.",
+                    }
+                ],
+            },
+            pet={
+                "name": "Громм",
+                "description": "гигантский земляной великан",
+                "stage": "adult",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 80,
+                    "energy": 80,
+                },
+                "characterBible": {
+                    "lore": {"home": {"story": "каменная балка"}},
+                    "extensions": {
+                        "lite_overlay": {
+                            "facts": [
+                                {
+                                    "sphere": "character",
+                                    "kind": "character_fact",
+                                    "text": "Громм любит базальтовую кашу.",
+                                }
+                            ]
+                        }
+                    },
+                },
+            },
+        )
+        messages = build_lite_chat_messages(
+            payload,
+            context_routing=ContextRoutingDecision(
+                surface="chat",
+                enabled_sources=frozenset({"characterProfile", "userMemory", "worldContext"}),
+            ),
+        )
+    finally:
+        speech_runtime.speech_runtime_config.cache_clear()
+
+    system_message = messages[0]["content"]
+    assert "CHARACTER_PROFILE" not in system_message
+    assert "Громм любит базальтовую кашу." not in system_message
+    assert "Пользователь любит базальт." not in system_message
+    assert "WORLD_CONTEXT" not in system_message
+    assert len(messages) == 2
+    assert messages[1]["content"] == "что ты ешь?"
+
+
 def test_speech_runtime_config_controls_reply_and_extractor_prompts(
     monkeypatch,
     tmp_path,
@@ -359,22 +460,14 @@ def test_speech_runtime_config_controls_reply_and_extractor_prompts(
     runtime["characterMemory"]["factExtractionSystem"] = "CUSTOM_FACT_EXTRACTION_PROMPT"
     runtime["stateLayer"]["surfaces"]["chat"] = {
         "age": True,
-        "mood": False,
-        "hunger": True,
-        "energy": False,
     }
     runtime["stateLayer"]["surfaces"]["proactive"] = {
         "age": True,
-        "mood": False,
-        "hunger": False,
-        "energy": False,
     }
     runtime["stateLayer"]["surfaces"]["ambient"] = {
         "age": True,
-        "mood": False,
-        "hunger": False,
-        "energy": False,
     }
+    runtime["contextSources"]["surfaces"]["chat"]["stateParams"] = "always"
     runtime["stateLayer"]["ageRoleHints"]["adult"] = "CUSTOM_ADULT_AGE"
     runtime["stateLayer"]["thresholds"]["hungerLowMax"] = 90
     runtime["stateLayer"]["stateModifiers"]["hungry"] = "CUSTOM_HUNGRY_STATE"
@@ -483,7 +576,6 @@ def test_proactive_prompt_does_not_include_character_voice_control() -> None:
                     "hunger": 80,
                     "happiness": 80,
                     "energy": 80,
-                    "cleanliness": 80,
                 },
                 "characterBible": {
                     "voice": {
@@ -525,7 +617,6 @@ def test_proactive_prompt_skips_world_context_without_story_signal() -> None:
                     "hunger": 80,
                     "happiness": 80,
                     "energy": 80,
-                    "cleanliness": 80,
                 },
                 "characterBible": {},
             },
@@ -557,7 +648,6 @@ def test_proactive_prompt_uses_preselected_world_context_when_needed() -> None:
                     "hunger": 80,
                     "happiness": 80,
                     "energy": 80,
-                    "cleanliness": 80,
                 },
                 "characterBible": {},
             },
@@ -611,7 +701,6 @@ def test_ambient_prompt_uses_idle_field_without_forced_world_context(
                     "hunger": 80,
                     "happiness": 80,
                     "energy": 80,
-                    "cleanliness": 80,
                 },
                 "characterBible": {
                     "voice": {
@@ -696,7 +785,6 @@ def test_ambient_prompt_uses_world_context_when_router_enables_it() -> None:
                     "hunger": 80,
                     "happiness": 80,
                     "energy": 80,
-                    "cleanliness": 80,
                 },
                 "characterBible": {},
             },
@@ -745,7 +833,6 @@ def test_ambient_generation_returns_story_context_debug() -> None:
                     "hunger": 80,
                     "happiness": 80,
                     "energy": 80,
-                    "cleanliness": 80,
                 },
                 "characterBible": {},
             },
@@ -979,7 +1066,6 @@ def test_lite_world_tool_bootstraps_missing_world_from_chatgpt() -> None:
                     "hunger": 80,
                     "happiness": 80,
                     "energy": 80,
-                    "cleanliness": 80,
                 },
                 "characterBible": {
                     "lore": {

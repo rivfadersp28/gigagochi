@@ -31,6 +31,60 @@
       }
     }
   },
+  "contextSources": {
+    "surfaces": {
+      "chat": {
+        "characterProfile": "auto",
+        "stateParams": "always",
+        "liteOverlay": "auto",
+        "storyLibrary": "auto",
+        "storyOverlay": "auto",
+        "userMemory": "auto",
+        "chatHistory": "always",
+        "recentReplies": "disabled"
+      },
+      "ambient": {
+        "characterProfile": "auto",
+        "stateParams": "always",
+        "liteOverlay": "auto",
+        "storyLibrary": "auto",
+        "storyOverlay": "auto",
+        "userMemory": "auto",
+        "chatHistory": "disabled",
+        "recentReplies": "auto"
+      },
+      "proactive": {
+        "characterProfile": "auto",
+        "stateParams": "always",
+        "liteOverlay": "auto",
+        "storyLibrary": "auto",
+        "storyOverlay": "auto",
+        "userMemory": "auto",
+        "chatHistory": "disabled",
+        "recentReplies": "disabled"
+      },
+      "push": {
+        "characterProfile": "auto",
+        "stateParams": "always",
+        "liteOverlay": "auto",
+        "storyLibrary": "auto",
+        "storyOverlay": "auto",
+        "userMemory": "auto",
+        "chatHistory": "disabled",
+        "recentReplies": "disabled"
+      },
+      "backgroundStory": {
+        "characterProfile": "always",
+        "stateParams": "always",
+        "liteOverlay": "always",
+        "storyLibrary": "disabled",
+        "storyOverlay": "always",
+        "userMemory": "always",
+        "chatHistory": "disabled",
+        "recentReplies": "disabled"
+      }
+    }
+  },
   "identityTemplate": "Отвечай мне как {description}. {age_hint} {state_modifier} Ответ максимум {reply_limit} символов; можно короче, даже одной фразой. Если есть внешний лимит, сгенерируй законченную реплику сразу в этом лимите; не сокращай ее многоточием.",
   "memoryUsageRule": "Используй это только если уместно. Не пересказывай память списком и не говори, что видишь memoryContext.",
   "visibleReply": {
@@ -39,28 +93,16 @@
   "stateLayer": {
     "surfaces": {
       "chat": {
-        "age": true,
-        "mood": true,
-        "hunger": true,
-        "energy": true
+        "age": true
       },
       "proactive": {
-        "age": true,
-        "mood": true,
-        "hunger": true,
-        "energy": true
+        "age": true
       },
       "ambient": {
-        "age": true,
-        "mood": true,
-        "hunger": true,
-        "energy": true
+        "age": true
       },
       "push": {
-        "age": true,
-        "mood": true,
-        "hunger": true,
-        "energy": true
+        "age": true
       }
     },
     "ageRoleHints": {
@@ -70,7 +112,29 @@
     },
     "thresholds": {
       "hungerLowMax": 29,
-      "energyLowMax": 30
+      "hungerHighMin": 75,
+      "happinessLowMax": 29,
+      "happinessHighMin": 75,
+      "energyLowMax": 30,
+      "energyHighMin": 70
+    },
+    "stateParamUsageRule": "Параметры состояния — это опциональные кирпичики, а не чеклист. Используй их только если они органично усиливают событие; не упоминай голод, настроение или энергию в каждой истории и не перечисляй все параметры подряд.",
+    "stateParamLabels": {
+      "hunger": {
+        "low": "голодный",
+        "normal": "нормально сытый",
+        "high": "наевшийся"
+      },
+      "happiness": {
+        "low": "грустный",
+        "normal": "спокойный",
+        "high": "счастливый"
+      },
+      "energy": {
+        "low": "уставший",
+        "normal": "с обычным запасом сил",
+        "high": "энергичный"
+      }
     },
     "stateModifiers": {
       "hungry": "Ты сейчас голодный.",
@@ -87,7 +151,7 @@
     "defaultQuery": "короткая реплика питомца с конкретной деталью мира"
   },
   "backgroundStory": {
-    "systemPrompt": "Ты генератор фоновых фэнтези-событий питомца. Не отвечай владельцу напрямую. Верни только JSON по схеме. История должна быть конкретной, совместимой с описанием и текущим состоянием персонажа, без упоминания prompt, JSON, RAG, датасетов или технических полей. Не меняй имя, вид и устойчивые факты персонажа. Событие может добавить одну новую деталь мира, опасность, место или предмет, если она не противоречит уже известному лору.",
+    "systemPrompt": "Ты генератор фоновых фэнтези-событий питомца. Не отвечай владельцу напрямую. Верни только JSON по схеме. История должна быть конкретной, совместимой с описанием и текущим состоянием персонажа, без упоминания prompt, JSON, RAG, датасетов или технических полей. Не меняй имя, вид и устойчивые факты персонажа. Событие может добавить одну новую деталь мира, опасность, место или предмет, если она не противоречит уже известному лору. Все переданные поля контекста — материал для выбора, а не обязательный чеклист: выбирай 1-3 уместные опоры случайно и органично, не пытайся упомянуть каждую копилку или каждый параметр состояния.",
     "userTemplate": "Придумай фэнтези историю как на этого персонажа напали. Вот описание персонажа и состояние:\n{character}",
     "defaultEventType": "attack",
     "maxStoryChars": 2400,

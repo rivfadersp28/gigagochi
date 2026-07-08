@@ -26,7 +26,6 @@ def travel_payload() -> GenerateTravelRequest:
                     "hunger": 80,
                     "happiness": 90,
                     "energy": 75,
-                    "cleanliness": 85,
                 },
                 "characterBible": {
                     "identity": {"name": "Листик"},
@@ -229,7 +228,6 @@ def test_asset_input_references_use_public_urls(monkeypatch) -> None:
                     "hunger": 80,
                     "happiness": 90,
                     "energy": 75,
-                    "cleanliness": 85,
                 },
                 "assetImages": {
                     "baby": {
@@ -277,6 +275,11 @@ def test_adventure_story_prompt_uses_compact_story_context_without_asset_urls() 
     assert "PET_CONTEXT_JSON:" not in user_content
     assert "маленький листолицый питомец" in user_content
     assert "simpleCharacterDescription" in user_content
+    assert '"params"' in user_content
+    assert "наевшийся" in user_content
+    assert "счастливый" in user_content
+    assert "энергичный" in user_content
+    assert '"stats"' not in user_content
     assert "leaf-shaped face" in user_content
     assert "currentReferenceImage" in user_content
     assert "characterProfile" not in user_content

@@ -1,8 +1,11 @@
 # Gotchas
 
-- Do not send the whole story dataset in every reply prompt. Use
-  `contextRouting.worldContext` to decide whether `assemble_pet_context` should
-  select a small `WORLD_CONTEXT`.
+- Do not send the whole story dataset in every reply prompt.
+  `contextRouting.worldContext` may request a small `WORLD_CONTEXT`, but final
+  inclusion must still pass `speech_runtime.contextSources`.
+- For production deploys, read `memory-bank/hetzner-deploy.md` first. It
+  contains the current Hetzner IP/domain, SSH target/key path, server repo path,
+  and fast deploy commands.
 - Do not force story retrieval for every ambient phrase. Idle phrases should
   stay varied and dialogue-oriented; retrieval is only for relevant context.
   Generic wording like `фан-факт`, `вопрос`, or `скажи что-нибудь` must not be a
@@ -16,6 +19,14 @@
 - Do not mutate character template fields during chat. Evolving per-pet
   character facts belong in `extensions.lite_overlay`; evolving story entities
   belong in `extensions.story_library_overlay`.
+- Do not add per-feature source toggles outside `speech_runtime.contextSources`.
+  Chat, idle, proactive, push, and `/story` must use the same matrix:
+  `disabled` / `auto` / `always`.
+- `Параметры` in the admin context matrix is `contextSources.stateParams`.
+  It controls hunger/happiness/energy injection. Story prompts must receive
+  semantic labels from `stateLayer.stateParamLabels`, not raw numeric stats.
+  Do not re-add duplicate per-surface mood/hunger/energy toggles under prompt
+  sections.
 - `/api/admin/speech` is intentionally local-dev only. It should stay disabled
   in production by requiring `ALLOW_DEV_TMA_AUTH=true` plus a local client host.
 - Speech/dataset saves validate JSON or JSONL, create backups under
@@ -62,12 +73,22 @@
 - Production admin apply should publish the full managed file set read from
   Hetzner, not only edited drafts. Otherwise unrelated local managed-file diffs
   can be swept into the production commit.
-- Age, mood, hunger, and energy prompt modifiers now belong to
+- Age plus hunger/happiness/energy prompt modifiers now belong to
   `speech_runtime.json` `stateLayer`. Do not reintroduce separate hardcoded
-  thresholds or age labels in the visible reply generator.
+  thresholds, semantic labels, optional-usage rules, or age labels in generators.
+- `cleanliness` is not an active pet parameter. Do not reintroduce it in API
+  schemas, local storage, prompt contexts, or story/travel stat signals unless a
+  visible UI/control for it is added first.
 - Hetzner `/opt/gigagochi` may not have branch upstream tracking configured.
   Use explicit `git pull --ff-only origin main` in deploy commands.
 - Local speech admin uses the Next same-origin proxy. Keep
   `frontend/.env.local` `BACKEND_URL` aligned with the local backend port
   (`8000` in the current dev setup), and keep `127.0.0.1`/`localhost` in
   `next.config.ts` `allowedDevOrigins` so Next dev HMR is not blocked.
+- `npm run build` in `frontend/` rewrites `frontend/next-env.d.ts` from
+  `./.next/dev/types/routes.d.ts` to `./.next/types/routes.d.ts`. Treat it as a
+  generated build side effect and revert it unless the Next config/source setup
+  intentionally changes.
+- Telegram scheduled, bulk, and manual debug push is temporarily hardcoded to
+  `DEBUG_PUSH_TARGET_TELEGRAM_ID=62943754` (Сергей/rivfader). Remove that guard
+  before enabling recurring pushes for broader users.

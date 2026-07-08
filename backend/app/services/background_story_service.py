@@ -18,10 +18,18 @@ from app.services.pet_reply_engine.speech_runtime import (
     background_story_default_event_type,
     background_story_max_rag_chars,
     background_story_max_story_chars,
+    background_story_source_flags,
     background_story_system_prompt,
     background_story_user_prompt,
+    context_routing_sources,
+    context_routing_system_prompt,
+    context_source_enabled,
+    context_source_mode,
+    state_param_labels,
+    state_param_usage_rule,
 )
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
+from app.services.story_library import search_story_library
 
 MAX_CHARACTER_DOSSIER_CHARS = 12000
 MAX_DOSSIER_LIST_ITEMS = 12
@@ -55,6 +63,24 @@ BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
         "tags",
         "ragText",
     ],
+}
+BACKGROUND_STORY_ROUTING_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "sources": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "worldContext": {"type": "boolean"},
+                "characterProfile": {"type": "boolean"},
+                "userMemory": {"type": "boolean"},
+            },
+            "required": ["worldContext", "characterProfile", "userMemory"],
+        },
+        "reason": {"type": "string", "maxLength": 500},
+    },
+    "required": ["sources", "reason"],
 }
 
 
@@ -207,6 +233,30 @@ def _story_overlay_briefs(extensions: dict[str, Any]) -> list[dict[str, str]]:
     return result
 
 
+def _global_story_briefs(*, pet: LocalPetChatContext) -> list[dict[str, str]]:
+    query = _compact_spaces(" ".join([pet.name or "", pet.description, pet.stage, pet.mood]))
+    result = search_story_library(
+        query=query,
+        pool_hints=[],
+        limit=5,
+        character_bible=pet.characterBible,
+        include_global=True,
+        include_overlay=False,
+        include_patch=False,
+        diverse_pools=True,
+    )
+    bricks = result.get("bricks") if isinstance(result.get("bricks"), list) else []
+    briefs: list[dict[str, str]] = []
+    for brick in bricks:
+        if not _is_record(brick):
+            continue
+        name = _text_value(brick.get("name"), limit=120)
+        text = _text_value(brick.get("text"), limit=360)
+        if name or text:
+            briefs.append({"name": name, "text": text})
+    return briefs
+
+
 def _memory_brief(memory_context: LocalPetMemoryContext | None) -> dict[str, Any] | None:
     if not memory_context:
         return None
@@ -227,67 +277,240 @@ def _memory_brief(memory_context: LocalPetMemoryContext | None) -> dict[str, Any
     return {key: value for key, value in result.items() if value not in ("", [], None)}
 
 
+def _state_params_brief(pet: LocalPetChatContext) -> dict[str, Any]:
+    labels = state_param_labels(
+        hunger=pet.stats.hunger,
+        happiness=pet.stats.happiness,
+        energy=pet.stats.energy,
+    )
+    return {
+        "usageRule": state_param_usage_rule(),
+        "голод": labels["hunger"],
+        "счастье": labels["happiness"],
+        "энергия": labels["energy"],
+    }
+
+
+def _background_auto_sources() -> set[str]:
+    sources = {
+        "characterProfile",
+        "stateParams",
+        "liteOverlay",
+        "storyLibrary",
+        "storyOverlay",
+        "userMemory",
+    }
+    return {
+        source
+        for source in sources
+        if context_source_mode("backgroundStory", source) == "auto"
+    }
+
+
+def _background_router_source(source: str) -> str | None:
+    if source in {"characterProfile", "liteOverlay"}:
+        return "characterProfile"
+    if source in {"storyLibrary", "storyOverlay"}:
+        return "worldContext"
+    if source == "userMemory":
+        return "userMemory"
+    return None
+
+
+def _background_source_enabled(source: str, routing: dict[str, bool] | None) -> bool:
+    router_source = _background_router_source(source)
+    router_enabled = routing.get(router_source) if routing and router_source else None
+    return context_source_enabled(
+        "backgroundStory",
+        source,
+        router_enabled=router_enabled,
+        auto_default=source == "stateParams",
+    )
+
+
+def _background_routing_payload(
+    *,
+    pet: LocalPetChatContext,
+    memory_context: LocalPetMemoryContext | None,
+    now_iso: str | None,
+    timezone: str | None,
+) -> dict[str, Any]:
+    pet_payload: dict[str, Any] = {
+        "name": pet.name,
+        "description": pet.description,
+        "stage": pet.stage,
+    }
+    if context_source_enabled("backgroundStory", "stateParams", auto_default=True):
+        pet_payload["params"] = _state_params_brief(pet)
+    return {
+        "surface": "backgroundStory",
+        "task": "generate_background_story",
+        "eventType": background_story_default_event_type(),
+        "now": now_iso or _now_iso(),
+        "timezone": timezone,
+        "pet": pet_payload,
+        "sources": context_routing_sources(),
+        "memoryBrief": _memory_brief(memory_context) or {},
+    }
+
+
+def _parse_background_routing_payload(value: str) -> dict[str, bool]:
+    parsed = _json_record_from_text(value)
+    sources = parsed.get("sources") if _is_record(parsed.get("sources")) else {}
+    return {
+        "worldContext": bool(sources.get("worldContext")),
+        "characterProfile": bool(sources.get("characterProfile")),
+        "userMemory": bool(sources.get("userMemory")),
+    }
+
+
+def _route_background_story_sources(
+    *,
+    pet: LocalPetChatContext,
+    memory_context: LocalPetMemoryContext | None,
+    now_iso: str | None,
+    timezone: str | None,
+    client: Any,
+    model: str,
+    timeout: float,
+) -> tuple[dict[str, bool], dict[str, Any] | None]:
+    if not _background_auto_sources():
+        return {}, None
+    request_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": context_routing_system_prompt()},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    _background_routing_payload(
+                        pet=pet,
+                        memory_context=memory_context,
+                        now_iso=now_iso,
+                        timezone=timezone,
+                    ),
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "background_story_context_routing",
+                "schema": BACKGROUND_STORY_ROUTING_SCHEMA,
+                "strict": True,
+            },
+        },
+        "timeout": timeout,
+        **chat_reasoning_effort_kwargs("none"),
+    }
+    prompt_debug = log_chat_completion_prompt("background_story/context_routing", request_kwargs)
+    completion = client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("background_story/context_routing", completion)
+    return (
+        _parse_background_routing_payload(completion.choices[0].message.content or "{}"),
+        prompt_debug,
+    )
+
+
 def character_dossier_for_background_story(
     *,
     pet: LocalPetChatContext,
     memory_context: LocalPetMemoryContext | None = None,
     now_iso: str | None = None,
     timezone: str | None = None,
+    source_flags: dict[str, bool] | None = None,
+    include_story_library: bool | None = None,
 ) -> str:
     bible = pet.characterBible if _is_record(pet.characterBible) else {}
     extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
     lore = bible.get("lore") if _is_record(bible.get("lore")) else {}
+    sources = source_flags if source_flags is not None else background_story_source_flags()
 
+    def enabled(source: str) -> bool:
+        return sources.get(source, True)
+
+    current_state: dict[str, Any] = {
+        "name": pet.name,
+        "description": pet.description,
+        "stage": pet.stage,
+    }
+    if enabled("stateParams"):
+        current_state["params"] = _state_params_brief(pet)
     dossier: dict[str, Any] = {
         "now": now_iso or _now_iso(),
         "timezone": timezone,
-        "currentState": {
-            "name": pet.name,
-            "description": pet.description,
-            "stage": pet.stage,
-            "mood": pet.mood,
-            "stats": pet.stats.model_dump(mode="json"),
-        },
-        "identity": _select_record(
-            bible.get("identity"),
-            ("name", "nickname", "one_liner", "role", "species"),
-        ),
-        "signature": _text_value(bible.get("signature"), limit=300),
-        "species": _text_value(bible.get("species"), limit=200),
-        "visual": _select_record(
-            bible.get("visual"),
-            ("anchors", "colors", "features", "growth_forms", "materials", "proportions"),
-        ),
-        "innerState": _select_record(
-            bible.get("inner_state"),
-            (
-                "core_want",
-                "inner_conflict",
-                "fears",
-                "comfort_actions",
-                "drives",
-            ),
-        ),
-        "lore": _select_record(
-            lore,
-            (
-                "origin",
-                "home",
-                "world",
-                "relationships",
-                "inner_life",
-                "story_seeds",
-                "growth_arc",
-            ),
-        ),
-        "world": _select_record(
-            bible.get("world"),
-            ("habitat", "home", "objects", "relationships", "routines", "story_seeds"),
-        ),
-        "liteFacts": _lite_overlay_facts(extensions),
-        "recentStoryBricks": _story_overlay_briefs(extensions),
+        "currentState": current_state,
     }
-    memory = _memory_brief(memory_context)
+
+    if enabled("characterProfile"):
+        dossier.update(
+            {
+                "identity": _select_record(
+                    bible.get("identity"),
+                    ("name", "nickname", "one_liner", "role", "species"),
+                ),
+                "signature": _text_value(bible.get("signature"), limit=300),
+                "species": _text_value(bible.get("species"), limit=200),
+                "visual": _select_record(
+                    bible.get("visual"),
+                    (
+                        "anchors",
+                        "colors",
+                        "features",
+                        "growth_forms",
+                        "materials",
+                        "proportions",
+                    ),
+                ),
+                "innerState": _select_record(
+                    bible.get("inner_state"),
+                    (
+                        "core_want",
+                        "inner_conflict",
+                        "fears",
+                        "comfort_actions",
+                        "drives",
+                    ),
+                ),
+                "lore": _select_record(
+                    lore,
+                    (
+                        "origin",
+                        "home",
+                        "world",
+                        "relationships",
+                        "inner_life",
+                        "story_seeds",
+                        "growth_arc",
+                    ),
+                ),
+                "world": _select_record(
+                    bible.get("world"),
+                    (
+                        "habitat",
+                        "home",
+                        "objects",
+                        "relationships",
+                        "routines",
+                        "story_seeds",
+                    ),
+                ),
+            }
+        )
+    if enabled("liteOverlay"):
+        dossier["liteFacts"] = _lite_overlay_facts(extensions)
+    if enabled("storyOverlay"):
+        dossier["recentStoryBricks"] = _story_overlay_briefs(extensions)
+    if include_story_library is None:
+        include_story_library = context_source_enabled(
+            "backgroundStory",
+            "storyLibrary",
+            auto_default=False,
+        )
+    if include_story_library:
+        dossier["globalStoryBricks"] = _global_story_briefs(pet=pet)
+    memory = _memory_brief(memory_context) if enabled("userMemory") else None
     if memory:
         dossier["userMemory"] = memory
 
@@ -428,11 +651,30 @@ def generate_background_story(
     model = model or get_chat_model(settings)
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
+    routing, routing_debug = _route_background_story_sources(
+        pet=pet,
+        memory_context=memory_context,
+        now_iso=now_iso,
+        timezone=timezone,
+        client=openai_client,
+        model=model,
+        timeout=timeout,
+    )
+    source_flags = {
+        "characterProfile": _background_source_enabled("characterProfile", routing),
+        "stateParams": _background_source_enabled("stateParams", routing),
+        "liteOverlay": _background_source_enabled("liteOverlay", routing),
+        "storyOverlay": _background_source_enabled("storyOverlay", routing),
+        "userMemory": _background_source_enabled("userMemory", routing),
+    }
+    include_story_library = _background_source_enabled("storyLibrary", routing)
     character = character_dossier_for_background_story(
         pet=pet,
         memory_context=memory_context,
         now_iso=now_iso,
         timezone=timezone,
+        source_flags=source_flags,
+        include_story_library=include_story_library,
     )
     request_kwargs: dict[str, Any] = {
         "model": model,
@@ -459,7 +701,8 @@ def generate_background_story(
         "timeout": timeout,
         **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
     }
-    prompt_debug = [log_chat_completion_prompt("background_story/generate", request_kwargs)]
+    prompt_debug = [item for item in (routing_debug,) if item is not None]
+    prompt_debug.append(log_chat_completion_prompt("background_story/generate", request_kwargs))
     completion = openai_client.chat.completions.create(**request_kwargs)
     log_chat_completion_response("background_story/generate", completion)
     content = completion.choices[0].message.content or "{}"

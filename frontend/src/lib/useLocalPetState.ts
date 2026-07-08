@@ -172,7 +172,6 @@ export function useLocalPetState(): UseLocalPetStateResult {
       hunger: 0,
       happiness: 0,
       energy: 0,
-      cleanliness: 0,
     };
     const nextPet = saveAndReturn({
       ...currentPet,

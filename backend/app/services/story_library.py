@@ -237,10 +237,14 @@ def story_library_overlay_from_bible(character_bible: Any) -> list[dict[str, Any
 def _combined_bricks(
     character_bible: Any,
     story_library_patch: dict[str, Any] | None = None,
+    *,
+    include_global: bool = True,
+    include_overlay: bool = True,
+    include_patch: bool = True,
 ) -> list[dict[str, Any]]:
-    overlay = story_library_overlay_from_bible(character_bible)
+    overlay = story_library_overlay_from_bible(character_bible) if include_overlay else []
     patch_bricks = []
-    if _is_record(story_library_patch):
+    if include_patch and _is_record(story_library_patch):
         raw_bricks = story_library_patch.get("bricks")
         if isinstance(raw_bricks, list):
             patch_bricks = [
@@ -248,7 +252,8 @@ def _combined_bricks(
                 for index, value in enumerate(raw_bricks)
                 if (brick := _normalize_overlay_brick(value, index))
             ]
-    return [*patch_bricks, *overlay, *global_story_bricks()]
+    global_bricks = list(global_story_bricks()) if include_global else []
+    return [*patch_bricks, *overlay, *global_bricks]
 
 
 def _hint_tokens(pool_hints: Any) -> set[str]:
@@ -322,6 +327,9 @@ def search_story_library(
     character_bible: Any = None,
     story_library_patch: dict[str, Any] | None = None,
     diverse_pools: bool = False,
+    include_global: bool = True,
+    include_overlay: bool = True,
+    include_patch: bool = True,
 ) -> dict[str, Any]:
     query_text = _text_value(query, limit=300)
     query_tokens = _tokens(query_text)
@@ -329,7 +337,13 @@ def search_story_library(
     effective_limit = min(MAX_SEARCH_LIMIT, max(1, int(limit or 3)))
 
     scored: list[tuple[int, dict[str, Any]]] = []
-    for brick in _combined_bricks(character_bible, story_library_patch):
+    for brick in _combined_bricks(
+        character_bible,
+        story_library_patch,
+        include_global=include_global,
+        include_overlay=include_overlay,
+        include_patch=include_patch,
+    ):
         score = _brick_score(brick, query_tokens, hints)
         if score > 0:
             scored.append((score, brick))

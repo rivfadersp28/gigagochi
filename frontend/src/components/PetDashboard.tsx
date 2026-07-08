@@ -1055,7 +1055,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         <div className="sr-only" aria-live="polite">
           Stage {stageLabels[pet.stage]}. State {stateLabels[pet.mood]}. Hunger{" "}
           {roundedHungerPercent}/100. Happiness {roundedMoodPercent}/100. Energy{" "}
-          {roundedEnergyPercent}/100. Cleanliness {Math.round(pet.stats.cleanliness)}/100.
+          {roundedEnergyPercent}/100.
         </div>
 
         <div className="pet-status-name conversation-fade-target">

@@ -68,7 +68,6 @@ class LocalPetStats(BaseModel):
     hunger: int = Field(ge=0, le=100)
     happiness: int = Field(ge=0, le=100)
     energy: int = Field(ge=0, le=100)
-    cleanliness: int = Field(ge=0, le=100)
 
 
 class LocalPetChatContext(BaseModel):

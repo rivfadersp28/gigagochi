@@ -18,7 +18,6 @@ class PetStats:
     hunger: int
     happiness: int
     energy: int | None = None
-    cleanliness: int | None = None
 
 
 @dataclass(frozen=True)
@@ -104,5 +103,4 @@ class PetStateCues:
     action_cue: str
     hunger_band: HungerBand
     energy_band: EnergyBand
-    cleanliness_cue: str | None = None
     recent_food_mention: bool = False

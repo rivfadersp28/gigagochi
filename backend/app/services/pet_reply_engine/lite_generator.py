@@ -52,6 +52,8 @@ from app.services.pet_reply_engine.speech_runtime import (
     character_fact_extraction_system_prompt,
     context_routing_sources,
     context_routing_system_prompt,
+    context_source_enabled,
+    context_source_modes,
     dialogue_state_modifier,
     identity_prompt,
     memory_usage_rule,
@@ -706,21 +708,56 @@ def _routing_enabled(
     return routing.enabled(source)
 
 
+def _source_enabled(
+    surface: PhraseSurface,
+    source: str,
+    routing: ContextRoutingDecision | None,
+    *,
+    router_source: str | None = None,
+    auto_default: bool = False,
+) -> bool:
+    router_enabled = None
+    if router_source and routing is not None:
+        router_enabled = routing.enabled(router_source)
+    return context_source_enabled(
+        surface,
+        source,
+        router_enabled=router_enabled,
+        auto_default=auto_default,
+    )
+
+
 def _character_context_block(
     pet: Any,
+    surface: PhraseSurface,
     routing: ContextRoutingDecision | None,
 ) -> str | None:
-    if not _routing_enabled(routing, "characterProfile", default=False):
+    include_profile = _source_enabled(
+        surface,
+        "characterProfile",
+        routing,
+        router_source="characterProfile",
+    )
+    include_lite_overlay = _source_enabled(
+        surface,
+        "liteOverlay",
+        routing,
+        router_source="characterProfile",
+    )
+    if not include_profile and not include_lite_overlay:
         return None
     bible = pet.characterBible if _is_record(pet.characterBible) else {}
-    if not bible:
+    if not bible and not include_lite_overlay:
         return None
     extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
     lite_overlay = extensions.get("lite_overlay") if _is_record(extensions) else {}
-    payload = {
-        "characterBible": bible,
-        "liteOverlay": lite_overlay if _is_record(lite_overlay) else {},
-    }
+    payload = {}
+    if include_profile and bible:
+        payload["characterBible"] = bible
+    if include_lite_overlay and _is_record(lite_overlay):
+        payload["liteOverlay"] = lite_overlay
+    if not payload:
+        return None
     return "CHARACTER_PROFILE:\n" + _safe_json_context(payload, 3000)
 
 
@@ -731,6 +768,18 @@ def _story_context_for_routing(
     context_routing: ContextRoutingDecision,
 ) -> AssembledPetContext:
     context_mode = "proactive" if surface == "push" else surface
+    include_story_library = _source_enabled(
+        surface,
+        "storyLibrary",
+        context_routing,
+        router_source="worldContext",
+    )
+    include_story_overlay = _source_enabled(
+        surface,
+        "storyOverlay",
+        context_routing,
+        router_source="worldContext",
+    )
     if surface == "chat":
         user_message = payload.message
         history = payload.history
@@ -746,10 +795,12 @@ def _story_context_for_routing(
         user_message=user_message,
         history=history,
         memory_context=payload.memoryContext,
-        force_context=context_routing.enabled("worldContext"),
+        force_context=include_story_library or include_story_overlay,
         forced_query=context_routing.query("worldContext"),
         forced_reason="context_routing",
         routing_applied=True,
+        include_story_library=include_story_library,
+        include_story_overlay=include_story_overlay,
     )
 
 
@@ -829,7 +880,6 @@ def _lite_reply_input_for_examples(payload: LocalChatRequest) -> PetReplyInput:
                 hunger=payload.pet.stats.hunger,
                 happiness=payload.pet.stats.happiness,
                 energy=payload.pet.stats.energy,
-                cleanliness=payload.pet.stats.cleanliness,
             ),
             visual_identity=PetVisualIdentity(
                 raw_description=payload.pet.description,
@@ -867,7 +917,17 @@ def _lite_tools_for_routing(
     context_routing: ContextRoutingDecision,
 ) -> list[dict[str, Any]] | None:
     tools = list(PET_STATE_TOOLS)
-    if context_routing.enabled("characterProfile"):
+    if _source_enabled(
+        "chat",
+        "characterProfile",
+        context_routing,
+        router_source="characterProfile",
+    ) or _source_enabled(
+        "chat",
+        "liteOverlay",
+        context_routing,
+        router_source="characterProfile",
+    ):
         tools.extend(LITE_CHARACTER_TOOLS)
     return tools
 
@@ -927,10 +987,16 @@ def _phrase_plan_for_chat(
         reply_limit=reply_limit,
         identity_line=_chat_identity_line(payload, reply_limit),
         persona_contract=surface_prompt("chat"),
-        character_block=_character_context_block(payload.pet, context_routing),
+        character_block=_character_context_block(payload.pet, "chat", context_routing),
         memory_block=(
             _memory_context_block(payload.memoryContext)
-            if _routing_enabled(context_routing, "userMemory", default=True)
+            if _source_enabled(
+                "chat",
+                "userMemory",
+                context_routing,
+                router_source="userMemory",
+                auto_default=True,
+            )
             else None
         ),
         world_block=context_bundle.prompt_block or None,
@@ -958,13 +1024,18 @@ def build_lite_chat_messages(
     baby_examples = _baby_phrase_examples_for_prompt(payload)
     if baby_examples:
         system_content = f"{system_content}\n\n{baby_examples}"
+    history_messages = (
+        _history_messages(payload)
+        if context_source_enabled("chat", "chatHistory", auto_default=True)
+        else []
+    )
 
     return [
         {
             "role": "system",
             "content": system_content,
         },
-        *_history_messages(payload),
+        *history_messages,
         {"role": "user", "content": payload.message},
     ]
 
@@ -1220,7 +1291,21 @@ def _read_character_json(
         sections = {"characterBible", "liteOverlay"}
 
     should_seed_world = bool(
-        context_routing and context_routing.enabled("worldContext")
+        context_routing
+        and (
+            _source_enabled(
+                "chat",
+                "storyLibrary",
+                context_routing,
+                router_source="worldContext",
+            )
+            or _source_enabled(
+                "chat",
+                "storyOverlay",
+                context_routing,
+                router_source="worldContext",
+            )
+        )
     ) and not _existing_world_texts(payload)
     world_seed_patch = (
         _world_seed_overlay_patch(
@@ -1727,6 +1812,7 @@ def generate_lite_pet_reply(
         storyLibraryDebug=_story_context_debug(context_bundle),
         contextRoutingDebug={
             "surface": context_routing.surface,
+            "sourceModes": context_source_modes("chat"),
             "enabledSources": sorted(context_routing.enabled_sources),
             "queries": context_routing.queries,
             "reason": context_routing.reason,
@@ -2084,7 +2170,13 @@ def build_proactive_messages(
 ) -> list[dict[str, str]]:
     memory_block = (
         _memory_context_block(payload.memoryContext)
-        if _routing_enabled(context_routing, "userMemory", default=True)
+        if _source_enabled(
+            "proactive",
+            "userMemory",
+            context_routing,
+            router_source="userMemory",
+            auto_default=True,
+        )
         else None
     )
     if context_bundle is None:
@@ -2105,7 +2197,7 @@ def build_proactive_messages(
         ),
         persona_contract=surface_prompt("proactive", {"reason": reason}),
         world_block=context_bundle.prompt_block or None,
-        character_block=_character_context_block(payload.pet, context_routing),
+        character_block=_character_context_block(payload.pet, "proactive", context_routing),
         memory_block=memory_block,
     )
     return [
@@ -2124,7 +2216,13 @@ def build_push_messages(
 ) -> list[dict[str, str]]:
     memory_block = (
         _memory_context_block(payload.memoryContext)
-        if _routing_enabled(context_routing, "userMemory", default=True)
+        if _source_enabled(
+            "push",
+            "userMemory",
+            context_routing,
+            router_source="userMemory",
+            auto_default=True,
+        )
         else None
     )
     if context_bundle is None:
@@ -2144,7 +2242,7 @@ def build_push_messages(
         ),
         persona_contract=surface_prompt("push", {"reason": _reason_from_payload(payload)}),
         world_block=context_bundle.prompt_block or None,
-        character_block=_character_context_block(payload.pet, context_routing),
+        character_block=_character_context_block(payload.pet, "push", context_routing),
         memory_block=memory_block,
     )
     return [
@@ -2218,6 +2316,7 @@ def generate_proactive_pet_message(
             storyLibraryDebug=_story_context_debug(context_bundle),
             contextRoutingDebug={
                 "surface": context_routing.surface,
+                "sourceModes": context_source_modes("proactive"),
                 "enabledSources": sorted(context_routing.enabled_sources),
                 "queries": context_routing.queries,
                 "reason": context_routing.reason,
@@ -2285,6 +2384,7 @@ def generate_push_pet_message(
             storyLibraryDebug=_story_context_debug(context_bundle),
             contextRoutingDebug={
                 "surface": context_routing.surface,
+                "sourceModes": context_source_modes("push"),
                 "enabledSources": sorted(context_routing.enabled_sources),
                 "queries": context_routing.queries,
                 "reason": context_routing.reason,
@@ -2309,7 +2409,13 @@ def build_ambient_messages(
     reply_limit = payload.replyMaxChars or 160
     memory_block = (
         _ambient_memory_context_block(payload.memoryContext)
-        if _routing_enabled(context_routing, "userMemory", default=True)
+        if _source_enabled(
+            "ambient",
+            "userMemory",
+            context_routing,
+            router_source="userMemory",
+            auto_default=True,
+        )
         else None
     )
     if context_bundle is None:
@@ -2320,7 +2426,13 @@ def build_ambient_messages(
         )
     recent_ambient_replies = (
         _recent_ambient_replies_text(payload.recentAmbientReplies)
-        if _routing_enabled(context_routing, "recentReplies", default=True)
+        if _source_enabled(
+            "ambient",
+            "recentReplies",
+            context_routing,
+            router_source="recentReplies",
+            auto_default=True,
+        )
         else ""
     )
     plan = PhrasePlan(
@@ -2334,7 +2446,7 @@ def build_ambient_messages(
         ),
         persona_contract=surface_prompt("ambient", {"recent_replies": recent_ambient_replies}),
         world_block=context_bundle.prompt_block or None,
-        character_block=_character_context_block(payload.pet, context_routing),
+        character_block=_character_context_block(payload.pet, "ambient", context_routing),
         memory_block=memory_block,
     )
     return [{"role": "system", "content": plan.system_content()}]
@@ -2396,6 +2508,7 @@ def generate_ambient_pet_message(
             storyLibraryDebug=_story_context_debug(context_bundle),
             contextRoutingDebug={
                 "surface": context_routing.surface,
+                "sourceModes": context_source_modes("ambient"),
                 "enabledSources": sorted(context_routing.enabled_sources),
                 "queries": context_routing.queries,
                 "reason": context_routing.reason,

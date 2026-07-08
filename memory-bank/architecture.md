@@ -6,8 +6,19 @@
 - Chat, proactive and ambient replies are assembled through the same `PhrasePlan` structure: identity, persona contract, optional world context, memory and surface-specific rules.
 - Before visible chat/proactive/ambient generation, `lite_generator.py` calls a
   `contextRouting` LLM gate configured in `backend/data/speech_runtime.json`.
-  The gate returns enabled sources for `worldContext`, `characterProfile`,
-  `userMemory`, and `recentReplies`.
+  The gate returns enabled router sources for `worldContext`,
+  `characterProfile`, `userMemory`, and `recentReplies`; the final inclusion is
+  gated by the shared `contextSources` matrix.
+- `speech_runtime.contextSources.surfaces` is the unified source policy for
+  `chat`, `ambient`, `proactive`, `push`, and `backgroundStory`. Each source is
+  `disabled`, `auto`, or `always`. The shared source ids are
+  `characterProfile`, `stateParams`, `liteOverlay`, `storyLibrary`, `storyOverlay`,
+  `userMemory`, `chatHistory`, and `recentReplies`.
+- `contextSources.stateParams` controls current mutable pet parameters. Numeric
+  hunger/happiness/energy are converted to admin-configured semantic labels in
+  `stateLayer.stateParamLabels`; thresholds and optional usage rule live in
+  `stateLayer`. Age/stage wording remains in `stateLayer.ageRoleHints`; the
+  per-surface age flag is still under `stateLayer.surfaces`.
 - `backend/app/services/context_assembler.py` no longer decides whether story
   context is needed from keywords. It only retrieves selected `WORLD_CONTEXT`
   bricks when `contextRouting.worldContext` enables it, then returns prompt text
@@ -24,14 +35,18 @@
   `characterBible.extensions.story_library_overlay.bricks` with pool `events`,
   returns a `storyLibraryPatch` from `/api/push/snapshot`, and the frontend
   applies that patch into localStorage so normal chat RAG can recall the event.
+- The `/story` character dossier uses the same `contextSources` matrix as
+  visible replies for optional sources: character profile, semantic state
+  params, lite overlay, global story library, per-pet story overlay and user
+  memory. It does not pass raw numeric `stats`.
 - Runtime speech regulator text that used to be hardcoded in the reply engine now lives in
   `backend/data/speech_runtime.json` and is read by
   `backend/app/services/pet_reply_engine/speech_runtime.py`. It covers persona
   contract, memory usage rule, ambient self-prompt, visible reply rules,
   character/user memory extractor prompts, world seeding,
-  `WORLD_CONTEXT` prompt framing, unified `contextRouting`, and the visible
-  age/mood/hunger/energy `stateLayer` used by chat/proactive/ambient identity
-  lines.
+  `WORLD_CONTEXT` prompt framing, unified `contextRouting`, shared
+  `contextSources`, and the age plus hunger/happiness/energy `stateLayer` used
+  by chat/proactive/ambient identity lines and semantic story params.
 - Proactive replies keep their memory-derived reason as a neutral context line
   inside the phrase plan. The old configurable `surfaceRules` layer was removed
   so proactive/ambient behavior is shaped by visible reply rules, state, memory,
@@ -83,7 +98,8 @@
 - The admin manifest also exposes a dialogue influence map with prompt
   modifiers and RAG/memory/dataset collections, including runtime-only sources
   such as character profile overlays, recent history, proactive reason, tool
-  definitions, reply limits and `contextRouting`.
+  definitions, reply limits, `contextRouting`, and the shared `contextSources`
+  matrix.
 - The `/admin/speech` UI edits local managed data and shows separate `Save` and
   `Deploy` actions. Local diffs from the server are a normal `local_dirty` state,
   not an error; deploy is the explicit production apply step.

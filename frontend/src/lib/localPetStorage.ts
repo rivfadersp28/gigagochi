@@ -107,7 +107,6 @@ function normalizeStats(value: unknown): PetStats {
     hunger: clampStat(stats.hunger ?? 80),
     happiness: clampStat(stats.happiness ?? 80),
     energy: clampStat(stats.energy ?? 80),
-    cleanliness: clampStat(stats.cleanliness ?? 80),
   };
 }
 
@@ -398,7 +397,7 @@ export function calculatePetMood(stats: PetStats): PetMood {
   if (stats.hunger < 30) {
     return "hungry";
   }
-  if (stats.happiness < 30 || stats.cleanliness < 25) {
+  if (stats.happiness < 30) {
     return "sad";
   }
   if (stats.happiness > 75 && stats.hunger > 60) {
@@ -503,7 +502,6 @@ export function createLocalPetState(
       hunger: 80,
       happiness: 80,
       energy: 80,
-      cleanliness: 80,
     },
     assetSet: characterAssetSet,
   };

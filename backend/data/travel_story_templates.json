@@ -762,10 +762,9 @@
           "collect"
         ],
         "valence": "positive",
-        "category": "cleanliness",
+        "category": "mood",
         "severity": "small",
         "statSignals": [
-          "cleanliness_up",
           "mood_up"
         ],
         "seedPattern": "#hero# приводит в порядок дом или свою коллекцию и радуется уюту.",
@@ -797,8 +796,7 @@
         "category": "mood",
         "severity": "small",
         "statSignals": [
-          "mood_down",
-          "cleanliness_down"
+          "mood_down"
         ],
         "seedPattern": "Погода портит планы: #hero# промокает, пачкается или вынужден прятаться.",
         "promptRole": "Негативное погодное событие, мягкое и визуальное."
@@ -839,10 +837,9 @@
           "collect"
         ],
         "valence": "negative",
-        "category": "cleanliness",
+        "category": "mood",
         "severity": "small",
         "statSignals": [
-          "cleanliness_down",
           "mood_down"
         ],
         "seedPattern": "#hero# собирает интересные мелочи и случайно весь пачкается.",

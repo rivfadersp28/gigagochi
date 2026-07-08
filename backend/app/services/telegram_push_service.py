@@ -176,7 +176,6 @@ def _current_pet_record(record: dict[str, Any], now: datetime) -> dict[str, Any]
         "hunger": _clamp_stat(stats.get("hunger", 0)),
         "happiness": _clamp_stat(stats.get("happiness", 0)),
         "energy": _clamp_stat(stats.get("energy", 0)),
-        "cleanliness": _clamp_stat(stats.get("cleanliness", 80)),
     }
 
     created_at = _parse_iso(record.get("createdAt"))

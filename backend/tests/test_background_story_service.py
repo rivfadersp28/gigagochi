@@ -3,18 +3,19 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from app.schemas import LocalPetChatContext
+from app.schemas import LocalPetChatContext, LocalPetMemoryContext
 from app.services import background_story_service
 
 
 class FakeBackgroundStoryCompletions:
-    def __init__(self, content: str) -> None:
-        self.content = content
+    def __init__(self, content: str | list[str]) -> None:
+        self.contents = [content] if isinstance(content, str) else content
         self.calls: list[dict] = []
 
     def create(self, **kwargs):
+        content = self.contents[min(len(self.calls), len(self.contents) - 1)]
         self.calls.append(kwargs)
-        message = SimpleNamespace(content=self.content)
+        message = SimpleNamespace(content=content)
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
 
@@ -29,7 +30,6 @@ def _pet() -> LocalPetChatContext:
                 "hunger": 96,
                 "happiness": 100,
                 "energy": 71,
-                "cleanliness": 80,
             },
             "characterBible": {
                 "identity": {
@@ -58,6 +58,14 @@ def _pet() -> LocalPetChatContext:
                                 "text": (
                                     "Листики выпускают запахи-сигналы опасности."
                                 ),
+                            }
+                        ]
+                    },
+                    "story_library_overlay": {
+                        "bricks": [
+                            {
+                                "name": "Каменная тропа",
+                                "text": "На тропе живет стеклянный шорох.",
                             }
                         ]
                     }
@@ -114,8 +122,174 @@ def test_generate_background_story_creates_events_story_patch(monkeypatch) -> No
     assert brick["attributes"]["fullStory"].startswith("У лесной миски")
     request = completions.calls[0]
     assert request["response_format"]["json_schema"]["name"] == "background_story"
-    assert "чел с листом вместо лица" in request["messages"][1]["content"]
+    prompt = request["messages"][1]["content"]
+    assert "чел с листом вместо лица" in prompt
+    assert "наевшийся" in prompt
+    assert "счастливый" in prompt
+    assert "энергичный" in prompt
+    assert '"stats"' not in prompt
+    assert '"голод"' in prompt
     assert (
         "Листики выпускают запахи-сигналы опасности."
-        in request["messages"][1]["content"]
+        in prompt
     )
+
+
+def test_background_story_context_sources_policy_controls_dossier(monkeypatch) -> None:
+    content = json.dumps(
+        {
+            "title": "Тихий налет",
+            "summary": "На Олега напали.",
+            "storyText": "На Олега напали у миски.",
+            "eventType": "attack",
+            "valence": "negative",
+            "tags": [],
+            "ragText": "На Олега напали у миски.",
+        },
+        ensure_ascii=False,
+    )
+    completions = FakeBackgroundStoryCompletions(content)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    memory_context = LocalPetMemoryContext.model_validate(
+        {
+            "summary": "Сергей любит стеклянный шорох.",
+            "userProfile": "Сергей собирает лунные листья.",
+            "relevantMemories": [
+                {
+                    "id": "m1",
+                    "kind": "user_fact",
+                    "text": "Сергей принес листовой амулет.",
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(
+        background_story_service,
+        "get_settings",
+        lambda: SimpleNamespace(openai_chat_timeout_seconds=10, openai_chat_reasoning_effort=None),
+    )
+    monkeypatch.setattr(
+        background_story_service,
+        "context_source_enabled",
+        lambda surface, source, *, router_enabled=None, auto_default=False: False,
+    )
+
+    background_story_service.generate_background_story(
+        pet=_pet(),
+        memory_context=memory_context,
+        now_iso="2026-07-08T07:40:00Z",
+        timezone="Europe/Moscow",
+        client=client,
+        model="test-model",
+        timeout=10,
+    )
+
+    prompt = completions.calls[0]["messages"][1]["content"]
+    assert "чел с листом вместо лица" in prompt
+    assert "params" not in prompt
+    assert "наевшийся" not in prompt
+    assert "Лист на лице стук" not in prompt
+    assert "Листики выпускают запахи-сигналы опасности." not in prompt
+    assert "стеклянный шорох" not in prompt
+    assert "Сергей принес листовой амулет" not in prompt
+
+
+def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
+    routing_content = json.dumps(
+        {
+            "sources": {
+                "worldContext": True,
+                "characterProfile": False,
+                "userMemory": False,
+            },
+            "reason": "Нужен только лор мира.",
+        },
+        ensure_ascii=False,
+    )
+    story_content = json.dumps(
+        {
+            "title": "Световая капля",
+            "summary": "На Олега напала световая капля.",
+            "storyText": "На Олега напала световая капля у тропы.",
+            "eventType": "attack",
+            "valence": "negative",
+            "tags": ["свет"],
+            "ragText": "На Олега напала световая капля.",
+        },
+        ensure_ascii=False,
+    )
+    completions = FakeBackgroundStoryCompletions([routing_content, story_content])
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    memory_context = LocalPetMemoryContext.model_validate(
+        {
+            "summary": "Сергей любит стеклянный шорох.",
+            "userProfile": "Сергей собирает лунные листья.",
+            "relevantMemories": [
+                {
+                    "id": "m1",
+                    "kind": "user_fact",
+                    "text": "Сергей принес листовой амулет.",
+                }
+            ],
+        }
+    )
+
+    def fake_mode(surface, source):
+        if surface == "backgroundStory" and source in {
+            "characterProfile",
+            "liteOverlay",
+            "storyLibrary",
+            "storyOverlay",
+            "userMemory",
+        }:
+            return "auto"
+        return "disabled"
+
+    def fake_enabled(surface, source, *, router_enabled=None, auto_default=False):
+        mode = fake_mode(surface, source)
+        if mode == "disabled":
+            return False
+        if mode == "always":
+            return True
+        return router_enabled if router_enabled is not None else auto_default
+
+    monkeypatch.setattr(
+        background_story_service,
+        "get_settings",
+        lambda: SimpleNamespace(openai_chat_timeout_seconds=10, openai_chat_reasoning_effort=None),
+    )
+    monkeypatch.setattr(background_story_service, "context_source_mode", fake_mode)
+    monkeypatch.setattr(background_story_service, "context_source_enabled", fake_enabled)
+    monkeypatch.setattr(
+        background_story_service,
+        "_global_story_briefs",
+        lambda *, pet: [
+            {
+                "name": "Кристаллическая капля",
+                "text": "Капля удерживает чужой свет на тропе.",
+            }
+        ],
+    )
+
+    result = background_story_service.generate_background_story(
+        pet=_pet(),
+        memory_context=memory_context,
+        now_iso="2026-07-08T07:40:00Z",
+        timezone="Europe/Moscow",
+        client=client,
+        model="test-model",
+        timeout=10,
+    )
+
+    assert result.title == "Световая капля"
+    assert len(completions.calls) == 2
+    assert completions.calls[0]["response_format"]["json_schema"]["name"] == (
+        "background_story_context_routing"
+    )
+    assert completions.calls[1]["response_format"]["json_schema"]["name"] == "background_story"
+    prompt = completions.calls[1]["messages"][1]["content"]
+    assert "Кристаллическая капля" in prompt
+    assert "Каменная тропа" in prompt
+    assert "Лист на лице стук" not in prompt
+    assert "Листики выпускают запахи-сигналы опасности." not in prompt
+    assert "Сергей принес листовой амулет" not in prompt

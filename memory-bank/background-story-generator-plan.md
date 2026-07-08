@@ -56,8 +56,7 @@ frontend localStorage.
    - name
    - description
    - stage
-   - mood
-   - current decayed stats
+   - semantic state params from `stateLayer.stateParamLabels`
    - identity/species/signature
    - visual features
    - inner state

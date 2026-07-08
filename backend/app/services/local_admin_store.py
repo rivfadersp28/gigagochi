@@ -235,7 +235,7 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "configPath": "assetSet.characterBible / extensions.lite_overlay",
                 "summary": (
                     "Текущий characterBible, lite_overlay, имя, описание, стадия, "
-                    "настроение и stats конкретного питомца."
+                    "настроение и параметры конкретного питомца."
                 ),
             },
             {
@@ -273,8 +273,8 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "fileId": "speech_runtime",
                 "configPath": "stateLayer",
                 "summary": (
-                    "Surface-флаги, age hints, пороги голода/энергии и короткие "
-                    "state-модификаторы."
+                    "Age hints, пороги и словесные подписи голода/счастья/энергии, "
+                    "а также короткие state-модификаторы."
                 ),
             },
             {
@@ -340,6 +340,16 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 ),
             },
             {
+                "id": "context_sources",
+                "label": "Копилки контекста",
+                "surfaces": [*surfaces, "background_story"],
+                "source": "speech_runtime",
+                "editable": True,
+                "fileId": "speech_runtime",
+                "configPath": "contextSources",
+                "summary": "Единая матрица disabled/auto/always для подключаемых копилок.",
+            },
+            {
                 "id": "chat_tools",
                 "label": "Chat tool definitions",
                 "surfaces": ["chat"],
@@ -349,7 +359,7 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "configPath": "update_pet_name / read_character_json",
                 "summary": (
                     "Модель может переименовать питомца; чтение character JSON доступно, "
-                    "когда context routing включил characterProfile."
+                    "когда contextSources и router разрешили characterProfile."
                 ),
             },
             {
@@ -387,8 +397,8 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "fileId": "speech_runtime",
                 "configPath": "backgroundStory",
                 "summary": (
-                    "Prompt генерации фонового события питомца и лимиты текста для "
-                    "сохранения в personal story RAG."
+                    "Prompt генерации фонового события и лимиты текста; источники "
+                    "берутся из contextSources."
                 ),
             },
         ],

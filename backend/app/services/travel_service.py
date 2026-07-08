@@ -31,6 +31,10 @@ from app.services.openai_service import (
     get_chat_model,
     get_openai_client,
 )
+from app.services.pet_reply_engine.speech_runtime import (
+    state_param_labels,
+    state_param_usage_rule,
+)
 from app.services.prompt_debug import (
     log_chat_completion_prompt,
     log_chat_completion_response,
@@ -388,6 +392,20 @@ def _asset_reference_text(payload: GenerateTravelRequest) -> str:
     return "\n".join(lines)
 
 
+def _state_params_context(payload: GenerateTravelRequest) -> dict[str, str]:
+    labels = state_param_labels(
+        hunger=payload.pet.stats.hunger,
+        happiness=payload.pet.stats.happiness,
+        energy=payload.pet.stats.energy,
+    )
+    return {
+        "usageRule": state_param_usage_rule(),
+        "голод": labels["hunger"],
+        "счастье": labels["happiness"],
+        "энергия": labels["energy"],
+    }
+
+
 def _is_public_reference_url(image_url: str) -> bool:
     if image_url.startswith("data:image/"):
         return True
@@ -439,7 +457,7 @@ def _pet_context(payload: GenerateTravelRequest) -> dict[str, Any]:
         "description": pet.description,
         "stage": pet.stage,
         "mood": pet.mood,
-        "stats": pet.stats.model_dump(),
+        "params": _state_params_context(payload),
         "characterProfile": _selected_character_profile(pet.characterBible),
         "assetReferenceImages": _asset_reference_context(payload),
     }
@@ -453,7 +471,7 @@ def _story_pet_context(payload: GenerateTravelRequest) -> dict[str, Any]:
         "description": pet.description,
         "stage": pet.stage,
         "mood": pet.mood,
-        "stats": pet.stats.model_dump(),
+        "params": _state_params_context(payload),
         "simpleCharacterDescription": _simple_character_description(payload),
         "currentReferenceImage": current_reference[2] if current_reference else None,
     }

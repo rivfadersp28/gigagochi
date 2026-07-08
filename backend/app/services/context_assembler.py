@@ -286,6 +286,9 @@ def assemble_pet_context(
     forced_pool_hints: list[str] | None = None,
     forced_reason: str = "context_routing",
     routing_applied: bool = False,
+    include_story_library: bool = True,
+    include_story_overlay: bool = True,
+    include_story_patch: bool = True,
 ) -> AssembledPetContext:
     active_history = [] if mode == "ambient" else history or []
     plan = _retrieval_plan(
@@ -311,6 +314,11 @@ def assemble_pet_context(
                 "injectedSpheres": [],
                 "needsStoryContext": False,
                 "reason": plan.reason,
+                "sources": {
+                    "storyLibrary": include_story_library,
+                    "storyOverlay": include_story_overlay,
+                    "storyPatch": include_story_patch,
+                },
             },
         )
 
@@ -320,6 +328,9 @@ def assemble_pet_context(
         limit=limit,
         character_bible=pet.characterBible,
         diverse_pools=mode == "ambient",
+        include_global=include_story_library,
+        include_overlay=include_story_overlay,
+        include_patch=include_story_patch,
     )
     bricks = result.get("bricks") if isinstance(result.get("bricks"), list) else []
     prompt_block = _prompt_block(bricks, mode)
@@ -333,5 +344,10 @@ def assemble_pet_context(
             "injectedSpheres": bricks,
             "needsStoryContext": True,
             "reason": plan.reason,
+            "sources": {
+                "storyLibrary": include_story_library,
+                "storyOverlay": include_story_overlay,
+                "storyPatch": include_story_patch,
+            },
         },
     )

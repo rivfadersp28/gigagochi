@@ -30,7 +30,6 @@ export type LocalPetStateV1 = {
     hunger: number;
     happiness: number;
     energy: number;
-    cleanliness: number;
   };
   assetSet?: LocalPetAssetSet;
 };
@@ -50,7 +49,6 @@ export type LocalPetStateV2 = {
     hunger: number;
     happiness: number;
     energy: number;
-    cleanliness: number;
   };
   assetSet?: LocalPetAssetSet;
 };

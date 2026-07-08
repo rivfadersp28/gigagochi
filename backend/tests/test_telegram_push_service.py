@@ -45,7 +45,6 @@ def _snapshot_payload() -> LocalPetPushSnapshotRequest:
                 "hunger": 80,
                 "happiness": 70,
                 "energy": 60,
-                "cleanliness": 90,
             },
         },
         memoryContext={
@@ -218,7 +217,6 @@ def test_current_pet_record_decays_stats_and_recomputes_stage() -> None:
                 "hunger": 100,
                 "happiness": 80,
                 "energy": 50,
-                "cleanliness": 90,
             },
         },
     }
@@ -230,7 +228,6 @@ def test_current_pet_record_decays_stats_and_recomputes_stage() -> None:
         "hunger": 0,
         "happiness": 0,
         "energy": 0,
-        "cleanliness": 90,
     }
 
 

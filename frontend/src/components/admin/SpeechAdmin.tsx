@@ -20,7 +20,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   fetchAdminPushStatus,
@@ -45,13 +44,6 @@ const PUBLISH_POLL_INTERVAL_MS = 1500;
 const SPEECH_RUNTIME_FILE_ID = "speech_runtime";
 const CHARACTER_BIBLE_TEMPLATE_FILE_ID = "character_bible_template";
 
-const STATE_FLAGS = [
-  { id: "age", label: "Возраст" },
-  { id: "mood", label: "Настроение" },
-  { id: "hunger", label: "Голод" },
-  { id: "energy", label: "Энергия" },
-] as const;
-
 const AGE_STAGES = [
   { id: "baby", label: "Baby" },
   { id: "teen", label: "Teen" },
@@ -66,11 +58,63 @@ const STATE_MODIFIERS = [
   { id: "lowEnergy", label: "Усталый" },
 ] as const;
 
+const STATE_PARAM_BANDS = [
+  {
+    id: "hunger",
+    label: "Голод",
+    lowMax: "hungerLowMax",
+    highMin: "hungerHighMin",
+  },
+  {
+    id: "happiness",
+    label: "Счастье",
+    lowMax: "happinessLowMax",
+    highMin: "happinessHighMin",
+  },
+  {
+    id: "energy",
+    label: "Энергия",
+    lowMax: "energyLowMax",
+    highMin: "energyHighMin",
+  },
+] as const;
+
+const STATE_PARAM_LABELS = [
+  { id: "low", label: "низко" },
+  { id: "normal", label: "норма" },
+  { id: "high", label: "высоко" },
+] as const;
+
 const CONTEXT_ROUTING_SOURCES = [
   { id: "worldContext", label: "World context" },
   { id: "characterProfile", label: "Character profile" },
   { id: "userMemory", label: "User memory" },
   { id: "recentReplies", label: "Recent replies" },
+] as const;
+
+const CONTEXT_SOURCE_ROWS = [
+  { id: "characterProfile", label: "Профиль" },
+  { id: "stateParams", label: "Параметры" },
+  { id: "liteOverlay", label: "Развитие" },
+  { id: "storyLibrary", label: "Мир" },
+  { id: "storyOverlay", label: "Лор" },
+  { id: "userMemory", label: "Память" },
+  { id: "chatHistory", label: "История" },
+  { id: "recentReplies", label: "Антиповтор" },
+] as const;
+
+const CONTEXT_SOURCE_SURFACES = [
+  { id: "chat", label: "Чат" },
+  { id: "ambient", label: "Idle" },
+  { id: "proactive", label: "Pro" },
+  { id: "push", label: "Push" },
+  { id: "backgroundStory", label: "Story" },
+] as const;
+
+const CONTEXT_SOURCE_MODES = [
+  { id: "disabled", label: "выкл" },
+  { id: "auto", label: "авто" },
+  { id: "always", label: "вкл" },
 ] as const;
 
 const CHARACTER_BIBLE_LEGACY_DEFAULTS = [
@@ -153,14 +197,14 @@ function stringListAt(config: JsonRecord, path: string[]) {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-function booleanAt(config: JsonRecord, path: string[]) {
-  const value = readPath(config, path);
-  return typeof value === "boolean" ? value : false;
-}
-
 function numberAt(config: JsonRecord, path: string[]) {
   const value = readPath(config, path);
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function contextModeAt(config: JsonRecord, path: string[]) {
+  const value = stringAt(config, path);
+  return CONTEXT_SOURCE_MODES.some((mode) => mode.id === value) ? value : "disabled";
 }
 
 function parseIntegerInput(value: string, fallback = 0) {
@@ -348,38 +392,102 @@ function RuntimeNumberField({
   );
 }
 
-function SurfaceFlags({
+function StateParamBandEditor({
   config,
-  surface,
+  band,
   onChange,
 }: {
   config: JsonRecord;
-  surface: "chat" | "proactive" | "ambient" | "push";
+  band: (typeof STATE_PARAM_BANDS)[number];
   onChange: (path: string[], value: unknown) => void;
 }) {
   return (
-    <div className="grid gap-2 rounded-md border border-border/60 p-3">
-      <div className="text-xs font-medium uppercase text-muted-foreground">
-        Модификаторы поверхности
+    <div className="grid gap-3 rounded-md border border-border/60 p-3">
+      <div className="text-xs font-medium uppercase text-muted-foreground">{band.label}</div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <RuntimeNumberField
+          label="Low max"
+          value={numberAt(config, ["stateLayer", "thresholds", band.lowMax])}
+          onChange={(value) => onChange(["stateLayer", "thresholds", band.lowMax], value)}
+        />
+        <RuntimeNumberField
+          label="High min"
+          value={numberAt(config, ["stateLayer", "thresholds", band.highMin])}
+          onChange={(value) => onChange(["stateLayer", "thresholds", band.highMin], value)}
+        />
       </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {STATE_FLAGS.map((flag) => (
-          <Label
-            key={flag.id}
-            className="flex items-center justify-between gap-3 rounded-md border border-border/50 px-3 py-2 text-sm"
-          >
-            <span>{flag.label}</span>
-            <Switch
-              checked={booleanAt(config, ["stateLayer", "surfaces", surface, flag.id])}
-              onCheckedChange={(checked) =>
-                onChange(["stateLayer", "surfaces", surface, flag.id], checked)
-              }
-              aria-label={`${surface}: ${flag.label}`}
-            />
-          </Label>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {STATE_PARAM_LABELS.map((label) => (
+          <RuntimeField
+            key={label.id}
+            label={label.label}
+            value={stringAt(config, ["stateLayer", "stateParamLabels", band.id, label.id])}
+            rows={2}
+            onChange={(value) =>
+              onChange(["stateLayer", "stateParamLabels", band.id, label.id], value)
+            }
+          />
         ))}
       </div>
     </div>
+  );
+}
+
+function ContextSourcesMatrix({
+  config,
+  onChange,
+}: {
+  config: JsonRecord;
+  onChange: (path: string[], value: unknown) => void;
+}) {
+  return (
+    <Section title="Копилки">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[620px] border-separate border-spacing-0 text-sm">
+          <thead>
+            <tr>
+              <th className="w-24 px-2 py-1 text-left text-xs font-medium text-muted-foreground" />
+              {CONTEXT_SOURCE_SURFACES.map((surface) => (
+                <th
+                  key={surface.id}
+                  className="px-2 py-1 text-left text-xs font-medium text-muted-foreground"
+                >
+                  {surface.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {CONTEXT_SOURCE_ROWS.map((source) => (
+              <tr key={source.id}>
+                <th className="px-2 py-1 text-left text-xs font-medium text-muted-foreground">
+                  {source.label}
+                </th>
+                {CONTEXT_SOURCE_SURFACES.map((surface) => {
+                  const path = ["contextSources", "surfaces", surface.id, source.id];
+                  return (
+                    <td key={surface.id} className="px-2 py-1">
+                      <select
+                        value={contextModeAt(config, path)}
+                        onChange={(event) => onChange(path, event.target.value)}
+                        className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                        aria-label={`${surface.label}: ${source.label}`}
+                      >
+                        {CONTEXT_SOURCE_MODES.map((mode) => (
+                          <option key={mode.id} value={mode.id}>
+                            {mode.label}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Section>
   );
 }
 
@@ -407,6 +515,8 @@ function SpeechRuntimeEditor({
 
   return (
     <div className="grid gap-4">
+      <ContextSourcesMatrix config={config} onChange={updatePath} />
+
       <Section title="Idle">
         <RuntimeField
           label="Idle prompt"
@@ -414,7 +524,6 @@ function SpeechRuntimeEditor({
           rows={8}
           onChange={(value) => updatePath(["surfacePrompts", "idle"], value)}
         />
-        <SurfaceFlags config={config} surface="ambient" onChange={updatePath} />
       </Section>
 
       <Section title="Обычный чат">
@@ -442,7 +551,6 @@ function SpeechRuntimeEditor({
           rows={4}
           onChange={(value) => updatePath(["identityTemplate"], value)}
         />
-        <SurfaceFlags config={config} surface="chat" onChange={updatePath} />
       </Section>
 
       <Section title="Proactive">
@@ -452,7 +560,6 @@ function SpeechRuntimeEditor({
           rows={6}
           onChange={(value) => updatePath(["surfacePrompts", "proactive"], value)}
         />
-        <SurfaceFlags config={config} surface="proactive" onChange={updatePath} />
       </Section>
 
       <Section title="Telegram push" meta={<Badge variant="outline">debug: 2 минуты</Badge>}>
@@ -462,7 +569,6 @@ function SpeechRuntimeEditor({
           rows={7}
           onChange={(value) => updatePath(["surfacePrompts", "push"], value)}
         />
-        <SurfaceFlags config={config} surface="push" onChange={updatePath} />
       </Section>
 
       <Section title="Фоновые истории" meta={<Badge variant="outline">/story</Badge>}>
@@ -491,7 +597,7 @@ function SpeechRuntimeEditor({
             onChange={(value) => updatePath(["backgroundStory", "maxStoryChars"], value)}
           />
           <RuntimeNumberField
-            label="Max RAG chars"
+            label="Max saved chars"
             value={numberAt(config, ["backgroundStory", "maxRagChars"])}
             onChange={(value) => updatePath(["backgroundStory", "maxRagChars"], value)}
           />
@@ -549,17 +655,21 @@ function SpeechRuntimeEditor({
       </Section>
 
       <Section title="Настроение, голод, энергия">
-        <div className="grid gap-4 md:grid-cols-2">
-          <RuntimeNumberField
-            label="Hunger low max"
-            value={numberAt(config, ["stateLayer", "thresholds", "hungerLowMax"])}
-            onChange={(value) => updatePath(["stateLayer", "thresholds", "hungerLowMax"], value)}
-          />
-          <RuntimeNumberField
-            label="Energy low max"
-            value={numberAt(config, ["stateLayer", "thresholds", "energyLowMax"])}
-            onChange={(value) => updatePath(["stateLayer", "thresholds", "energyLowMax"], value)}
-          />
+        <RuntimeField
+          label="Story usage rule"
+          value={stringAt(config, ["stateLayer", "stateParamUsageRule"])}
+          rows={3}
+          onChange={(value) => updatePath(["stateLayer", "stateParamUsageRule"], value)}
+        />
+        <div className="grid gap-4">
+          {STATE_PARAM_BANDS.map((band) => (
+            <StateParamBandEditor
+              key={band.id}
+              config={config}
+              band={band}
+              onChange={updatePath}
+            />
+          ))}
         </div>
         <div className="grid gap-4 md:grid-cols-2">
           {STATE_MODIFIERS.map((modifier) => (
@@ -637,7 +747,6 @@ function SpeechRuntimeEditor({
     </div>
   );
 }
-
 function CharacterBibleTemplateEditor({
   content,
   onChange,
