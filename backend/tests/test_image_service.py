@@ -763,7 +763,7 @@ def test_character_bible_prompt_omits_curated_generation_context() -> None:
     prompt = build_character_bible_prompt("водяной зверек с ракушкой")
 
     assert "TONE_PROFILE" in prompt
-    assert "Ironic fantasy" in prompt
+    assert "Dark fantasy" in prompt
     assert "WORLD_DESCRIPTION_ANCHORS" not in prompt
     assert "source_text_do_not_copy" not in prompt
     assert "LORE_VARIATION_SEED" not in prompt
@@ -805,7 +805,7 @@ def test_character_bible_prompt_requests_species_specific_lore() -> None:
 
     assert "compact character profile" in prompt
     assert "TONE_PROFILE" in prompt
-    assert "Ironic fantasy" in prompt
+    assert "Dark fantasy" in prompt
     assert "tiny persona-file shape" in prompt
     assert "physical anchor" in prompt
     assert "mechanism" in prompt

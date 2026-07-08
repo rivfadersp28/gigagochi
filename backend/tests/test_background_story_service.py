@@ -140,7 +140,7 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
     assert "древний дуб отвечает шепотом листа" not in prompt
     assert "чел с листом вместо лица" in prompt
     assert "TONE_PROFILE" in prompt
-    assert "Ironic fantasy" in prompt
+    assert "Dark fantasy" in prompt
     assert "Детальная фэнтези-манга" in prompt
     assert "японской ролевой игры" in prompt
     assert "магия слегка плохо настроена" in prompt

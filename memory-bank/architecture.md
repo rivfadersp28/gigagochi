@@ -94,7 +94,7 @@
   `contextSources`, and the age plus hunger/happiness/energy `stateLayer` used
   by chat/proactive/ambient identity lines and semantic story params.
 - Global tone-of-voice now lives in `backend/data/tone_runtime.json` and is read by
-  `backend/app/services/tone_runtime.py`. The active `ironic_fantasy` preset is injected
+  `backend/app/services/tone_runtime.py`. The active `dark_fantasy` preset is injected
   into visible replies, context routing payloads, `WORLD_CONTEXT`, character-bible
   generation and repair, `/story` generation and illustration prompts, travel full-story,
   storyboard and image prompts. Age examples remain a separate speech-diction layer: baby
