@@ -45,11 +45,12 @@ from app.services.character_bible_template import (
 from app.services.character_cards import upgrade_character_bible_v2
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
-    get_ai_api_key,
     get_character_model,
     get_image_model,
     get_openai_client,
+    get_openrouter_api_key,
     get_openrouter_headers,
+    get_openrouter_image_model,
     get_openrouter_image_url,
     is_openrouter_provider,
 )
@@ -145,12 +146,12 @@ def _character_bible_completion(
         "messages": messages,
         "response_format": {
             "type": "json_schema",
-                "json_schema": {
-                    "name": "character_bible",
-                    "schema": character_bible_schema(),
-                    "strict": True,
-                },
+            "json_schema": {
+                "name": "character_bible",
+                "schema": character_bible_schema(),
+                "strict": True,
             },
+        },
         "timeout": timeout,
         **_character_reasoning_effort_kwargs(settings, model),
     }
@@ -242,9 +243,7 @@ STAGE_ROWS = ("baby", "teen", "adult")
 STATE_COLUMNS = ("idle", "happy", "sad", "hungry")
 FAST_GENERATION_STAGE = "teen"
 FAST_GENERATION_STATES = ("idle", "happy", "sad")
-FAST_GENERATION_SKINS = tuple(
-    (FAST_GENERATION_STAGE, state) for state in FAST_GENERATION_STATES
-)
+FAST_GENERATION_SKINS = tuple((FAST_GENERATION_STAGE, state) for state in FAST_GENERATION_STATES)
 FAST_GENERATION_STATE_FALLBACKS = {
     "idle": ("teen", "idle"),
     "happy": ("teen", "happy"),
@@ -484,9 +483,7 @@ def _attach_world_anchor_trace(
     extensions = character_bible.get("extensions")
     if not isinstance(extensions, dict):
         extensions = {}
-    extensions["world_description_anchors_used"] = [
-        anchor.debug_dict() for anchor in anchors[:8]
-    ]
+    extensions["world_description_anchors_used"] = [anchor.debug_dict() for anchor in anchors[:8]]
     return {**character_bible, "extensions": extensions}
 
 
@@ -755,11 +752,12 @@ def build_image_generate_kwargs(
     settings: Any,
     prompt: str,
     *,
+    model: str | None = None,
     size: str | None = None,
     input_references: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     kwargs = {
-        "model": get_image_model(settings),
+        "model": model or get_image_model(settings),
         "prompt": prompt,
         "size": size or settings.openai_image_size,
         "quality": settings.openai_image_quality,
@@ -774,9 +772,7 @@ def build_image_generate_kwargs(
 
 def _image_result_bytes(first: Any) -> bytes:
     b64_json = (
-        first.get("b64_json")
-        if isinstance(first, dict)
-        else getattr(first, "b64_json", None)
+        first.get("b64_json") if isinstance(first, dict) else getattr(first, "b64_json", None)
     )
     if b64_json:
         return base64.b64decode(b64_json)
@@ -795,22 +791,22 @@ def _generate_openrouter_image_bytes(
     prompt: str,
     *,
     label: str,
+    model: str | None = None,
     size: str | None = None,
     input_references: list[dict[str, Any]] | None = None,
 ) -> bytes:
     kwargs = build_image_generate_kwargs(
         settings,
         prompt,
+        model=model or get_openrouter_image_model(settings),
         size=size,
         input_references=input_references,
     )
     request_body = {
-        key: value
-        for key, value in kwargs.items()
-        if key != "timeout" and value is not None
+        key: value for key, value in kwargs.items() if key != "timeout" and value is not None
     }
     headers = {
-        "Authorization": f"Bearer {get_ai_api_key(settings)}",
+        "Authorization": f"Bearer {get_openrouter_api_key(settings)}",
         "Content-Type": "application/json",
         **get_openrouter_headers(settings),
     }
@@ -846,6 +842,7 @@ def generate_image_bytes(
         openrouter_kwargs = build_image_generate_kwargs(
             settings,
             prompt,
+            model=get_openrouter_image_model(settings),
             size=size,
             input_references=input_references,
         )
@@ -854,6 +851,7 @@ def generate_image_bytes(
             settings,
             prompt,
             label=label,
+            model=get_openrouter_image_model(settings),
             size=size,
             input_references=input_references,
         )
@@ -865,6 +863,33 @@ def generate_image_bytes(
     response_payload = response.model_dump() if hasattr(response, "model_dump") else {}
     log_image_generation_response(label, kwargs, response_payload)
     return _image_result_bytes(response.data[0])
+
+
+def generate_openrouter_image_bytes(
+    prompt: str,
+    *,
+    label: str,
+    size: str | None = None,
+    input_references: list[dict[str, Any]] | None = None,
+) -> bytes:
+    settings = get_settings()
+    model = get_openrouter_image_model(settings)
+    openrouter_kwargs = build_image_generate_kwargs(
+        settings,
+        prompt,
+        model=model,
+        size=size,
+        input_references=input_references,
+    )
+    log_image_generation_prompt(label, openrouter_kwargs)
+    return _generate_openrouter_image_bytes(
+        settings,
+        prompt,
+        label=label,
+        model=model,
+        size=size,
+        input_references=input_references,
+    )
 
 
 def remove_image_background(image_bytes: bytes) -> bytes:

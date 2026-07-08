@@ -11,7 +11,9 @@ from app.services.openai_service import (
     get_chat_model,
     get_image_model,
     get_openai_client,
+    get_openrouter_api_key,
     get_openrouter_headers,
+    get_openrouter_image_model,
     get_openrouter_image_url,
 )
 
@@ -64,6 +66,7 @@ def test_openrouter_accepts_legacy_openai_env_only_for_openrouter_keys() -> None
     settings = openrouter_settings(openrouter_api_key=None, openai_api_key="sk-or-legacy")
 
     assert get_ai_api_key(settings) == "sk-or-legacy"
+    assert get_openrouter_api_key(settings) == "sk-or-legacy"
 
 
 def test_openrouter_rejects_missing_key() -> None:
@@ -71,6 +74,20 @@ def test_openrouter_rejects_missing_key() -> None:
 
     with pytest.raises(MissingOpenAIAPIKey):
         get_ai_api_key(settings)
+
+    with pytest.raises(MissingOpenAIAPIKey):
+        get_openrouter_api_key(settings)
+
+
+def test_openrouter_image_model_is_available_with_openai_provider() -> None:
+    settings = openrouter_settings(
+        ai_provider="openai",
+        openrouter_image_model="bytedance-seed/seedream-4.5",
+    )
+
+    assert get_image_model(settings) == "gpt-image-2"
+    assert get_openrouter_image_model(settings) == "bytedance-seed/seedream-4.5"
+    assert get_openrouter_api_key(settings) == "sk-or-test"
 
 
 def test_openai_client_configures_openrouter_base_url_and_headers(monkeypatch) -> None:

@@ -65,12 +65,26 @@ def get_image_model(settings: Any) -> str:
     return _clean_string(getattr(settings, "openai_image_model", None)) or "gpt-image-2"
 
 
+def get_openrouter_image_model(settings: Any) -> str:
+    return (
+        _clean_string(getattr(settings, "openrouter_image_model", None))
+        or "bytedance-seed/seedream-4.5"
+    )
+
+
+def get_openrouter_api_key(settings: Any) -> str:
+    api_key = _clean_string(getattr(settings, "openrouter_api_key", None))
+    legacy_key = _clean_string(getattr(settings, "openai_api_key", None))
+    if not api_key and legacy_key and legacy_key.startswith("sk-or-"):
+        api_key = legacy_key
+    if not api_key:
+        raise MissingOpenAIAPIKey
+    return api_key
+
+
 def get_ai_api_key(settings: Any) -> str:
     if is_openrouter_provider(settings):
-        api_key = _clean_string(getattr(settings, "openrouter_api_key", None))
-        legacy_key = _clean_string(getattr(settings, "openai_api_key", None))
-        if not api_key and legacy_key and legacy_key.startswith("sk-or-"):
-            api_key = legacy_key
+        api_key = get_openrouter_api_key(settings)
     else:
         api_key = _clean_string(getattr(settings, "openai_api_key", None))
     if not api_key:

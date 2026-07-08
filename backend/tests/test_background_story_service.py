@@ -79,14 +79,14 @@ def _pet() -> LocalPetChatContext:
 def test_background_story_image_uses_story_and_pet_identity(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
-    def fake_generate_image_bytes(prompt: str, **kwargs):
+    def fake_generate_openrouter_image_bytes(prompt: str, **kwargs):
         calls.append({"prompt": prompt, **kwargs})
         return b"story-image"
 
     monkeypatch.setattr(
         background_story_service,
-        "generate_image_bytes",
-        fake_generate_image_bytes,
+        "generate_openrouter_image_bytes",
+        fake_generate_openrouter_image_bytes,
     )
     story = background_story_service.BackgroundStoryResult(
         title="След под кроной",

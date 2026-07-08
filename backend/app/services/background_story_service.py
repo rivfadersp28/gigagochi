@@ -9,7 +9,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
-from app.services.image_service import generate_image_bytes
+from app.services.image_service import generate_openrouter_image_bytes
 from app.services.lite_overlay import (
     LITE_FACT_KINDS,
     LITE_FACT_SPHERES,
@@ -427,7 +427,7 @@ def generate_background_story_image_bytes(
     pet: LocalPetChatContext,
     story: BackgroundStoryResult,
 ) -> bytes:
-    return generate_image_bytes(
+    return generate_openrouter_image_bytes(
         build_background_story_image_prompt(pet=pet, story=story),
         label="background_story/image",
         input_references=_asset_input_references_for_background_story(pet),

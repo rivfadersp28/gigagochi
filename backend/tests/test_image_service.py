@@ -26,6 +26,7 @@ from app.services.image_service import (
     extract_state_strip_cells,
     generate_image_bytes,
     generate_individual_sprite_paths,
+    generate_openrouter_image_bytes,
     generate_pet_asset_set,
     generate_sprite_sheet_bytes,
     generation_error_code,
@@ -309,6 +310,56 @@ def test_generate_image_bytes_passes_openrouter_input_references(monkeypatch) ->
     assert captured["json"]["input_references"] == references
 
 
+def test_generate_openrouter_image_bytes_uses_openrouter_with_openai_provider(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "data": [
+                    {"b64_json": base64.b64encode(b"story-image").decode()},
+                ]
+            }
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            ai_provider="openai",
+            openrouter_api_key="sk-or-test",
+            openrouter_base_url="https://openrouter.ai/api/v1",
+            openrouter_image_model="bytedance-seed/seedream-4.5",
+            openrouter_site_url="https://app.example",
+            openrouter_app_title="Test Tamagotchi",
+            backend_public_url=None,
+            webapp_url=None,
+            openai_image_model="gpt-image-2",
+            openai_image_size="1536x1152",
+            openai_image_quality="medium",
+            openai_image_output_format="png",
+            openai_image_timeout_seconds=180,
+        ),
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+
+    result = generate_openrouter_image_bytes("story prompt", label="background_story/image")
+
+    assert result == b"story-image"
+    assert captured["url"] == "https://openrouter.ai/api/v1/images"
+    assert captured["headers"]["Authorization"] == "Bearer sk-or-test"
+    assert captured["json"]["model"] == "bytedance-seed/seedream-4.5"
+    assert captured["json"]["prompt"] == "story prompt"
+
+
 def test_generate_pet_asset_set_generates_only_three_teen_skins(monkeypatch, tmp_path) -> None:
     generated_prompts: list[str] = []
 
@@ -452,11 +503,7 @@ def test_create_character_bible_uses_character_timeout(monkeypatch) -> None:
             else:
                 content = json.dumps({"species": "дракончик"})
             return SimpleNamespace(
-                choices=[
-                    SimpleNamespace(
-                        message=SimpleNamespace(content=content)
-                    )
-                ]
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
             )
 
     monkeypatch.setattr(
@@ -697,7 +744,9 @@ def test_create_character_bible_does_not_run_repair_or_initial_overlay(monkeypat
         def create(self, **kwargs):
             calls.append(kwargs["messages"])
             return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(compact_bible)))]
+                choices=[
+                    SimpleNamespace(message=SimpleNamespace(content=json.dumps(compact_bible)))
+                ]
             )
 
     monkeypatch.setattr(
