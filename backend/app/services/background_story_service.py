@@ -9,6 +9,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
+from app.services.image_service import generate_image_bytes
 from app.services.lite_overlay import (
     LITE_FACT_KINDS,
     LITE_FACT_SPHERES,
@@ -53,6 +54,12 @@ MAX_DOSSIER_LIST_ITEMS = 12
 MAX_AFTERMATH_CONTEXT_CHARS = 12000
 AFTERMATH_CONFIDENCE_THRESHOLD = 0.7
 BACKGROUND_ROUTING_SOURCE_IDS = CONTEXT_ROUTING_SOURCE_IDS
+BACKGROUND_STORY_IMAGE_STYLE = """
+warm cinematic family-animation illustration, handcrafted storybook texture,
+soft expressive lighting, rich but clean environment, readable foreground action,
+cute mobile game pet character consistency, painterly details, no photorealism,
+no 3D plastic toy look, no clutter.
+""".strip()
 BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -249,6 +256,13 @@ def _string_list(value: Any, *, limit: int = MAX_DOSSIER_LIST_ITEMS) -> list[str
     return result
 
 
+def _compact_json(value: Any, *, limit: int = 1400) -> str:
+    if value in (None, "", [], {}):
+        return ""
+    text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return _truncate_text(text, limit)
+
+
 def _select_record(value: Any, keys: tuple[str, ...], *, limit: int = 800) -> dict[str, Any]:
     if not _is_record(value):
         return {}
@@ -272,6 +286,129 @@ def _select_record(value: Any, keys: tuple[str, ...], *, limit: int = 800) -> di
         else:
             result[key] = item
     return result
+
+
+def _background_story_image_identity(pet: LocalPetChatContext) -> str:
+    bible = pet.characterBible if _is_record(pet.characterBible) else {}
+    identity = _select_record(
+        bible.get("identity"),
+        ("name", "nickname", "one_liner", "role", "species"),
+    )
+    visual = _select_record(
+        bible.get("visual"),
+        ("anchors", "colors", "features", "growth_forms", "materials", "proportions"),
+    )
+    legacy_visual = {
+        key: bible.get(key)
+        for key in (
+            "species",
+            "signature",
+            "main_colors",
+            "signature_features",
+            "materials",
+            "proportions",
+        )
+        if bible.get(key) not in (None, "", [], {})
+    }
+    name = _text_value(pet.name) or _text_value(identity.get("name")) or "unnamed pet"
+    lines = [
+        f"Current name: {name}",
+        f"User description: {_text_value(pet.description)}",
+        f"Current growth stage: {pet.stage}",
+        f"Current mood: {pet.mood}",
+    ]
+    identity_text = _compact_json(identity)
+    visual_text = _compact_json(visual or legacy_visual)
+    if identity_text:
+        lines.append(f"Identity: {identity_text}")
+    if visual_text:
+        lines.append(f"Visual anchors: {visual_text}")
+    return "\n".join(lines)
+
+
+def _current_asset_image_url(pet: LocalPetChatContext) -> str:
+    asset_images = pet.assetImages
+    if not isinstance(asset_images, dict):
+        return ""
+    stage_images = asset_images.get(pet.stage)
+    if not isinstance(stage_images, dict):
+        return ""
+    return _text_value(stage_images.get(pet.mood), limit=1000)
+
+
+def _asset_input_references_for_background_story(
+    pet: LocalPetChatContext,
+) -> list[dict[str, Any]]:
+    image_url = _current_asset_image_url(pet)
+    if not image_url.startswith(("http://", "https://", "data:image/")):
+        return []
+    return [{"type": "image_url", "image_url": {"url": image_url}}]
+
+
+def build_background_story_image_prompt(
+    *,
+    pet: LocalPetChatContext,
+    story: BackgroundStoryResult,
+) -> str:
+    reference_url = _current_asset_image_url(pet)
+    reference_text = (
+        f"Current sprite reference URL: {reference_url}"
+        if reference_url
+        else "No current sprite reference URL was provided. Follow the text identity exactly."
+    )
+    tags = ", ".join(story.tags)
+    return f"""
+Create one illustration for a generated background story about the pet.
+The image is sent to the owner in Telegram with the story text, so it must show
+the central moment clearly in one frame.
+
+STORY TITLE:
+{story.title}
+
+STORY SUMMARY:
+{story.summary}
+
+STORY TEXT:
+{story.story_text}
+
+EVENT TYPE:
+{story.event_type}
+
+VALENCE:
+{story.valence}
+
+TAGS:
+{tags or "none"}
+
+CHARACTER APPEARANCE TO PRESERVE:
+{_background_story_image_identity(pet)}
+
+CHARACTER REFERENCE:
+{reference_text}
+
+SHARED ART STYLE:
+{BACKGROUND_STORY_IMAGE_STYLE}
+
+Composition rules:
+- One complete illustration, not a storyboard, card, UI, split panel or collage.
+- Keep the pet clearly visible as the main character.
+- Preserve the pet species, silhouette, colors, face placement, materials and signature features.
+- Show the story environment and the main action without adding unrelated lore.
+- No text, captions, speech bubbles, watermarks, logos or interface elements inside the image.
+- No graphic violence, blood, weapons, horror, adult themes or copyrighted characters.
+""".strip()
+
+
+def generate_background_story_image_bytes(
+    *,
+    pet: LocalPetChatContext,
+    story: BackgroundStoryResult,
+) -> bytes:
+    return generate_image_bytes(
+        build_background_story_image_prompt(pet=pet, story=story),
+        label="background_story/image",
+        input_references=_asset_input_references_for_background_story(pet),
+    )
 
 
 def _clean_context_value(value: Any) -> Any:
@@ -373,11 +510,7 @@ def _history_brief(history: list[LocalChatHistoryItem] | None) -> list[dict[str,
 def _recent_replies_brief(recent_replies: list[str] | None) -> list[str]:
     if not recent_replies:
         return []
-    return [
-        text
-        for text in (_text_value(item, limit=500) for item in recent_replies[-6:])
-        if text
-    ]
+    return [text for text in (_text_value(item, limit=500) for item in recent_replies[-6:]) if text]
 
 
 def _story_event_briefs(recent_story_events: list[dict[str, Any]] | None) -> list[str]:
@@ -446,8 +579,7 @@ def _state_params_brief(pet: LocalPetChatContext) -> dict[str, Any]:
 
 def _background_context_modes() -> dict[str, str]:
     modes = {
-        source: context_source_mode("backgroundStory", source)
-        for source in CONTEXT_SOURCE_KEYS
+        source: context_source_mode("backgroundStory", source) for source in CONTEXT_SOURCE_KEYS
     }
     # Previous generated pet stories are conversation memory only. Feeding them
     # back into /story makes the story generator repeat its own past outputs.
@@ -628,10 +760,7 @@ def character_dossier_for_background_story(
     extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
     lore = bible.get("lore") if _is_record(bible.get("lore")) else {}
     if context_plan is not None:
-        sources = {
-            source: context_plan.includes(source)
-            for source in CONTEXT_SOURCE_KEYS
-        }
+        sources = {source: context_plan.includes(source) for source in CONTEXT_SOURCE_KEYS}
         if include_story_library is None:
             include_story_library = context_plan.includes("storyLibrary")
         if story_library_query is None:
@@ -733,11 +862,7 @@ def character_dossier_for_background_story(
     if recent_reply_brief:
         dossier["recentReplies"] = recent_reply_brief
 
-    compact = {
-        key: value
-        for key, value in dossier.items()
-        if value not in (None, "", [], {})
-    }
+    compact = {key: value for key, value in dossier.items() if value not in (None, "", [], {})}
     return _truncate_text(
         json.dumps(compact, ensure_ascii=False, indent=2, default=str),
         MAX_CHARACTER_DOSSIER_CHARS,
@@ -860,11 +985,7 @@ def _aftermath_character_context(pet: LocalPetChatContext) -> str:
         if _is_record(extensions.get("lite_overlay"))
         else {},
     }
-    compact = {
-        key: value
-        for key, value in payload.items()
-        if value not in (None, "", [], {})
-    }
+    compact = {key: value for key, value in payload.items() if value not in (None, "", [], {})}
     return _truncate_text(
         json.dumps(compact, ensure_ascii=False, indent=2, default=str),
         MAX_AFTERMATH_CONTEXT_CHARS,
@@ -913,9 +1034,7 @@ def _normalize_recent_story_event(
     if not event["summary"]:
         event["summary"] = _truncate_text(story.story_text, 500)
     return {
-        key: item_value
-        for key, item_value in event.items()
-        if item_value not in (None, "", [], {})
+        key: item_value for key, item_value in event.items() if item_value not in (None, "", [], {})
     }
 
 

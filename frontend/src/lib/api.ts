@@ -609,6 +609,7 @@ export async function registerPetPushSnapshot(
           name: pet.name,
           description: pet.description,
           characterBible: pet.assetSet?.characterBible,
+          assetImages: publicAssetImagesForApi(pet.assetSet?.images),
           stage: pet.stage,
           mood: pet.mood,
           stats: petStatsForApi(pet.stats),

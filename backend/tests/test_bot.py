@@ -1,0 +1,92 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import httpx
+
+from app import bot
+from app.services import telegram_push_service
+
+
+def _story_update() -> dict:
+    return {
+        "message": {
+            "chat": {"id": telegram_push_service.DEBUG_PUSH_TARGET_TELEGRAM_ID},
+            "from": {"first_name": "Serge"},
+            "text": "/story",
+        }
+    }
+
+
+def test_story_command_sends_generated_image_as_photo(monkeypatch) -> None:
+    sent: dict[str, object] = {}
+    monkeypatch.setattr(
+        bot,
+        "get_settings",
+        lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_story_for_telegram_user",
+        lambda **kwargs: {
+            "story": {
+                "title": "След под кроной",
+                "storyText": "Олег нашел теплый знак под древним дубом.",
+            },
+            "storyImage": {"bytes": b"png", "mimeType": "image/png"},
+        },
+    )
+
+    def fake_send_photo(client, chat_id, photo, caption, reply_markup):
+        sent["method"] = "photo"
+        sent["chat_id"] = chat_id
+        sent["photo"] = photo
+        sent["caption"] = caption
+        sent["reply_markup"] = reply_markup
+
+    monkeypatch.setattr(bot, "send_photo", fake_send_photo)
+    monkeypatch.setattr(bot, "send_message", lambda *args, **kwargs: sent.setdefault("text", True))
+
+    bot.handle_update(httpx.Client(), _story_update())
+
+    assert sent["method"] == "photo"
+    assert sent["chat_id"] == telegram_push_service.DEBUG_PUSH_TARGET_TELEGRAM_ID
+    assert sent["photo"] == b"png"
+    assert sent["caption"] == "След под кроной\n\nОлег нашел теплый знак под древним дубом."
+    assert "text" not in sent
+
+
+def test_story_command_falls_back_to_message_without_image(monkeypatch) -> None:
+    sent: dict[str, object] = {}
+    monkeypatch.setattr(
+        bot,
+        "get_settings",
+        lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_story_for_telegram_user",
+        lambda **kwargs: {
+            "story": {
+                "title": "След под кроной",
+                "storyText": "Олег нашел теплый знак под древним дубом.",
+            },
+            "storyImage": None,
+        },
+    )
+    monkeypatch.setattr(bot, "send_photo", lambda *args, **kwargs: sent.setdefault("photo", True))
+
+    def fake_send_message(client, chat_id, text, reply_markup):
+        sent["method"] = "message"
+        sent["chat_id"] = chat_id
+        sent["text"] = text
+        sent["reply_markup"] = reply_markup
+
+    monkeypatch.setattr(bot, "send_message", fake_send_message)
+
+    bot.handle_update(httpx.Client(), _story_update())
+
+    assert sent["method"] == "message"
+    assert sent["chat_id"] == telegram_push_service.DEBUG_PUSH_TARGET_TELEGRAM_ID
+    assert sent["text"] == "След под кроной\n\nОлег нашел теплый знак под древним дубом."
+    assert "photo" not in sent

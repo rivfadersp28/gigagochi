@@ -42,14 +42,10 @@ def _pet() -> LocalPetChatContext:
                 "identity": {
                     "name": "Листик",
                     "species": "Чел с листом вместо лица",
-                    "one_liner": (
-                        "Лист на лице стук, сердце в растениях"
-                    ),
+                    "one_liner": ("Лист на лице стук, сердце в растениях"),
                 },
                 "inner_state": {
-                    "core_want": (
-                        "ощущать тепло и заботу через листовую чешую"
-                    ),
+                    "core_want": ("ощущать тепло и заботу через листовую чешую"),
                     "fears": ["ветер слишком сильный"],
                 },
                 "lore": {
@@ -62,9 +58,7 @@ def _pet() -> LocalPetChatContext:
                             {
                                 "sphere": "appearance",
                                 "kind": "appearance_fact",
-                                "text": (
-                                    "Листики выпускают запахи-сигналы опасности."
-                                ),
+                                "text": ("Листики выпускают запахи-сигналы опасности."),
                             }
                         ]
                     },
@@ -75,11 +69,52 @@ def _pet() -> LocalPetChatContext:
                                 "text": "На тропе живет стеклянный шорох.",
                             }
                         ]
-                    }
+                    },
                 },
             },
         }
     )
+
+
+def test_background_story_image_uses_story_and_pet_identity(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_generate_image_bytes(prompt: str, **kwargs):
+        calls.append({"prompt": prompt, **kwargs})
+        return b"story-image"
+
+    monkeypatch.setattr(
+        background_story_service,
+        "generate_image_bytes",
+        fake_generate_image_bytes,
+    )
+    story = background_story_service.BackgroundStoryResult(
+        title="След под кроной",
+        summary="Олег нашел теплый знак под древним дубом.",
+        story_text="Олег заметил, что древний дуб отвечает шепотом листа.",
+        event_type="discovery",
+        valence="positive",
+        tags=("дуб", "лист"),
+        rag_text="Олег нашел знак под дубом.",
+        story_library_patch=None,
+        lite_overlay_patch=None,
+        recent_story_event=None,
+        prompt_debug=[],
+    )
+
+    image_bytes = background_story_service.generate_background_story_image_bytes(
+        pet=_pet(),
+        story=story,
+    )
+
+    assert image_bytes == b"story-image"
+    assert calls[0]["label"] == "background_story/image"
+    assert calls[0]["input_references"] == []
+    prompt = str(calls[0]["prompt"])
+    assert "След под кроной" in prompt
+    assert "древний дуб отвечает шепотом листа" in prompt
+    assert "чел с листом вместо лица" in prompt
+    assert "Листики выпускают запахи-сигналы опасности" not in prompt
 
 
 def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) -> None:
@@ -99,12 +134,9 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
     content = json.dumps(
         {
             "title": "Налет стеклянных улиток",
-            "summary": (
-                "На Олега напали стеклянные улитки у лесной миски."
-            ),
+            "summary": ("На Олега напали стеклянные улитки у лесной миски."),
             "storyText": (
-                "У лесной миски Олег услышал хруст: стеклянные "
-                "улитки поползли к его листу."
+                "У лесной миски Олег услышал хруст: стеклянные улитки поползли к его листу."
             ),
             "eventType": "attack",
             "valence": "negative",
@@ -143,9 +175,7 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
         },
         ensure_ascii=False,
     )
-    completions = FakeBackgroundStoryCompletions(
-        [routing_content, content, aftermath_content]
-    )
+    completions = FakeBackgroundStoryCompletions([routing_content, content, aftermath_content])
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     monkeypatch.setattr(
         background_story_service,
@@ -183,10 +213,7 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
     assert "энергичный" in prompt
     assert '"stats"' not in prompt
     assert '"голод"' in prompt
-    assert (
-        "Листики выпускают запахи-сигналы опасности."
-        in prompt
-    )
+    assert "Листики выпускают запахи-сигналы опасности." in prompt
     aftermath_request = _call_by_schema(
         completions,
         "background_story_aftermath_extraction",

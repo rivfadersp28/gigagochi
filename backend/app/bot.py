@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any
@@ -9,6 +10,7 @@ import httpx
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+TELEGRAM_PHOTO_CAPTION_LIMIT = 1024
 
 
 class TelegramAPIError(RuntimeError):
@@ -16,9 +18,7 @@ class TelegramAPIError(RuntimeError):
         self.method = method
         self.status_code = response.status_code
         self.description = _telegram_error_description(response)
-        super().__init__(
-            f"Telegram {method} failed: HTTP {self.status_code}: {self.description}"
-        )
+        super().__init__(f"Telegram {method} failed: HTTP {self.status_code}: {self.description}")
 
 
 def _telegram_error_description(response: httpx.Response) -> str:
@@ -74,18 +74,48 @@ def send_message(
         raise TelegramAPIError(method, response)
 
 
+def send_photo(
+    client: httpx.Client,
+    chat_id: int,
+    photo: bytes,
+    caption: str,
+    reply_markup: dict[str, Any],
+) -> None:
+    settings = get_settings()
+    if not settings.bot_token:
+        raise RuntimeError("BOT_TOKEN is not configured")
+
+    method = "sendPhoto"
+    response = client.post(
+        telegram_api_url(method, settings.bot_token),
+        data={
+            "chat_id": str(chat_id),
+            "caption": caption[:TELEGRAM_PHOTO_CAPTION_LIMIT].rstrip(),
+            "reply_markup": json.dumps(reply_markup, ensure_ascii=False),
+        },
+        files={"photo": ("story.png", photo, "image/png")},
+        timeout=30,
+    )
+    if not response.is_success:
+        raise TelegramAPIError(method, response)
+
+
 def _message_command(text: str) -> str:
     first = text.strip().split(maxsplit=1)[0] if text.strip() else ""
     return first.split("@", 1)[0].lower()
 
 
-def _format_story_message(story: dict[str, Any]) -> str:
+def _format_story_message(story: dict[str, Any], *, limit: int = 3500) -> str:
     title = str(story.get("title") or "Фоновое событие").strip()
     story_text = str(story.get("storyText") or story.get("summary") or "").strip()
     if not story_text:
         story_text = "История сгенерировалась, но текст пустой."
     text = f"{title}\n\n{story_text}"
-    return text[:3500].rstrip()
+    return text[:limit].rstrip()
+
+
+def _format_story_caption(story: dict[str, Any]) -> str:
+    return _format_story_message(story, limit=TELEGRAM_PHOTO_CAPTION_LIMIT)
 
 
 def handle_update(client: httpx.Client, update: dict[str, Any]) -> None:
@@ -141,6 +171,20 @@ def handle_update(client: httpx.Client, update: dict[str, Any]) -> None:
             return
 
         story = result.get("story") if isinstance(result.get("story"), dict) else {}
+        story_image = result.get("storyImage") if isinstance(result.get("storyImage"), dict) else {}
+        image_bytes = story_image.get("bytes") if isinstance(story_image, dict) else None
+        if isinstance(image_bytes, bytes) and image_bytes:
+            try:
+                send_photo(
+                    client,
+                    chat_id,
+                    image_bytes,
+                    _format_story_caption(story),
+                    keyboard,
+                )
+                return
+            except (TelegramAPIError, httpx.HTTPError):
+                logger.exception("Telegram /story sendPhoto failed; falling back to sendMessage")
         send_message(client, chat_id, _format_story_message(story), keyboard)
         return
 

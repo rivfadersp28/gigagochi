@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,7 +21,10 @@ from app.schemas import (
     LocalPetPushSnapshotResponse,
     LocalPushRequest,
 )
-from app.services.background_story_service import generate_background_story
+from app.services.background_story_service import (
+    generate_background_story,
+    generate_background_story_image_bytes,
+)
 from app.services.lite_overlay import merge_lite_overlay_patch
 from app.services.pet_reply_engine.lite_generator import generate_push_pet_message
 from app.services.telegram_auth_service import TelegramUserContext
@@ -33,6 +37,7 @@ DEBUG_PUSH_TARGET_TELEGRAM_ID = 62943754
 DEBUG_PUSH_TARGET_FIRST_NAME = "Сергей"
 MAX_RECENT_STORY_EVENTS = 10
 
+logger = logging.getLogger(__name__)
 _store_lock = Lock()
 
 
@@ -125,9 +130,7 @@ def _record_lite_overlay_patch(record: dict[str, Any] | None) -> dict[str, Any] 
     bible = pet.get("characterBible") if isinstance(pet.get("characterBible"), dict) else {}
     extensions = bible.get("extensions") if isinstance(bible.get("extensions"), dict) else {}
     overlay = (
-        extensions.get("lite_overlay")
-        if isinstance(extensions.get("lite_overlay"), dict)
-        else {}
+        extensions.get("lite_overlay") if isinstance(extensions.get("lite_overlay"), dict) else {}
     )
     if not isinstance(overlay, dict):
         return None
@@ -183,9 +186,7 @@ def _record_recent_story_events(record: dict[str, Any] | None) -> list[dict[str,
     last_story = record.get("lastStory")
     if isinstance(last_story, dict):
         summary = (
-            last_story.get("summary")
-            or last_story.get("storyText")
-            or last_story.get("title")
+            last_story.get("summary") or last_story.get("storyText") or last_story.get("title")
         )
         if isinstance(summary, str) and summary.strip():
             tags = last_story.get("tags")
@@ -269,11 +270,7 @@ def register_push_snapshot(
     }
     existing = _read_store().get("records", {}).get(str(user.telegram_id))
     same_pet = isinstance(existing, dict) and existing.get("petId") == payload.petId
-    lite_overlay_patch = (
-        _record_lite_overlay_patch(existing)
-        if same_pet
-        else None
-    )
+    lite_overlay_patch = _record_lite_overlay_patch(existing) if same_pet else None
     if isinstance(existing, dict):
         for key in (
             "lastPushAt",
@@ -625,12 +622,28 @@ def generate_story_for_telegram_user(
     }
     _merge_record_lite_overlay_patch(next_record, result.lite_overlay_patch)
     _save_record(next_record)
+    story_image: dict[str, Any] | None = None
+    story_image_error: str | None = None
+    try:
+        image_bytes = generate_background_story_image_bytes(
+            pet=payload.pet,
+            story=result,
+        )
+        story_image = {
+            "bytes": image_bytes,
+            "mimeType": "image/png",
+        }
+    except Exception as exc:
+        logger.exception("background_story_image_generation failed")
+        story_image_error = exc.__class__.__name__
     return {
         "generated": True,
         "telegramId": record.get("telegramId"),
         "petId": record.get("petId"),
         "generatedAt": now_iso,
         "story": next_record["lastStory"],
+        "storyImage": story_image,
+        "storyImageError": story_image_error,
         "storyLibraryPatch": None,
         "liteOverlayPatch": result.lite_overlay_patch,
         "recentStoryEvent": recent_story_event,
@@ -641,9 +654,7 @@ def generate_story_for_telegram_user(
 def _snapshot_records() -> list[dict[str, Any]]:
     records = _read_store().get("records", {})
     return [
-        record
-        for record in records.values()
-        if isinstance(record, dict) and _has_snapshot(record)
+        record for record in records.values() if isinstance(record, dict) and _has_snapshot(record)
     ]
 
 

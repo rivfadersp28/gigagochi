@@ -254,10 +254,7 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
                     {
                         "sphere": "world",
                         "kind": "world_fact",
-                        "text": (
-                            "У каменного порога Громма теперь видны "
-                            "меловые следы тени."
-                        ),
+                        "text": ("У каменного порога Громма теперь видны меловые следы тени."),
                         "pathHint": "lite_overlay.spheres.world",
                         "source": "background_story_aftermath",
                         "createdAt": "2026-07-08T07:40:00Z",
@@ -272,18 +269,12 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
         "generate_background_story",
         lambda **kwargs: SimpleNamespace(
             title="Нападение меловой тени",
-            summary=(
-                "Меловая тень попыталась стереть следы Громма."
-            ),
-            story_text=(
-                "На Громма напала меловая тень у каменного порога."
-            ),
+            summary=("Меловая тень попыталась стереть следы Громма."),
+            story_text=("На Громма напала меловая тень у каменного порога."),
             event_type="attack",
             valence="negative",
             tags=("тень",),
-            rag_text=(
-                "На Громма напала меловая тень у каменного порога."
-            ),
+            rag_text=("На Громма напала меловая тень у каменного порога."),
             story_library_patch=None,
             lite_overlay_patch=lite_overlay_patch,
             recent_story_event={
@@ -300,6 +291,17 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
             prompt_debug=[],
         ),
     )
+    image_calls: list[dict[str, object]] = []
+
+    def fake_story_image_bytes(**kwargs):
+        image_calls.append(kwargs)
+        return b"story-png"
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_background_story_image_bytes",
+        fake_story_image_bytes,
+    )
 
     telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
     result = telegram_push_service.generate_story_for_telegram_user(
@@ -309,6 +311,10 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
 
     assert result["storyLibraryPatch"] is None
     assert result["liteOverlayPatch"] == lite_overlay_patch
+    assert result["storyImage"] == {"bytes": b"story-png", "mimeType": "image/png"}
+    assert result["storyImageError"] is None
+    assert image_calls[0]["pet"].name == "Громм"
+    assert image_calls[0]["story"].title == "Нападение меловой тени"
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
     overlay = store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["pet"]["characterBible"][
         "extensions"
@@ -332,9 +338,10 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     ]["lite_overlay"]
     assert len(overlay["facts"]) == 1
     assert overlay["facts"][0]["source"] == "background_story_aftermath"
-    assert store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["recentStoryEvents"][0][
-        "summary"
-    ] == "На Громма напала меловая тень у каменного порога."
+    assert (
+        store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["recentStoryEvents"][0]["summary"]
+        == "На Громма напала меловая тень у каменного порога."
+    )
 
 
 def test_recent_story_events_fallback_uses_last_story_for_anti_repeat() -> None:
@@ -474,23 +481,35 @@ def test_due_push_can_use_seconds_interval(monkeypatch, tmp_path) -> None:
     telegram_push_service.mark_chat_started(chat_id=380566596)
     store = telegram_push_service._read_store()
     record = store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]
-    record["registeredAt"] = (now - timedelta(seconds=119)).isoformat().replace(
-        "+00:00",
-        "Z",
+    record["registeredAt"] = (
+        (now - timedelta(seconds=119))
+        .isoformat()
+        .replace(
+            "+00:00",
+            "Z",
+        )
     )
     telegram_push_service._save_record(record)
     non_target = store["records"]["380566596"]
-    non_target["registeredAt"] = (now - timedelta(seconds=120)).isoformat().replace(
-        "+00:00",
-        "Z",
+    non_target["registeredAt"] = (
+        (now - timedelta(seconds=120))
+        .isoformat()
+        .replace(
+            "+00:00",
+            "Z",
+        )
     )
     telegram_push_service._save_record(non_target)
 
     assert telegram_push_service._due_records(now) == []
 
-    record["registeredAt"] = (now - timedelta(seconds=120)).isoformat().replace(
-        "+00:00",
-        "Z",
+    record["registeredAt"] = (
+        (now - timedelta(seconds=120))
+        .isoformat()
+        .replace(
+            "+00:00",
+            "Z",
+        )
     )
     telegram_push_service._save_record(record)
 
