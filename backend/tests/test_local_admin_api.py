@@ -10,6 +10,8 @@ from app.main import app
 from app.services import local_admin_store
 from app.services.local_admin_publish import (
     AdminPublishError,
+    AdminPublishJob,
+    _deploy_admin_data_on_hetzner,
     _parse_push_command_output,
     unexpected_publish_paths,
 )
@@ -293,6 +295,37 @@ def test_local_admin_publish_starts_job_when_enabled(monkeypatch) -> None:
         {"id": "story_library", "content": '{"meta":{"version":2}}'}
     ]
     assert captured["commit_message"] == "Update admin data"
+
+
+def test_admin_data_deploy_uses_no_build(monkeypatch) -> None:
+    captured = {}
+
+    def fake_run_logged_command(job, args, *, cwd, timeout):
+        captured["args"] = args
+        captured["cwd"] = cwd
+        captured["timeout"] = timeout
+
+    monkeypatch.setattr(
+        "app.services.local_admin_publish._run_logged_command",
+        fake_run_logged_command,
+    )
+
+    _deploy_admin_data_on_hetzner(
+        AdminPublishJob(id="job-1"),
+        SimpleNamespace(
+            admin_publish_ssh_target="root@example.test",
+            admin_publish_ssh_key_path=None,
+            admin_publish_remote_path="/opt/gigagochi",
+            admin_publish_git_remote="origin",
+            admin_publish_git_branch="main",
+        ),
+        120,
+    )
+
+    remote_command = captured["args"][-1]
+    assert "git pull --ff-only origin main" in remote_command
+    assert "up -d --no-build backend bot" in remote_command
+    assert " --build" not in remote_command
 
 
 def test_local_admin_sends_manual_push(monkeypatch) -> None:

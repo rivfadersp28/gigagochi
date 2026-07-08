@@ -40,6 +40,7 @@ services:
     volumes:
       - generated_assets:/app/static/generated
       - backend_logs:/app/logs
+      - ./backend/data:/app/data:ro
       - push_data:/app/data/push
     healthcheck:
       test:
@@ -66,6 +67,7 @@ services:
     command: ["python", "-m", "app.bot"]
     volumes:
       - backend_logs:/app/logs
+      - ./backend/data:/app/data:ro
       - push_data:/app/data/push
 
   frontend:

@@ -119,6 +119,15 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d --bui
 docker image prune -f
 ```
 
+For admin data-only updates (`backend/data/*`), production mounts `./backend/data` into the
+backend image, while `push_data` still owns `/app/data/push`. A faster update is enough:
+
+```bash
+cd /opt/gigagochi
+git pull --ff-only origin main
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --no-build backend bot
+```
+
 ## Local admin publish
 
 The `/admin/speech` editor is intentionally local-only. To publish edited data files from the
@@ -138,12 +147,12 @@ ADMIN_SYNC_FROM_SERVER_ENABLED=true
 ```
 
 The `Опубликовать` button saves dirty admin drafts, validates all managed `backend/data` files,
-commits only those managed data paths, pushes `HEAD:main` to GitHub, then runs the same update
-command on Hetzner over SSH (`git pull --ff-only origin main` plus compose rebuild) and checks
-`/health`. With `ADMIN_SYNC_FROM_SERVER_ENABLED=true`, every `/admin/speech` load first reads the
-current Git commit from Hetzner and refreshes the local managed data files before returning the
-manifest. Keep `ADMIN_PUBLISH_ENABLED=false` and `ADMIN_SYNC_FROM_SERVER_ENABLED=false` on the
-production server.
+commits only those managed data paths, pushes `HEAD:main` to GitHub, then runs the fast data-only
+update on Hetzner over SSH (`git pull --ff-only origin main` plus `up -d --no-build backend bot`)
+and checks `/health`. With `ADMIN_SYNC_FROM_SERVER_ENABLED=true`, every `/admin/speech` load first
+reads the current Git commit from Hetzner and refreshes the local managed data files before
+returning the manifest. Keep `ADMIN_PUBLISH_ENABLED=false` and `ADMIN_SYNC_FROM_SERVER_ENABLED=false`
+on the production server.
 
 ## Verify
 

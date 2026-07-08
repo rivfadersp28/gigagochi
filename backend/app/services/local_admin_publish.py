@@ -632,7 +632,7 @@ def _publish_admin_data(
         timeout=timeout,
     )
 
-    _deploy_on_hetzner(job, settings, timeout)
+    _deploy_admin_data_on_hetzner(job, settings, timeout)
     _check_health(job, str(_setting(settings, "admin_publish_health_url", "")))
 
 
@@ -794,18 +794,19 @@ def _sync_worktree_to_server_commit(
     )
 
 
-def _deploy_on_hetzner(job: AdminPublishJob, settings: Any, timeout: float) -> None:
+def _deploy_admin_data_on_hetzner(job: AdminPublishJob, settings: Any, timeout: float) -> None:
     ssh_target = str(_setting(settings, "admin_publish_ssh_target", "") or "").strip()
     remote_path = str(_setting(settings, "admin_publish_remote_path", "/opt/gigagochi"))
     git_remote = shlex.quote(str(_setting(settings, "admin_publish_git_remote", "origin")))
     git_branch = shlex.quote(str(_setting(settings, "admin_publish_git_branch", "main")))
+    compose = "docker compose --env-file .env.production -f docker-compose.prod.yml"
     remote_command = (
         f"set -e; cd {shlex.quote(remote_path)}; "
         f"git pull --ff-only {git_remote} {git_branch}; "
-        "docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build; "
-        "docker compose --env-file .env.production -f docker-compose.prod.yml ps"
+        f"{compose} up -d --no-build backend bot; "
+        f"{compose} ps backend bot"
     )
-    job.log(f"Запускаю deploy на Hetzner: {ssh_target}.")
+    job.log(f"Запускаю быстрый data deploy на Hetzner без rebuild: {ssh_target}.")
     _run_logged_command(
         job,
         [*_ssh_command_args(settings), remote_command],
