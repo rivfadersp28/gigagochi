@@ -13,6 +13,7 @@ import httpx
 from app.bot import TelegramAPIError, mini_app_keyboard, send_message
 from app.config import get_settings
 from app.schemas import (
+    LocalChatHistoryItem,
     LocalPetChatContext,
     LocalPetMemoryContext,
     LocalPetPushSnapshotRequest,
@@ -198,6 +199,8 @@ def register_push_snapshot(
         "languageCode": user.language_code,
         "petId": payload.petId,
         "pet": payload.pet.model_dump(mode="json"),
+        "history": [item.model_dump(mode="json") for item in payload.history[-12:]],
+        "recentAmbientReplies": payload.recentAmbientReplies[-6:],
         "memoryContext": (
             payload.memoryContext.model_dump(mode="json") if payload.memoryContext else None
         ),
@@ -354,6 +357,30 @@ def _build_push_payload(
     )
 
 
+def _record_history(record: dict[str, Any]) -> list[LocalChatHistoryItem]:
+    raw_history = record.get("history")
+    if not isinstance(raw_history, list):
+        return []
+    history: list[LocalChatHistoryItem] = []
+    for item in raw_history[-12:]:
+        try:
+            history.append(LocalChatHistoryItem.model_validate(item))
+        except ValueError:
+            continue
+    return history
+
+
+def _record_recent_replies(record: dict[str, Any]) -> list[str]:
+    raw_replies = record.get("recentAmbientReplies")
+    if not isinstance(raw_replies, list):
+        return []
+    replies: list[str] = []
+    for item in raw_replies[-6:]:
+        if isinstance(item, str) and item.strip():
+            replies.append(item.strip()[:500])
+    return replies
+
+
 def _send_push_record(
     record: dict[str, Any],
     *,
@@ -507,6 +534,8 @@ def generate_story_for_telegram_user(
     result = generate_background_story(
         pet=payload.pet,
         memory_context=payload.memoryContext,
+        history=_record_history(record),
+        recent_replies=_record_recent_replies(record),
         now_iso=payload.nowIso,
         timezone=payload.timezone,
     )

@@ -132,7 +132,13 @@ class PhrasePlan:
         return "\n\n".join(section for section in sections if section)
 
 
-CONTEXT_SOURCE_IDS = ("worldContext", "characterProfile", "userMemory", "recentReplies")
+CONTEXT_SOURCE_IDS = (
+    "worldContext",
+    "characterProfile",
+    "userMemory",
+    "chatHistory",
+    "recentReplies",
+)
 
 
 @dataclass(frozen=True)

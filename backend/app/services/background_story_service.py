@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.config import get_settings
-from app.schemas import LocalPetChatContext, LocalPetMemoryContext
+from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_chat_model,
@@ -35,6 +35,13 @@ MAX_CHARACTER_DOSSIER_CHARS = 12000
 MAX_DOSSIER_LIST_ITEMS = 12
 BACKGROUND_STORY_POOL = "events"
 BACKGROUND_STORY_POOL_LABEL = "Фоновые события"
+BACKGROUND_ROUTING_SOURCE_IDS = (
+    "worldContext",
+    "characterProfile",
+    "userMemory",
+    "chatHistory",
+    "recentReplies",
+)
 BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -72,11 +79,18 @@ BACKGROUND_STORY_ROUTING_SCHEMA: dict[str, Any] = {
             "type": "object",
             "additionalProperties": False,
             "properties": {
-                "worldContext": {"type": "boolean"},
-                "characterProfile": {"type": "boolean"},
-                "userMemory": {"type": "boolean"},
+                source: {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "enabled": {"type": "boolean"},
+                        "query": {"type": "string", "maxLength": 500},
+                    },
+                    "required": ["enabled", "query"],
+                }
+                for source in BACKGROUND_ROUTING_SOURCE_IDS
             },
-            "required": ["worldContext", "characterProfile", "userMemory"],
+            "required": list(BACKGROUND_ROUTING_SOURCE_IDS),
         },
         "reason": {"type": "string", "maxLength": 500},
     },
@@ -277,6 +291,29 @@ def _memory_brief(memory_context: LocalPetMemoryContext | None) -> dict[str, Any
     return {key: value for key, value in result.items() if value not in ("", [], None)}
 
 
+def _history_brief(history: list[LocalChatHistoryItem] | None) -> list[dict[str, str]]:
+    if not history:
+        return []
+    return [
+        {
+            "role": item.role,
+            "text": _text_value(item.text, limit=500),
+        }
+        for item in history[-6:]
+        if _text_value(item.text, limit=500)
+    ]
+
+
+def _recent_replies_brief(recent_replies: list[str] | None) -> list[str]:
+    if not recent_replies:
+        return []
+    return [
+        text
+        for text in (_text_value(item, limit=500) for item in recent_replies[-6:])
+        if text
+    ]
+
+
 def _state_params_brief(pet: LocalPetChatContext) -> dict[str, Any]:
     labels = state_param_labels(
         hunger=pet.stats.hunger,
@@ -299,6 +336,8 @@ def _background_auto_sources() -> set[str]:
         "storyLibrary",
         "storyOverlay",
         "userMemory",
+        "chatHistory",
+        "recentReplies",
     }
     return {
         source
@@ -314,6 +353,10 @@ def _background_router_source(source: str) -> str | None:
         return "worldContext"
     if source == "userMemory":
         return "userMemory"
+    if source == "chatHistory":
+        return "chatHistory"
+    if source == "recentReplies":
+        return "recentReplies"
     return None
 
 
@@ -332,6 +375,8 @@ def _background_routing_payload(
     *,
     pet: LocalPetChatContext,
     memory_context: LocalPetMemoryContext | None,
+    history: list[LocalChatHistoryItem] | None,
+    recent_replies: list[str] | None,
     now_iso: str | None,
     timezone: str | None,
 ) -> dict[str, Any]:
@@ -351,23 +396,32 @@ def _background_routing_payload(
         "pet": pet_payload,
         "sources": context_routing_sources(),
         "memoryBrief": _memory_brief(memory_context) or {},
+        "recentChatHistory": _history_brief(history),
+        "recentReplies": _recent_replies_brief(recent_replies),
     }
 
 
 def _parse_background_routing_payload(value: str) -> dict[str, bool]:
     parsed = _json_record_from_text(value)
     sources = parsed.get("sources") if _is_record(parsed.get("sources")) else {}
-    return {
-        "worldContext": bool(sources.get("worldContext")),
-        "characterProfile": bool(sources.get("characterProfile")),
-        "userMemory": bool(sources.get("userMemory")),
-    }
+    result: dict[str, bool] = {}
+    for source in BACKGROUND_ROUTING_SOURCE_IDS:
+        item = sources.get(source)
+        if isinstance(item, bool):
+            result[source] = item
+        elif _is_record(item):
+            result[source] = bool(item.get("enabled"))
+        else:
+            result[source] = False
+    return result
 
 
 def _route_background_story_sources(
     *,
     pet: LocalPetChatContext,
     memory_context: LocalPetMemoryContext | None,
+    history: list[LocalChatHistoryItem] | None,
+    recent_replies: list[str] | None,
     now_iso: str | None,
     timezone: str | None,
     client: Any,
@@ -386,6 +440,8 @@ def _route_background_story_sources(
                     _background_routing_payload(
                         pet=pet,
                         memory_context=memory_context,
+                        history=history,
+                        recent_replies=recent_replies,
                         now_iso=now_iso,
                         timezone=timezone,
                     ),
@@ -417,6 +473,8 @@ def character_dossier_for_background_story(
     *,
     pet: LocalPetChatContext,
     memory_context: LocalPetMemoryContext | None = None,
+    history: list[LocalChatHistoryItem] | None = None,
+    recent_replies: list[str] | None = None,
     now_iso: str | None = None,
     timezone: str | None = None,
     source_flags: dict[str, bool] | None = None,
@@ -513,6 +571,12 @@ def character_dossier_for_background_story(
     memory = _memory_brief(memory_context) if enabled("userMemory") else None
     if memory:
         dossier["userMemory"] = memory
+    recent_history = _history_brief(history) if enabled("chatHistory") else []
+    if recent_history:
+        dossier["recentChatHistory"] = recent_history
+    recent_reply_brief = _recent_replies_brief(recent_replies) if enabled("recentReplies") else []
+    if recent_reply_brief:
+        dossier["recentReplies"] = recent_reply_brief
 
     compact = {
         key: value
@@ -641,6 +705,8 @@ def generate_background_story(
     *,
     pet: LocalPetChatContext,
     memory_context: LocalPetMemoryContext | None = None,
+    history: list[LocalChatHistoryItem] | None = None,
+    recent_replies: list[str] | None = None,
     now_iso: str | None = None,
     timezone: str | None = None,
     client: Any | None = None,
@@ -654,6 +720,8 @@ def generate_background_story(
     routing, routing_debug = _route_background_story_sources(
         pet=pet,
         memory_context=memory_context,
+        history=history,
+        recent_replies=recent_replies,
         now_iso=now_iso,
         timezone=timezone,
         client=openai_client,
@@ -666,11 +734,15 @@ def generate_background_story(
         "liteOverlay": _background_source_enabled("liteOverlay", routing),
         "storyOverlay": _background_source_enabled("storyOverlay", routing),
         "userMemory": _background_source_enabled("userMemory", routing),
+        "chatHistory": _background_source_enabled("chatHistory", routing),
+        "recentReplies": _background_source_enabled("recentReplies", routing),
     }
     include_story_library = _background_source_enabled("storyLibrary", routing)
     character = character_dossier_for_background_story(
         pet=pet,
         memory_context=memory_context,
+        history=history,
+        recent_replies=recent_replies,
         now_iso=now_iso,
         timezone=timezone,
         source_flags=source_flags,

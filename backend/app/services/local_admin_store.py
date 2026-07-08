@@ -336,7 +336,7 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "configPath": "contextRouting",
                 "summary": (
                     "Единый LLM-router решает, подключать ли world context, "
-                    "character profile, user memory и recent replies."
+                    "character profile, user memory, chat history и recent replies."
                 ),
             },
             {

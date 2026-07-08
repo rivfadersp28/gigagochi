@@ -254,6 +254,8 @@ class LocalProactiveResponse(BaseModel):
 class LocalPetPushSnapshotRequest(BaseModel):
     petId: str = Field(min_length=1, max_length=120)
     pet: LocalPetChatContext
+    history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
+    recentAmbientReplies: list[str] = Field(default_factory=list, max_length=6)
     memoryContext: LocalPetMemoryContext | None = None
     createdAt: str | None = Field(default=None, max_length=80)
     updatedAt: str | None = Field(default=None, max_length=80)

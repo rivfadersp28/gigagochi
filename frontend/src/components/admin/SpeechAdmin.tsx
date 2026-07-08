@@ -89,6 +89,7 @@ const CONTEXT_ROUTING_SOURCES = [
   { id: "worldContext", label: "World context" },
   { id: "characterProfile", label: "Character profile" },
   { id: "userMemory", label: "User memory" },
+  { id: "chatHistory", label: "Chat history" },
   { id: "recentReplies", label: "Recent replies" },
 ] as const;
 

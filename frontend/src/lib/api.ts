@@ -581,6 +581,10 @@ export async function generateLocalProactiveMessage(
 export async function registerPetPushSnapshot(
   pet: LocalPetState,
   memoryContext?: LocalPetMemoryContext,
+  options: {
+    history?: LocalChatMessage[];
+    recentAmbientReplies?: string[];
+  } = {},
 ): Promise<PushSnapshotResponse> {
   return request<PushSnapshotResponse>(
     "/api/push/snapshot",
@@ -594,6 +598,11 @@ export async function registerPetPushSnapshot(
         lastStatsTickAt: pet.lastStatsTickAt,
         timezone: browserTimezone(),
         memoryContext,
+        history: (options.history ?? []).slice(-12).map((item) => ({
+          role: item.role,
+          text: item.text,
+        })),
+        recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-6),
         pet: {
           name: pet.name,
           description: pet.description,

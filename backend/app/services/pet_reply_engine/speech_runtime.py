@@ -34,6 +34,7 @@ CONTEXT_ROUTING_SOURCE_KEYS = (
     "worldContext",
     "characterProfile",
     "userMemory",
+    "chatHistory",
     "recentReplies",
 )
 CONTEXT_SOURCE_KEYS = (

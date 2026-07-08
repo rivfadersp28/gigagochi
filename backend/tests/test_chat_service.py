@@ -137,6 +137,10 @@ def _fake_context_routing_response(kwargs: dict) -> str:
                 "enabled": has_memory,
                 "query": decision_text if has_memory else "",
             },
+            "chatHistory": {
+                "enabled": False,
+                "query": "",
+            },
             "recentReplies": {
                 "enabled": recent_replies_enabled,
                 "query": "anti-repeat" if recent_replies_enabled else "",

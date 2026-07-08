@@ -591,7 +591,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       updatedAt: pet.updatedAt,
     };
 
-    void registerPetPushSnapshot(pet, buildPushSnapshotMemoryContext(pet.petId))
+    void registerPetPushSnapshot(pet, buildPushSnapshotMemoryContext(pet.petId), {
+      history: readLocalChatHistory().messages,
+      recentAmbientReplies: ambientReplyHistoryRef.current,
+    })
       .then((response) => {
         applyStoryLibraryPatch(response.storyLibraryPatch ?? undefined);
       })

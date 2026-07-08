@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from app.schemas import LocalPetChatContext, LocalPetMemoryContext
+from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
 from app.services import background_story_service
 
 
@@ -76,6 +76,19 @@ def _pet() -> LocalPetChatContext:
 
 
 def test_generate_background_story_creates_events_story_patch(monkeypatch) -> None:
+    routing_content = json.dumps(
+        {
+            "sources": {
+                "worldContext": {"enabled": False, "query": ""},
+                "characterProfile": {"enabled": True, "query": "описание персонажа"},
+                "userMemory": {"enabled": False, "query": ""},
+                "chatHistory": {"enabled": False, "query": ""},
+                "recentReplies": {"enabled": False, "query": ""},
+            },
+            "reason": "Нужен профиль персонажа.",
+        },
+        ensure_ascii=False,
+    )
     content = json.dumps(
         {
             "title": "Налет стеклянных улиток",
@@ -96,7 +109,7 @@ def test_generate_background_story_creates_events_story_patch(monkeypatch) -> No
         },
         ensure_ascii=False,
     )
-    completions = FakeBackgroundStoryCompletions(content)
+    completions = FakeBackgroundStoryCompletions([routing_content, content])
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     monkeypatch.setattr(
         background_story_service,
@@ -120,7 +133,7 @@ def test_generate_background_story_creates_events_story_patch(monkeypatch) -> No
     assert brick["poolLabel"] == "Фоновые события"
     assert brick["attributes"]["generatedBy"] == "background_story"
     assert brick["attributes"]["fullStory"].startswith("У лесной миски")
-    request = completions.calls[0]
+    request = completions.calls[-1]
     assert request["response_format"]["json_schema"]["name"] == "background_story"
     prompt = request["messages"][1]["content"]
     assert "чел с листом вместо лица" in prompt
@@ -184,7 +197,7 @@ def test_background_story_context_sources_policy_controls_dossier(monkeypatch) -
         timeout=10,
     )
 
-    prompt = completions.calls[0]["messages"][1]["content"]
+    prompt = completions.calls[-1]["messages"][1]["content"]
     assert "чел с листом вместо лица" in prompt
     assert "params" not in prompt
     assert "наевшийся" not in prompt
@@ -198,9 +211,11 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     routing_content = json.dumps(
         {
             "sources": {
-                "worldContext": True,
-                "characterProfile": False,
-                "userMemory": False,
+                "worldContext": {"enabled": True, "query": "лор мира"},
+                "characterProfile": {"enabled": False, "query": ""},
+                "userMemory": {"enabled": False, "query": ""},
+                "chatHistory": {"enabled": False, "query": ""},
+                "recentReplies": {"enabled": False, "query": ""},
             },
             "reason": "Нужен только лор мира.",
         },
@@ -293,3 +308,64 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     assert "Лист на лице стук" not in prompt
     assert "Листики выпускают запахи-сигналы опасности." not in prompt
     assert "Сергей принес листовой амулет" not in prompt
+
+
+def test_background_story_uses_snapshot_history_when_story_toggles_allow(
+    monkeypatch,
+) -> None:
+    content = json.dumps(
+        {
+            "title": "Налет из прошлой темы",
+            "summary": "На Олега напали после разговора о тропе.",
+            "storyText": "На Олега напали у тропы после старого разговора.",
+            "eventType": "attack",
+            "valence": "negative",
+            "tags": ["тропа"],
+            "ragText": "На Олега напали у тропы.",
+        },
+        ensure_ascii=False,
+    )
+    completions = FakeBackgroundStoryCompletions(content)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    history = [
+        LocalChatHistoryItem(role="user", text="Помнишь стеклянную тропу?"),
+        LocalChatHistoryItem(role="pet", text="Я уже слышал ее шорох."),
+    ]
+
+    def fake_enabled(surface, source, *, router_enabled=None, auto_default=False):
+        if surface == "backgroundStory" and source in {"chatHistory", "recentReplies"}:
+            return True
+        if surface == "backgroundStory" and source in {
+            "characterProfile",
+            "stateParams",
+            "liteOverlay",
+            "storyLibrary",
+            "storyOverlay",
+            "userMemory",
+        }:
+            return False
+        return auto_default
+
+    monkeypatch.setattr(
+        background_story_service,
+        "get_settings",
+        lambda: SimpleNamespace(openai_chat_timeout_seconds=10, openai_chat_reasoning_effort=None),
+    )
+    monkeypatch.setattr(background_story_service, "context_source_enabled", fake_enabled)
+
+    background_story_service.generate_background_story(
+        pet=_pet(),
+        history=history,
+        recent_replies=["Не буду снова говорить про светляков."],
+        now_iso="2026-07-08T07:40:00Z",
+        timezone="Europe/Moscow",
+        client=client,
+        model="test-model",
+        timeout=10,
+    )
+
+    prompt = completions.calls[-1]["messages"][1]["content"]
+    assert "recentChatHistory" in prompt
+    assert "Помнишь стеклянную тропу?" in prompt
+    assert "recentReplies" in prompt
+    assert "Не буду снова говорить про светляков." in prompt
