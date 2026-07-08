@@ -51,7 +51,10 @@
   past events without making them RAG bricks. The aftermath analyzer also
   returns a partial `statImpact`; negative outcomes lower exactly one internal
   stat key (`hunger`, `happiness`, or legacy `energy` for user-facing health).
-  Server stat changes sync back through `/api/push/snapshot` `statsPatch`.
+  Story delivery includes a debug stat footer built from the actual applied
+  `statsDelta` (`здоровье`, `голод`, `настроение`) so manual `/story` calls can
+  verify which stat the analyzer damaged. Server stat changes sync back through
+  `/api/push/snapshot` `statsPatch`.
   `/story` also preserves the `contextRouting.worldContext.query` when selecting
   global stories for the background-story dossier.
 - The `/story` character dossier uses the same `ContextPlan` / `contextSources`

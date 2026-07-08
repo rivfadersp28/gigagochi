@@ -329,6 +329,7 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     assert result["storyImage"] == {"bytes": b"story-png", "mimeType": "image/png"}
     assert result["storyImageError"] is None
     assert result["statsPatch"]["stats"] == {"energy": 35}
+    assert result["story"]["statsDelta"] == {"hunger": 0, "happiness": 0, "energy": 25}
     assert set(result["statsPatch"]["lastStatTickAt"]) == {"energy"}
     assert image_calls[0]["pet"].name == "Громм"
     assert image_calls[0]["story"].title == "Нападение меловой тени"
@@ -340,6 +341,11 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     assert "меловые следы" in overlay["facts"][0]["text"]
     events = store["records"][str(TEST_TELEGRAM_ID)]["recentStoryEvents"]
     assert events[0]["summary"] == "На Громма напала меловая тень у каменного порога."
+    assert store["records"][str(TEST_TELEGRAM_ID)]["lastStory"]["statsDelta"] == {
+        "hunger": 0,
+        "happiness": 0,
+        "energy": 25,
+    }
     assert result["recentStoryEvent"]["eventType"] == "attack"
 
     response = telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())

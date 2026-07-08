@@ -8,9 +8,13 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.services.story_delivery_format import (
+    TELEGRAM_PHOTO_CAPTION_LIMIT,
+    format_story_caption,
+    format_story_message,
+)
 
 logger = logging.getLogger(__name__)
-TELEGRAM_PHOTO_CAPTION_LIMIT = 1024
 
 
 class TelegramAPIError(RuntimeError):
@@ -116,19 +120,6 @@ def _message_command(text: str) -> str:
     return first.split("@", 1)[0].lower()
 
 
-def _format_story_message(story: dict[str, Any], *, limit: int = 3500) -> str:
-    title = str(story.get("title") or "Фоновое событие").strip()
-    story_text = str(story.get("storyText") or story.get("summary") or "").strip()
-    if not story_text:
-        story_text = "История сгенерировалась, но текст пустой."
-    text = f"{title}\n\n{story_text}"
-    return text[:limit].rstrip()
-
-
-def _format_story_caption(story: dict[str, Any]) -> str:
-    return _format_story_message(story, limit=TELEGRAM_PHOTO_CAPTION_LIMIT)
-
-
 def handle_update(client: httpx.Client, update: dict[str, Any]) -> None:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
@@ -190,13 +181,13 @@ def handle_update(client: httpx.Client, update: dict[str, Any]) -> None:
                     client,
                     chat_id,
                     image_bytes,
-                    _format_story_caption(story),
+                    format_story_caption(story),
                     keyboard,
                 )
                 return
             except (TelegramAPIError, httpx.HTTPError):
                 logger.exception("Telegram /story sendPhoto failed; falling back to sendMessage")
-        send_message(client, chat_id, _format_story_message(story), keyboard)
+        send_message(client, chat_id, format_story_message(story), keyboard)
         return
 
     if command in {"/start", "/app"}:

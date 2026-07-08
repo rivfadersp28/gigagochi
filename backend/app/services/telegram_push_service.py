@@ -27,6 +27,10 @@ from app.services.background_story_service import (
 )
 from app.services.lite_overlay import merge_lite_overlay_patch
 from app.services.pet_reply_engine.lite_generator import generate_push_pet_message
+from app.services.story_delivery_format import (
+    format_story_caption,
+    format_story_message,
+)
 from app.services.telegram_auth_service import TelegramUserContext
 
 STORE_VERSION = 1
@@ -36,7 +40,6 @@ STAT_DECAY_PER_HOUR = 100 / STAT_FULL_DECAY_HOURS
 DAILY_PUSH_REASON = "Ежедневный короткий пуш владельцу от питомца."
 MANUAL_PUSH_REASON = "Ручной debug-триггер из админки."
 MAX_RECENT_STORY_EVENTS = 10
-TELEGRAM_PHOTO_CAPTION_LIMIT = 1024
 
 logger = logging.getLogger(__name__)
 _store_lock = Lock()
@@ -662,18 +665,6 @@ def _save_story_failure(record: dict[str, Any], exc: Exception) -> None:
     _save_record(failed)
 
 
-def _format_story_message(story: dict[str, Any], *, limit: int = 3500) -> str:
-    title = str(story.get("title") or "Фоновое событие").strip()
-    story_text = str(story.get("storyText") or story.get("summary") or "").strip()
-    if not story_text:
-        story_text = "История сгенерировалась, но текст пустой."
-    return f"{title}\n\n{story_text}"[:limit].rstrip()
-
-
-def _format_story_caption(story: dict[str, Any]) -> str:
-    return _format_story_message(story, limit=TELEGRAM_PHOTO_CAPTION_LIMIT)
-
-
 def send_manual_push(
     *,
     telegram_id: int | None = None,
@@ -694,23 +685,32 @@ def _apply_story_stat_impact(
     stat_impact: dict[str, Any] | None,
     *,
     now: datetime,
-) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, datetime] | None]:
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any] | None,
+    dict[str, datetime] | None,
+    dict[str, int] | None,
+]:
     pet = deepcopy(record.get("pet")) if isinstance(record.get("pet"), dict) else {}
     if not isinstance(stat_impact, dict) or stat_impact.get("applies") is not True:
-        return pet, None, None
+        stats_delta = {key: 0 for key in STAT_KEYS} if isinstance(stat_impact, dict) else None
+        return pet, None, None, stats_delta
 
     stat = stat_impact.get("stat")
     if stat not in STAT_KEYS:
-        return pet, None, None
+        return pet, None, None, {key: 0 for key in STAT_KEYS}
 
     amount = stat_impact.get("amount")
     impact_amount = amount if isinstance(amount, (int, float)) else 25
     impact_amount = max(0, min(100, impact_amount))
     if impact_amount <= 0:
-        return pet, None, None
+        return pet, None, None, {key: 0 for key in STAT_KEYS}
 
     current_stats = _record_current_stats(record, now)
+    previous_value = current_stats[stat]
     current_stats[stat] = _clamp_stat(current_stats[stat] - impact_amount)
+    stats_delta = {key: 0 for key in STAT_KEYS}
+    stats_delta[stat] = max(0, previous_value - current_stats[stat])
     stats = pet.setdefault("stats", {})
     if not isinstance(stats, dict):
         stats = {}
@@ -719,7 +719,7 @@ def _apply_story_stat_impact(
 
     ticks = _stat_tick_map(record, fallback=now)
     ticks[stat] = now
-    return pet, _stats_patch(stats=current_stats, ticks=ticks, keys=(stat,)), ticks
+    return pet, _stats_patch(stats=current_stats, ticks=ticks, keys=(stat,)), ticks, stats_delta
 
 
 def generate_story_for_telegram_user(
@@ -746,11 +746,24 @@ def generate_story_for_telegram_user(
     now_iso = _iso(now)
     recent_story_event = getattr(result, "recent_story_event", None)
     stat_impact = getattr(result, "stat_impact", None)
-    next_pet, stats_patch, stat_ticks = _apply_story_stat_impact(
+    next_pet, stats_patch, stat_ticks, stats_delta = _apply_story_stat_impact(
         record,
         stat_impact,
         now=now,
     )
+    last_story = {
+        "title": result.title,
+        "summary": result.summary,
+        "storyText": result.story_text,
+        "eventType": result.event_type,
+        "valence": result.valence,
+        "tags": list(result.tags),
+        "ragText": result.rag_text,
+        "statImpact": stat_impact,
+    }
+    if stats_delta is not None:
+        last_story["statsDelta"] = stats_delta
+
     next_record = {
         **record,
         "pet": next_pet,
@@ -759,16 +772,7 @@ def generate_story_for_telegram_user(
         "lastStoryError": None,
         "lastStoryErrorCode": None,
         "lastStoryErrorAt": None,
-        "lastStory": {
-            "title": result.title,
-            "summary": result.summary,
-            "storyText": result.story_text,
-            "eventType": result.event_type,
-            "valence": result.valence,
-            "tags": list(result.tags),
-            "ragText": result.rag_text,
-            "statImpact": stat_impact,
-        },
+        "lastStory": last_story,
         "recentStoryEvents": _append_recent_story_event(record, recent_story_event),
     }
     if stat_ticks is not None:
@@ -846,9 +850,9 @@ def _send_story_record(
     with httpx.Client() as client:
         try:
             if isinstance(image_bytes, bytes) and image_bytes:
-                send_photo(client, chat_id, image_bytes, _format_story_caption(story), keyboard)
+                send_photo(client, chat_id, image_bytes, format_story_caption(story), keyboard)
             else:
-                send_message(client, chat_id, _format_story_message(story), keyboard)
+                send_message(client, chat_id, format_story_message(story), keyboard)
         except TelegramAPIError as exc:
             story_error = _telegram_push_error(exc)
             _save_story_failure(_fresh_record(record), story_error)

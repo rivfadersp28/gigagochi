@@ -139,3 +139,6 @@
   partial `statsPatch`. Do not replace the whole stats object unless every
   `lastStatTickAt` key is also reset consistently; otherwise independent decay
   timers will double-decay or collapse into one shared clock.
+- Telegram story photo captions are capped at 1024 chars. Keep the stat debug
+  footer reserved during truncation, otherwise `/story` debugging can hide the
+  analyzer result behind a long generated story.

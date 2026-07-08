@@ -6,8 +6,15 @@ import httpx
 
 from app import bot
 from app.services import telegram_push_service
+from app.services.story_delivery_format import TELEGRAM_PHOTO_CAPTION_LIMIT, format_story_caption
 
 TEST_TELEGRAM_ID = 62943754
+STORY_IMPACT_TEXT = (
+    "Влияние на параметры:\n"
+    "здоровье: минус 25\n"
+    "голод: минус 0\n"
+    "настроение: минус 0"
+)
 
 
 def _story_update() -> dict:
@@ -34,6 +41,14 @@ def test_story_command_sends_generated_image_as_photo(monkeypatch) -> None:
             "story": {
                 "title": "След под кроной",
                 "storyText": "Олег нашел теплый знак под древним дубом.",
+                "statImpact": {
+                    "applies": True,
+                    "isNegativeOutcome": True,
+                    "stat": "energy",
+                    "amount": 25,
+                    "reason": "Олег поцарапал лапу.",
+                },
+                "statsDelta": {"energy": 25, "hunger": 0, "happiness": 0},
             },
             "storyImage": {"bytes": b"png", "mimeType": "image/png"},
         },
@@ -54,7 +69,11 @@ def test_story_command_sends_generated_image_as_photo(monkeypatch) -> None:
     assert sent["method"] == "photo"
     assert sent["chat_id"] == TEST_TELEGRAM_ID
     assert sent["photo"] == b"png"
-    assert sent["caption"] == "След под кроной\n\nОлег нашел теплый знак под древним дубом."
+    assert sent["caption"] == (
+        "След под кроной\n\n"
+        "Олег нашел теплый знак под древним дубом.\n\n"
+        f"{STORY_IMPACT_TEXT}"
+    )
     assert "text" not in sent
 
 
@@ -101,6 +120,14 @@ def test_story_command_falls_back_to_message_without_image(monkeypatch) -> None:
             "story": {
                 "title": "След под кроной",
                 "storyText": "Олег нашел теплый знак под древним дубом.",
+                "statImpact": {
+                    "applies": False,
+                    "isNegativeOutcome": False,
+                    "stat": "none",
+                    "amount": 0,
+                    "reason": "Последствий нет.",
+                },
+                "statsDelta": {"energy": 0, "hunger": 0, "happiness": 0},
             },
             "storyImage": None,
         },
@@ -119,5 +146,37 @@ def test_story_command_falls_back_to_message_without_image(monkeypatch) -> None:
 
     assert sent["method"] == "message"
     assert sent["chat_id"] == TEST_TELEGRAM_ID
-    assert sent["text"] == "След под кроной\n\nОлег нашел теплый знак под древним дубом."
+    assert sent["text"] == (
+        "След под кроной\n\n"
+        "Олег нашел теплый знак под древним дубом.\n\n"
+        "Влияние на параметры:\n"
+        "здоровье: минус 0\n"
+        "голод: минус 0\n"
+        "настроение: минус 0"
+    )
     assert "photo" not in sent
+
+
+def test_story_caption_preserves_stat_debug_tail() -> None:
+    caption = format_story_caption(
+        {
+            "title": "Длинная история",
+            "storyText": "Очень длинный текст. " * 200,
+            "statImpact": {
+                "applies": True,
+                "isNegativeOutcome": True,
+                "stat": "hunger",
+                "amount": 25,
+                "reason": "Питомец потерял еду.",
+            },
+            "statsDelta": {"energy": 0, "hunger": 25, "happiness": 0},
+        }
+    )
+
+    assert len(caption) <= TELEGRAM_PHOTO_CAPTION_LIMIT
+    assert caption.endswith(
+        "Влияние на параметры:\n"
+        "здоровье: минус 0\n"
+        "голод: минус 25\n"
+        "настроение: минус 0"
+    )
