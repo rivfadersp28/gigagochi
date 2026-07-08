@@ -757,27 +757,21 @@ def _story_event_briefs(recent_story_events: list[dict[str, Any]] | None) -> lis
         if not _is_record(item):
             continue
         parts: list[str] = []
-        summary = _text_value(item.get("summary"), limit=360)
-        if summary:
-            parts.append(summary)
         event_type = _text_value(item.get("eventType"), limit=60)
         if event_type:
             parts.append(f"тип: {event_type}")
+        valence = _text_value(item.get("valence"), limit=40)
+        if valence:
+            parts.append(f"тон исхода: {_valence_label(valence)}")
         participants = _string_list(item.get("participants"), limit=4)
         if participants:
             parts.append(f"участники: {', '.join(participants)}")
-        actions = _string_list(item.get("actions"), limit=4)
-        if actions:
-            parts.append(f"действия: {', '.join(actions)}")
         objects = _string_list(item.get("objects"), limit=4)
         if objects:
             parts.append(f"предметы: {', '.join(objects)}")
         location = _text_value(item.get("location"), limit=120)
         if location:
             parts.append(f"место: {location}")
-        outcome = _text_value(item.get("outcome"), limit=180)
-        if outcome:
-            parts.append(f"исход: {outcome}")
         brief = "; ".join(parts)
         if brief:
             briefs.append(brief)
@@ -794,8 +788,8 @@ def _anti_repeat_block(recent_story_events: list[dict[str, Any]] | None) -> str:
         "Используй список только как запрет на повтор, "
         "не как источник новых деталей сюжета. "
         "Не повторяй по сути то же сочетание участник + "
-        "действие/случайность + предмет + место "
-        f"+ исход.\n{lines}"
+        "тип события + предмет + место + тон исхода.\n"
+        f"{lines}"
     )
 
 

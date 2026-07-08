@@ -624,6 +624,7 @@ def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) ->
             {
                 "summary": "Олег уже споткнулся о мягкий камень у миски.",
                 "eventType": "accident",
+                "valence": "mixed",
                 "participants": ["Олег"],
                 "actions": ["споткнулся"],
                 "objects": ["мягкий камень"],
@@ -641,7 +642,12 @@ def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) ->
     prompt = _call_by_schema(completions, "background_story")["messages"][1]["content"]
     assert "ANTI_REPEAT" in prompt
     assert "Используй список только как запрет на повтор" in prompt
-    assert "Олег уже споткнулся о мягкий камень" in prompt
+    assert "тип: accident" in prompt
+    assert "тон исхода: смешанный" in prompt
+    assert "предметы: мягкий камень" in prompt
+    assert "Олег уже споткнулся о мягкий камень" not in prompt
+    assert "действия: споткнулся" not in prompt
+    assert "исход: поднялся сам" not in prompt
 
 
 def test_background_story_aftermath_ignores_ephemeral_events(monkeypatch) -> None:
