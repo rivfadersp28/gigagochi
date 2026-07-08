@@ -78,7 +78,7 @@
         "recentReplies": "disabled"
       },
       "backgroundStory": {
-        "characterProfile": "disabled",
+        "characterProfile": "always",
         "stateParams": "always",
         "liteOverlay": "auto",
         "storyLibrary": "auto",
