@@ -26,6 +26,8 @@ STORE_VERSION = 1
 STAT_DECAY_PER_HOUR = 100 / 24
 DAILY_PUSH_REASON = "Ежедневный короткий пуш владельцу от питомца."
 MANUAL_PUSH_REASON = "Ручной debug-триггер из админки."
+DEBUG_PUSH_TARGET_TELEGRAM_ID = 62943754
+DEBUG_PUSH_TARGET_FIRST_NAME = "Сергей"
 
 _store_lock = Lock()
 
@@ -311,6 +313,15 @@ def _send_push_record(
     manual: bool,
     include_debug: bool = False,
 ) -> dict[str, Any]:
+    if not _is_debug_push_target(record):
+        raise TelegramPushError(
+            "PUSH_TARGET_RESTRICTED",
+            (
+                "Debug push временно разрешен только пользователю "
+                f"{DEBUG_PUSH_TARGET_FIRST_NAME} ({DEBUG_PUSH_TARGET_TELEGRAM_ID})."
+            ),
+        )
+
     settings = get_settings()
     if not settings.bot_token:
         raise TelegramPushError("BOT_TOKEN_MISSING", "BOT_TOKEN не настроен.")
@@ -448,13 +459,21 @@ def _bulk_error(record: dict[str, Any], exc: Exception) -> dict[str, Any]:
     }
 
 
+def _is_debug_push_target(record: dict[str, Any]) -> bool:
+    return record.get("telegramId") == DEBUG_PUSH_TARGET_TELEGRAM_ID
+
+
 def send_manual_push_to_reachable(
     *,
     reason: str | None = None,
     include_debug: bool = True,
 ) -> dict[str, Any]:
     records = _snapshot_records()
-    reachable = [record for record in records if record.get("chatReachable") is True]
+    reachable = [
+        record
+        for record in records
+        if record.get("chatReachable") is True and _is_debug_push_target(record)
+    ]
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     for record in reachable:
@@ -498,7 +517,11 @@ def _due_records(now: datetime) -> list[dict[str, Any]]:
     for record in records.values():
         if not isinstance(record, dict):
             continue
-        if not _has_snapshot(record) or record.get("chatReachable") is not True:
+        if (
+            not _has_snapshot(record)
+            or record.get("chatReachable") is not True
+            or not _is_debug_push_target(record)
+        ):
             continue
         base_time = _latest_time(record.get("lastPushAt"), record.get("lastPushAttemptAt"))
         if base_time is None:
