@@ -121,6 +121,69 @@ def test_background_story_image_uses_story_and_pet_identity(monkeypatch) -> None
     assert "Листики выпускают запахи-сигналы опасности" not in prompt
 
 
+def test_background_story_image_passes_current_sprite_reference(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    pet = _pet().model_copy(
+        update={
+            "assetImages": {
+                "baby": {
+                    "happy": "/static/generated/pets/oleg-baby-happy.png",
+                },
+            }
+        }
+    )
+
+    def fake_generate_openrouter_image_bytes(prompt: str, **kwargs):
+        calls.append({"prompt": prompt, **kwargs})
+        return b"story-image"
+
+    monkeypatch.setattr(
+        background_story_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            backend_public_url="https://gigagochi.serega.works",
+            webapp_url=None,
+        ),
+    )
+    monkeypatch.setattr(
+        background_story_service,
+        "generate_openrouter_image_bytes",
+        fake_generate_openrouter_image_bytes,
+    )
+    story = background_story_service.BackgroundStoryResult(
+        title="След под кроной",
+        summary="Олег нашел теплый знак под древним дубом.",
+        story_text="Олег заметил, что древний дуб отвечает шепотом листа.",
+        event_type="discovery",
+        valence="positive",
+        tags=("дуб", "лист"),
+        rag_text="Олег нашел знак под дубом.",
+        story_library_patch=None,
+        lite_overlay_patch=None,
+        recent_story_event=None,
+        prompt_debug=[],
+    )
+
+    image_bytes = background_story_service.generate_background_story_image_bytes(
+        pet=pet,
+        story=story,
+    )
+
+    assert image_bytes == b"story-image"
+    assert calls[0]["input_references"] == [
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "https://gigagochi.serega.works/static/generated/pets/oleg-baby-happy.png"
+            },
+        }
+    ]
+    prompt = str(calls[0]["prompt"])
+    assert "A character reference image is attached through input_references" in prompt
+    assert "Use that reference image as the primary source for the pet design" in prompt
+    assert "do not invent a new character design" in prompt
+
+
 def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) -> None:
     routing_content = json.dumps(
         {

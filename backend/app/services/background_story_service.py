@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from app.config import get_settings
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
@@ -54,6 +55,7 @@ MAX_DOSSIER_LIST_ITEMS = 12
 MAX_AFTERMATH_CONTEXT_CHARS = 12000
 AFTERMATH_CONFIDENCE_THRESHOLD = 0.7
 BACKGROUND_ROUTING_SOURCE_IDS = CONTEXT_ROUTING_SOURCE_IDS
+LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 BACKGROUND_STORY_IMAGE_STYLE = """
 Create a highly detailed Japanese fantasy manga illustration in the style of a cozy
 light novel cover or classic JRPG key visual. Clean expressive ink lineart with
@@ -357,11 +359,41 @@ def _current_asset_image_url(pet: LocalPetChatContext) -> str:
     return _text_value(stage_images.get(pet.mood), limit=1000)
 
 
+def _is_public_reference_url(image_url: str) -> bool:
+    if image_url.startswith("data:image/"):
+        return True
+    parsed = urlparse(image_url)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    hostname = parsed.hostname or ""
+    return hostname not in LOCAL_REFERENCE_HOSTS and not hostname.endswith(".local")
+
+
+def _absolute_reference_url(image_url: str, settings: Any) -> str:
+    if _is_public_reference_url(image_url):
+        return image_url
+    if not image_url.startswith("/"):
+        return ""
+
+    base_url = _text_value(getattr(settings, "backend_public_url", None)) or _text_value(
+        getattr(settings, "webapp_url", None)
+    )
+    if not base_url:
+        return ""
+
+    absolute_url = f"{base_url.rstrip('/')}/{image_url.lstrip('/')}"
+    return absolute_url if _is_public_reference_url(absolute_url) else ""
+
+
+def _current_asset_reference_url(pet: LocalPetChatContext) -> str:
+    return _absolute_reference_url(_current_asset_image_url(pet), get_settings())
+
+
 def _asset_input_references_for_background_story(
     pet: LocalPetChatContext,
 ) -> list[dict[str, Any]]:
-    image_url = _current_asset_image_url(pet)
-    if not image_url.startswith(("http://", "https://", "data:image/")):
+    image_url = _current_asset_reference_url(pet)
+    if not image_url:
         return []
     return [{"type": "image_url", "image_url": {"url": image_url}}]
 
@@ -371,17 +403,30 @@ def build_background_story_image_prompt(
     pet: LocalPetChatContext,
     story: BackgroundStoryResult,
 ) -> str:
-    reference_url = _current_asset_image_url(pet)
+    reference_url = _current_asset_reference_url(pet)
     reference_text = (
-        f"Current sprite reference URL: {reference_url}"
+        (
+            "A character reference image is attached through input_references.\n"
+            f"Reference URL for logging only: {reference_url}\n"
+            "Use that reference image as the primary source for the pet design: preserve the "
+            "same silhouette, face placement, colors, material feel, proportions, signature "
+            "features, and current growth-stage/mood design. Repose and integrate the pet "
+            "into the story scene, but do not invent a new character design."
+        )
         if reference_url
-        else "No current sprite reference URL was provided. Follow the text identity exactly."
+        else (
+            "No character reference image was provided. Follow the text identity and visual "
+            "anchors exactly, and keep the pet design stable."
+        )
     )
     tags = ", ".join(story.tags)
     return f"""
-Create one illustration for a generated background story about the pet.
-The image is sent to the owner in Telegram with the story text, so it must show
-the central moment clearly in one frame.
+Create one polished illustration for a generated background story about the pet.
+The image is sent to the owner in Telegram with the story text, so show the central
+story moment clearly in one frame.
+
+REFERENCE IMAGE USAGE:
+{reference_text}
 
 STORY TITLE:
 {story.title}
@@ -405,7 +450,7 @@ CHARACTER APPEARANCE TO PRESERVE:
 {_background_story_image_identity(pet)}
 
 CHARACTER REFERENCE:
-{reference_text}
+See REFERENCE IMAGE USAGE above.
 
 SHARED ART STYLE:
 {BACKGROUND_STORY_IMAGE_STYLE}
@@ -414,8 +459,12 @@ Composition rules:
 - One complete illustration, not a storyboard, card, UI, split panel or collage.
 - Keep the pet clearly visible as the main character.
 - Preserve the pet species, silhouette, colors, face placement, materials and signature features.
+- If a reference image is attached, it overrides generic anime character defaults
+  for the pet design.
 - Apply anime human proportions only to humanoid/background characters.
 - Do not redesign the pet into a human unless the original pet identity is humanoid.
+- Keep story action, environment, lighting and costume additions compatible with
+  the reference design.
 - Show the story environment and the main action without adding unrelated lore.
 - No text, captions, speech bubbles, watermarks, logos or interface elements inside the image.
 - No graphic violence, blood, weapons, horror, adult themes or copyrighted characters.
