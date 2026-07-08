@@ -483,9 +483,16 @@ def send_manual_push_to_reachable(
     }
 
 
+def _daily_push_min_interval(settings: Any) -> timedelta:
+    min_interval_seconds = getattr(settings, "telegram_daily_push_min_interval_seconds", None)
+    if min_interval_seconds is not None:
+        return timedelta(seconds=max(0, int(min_interval_seconds)))
+    return timedelta(hours=settings.telegram_daily_push_min_interval_hours)
+
+
 def _due_records(now: datetime) -> list[dict[str, Any]]:
     settings = get_settings()
-    cutoff = now - timedelta(hours=settings.telegram_daily_push_min_interval_hours)
+    cutoff = now - _daily_push_min_interval(settings)
     records = _read_store().get("records", {})
     due: list[dict[str, Any]] = []
     for record in records.values():

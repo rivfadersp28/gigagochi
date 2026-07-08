@@ -287,3 +287,33 @@ def test_failed_daily_attempt_delays_next_due_push(monkeypatch, tmp_path) -> Non
     assert latest["lastPushErrorCode"] == "TELEGRAM_CHAT_NOT_FOUND"
     assert latest["lastPushAttemptAt"] == now.isoformat().replace("+00:00", "Z")
     assert telegram_push_service._due_records(now) == []
+
+
+def test_due_push_can_use_seconds_interval(monkeypatch, tmp_path) -> None:
+    now = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
+    settings = SimpleNamespace(
+        telegram_push_store_path=str(tmp_path / "push.json"),
+        telegram_daily_push_min_interval_hours=24,
+        telegram_daily_push_min_interval_seconds=120,
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    telegram_push_service.mark_chat_started(chat_id=42)
+    store = telegram_push_service._read_store()
+    record = store["records"]["42"]
+    record["registeredAt"] = (now - timedelta(seconds=119)).isoformat().replace(
+        "+00:00",
+        "Z",
+    )
+    telegram_push_service._save_record(record)
+
+    assert telegram_push_service._due_records(now) == []
+
+    record["registeredAt"] = (now - timedelta(seconds=120)).isoformat().replace(
+        "+00:00",
+        "Z",
+    )
+    telegram_push_service._save_record(record)
+
+    assert len(telegram_push_service._due_records(now)) == 1

@@ -455,7 +455,7 @@ function SpeechRuntimeEditor({
         <SurfaceFlags config={config} surface="proactive" onChange={updatePath} />
       </Section>
 
-      <Section title="Telegram push" meta={<Badge variant="outline">1 раз в день</Badge>}>
+      <Section title="Telegram push" meta={<Badge variant="outline">debug: 2 минуты</Badge>}>
         <RuntimeField
           label="Push prompt"
           value={stringAt(config, ["surfacePrompts", "push"])}
