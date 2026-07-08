@@ -74,14 +74,14 @@
         "recentReplies": "disabled"
       },
       "backgroundStory": {
-        "characterProfile": "always",
-        "stateParams": "always",
-        "liteOverlay": "always",
-        "storyLibrary": "disabled",
-        "storyOverlay": "always",
-        "userMemory": "always",
-        "chatHistory": "disabled",
-        "recentReplies": "disabled"
+        "characterProfile": "auto",
+        "stateParams": "auto",
+        "liteOverlay": "auto",
+        "storyLibrary": "auto",
+        "storyOverlay": "auto",
+        "userMemory": "auto",
+        "chatHistory": "auto",
+        "recentReplies": "always"
       }
     }
   },
