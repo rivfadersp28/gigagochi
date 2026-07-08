@@ -465,6 +465,18 @@ def _string_list(value: Any, *, limit: int = 8) -> list[str]:
     return result
 
 
+def _merge_string_lists(*values: Any, limit: int = 8) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        for text in _string_list(value, limit=limit):
+            if text in result:
+                continue
+            result.append(text)
+            if len(result) >= limit:
+                return result
+    return result
+
+
 def _lorebook_entries(value: Any, *, limit: int = 6) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -500,6 +512,8 @@ def expand_compact_character_bible(
     adapter lets generation stay small while the rest of the app migrates gradually.
     """
     bible = dict(character_bible)
+    genesis = _dict_value(bible.get("genesis"))
+    roleplay_contract = _dict_value(bible.get("roleplay_contract"))
     identity = _dict_value(bible.get("identity"))
     visual = _dict_value(bible.get("visual"))
     compact_voice = _dict_value(bible.get("voice"))
@@ -512,7 +526,29 @@ def expand_compact_character_bible(
 
     species = _string_value(identity.get("species")) or raw_description
     one_liner = _string_value(identity.get("one_liner")) or species
-    voice_rules = _string_list(compact_voice.get("rules"), limit=8)
+    roleplay_voice_rules = _string_list(roleplay_contract.get("voice_rules"), limit=7)
+    genesis_description = _string_value(genesis.get("description")) or _string_value(
+        genesis.get("core_reading")
+    )
+    character_trait = _string_value(genesis.get("character_trait")) or _string_value(
+        genesis.get("central_trait")
+    )
+    genesis_likes = _string_list(genesis.get("likes"), limit=8)
+    genesis_does = _string_list(genesis.get("does"), limit=8)
+    appetite = _string_value(genesis.get("appetite")) or _string_value(
+        genesis.get("safe_adaptation")
+    )
+    conflict = _string_value(genesis.get("conflict")) or _string_value(
+        genesis.get("inner_conflict")
+    )
+    story_engine = _string_value(genesis.get("story_engine")) or _string_value(
+        genesis.get("daily_life_hook")
+    )
+    voice_rules = _merge_string_lists(
+        compact_voice.get("rules"),
+        roleplay_voice_rules,
+        limit=10,
+    )
     sample_replies = _string_list(compact_voice.get("sample_replies"), limit=8)
     avoid_patterns = _string_list(compact_voice.get("avoid"), limit=8)
     catchphrases = _string_list(compact_voice.get("catchphrases"), limit=5)
@@ -538,13 +574,27 @@ def expand_compact_character_bible(
     }
     bible["species"] = _string_value(bible.get("species")) or species
     bible["signature"] = _string_value(bible.get("signature")) or one_liner
-    bible["personality"] = _string_value(bible.get("personality")) or " ".join(
+    genesis_personality = " ".join(
         text
         for text in (
-            _string_value(inner.get("core_want")),
-            _string_value(inner.get("inner_conflict")),
+            genesis_description,
+            character_trait,
+            conflict,
+            story_engine,
         )
         if text
+    )
+    bible["personality"] = (
+        _string_value(bible.get("personality"))
+        or genesis_personality
+        or " ".join(
+            text
+            for text in (
+                _string_value(inner.get("core_want")),
+                _string_value(inner.get("inner_conflict")),
+            )
+            if text
+        )
     )
     bible["main_colors"] = _string_list(visual.get("colors"), limit=5)
     bible["signature_features"] = _string_list(visual.get("features"), limit=6)
@@ -573,8 +623,10 @@ def expand_compact_character_bible(
         "avoid_patterns": avoid_patterns,
     }
     bible["inner_state"] = {
-        "core_want": _string_value(inner.get("core_want")),
-        "inner_conflict": _string_value(inner.get("inner_conflict")),
+        "core_want": _string_value(inner.get("core_want"))
+        or story_engine
+        or "; ".join(genesis_does[:3]),
+        "inner_conflict": _string_value(inner.get("inner_conflict")) or conflict,
         "fears": fears,
         "comfort_actions": comfort_actions,
     }
@@ -624,9 +676,11 @@ def expand_compact_character_bible(
             "story": "; ".join(relationships),
         },
         "inner_life": {
-            "core_want": _string_value(inner.get("core_want")),
-            "inner_conflict": _string_value(inner.get("inner_conflict")),
-            "likes": objects[:3] + routines[:2],
+            "core_want": _string_value(inner.get("core_want"))
+            or story_engine
+            or "; ".join(genesis_does[:3]),
+            "inner_conflict": _string_value(inner.get("inner_conflict")) or conflict,
+            "likes": genesis_likes or objects[:3] + routines[:2],
             "dislikes": [],
             "fears": fears,
             "dreams": story_seeds[:3],
@@ -653,7 +707,36 @@ def expand_compact_character_bible(
         "source_urls": [],
         "license_notes": legacy_defaults["provenanceLicenseNotes"],
     }
-    bible.setdefault("extensions", {})
+    bible["genesis"] = {
+        "description": genesis_description,
+        "character_trait": character_trait,
+        "likes": genesis_likes,
+        "does": genesis_does,
+        "appetite": appetite,
+        "conflict": conflict,
+        "story_engine": story_engine,
+    }
+    bible["roleplay_contract"] = {
+        "self_intro": _string_value(roleplay_contract.get("self_intro")),
+        "how_to_answer_who_are_you": _string_value(
+            roleplay_contract.get("how_to_answer_who_are_you")
+        ),
+        "how_to_answer_what_do_you_eat": _string_value(
+            roleplay_contract.get("how_to_answer_what_do_you_eat")
+        ),
+        "how_to_answer_where_do_you_live": _string_value(
+            roleplay_contract.get("how_to_answer_where_do_you_live")
+        ),
+        "voice_rules": roleplay_voice_rules,
+    }
+    extensions = _dict_value(bible.get("extensions"))
+    generation_meta = _dict_value(extensions.get("generation"))
+    extensions["generation"] = {
+        **generation_meta,
+        "pipeline": "direct_creature_profile_v4",
+        "usesDirectProfileQuestions": True,
+    }
+    bible["extensions"] = extensions
     return bible
 
 

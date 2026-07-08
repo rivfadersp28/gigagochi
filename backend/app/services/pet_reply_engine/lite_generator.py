@@ -916,6 +916,110 @@ def _character_context_block(
     return "CHARACTER_PROFILE:\n" + _safe_json_context(payload, 3000)
 
 
+def _record_at(value: Any, key: str) -> dict[str, Any]:
+    if not _is_record(value):
+        return {}
+    child = value.get(key)
+    return child if _is_record(child) else {}
+
+
+def _text_list(value: Any, *, limit: int = 6, item_limit: int = 180) -> list[str]:
+    if isinstance(value, str):
+        text = _clean_optional_text(value, item_limit)
+        return [text] if text else []
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = _clean_optional_text(str(item), item_limit) if item is not None else None
+        if not text or text in result:
+            continue
+        result.append(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _join_labeled_line(label: str, *values: Any, limit: int = 320) -> str | None:
+    parts: list[str] = []
+    for value in values:
+        text = _clean_optional_text(str(value), limit) if value is not None else None
+        if text and text not in parts:
+            parts.append(text)
+    if not parts:
+        return None
+    return f"{label}: {'; '.join(parts)}"
+
+
+def _character_capsule_block(pet: Any) -> str | None:
+    bible = _sanitized_character_bible(getattr(pet, "characterBible", None))
+    identity = _record_at(bible, "identity")
+    genesis = _record_at(bible, "genesis")
+    roleplay_contract = _record_at(bible, "roleplay_contract")
+
+    name = _clean_optional_text(getattr(pet, "name", None), 80)
+    species = _clean_optional_text(identity.get("species"), 140)
+    role = _clean_optional_text(identity.get("role"), 160)
+    one_liner = _clean_optional_text(identity.get("one_liner"), 220)
+    description = _clean_optional_text(getattr(pet, "description", None), 180)
+
+    lines = [
+        "CHARACTER_CAPSULE:",
+        (
+            "This is stable character canon for every visible reply. It is stronger than "
+            "world context, chat history, and one-off invented details."
+        ),
+    ]
+    identity_line = _join_labeled_line(
+        "Who I am",
+        ", ".join(part for part in (name, species or description) if part),
+        role,
+        one_liner,
+        limit=360,
+    )
+    if identity_line:
+        lines.append(identity_line)
+
+    for label, keys in (
+        ("Description", ("description", "core_reading")),
+        ("Character trait", ("character_trait", "central_trait")),
+        ("Appetite", ("appetite", "safe_adaptation", "pet_safe_adaptation")),
+        ("Conflict", ("conflict", "inner_conflict")),
+        ("Story engine", ("story_engine", "daily_life_hook", "daily_care_hook")),
+    ):
+        value = next((genesis.get(key) for key in keys if genesis.get(key)), None)
+        line = _join_labeled_line(label, value, limit=300)
+        if line:
+            lines.append(line)
+
+    likes = _text_list(genesis.get("likes"), limit=6, item_limit=140)
+    if likes:
+        lines.append("Likes: " + "; ".join(likes))
+    does = _text_list(genesis.get("does"), limit=6, item_limit=160)
+    if does:
+        lines.append("Does: " + "; ".join(does))
+
+    for label, key in (
+        ('When asked "who are you"', "how_to_answer_who_are_you"),
+        ('When asked "what do you eat"', "how_to_answer_what_do_you_eat"),
+        ('When asked "where do you live"', "how_to_answer_where_do_you_live"),
+    ):
+        line = _join_labeled_line(label, roleplay_contract.get(key), limit=260)
+        if line:
+            lines.append(line)
+
+    voice_rules = _text_list(roleplay_contract.get("voice_rules"), limit=5, item_limit=160)
+    if voice_rules:
+        lines.append("Voice contract: " + "; ".join(voice_rules))
+
+    return "\n".join(lines) if len(lines) > 3 else None
+
+
+def _combine_character_blocks(*blocks: str | None) -> str | None:
+    values = [block for block in blocks if block]
+    return "\n\n".join(values) if values else None
+
+
 def _story_context_for_routing(
     *,
     surface: PhraseSurface,
@@ -1139,7 +1243,10 @@ def _phrase_plan_for_chat(
         identity_line=_chat_identity_line(payload, reply_limit),
         persona_contract=surface_prompt("chat"),
         tone_block=tone_prompt_block("visibleReply"),
-        character_block=_character_context_block(payload.pet, "chat", context_routing),
+        character_block=_combine_character_blocks(
+            _character_capsule_block(payload.pet),
+            _character_context_block(payload.pet, "chat", context_routing),
+        ),
         memory_block=(
             _memory_context_block(payload.memoryContext)
             if _source_enabled(
@@ -1539,7 +1646,7 @@ def build_lite_fact_extraction_messages(
     system_content = (
         character_fact_extraction_system_prompt()
         + "\n\nRecent event canonical facts have priority over the assistant reply. "
-        "Do not save durable facts that contradict RECENT_EVENTS."
+        "Treat one visible assistant reply as weak evidence, not automatic canon."
     )
     user_content = speech_template(
         "liteFactExtractionUserMessage",
@@ -1572,6 +1679,15 @@ LITE_FACT_RECOVERY_RE = re.compile(
 LITE_FACT_UNRESOLVED_RE = re.compile(
     r"\b(не\s+смог\w*\s+верну\w*|не\s+вернул\w*|не\s+защитил\w*|"
     r"потерял\w*|потерян\w*|украл\w*|украден\w*|утащил\w*|lost)\b",
+    re.IGNORECASE,
+)
+LITE_FACT_NEW_CANON_RE = re.compile(
+    r"\b("
+    r"уме[ею]т\w*|умею|может|могу|способн\w*|зна[ею]т\w*|знаю|"
+    r"владе[ею]т\w*|владею|маг\w*|ритуал\w*|заклин\w*|"
+    r"призыва\w*|созда[её]т\w*|лечит\w*|видит\w*|предсказыва\w*|"
+    r"учил\w*|школ\w*|гильди\w*|титул\w*|професси\w*|мастер\w*"
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -1656,6 +1772,77 @@ def _filter_lite_overlay_patch_against_recent_events(
                 break
         if conflict:
             skipped.append(conflict)
+            continue
+        kept.append(fact)
+    return overlay_patch_from_extracted_facts(kept), skipped
+
+
+def _character_capsule_support_tokens(pet: Any) -> set[str]:
+    bible = _sanitized_character_bible(getattr(pet, "characterBible", None))
+    identity = _record_at(bible, "identity")
+    genesis = _record_at(bible, "genesis")
+    roleplay_contract = _record_at(bible, "roleplay_contract")
+    support_parts: list[str] = [
+        str(getattr(pet, "description", "") or ""),
+        *[str(identity.get(key) or "") for key in ("species", "role", "one_liner")],
+        *[
+            str(genesis.get(key) or "")
+            for key in (
+                "core_reading",
+                "description",
+                "central_trait",
+                "character_trait",
+                "inner_conflict",
+                "conflict",
+                "appetite",
+                "safe_adaptation",
+                "pet_safe_adaptation",
+                "story_engine",
+                "daily_life_hook",
+                "daily_care_hook",
+            )
+        ],
+        *[str(item) for item in genesis.get("likes", []) if isinstance(item, str)],
+        *[str(item) for item in genesis.get("does", []) if isinstance(item, str)],
+        *[str(item) for item in genesis.get("causal_spine", []) if isinstance(item, str)],
+        *[
+            str(roleplay_contract.get(key) or "")
+            for key in (
+                "self_intro",
+                "how_to_answer_who_are_you",
+                "how_to_answer_what_do_you_eat",
+                "how_to_answer_where_do_you_live",
+            )
+        ],
+    ]
+    return set().union(*(_recent_event_tokens(part) for part in support_parts if part))
+
+
+def _filter_lite_overlay_patch_against_character_capsule(
+    patch: dict[str, Any] | None,
+    pet: Any,
+) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
+    if not patch or not isinstance(patch.get("facts"), list):
+        return patch, []
+    support_tokens = _character_capsule_support_tokens(pet)
+    kept: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    for fact in patch["facts"]:
+        if not _is_record(fact):
+            continue
+        fact_text = _text_value(fact.get("text"))
+        sphere = _text_value(fact.get("sphere"))
+        if (
+            sphere in {"character", "world"}
+            and LITE_FACT_NEW_CANON_RE.search(fact_text)
+            and len(_recent_event_tokens(fact_text) & support_tokens) < 2
+        ):
+            skipped.append(
+                {
+                    "factText": fact_text,
+                    "conflictReason": "new_canon_not_supported_by_character_capsule",
+                }
+            )
             continue
         kept.append(fact)
     return overlay_patch_from_extracted_facts(kept), skipped
@@ -1908,6 +2095,7 @@ def extract_lite_overlay_patch_from_reply(
         patch,
         selected_events,
     )
+    capsule_skips: list[dict[str, str]] = []
     debug = None
     if payload.includeDebug or prompt_debug:
         debug = LocalChatDebug(
@@ -1917,7 +2105,7 @@ def extract_lite_overlay_patch_from_reply(
             liteOverlayPatch=patch,
             memoryDebug={
                 "recentEvents": recent_events_debug,
-                "liteFactConflictSkips": conflict_skips,
+                "liteFactConflictSkips": [*conflict_skips, *capsule_skips],
             },
         )
     return patch, debug
@@ -2253,7 +2441,10 @@ def build_proactive_messages(
         persona_contract=surface_prompt("proactive", {"reason": reason}),
         tone_block=tone_prompt_block("visibleReply"),
         world_block=context_bundle.prompt_block or None,
-        character_block=_character_context_block(payload.pet, "proactive", context_plan),
+        character_block=_combine_character_blocks(
+            _character_capsule_block(payload.pet),
+            _character_context_block(payload.pet, "proactive", context_plan),
+        ),
         memory_block=memory_block,
     )
     return [
@@ -2304,7 +2495,10 @@ def build_push_messages(
         persona_contract=surface_prompt("push", {"reason": _reason_from_payload(payload)}),
         tone_block=tone_prompt_block("visibleReply"),
         world_block=context_bundle.prompt_block or None,
-        character_block=_character_context_block(payload.pet, "push", context_plan),
+        character_block=_combine_character_blocks(
+            _character_capsule_block(payload.pet),
+            _character_context_block(payload.pet, "push", context_plan),
+        ),
         memory_block=memory_block,
     )
     return [
@@ -2502,7 +2696,10 @@ def build_ambient_messages(
         persona_contract=surface_prompt("ambient", {"recent_replies": recent_ambient_replies}),
         tone_block=tone_prompt_block("visibleReply"),
         world_block=context_bundle.prompt_block or None,
-        character_block=_character_context_block(payload.pet, "ambient", context_plan),
+        character_block=_combine_character_blocks(
+            _character_capsule_block(payload.pet),
+            _character_context_block(payload.pet, "ambient", context_plan),
+        ),
         memory_block=memory_block,
     )
     return [{"role": "system", "content": plan.system_content()}]

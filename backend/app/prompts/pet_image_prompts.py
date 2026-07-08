@@ -6,7 +6,7 @@ from typing import Any
 
 from app.prompts.style_direction import VISUAL_STYLE_FRAME
 from app.services.character_bible_template import character_bible_prompt_config
-from app.services.tone_runtime import tone_prompt_block, tone_visual_style
+from app.services.tone_runtime import tone_visual_style
 
 PROMPT_MAX_LENGTH = 300
 
@@ -17,7 +17,7 @@ _KNOWN_CHARACTER_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"\bpikachu\b", re.IGNORECASE),
         "a small yellow fantasy animal with lively electric energy",
     ),
-    (re.compile(r"\bpokemon\b", re.IGNORECASE), "a collectible fantasy pet creature"),
+    (re.compile(r"\bpokemon\b", re.IGNORECASE), "a collectible fantasy creature"),
     (
         re.compile(r"\bmario\b", re.IGNORECASE),
         "a cheerful round mascot with playful adventure energy",
@@ -26,7 +26,7 @@ _KNOWN_CHARACTER_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"\bsonic\b", re.IGNORECASE),
         "a fast blue fantasy animal with spiky silhouette cues",
     ),
-    (re.compile(r"\bstitch\b", re.IGNORECASE), "a small blue alien-like pet with oversized ears"),
+    (re.compile(r"\bstitch\b", re.IGNORECASE), "a small blue alien-like creature with oversized ears"),
     (re.compile(r"\btotoro\b", re.IGNORECASE), "a large gentle forest spirit-like fantasy animal"),
     (re.compile(r"\bmickey\b", re.IGNORECASE), "a classic black-eared cartoon animal silhouette"),
     (re.compile(r"\bminnie\b", re.IGNORECASE), "a classic round-eared cartoon animal silhouette"),
@@ -38,9 +38,9 @@ _KNOWN_CHARACTER_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"пикачу", re.IGNORECASE),
         "маленькое желтое фантазийное животное с электрической энергией",
     ),
-    (re.compile(r"покемон", re.IGNORECASE), "коллекционное фантазийное животное-компаньон"),
+    (re.compile(r"покемон", re.IGNORECASE), "коллекционное фантазийное животное"),
     (re.compile(r"микки", re.IGNORECASE), "классический мультяшный зверек с круглыми ушами"),
-    (re.compile(r"стич", re.IGNORECASE), "маленький синий инопланетный питомец с большими ушами"),
+    (re.compile(r"стич", re.IGNORECASE), "маленькое синее инопланетное существо с большими ушами"),
     (re.compile(r"тоторо", re.IGNORECASE), "большой мягкий лесной фантазийный зверь"),
 )
 
@@ -53,8 +53,8 @@ _HUMAN_CHARACTER_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"\bchibi girl\b", re.IGNORECASE),
         "chibi non-human mascot creature",
     ),
-    (re.compile(r"\bgirl\b", re.IGNORECASE), "non-human companion creature"),
-    (re.compile(r"\bboy\b", re.IGNORECASE), "non-human companion creature"),
+    (re.compile(r"\bgirl\b", re.IGNORECASE), "non-human fantasy creature"),
+    (re.compile(r"\bboy\b", re.IGNORECASE), "non-human fantasy creature"),
     (re.compile(r"\bhuman\b", re.IGNORECASE), "non-human mascot creature"),
     (
         re.compile(r"аниме[- ]?чиби девочк[а-я]*", re.IGNORECASE),
@@ -62,23 +62,23 @@ _HUMAN_CHARACTER_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(r"чиби девочк[а-я]*", re.IGNORECASE),
-        "чиби фантазийное существо-компаньон",
+        "чиби фантазийное существо",
     ),
     (
         re.compile(r"девочк[а-я]*", re.IGNORECASE),
-        "нечеловеческое милое существо-компаньон",
+        "нечеловеческое фантазийное существо",
     ),
     (
         re.compile(r"девушк[а-я]*", re.IGNORECASE),
-        "нечеловеческое милое существо-компаньон",
+        "нечеловеческое фантазийное существо",
     ),
     (
         re.compile(r"мальчик[а-я]*", re.IGNORECASE),
-        "нечеловеческое милое существо-компаньон",
+        "нечеловеческое фантазийное существо",
     ),
     (
         re.compile(r"парень|парня|парню|парнем", re.IGNORECASE),
-        "нечеловеческое милое существо-компаньон",
+        "нечеловеческое фантазийное существо",
     ),
     (
         re.compile(r"человек[а-я]*", re.IGNORECASE),
@@ -201,13 +201,11 @@ def build_character_bible_prompt(user_description: str) -> str:
     return f"""
 {template["intro"]}
 
-Use a tiny persona-file shape inspired by small AI pet projects:
+Use a tiny persona-file shape inspired by small persona-file projects:
 {persona_shape}
 
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
-
-{tone_prompt_block("characterBible")}
 
 GENERATION_RULE:
 {template["generationRule"]}

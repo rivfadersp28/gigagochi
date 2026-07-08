@@ -71,6 +71,9 @@ def validate_character_bible_template_config(config: Any) -> None:
     properties = schema.get("properties")
     if not _is_record(properties):
         raise ValueError("schema.properties must be a JSON object")
+    for key in ("genesis", "roleplay_contract"):
+        if not _is_record(properties.get(key)):
+            raise ValueError(f"schema.properties.{key} must be configured")
     voice = properties.get("voice")
     if not _is_record(voice):
         raise ValueError("schema.properties.voice must be configured")

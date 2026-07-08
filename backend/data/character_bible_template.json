@@ -2,21 +2,25 @@
   "meta": {
     "version": 1,
     "format": "tamagochi-character-bible-template-v1",
-    "description": "Шаблон compact character bible для новых питомцев. Содержит JSON schema, system prompt и правила user prompt."
+    "description": "Шаблон compact character bible для новых существ. Содержит JSON schema, system prompt и правила user prompt."
   },
-  "systemPrompt": "Create compact JSON persona files for a non-human virtual pet. Keep the profile small, concrete, and usable for chat plus image generation.",
+  "systemPrompt": "Create JSON persona files for a fictional creature. Build the profile by directly answering simple character questions from the user's idea.",
   "prompt": {
-    "intro": "Create a compact character profile for a living non-human pet companion.",
+    "intro": "Create a compact character profile for this creature.",
     "personaShape": [
+      "genesis = direct answers to simple character questions",
+      "roleplay_contract = compact first-person rules for stable chat identity",
       "identity = who this creature is",
       "visual = stable image-generation anchors",
       "voice = how it talks",
       "inner_state = wants, tension, fears, comfort",
       "world = where it lives and what facts can be revealed later"
     ],
-    "generationRule": "Generate identity, visual anchors, voice, inner_state, world, habitat, home, routines, conflicts, openings, and lorebook entries directly from USER_CHARACTER_DESCRIPTION and TONE_PROFILE. Do not use local datasets, few-shot examples, fixed habitat templates, random seed fragments, or copied source prose.",
+    "generationRule": "Fill the profile by answering these questions about USER_CHARACTER_DESCRIPTION: describe it; give its main character trait; what does it like; what does it usually do; what does it eat or seek; where does it live; how does it talk; what stories naturally happen to it. Use those answers to fill genesis, roleplay_contract, identity, visual anchors, voice, inner_state, world, openings, and lorebook entries.",
     "topLevelFields": [
       "schema_version",
+      "genesis",
+      "roleplay_contract",
       "identity",
       "visual",
       "voice",
@@ -31,18 +35,12 @@
       "Keep strings compact. No decorative paragraphs."
     ],
     "rules": [
-      "The pet is real in its own world, not an app, AI, game object, screen element, or assistant.",
-      "Preserve the user's core idea before adding twists.",
-      "identity.species must be a plain short phrase based on the user's description. Do not add unrelated animal families, slash hybrids, taxonomy jokes, roles, jobs, or proper nouns.",
-      "identity.name must be a pet name, not a restatement of the whole user description.",
-      "Use one physical anchor and one simple mechanism: body part/object/element -> behavior trigger.",
-      "Personality should come from body, habitat, habits, and limits.",
-      "Visual must be usable for a cute stylized 3D mascot: simple silhouette, 2-4 colors, few details.",
-      "voice.catchphrases: 2-5 short favorite phrases or signature sounds. These are mirrored into lore.voice.favorite_phrases for compatibility.",
-      "voice.sample_replies: 5-8 short Russian replies the pet could say in chat. At most 2 should directly mention the core ability; the rest should show routine, feeling, care, or opinion.",
-      "lorebook_entries: 3-5 triggerable facts with keys/content only.",
-      "Avoid generic support phrases, morals, assistant tone, \"я всегда рядом\", \"важно быть собой\", \"урок\", \"норма\", \"искорка\", \"сияние\", and long event-log backstory.",
-      "Do not copy or name existing franchises, Pokemon, brands, studios, games, or characters."
+      "The creature is real in its own world.",
+      "Preserve the user's core idea.",
+      "Make the fields concrete, internally coherent, and useful for chat.",
+      "roleplay_contract answers common identity questions in first person.",
+      "voice.sample_replies: 5-8 short Russian replies that demonstrate its voice.",
+      "lorebook_entries: 3-5 triggerable facts with keys/content only."
     ]
   },
   "runtimeMappings": [
@@ -58,20 +56,22 @@
     }
   ],
   "legacyDefaults": {
-    "identityRole": "живой питомец-компаньон",
+    "identityRole": "самостоятельное живое существо",
     "voiceRhythm": "короткие живые фразы",
-    "addressingUser": "обращается на ты, как живой компаньон",
+    "addressingUser": "обращается на ты, как живой собеседник",
     "humorStyle": "маленький характерный юмор без ассистентского тона",
     "uncertaintyStyle": "признает неуверенность коротко и через конкретное действие",
     "initiativeStyle": "Продолжает разговор одним маленьким наблюдением, находкой или предложением.",
-    "attitudeToUser": "осторожно сближается через общие маленькие ритуалы",
-    "provenanceLicenseNotes": "generated compact pet profile inspired by a small persona-file architecture"
+    "attitudeToUser": "осторожно сближается через повторяющиеся привычки и общую историю",
+    "provenanceLicenseNotes": "generated compact creature profile inspired by a small persona-file architecture"
   },
   "schema": {
     "type": "object",
     "additionalProperties": false,
     "required": [
       "schema_version",
+      "genesis",
+      "roleplay_contract",
       "identity",
       "visual",
       "voice",
@@ -86,6 +86,102 @@
         "enum": [
           2
         ]
+      },
+      "genesis": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "character_trait",
+          "likes",
+          "does",
+          "appetite",
+          "conflict",
+          "story_engine"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "maxLength": 420,
+            "description": "Answer to: describe this creature."
+          },
+          "character_trait": {
+            "type": "string",
+            "maxLength": 220,
+            "description": "Answer to: what is its main character trait?"
+          },
+          "likes": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "maxLength": 140
+            }
+          },
+          "does": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "maxLength": 160
+            }
+          },
+          "appetite": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Answer to: what does it eat, seek, collect, or crave?"
+          },
+          "conflict": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "A tension or contradiction that makes the creature interesting."
+          },
+          "story_engine": {
+            "type": "string",
+            "maxLength": 320,
+            "description": "What kinds of stories naturally happen to this creature."
+          }
+        }
+      },
+      "roleplay_contract": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "self_intro",
+          "how_to_answer_who_are_you",
+          "how_to_answer_what_do_you_eat",
+          "how_to_answer_where_do_you_live",
+          "voice_rules"
+        ],
+        "properties": {
+          "self_intro": {
+            "type": "string",
+            "maxLength": 180
+          },
+          "how_to_answer_who_are_you": {
+            "type": "string",
+            "maxLength": 180
+          },
+          "how_to_answer_what_do_you_eat": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "how_to_answer_where_do_you_live": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "voice_rules": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 7,
+            "items": {
+              "type": "string",
+              "maxLength": 90
+            }
+          }
+        }
       },
       "identity": {
         "type": "object",
@@ -179,8 +275,7 @@
           "rules",
           "rhythm",
           "catchphrases",
-          "sample_replies",
-          "avoid"
+          "sample_replies"
         ],
         "properties": {
           "rules": {
@@ -204,13 +299,7 @@
             "items": {
               "type": "string"
             },
-            "description": "5-8 short Russian replies that demonstrate the pet voice."
-          },
-          "avoid": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+            "description": "5-8 short Russian replies that demonstrate the creature voice."
           }
         }
       },

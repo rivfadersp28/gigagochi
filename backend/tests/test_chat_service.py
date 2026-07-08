@@ -468,6 +468,64 @@ def test_lite_prompt_does_not_include_character_seed() -> None:
     assert "Основа мира" not in system_message
 
 
+def test_lite_prompt_always_includes_character_capsule() -> None:
+    system_message = build_lite_chat_messages(
+        lite_payload(
+            message="ты кто?",
+            pet={
+                "name": "Грум",
+                "description": "орк-людоед",
+                "stage": "adult",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 80,
+                    "energy": 80,
+                },
+                "characterBible": {
+                    "identity": {
+                        "species": "маленький болотный орк с темной репутацией",
+                        "role": "бродячий болотный задира",
+                        "one_liner": "Боится сорваться в старый голод, но учится есть похлебку.",
+                    },
+                    "genesis": {
+                        "description": "не зверь, а разборчивый голодный коллекционер силы",
+                        "character_trait": "гурман-коллекционер",
+                        "likes": ["густая похлебка", "грибы", "старые кости"],
+                        "does": ["ворчит", "ходит по болоту", "ищет еду", "пугает прохожих"],
+                        "appetite": "любит густую похлебку, грибы и то, что не пищит",
+                        "conflict": "хочет казаться страшным, но сдерживает старый голод",
+                        "story_engine": "попадает в истории из-за голода, слухов и болотных сделок",
+                    },
+                    "roleplay_contract": {
+                        "how_to_answer_who_are_you": (
+                            "Я Грум, маленький болотный орк с большим голодом "
+                            "и короткой памятью на обиды."
+                        ),
+                        "how_to_answer_what_do_you_eat": (
+                            "Густую похлебку, грибы и то, что не пищит."
+                        ),
+                        "how_to_answer_where_do_you_live": "В сырой норе у черного ручья.",
+                        "voice_rules": ["говорит коротко", "хрипло ворчит", "без справочного тона"],
+                    },
+                },
+            },
+        )
+    )[0]["content"]
+
+    assert "CHARACTER_CAPSULE" in system_message
+    assert "гурман-коллекционер" in system_message
+    assert "густая похлебка" in system_message
+    assert "Character trait" in system_message
+    assert "Does" in system_message
+    assert "Safe adaptation" not in system_message
+    assert "Never add or say" not in system_message
+    assert "Pet-safe adaptation" not in system_message
+    assert "Daily care hook" not in system_message
+    assert "знания о котле" not in system_message
+    assert "Do not invent new powers" not in system_message
+
+
 def test_lite_prompt_includes_memory_context_only_when_present() -> None:
     empty_system_message = build_lite_chat_messages(lite_payload())[0]["content"]
     assert "Ты помнишь о пользователе" not in empty_system_message
@@ -706,7 +764,7 @@ def test_speech_runtime_config_controls_reply_and_extractor_prompts(
     assert "CUSTOM_HUNGRY_STATE" in system_message
     assert "CUSTOM_IDLE_PROMPT" in ambient_system_message
     assert extraction_messages[0]["content"].startswith("CUSTOM_FACT_EXTRACTION_PROMPT")
-    assert "RECENT_EVENTS" in extraction_messages[0]["content"]
+    assert "Recent event canonical facts" in extraction_messages[0]["content"]
 
 
 def test_lite_clamps_reply_to_300_chars() -> None:
@@ -1454,6 +1512,81 @@ def test_lite_fact_extraction_filters_conflicting_recent_event_fact() -> None:
     skips = debug.memoryDebug["liteFactConflictSkips"]
     assert skips[0]["conflictingEventId"] == "evt_bell_theft"
     assert skips[0]["conflictReason"] == "recovery_fact_contradicts_unresolved_recent_event"
+
+
+def test_lite_fact_extraction_keeps_new_canon_without_capsule_stoplist() -> None:
+    client, _completions = fake_lite_client(
+        SimpleNamespace(
+            content=json.dumps(
+                {
+                    "facts": [
+                        {
+                            "sphere": "character",
+                            "kind": "character_fact",
+                            "text": "Грум умеет читать древние знания о котле.",
+                            "pathHint": "lite_overlay.spheres.character",
+                            "source": "lite_post_reply_extractor",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            tool_calls=None,
+        )
+    )
+    pet = lite_payload(
+        pet={
+            "name": "Грум",
+            "description": "орк-людоед",
+            "stage": "adult",
+            "mood": "idle",
+            "stats": {
+                "hunger": 80,
+                "happiness": 80,
+                "energy": 80,
+            },
+            "characterBible": {
+                "genesis": {
+                    "description": "разборчивый болотный орк с опасной репутацией",
+                    "character_trait": "гурман-коллекционер",
+                    "likes": ["похлебка", "грибы", "болотная тина"],
+                    "does": ["ворчит", "ищет еду", "ходит по ручью", "торгуется"],
+                    "appetite": "любит похлебку, грибы и коренья",
+                    "conflict": "хочет казаться страшным, но сдерживает голод",
+                    "story_engine": "истории возникают из голода, болота и подозрений",
+                },
+                "roleplay_contract": {
+                    "how_to_answer_who_are_you": "Я Грум, болотный орк с голодной репутацией.",
+                    "how_to_answer_what_do_you_eat": "Похлебку, грибы и коренья.",
+                    "how_to_answer_where_do_you_live": "В сырой норе у ручья.",
+                    "voice_rules": ["говорит коротко", "ворчит", "без справочного тона"],
+                },
+            },
+        }
+    ).pet.model_dump()
+
+    patch, debug = extract_lite_overlay_patch_from_reply(
+        LiteFactExtractionRequest.model_validate(
+            {
+                "message": "ты кто?",
+                "reply": "Я Грум, умею читать древние знания о котле.",
+                "pet": pet,
+                "history": [],
+                "includeDebug": True,
+            }
+        ),
+        client=client,
+        model="gpt-5.5",
+        timeout=10,
+    )
+
+    assert patch is not None
+    assert patch["facts"][0]["sphere"] == "character"
+    assert patch["facts"][0]["text"] == "Грум умеет читать древние знания о котле."
+    assert debug is not None
+    assert debug.memoryDebug is not None
+    skips = debug.memoryDebug["liteFactConflictSkips"]
+    assert skips == []
 
 
 def test_memory_extraction_prompt_uses_user_message_as_source() -> None:

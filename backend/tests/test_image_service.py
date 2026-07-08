@@ -762,8 +762,8 @@ def test_character_reasoning_effort_only_for_supported_models() -> None:
 def test_character_bible_prompt_omits_curated_generation_context() -> None:
     prompt = build_character_bible_prompt("водяной зверек с ракушкой")
 
-    assert "TONE_PROFILE" in prompt
-    assert "Dark fantasy" in prompt
+    assert "TONE_PROFILE" not in prompt
+    assert "Dark fantasy" not in prompt
     assert "WORLD_DESCRIPTION_ANCHORS" not in prompt
     assert "source_text_do_not_copy" not in prompt
     assert "LORE_VARIATION_SEED" not in prompt
@@ -783,6 +783,8 @@ def test_generation_error_code_classifies_background_removal_failures() -> None:
 def test_character_bible_schema_is_compact() -> None:
     assert CHARACTER_BIBLE_SCHEMA["required"] == [
         "schema_version",
+        "genesis",
+        "roleplay_contract",
         "identity",
         "visual",
         "voice",
@@ -792,6 +794,22 @@ def test_character_bible_schema_is_compact() -> None:
         "lorebook_entries",
     ]
     assert CHARACTER_BIBLE_SCHEMA["properties"]["schema_version"]["enum"] == [2]
+    genesis_required = CHARACTER_BIBLE_SCHEMA["properties"]["genesis"]["required"]
+    assert "description" in genesis_required
+    assert "character_trait" in genesis_required
+    assert "likes" in genesis_required
+    assert "does" in genesis_required
+    assert "appetite" in genesis_required
+    assert "safe_adaptation" not in genesis_required
+    assert "forbidden_random_additions" not in genesis_required
+    assert (
+        "how_to_answer_who_are_you"
+        in CHARACTER_BIBLE_SCHEMA["properties"]["roleplay_contract"]["required"]
+    )
+    assert (
+        "never_say"
+        not in CHARACTER_BIBLE_SCHEMA["properties"]["roleplay_contract"]["required"]
+    )
     assert "growth_forms" in CHARACTER_BIBLE_SCHEMA["properties"]["visual"]["required"]
     assert "sample_replies" in CHARACTER_BIBLE_SCHEMA["properties"]["voice"]["required"]
     assert "drives" not in CHARACTER_BIBLE_SCHEMA["properties"]["inner_state"]["required"]
@@ -804,21 +822,21 @@ def test_character_bible_prompt_requests_species_specific_lore() -> None:
     prompt = build_character_bible_prompt("маленький дракон с мягкими крыльями")
 
     assert "compact character profile" in prompt
-    assert "TONE_PROFILE" in prompt
-    assert "Dark fantasy" in prompt
     assert "tiny persona-file shape" in prompt
-    assert "physical anchor" in prompt
-    assert "mechanism" in prompt
-    assert "habitat" in prompt
-    assert "not an app, AI, game object" in prompt
+    assert "describe it" in prompt
+    assert "what does it like" in prompt
+    assert "what does it usually do" in prompt
+    assert "roleplay_contract" in prompt
+    assert "TONE_PROFILE" not in prompt
+    assert "safe fictional behavior pattern" not in prompt
+    assert "forbidden_random_additions" not in prompt
+    assert "never_say" not in prompt
     assert "digital companion" not in prompt
     assert "visibly blend at least 4 different source fragments" not in prompt
     assert "Write every user-facing string value in natural Russian" in prompt
-    assert "Visual must be usable" in prompt
     assert "high-quality character card" not in prompt
     assert "voice.sample_replies: 5-8 short Russian replies" in prompt
     assert "lorebook_entries: 3-5 triggerable facts" in prompt
-    assert "event-log backstory" in prompt
     assert "Do not default to the same" not in prompt
     assert "storybook logic" not in prompt
     assert "короткие просьбы" not in prompt
@@ -853,6 +871,27 @@ def test_character_bible_quality_flags_overused_defaults_and_bad_physics() -> No
 def test_create_character_bible_does_not_run_repair_or_initial_overlay(monkeypatch) -> None:
     compact_bible = {
         "schema_version": 2,
+        "genesis": {
+            "description": "маленький паровой зверек с осторожным теплом",
+            "character_trait": "бережный хранитель пара",
+            "likes": ["теплые камни", "густая похлебка", "тихий склон"],
+            "does": [
+                "проверяет клапан",
+                "садится на теплый камень",
+                "шипит, когда волнуется",
+                "ищет ровное тепло",
+            ],
+            "appetite": "любит густую похлебку и тепло камней",
+            "conflict": "боится расплескать жар, но хочет греться рядом",
+            "story_engine": "истории строятся вокруг клапана, тепла и каменного склона",
+        },
+        "roleplay_contract": {
+            "self_intro": "Я Пых, маленький паровой дракончик с упрямым клапаном.",
+            "how_to_answer_who_are_you": "Я Пых. Клапан шипит, когда я волнуюсь.",
+            "how_to_answer_what_do_you_eat": "Люблю густую похлебку и тепло камней.",
+            "how_to_answer_where_do_you_live": "Живу в теплой каменной нише.",
+            "voice_rules": ["говорит коротко", "сначала телесная реакция", "без справочного тона"],
+        },
         "identity": {
             "name": "Пых",
             "species": "паровой дракончик",
@@ -876,7 +915,6 @@ def test_create_character_bible_does_not_run_repair_or_initial_overlay(monkeypat
             "rhythm": "короткие фразы",
             "catchphrases": ["пшш, спокойно"],
             "sample_replies": ["Я Пых. Сначала сяду на теплый камень."],
-            "avoid": ["я всегда рядом"],
         },
         "inner_state": {
             "core_want": "держать тепло ровно",
@@ -929,6 +967,12 @@ def test_create_character_bible_does_not_run_repair_or_initial_overlay(monkeypat
     assert result["species"] == "паровой дракончик"
     assert result["main_colors"] == ["красный", "кремовый"]
     assert result["lore"]["world"]["story"] == "каменный склон с теплым паром"
+    assert result["genesis"]["character_trait"] == "бережный хранитель пара"
+    assert result["genesis"]["appetite"] == "любит густую похлебку и тепло камней"
+    assert "safe_adaptation" not in result["genesis"]
+    assert "forbidden_random_additions" not in result["genesis"]
+    assert result["roleplay_contract"]["how_to_answer_who_are_you"].startswith("Я Пых")
+    assert result["extensions"]["generation"]["pipeline"] == "direct_creature_profile_v4"
     assert "identity" in result
     assert "dialogue_moves" in result
     assert "lite_overlay" not in result["extensions"]

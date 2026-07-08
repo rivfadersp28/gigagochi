@@ -1,7 +1,7 @@
 import type { LocalPetAssetSet } from "./types";
 
 const CHARACTER_INSTANCE_SCHEMA_VERSION = 1;
-const PROMPT_MODEL_SCHEMA_VERSION = 2;
+const PROMPT_MODEL_SCHEMA_VERSION = 3;
 const MUTABLE_EXTENSION_KEYS = [
   "lite_overlay",
   "story_library_overlay",
