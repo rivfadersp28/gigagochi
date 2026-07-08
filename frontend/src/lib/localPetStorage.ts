@@ -19,6 +19,7 @@ export const SETTINGS_STORAGE_KEY = "tamagochi:v1:settings";
 const MAX_CHAT_MESSAGES = 50;
 const MAX_CHAT_MESSAGE_TEXT = 8000;
 const MAX_STORY_LIBRARY_BRICKS = 80;
+const MAX_RECENT_STORY_EVENTS = 10;
 const MIN_STAT = 0;
 const MAX_STAT = 100;
 const STAT_FULL_DECAY_HOURS = 24;
@@ -228,6 +229,73 @@ function dedupeStoryLibraryBricks(values: Record<string, unknown>[]): Record<str
   return result.slice(-MAX_STORY_LIBRARY_BRICKS);
 }
 
+function normalizeStringList(value: unknown, limit: number, itemLimit: number): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => normalizeText(item, itemLimit))
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function normalizeRecentStoryEvent(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const summary = normalizeText(value.summary, 500);
+  if (!summary) {
+    return null;
+  }
+  return {
+    ...value,
+    title: normalizeText(value.title, 120),
+    summary,
+    eventType: normalizeText(value.eventType, 60),
+    participants: normalizeStringList(value.participants, 6, 80),
+    actions: normalizeStringList(value.actions, 6, 80),
+    objects: normalizeStringList(value.objects, 6, 80),
+    location: normalizeText(value.location, 160),
+    outcome: normalizeText(value.outcome, 260),
+    tags: normalizeStringList(value.tags, 8, 60),
+    createdAt: isIsoDate(value.createdAt) ? value.createdAt : new Date().toISOString(),
+    source: normalizeText(value.source, 80) || "background_story",
+  };
+}
+
+function normalizeRecentStoryEvents(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(normalizeRecentStoryEvent)
+    .filter((event): event is Record<string, unknown> => Boolean(event));
+}
+
+function storyEventKey(event: Record<string, unknown>): string {
+  return [
+    normalizeText(event.eventType, 60),
+    normalizeText(event.title, 120),
+    normalizeText(event.summary, 500),
+  ]
+    .join(":")
+    .toLocaleLowerCase("ru-RU");
+}
+
+function dedupeRecentStoryEvents(values: Record<string, unknown>[]): Record<string, unknown>[] {
+  const seen = new Set<string>();
+  const result: Record<string, unknown>[] = [];
+  for (const event of values) {
+    const key = storyEventKey(event);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(event);
+  }
+  return result.slice(-MAX_RECENT_STORY_EVENTS);
+}
+
 function liteFactsFromSpheres(value: unknown): Record<string, unknown>[] {
   if (!isRecord(value)) {
     return [];
@@ -371,6 +439,41 @@ export function applyStoryLibraryPatch(
             bricks: mergedBricks,
             updatedAt: new Date().toISOString(),
           },
+        },
+      },
+    },
+  };
+}
+
+export function applyRecentStoryEventsPatch(
+  state: LocalPetState,
+  patch: Record<string, unknown> | undefined,
+): LocalPetState {
+  if (!patch || !state.assetSet?.characterBible) {
+    return state;
+  }
+
+  const patchEvents = normalizeRecentStoryEvents(patch.events);
+  if (!patchEvents.length) {
+    return state;
+  }
+
+  const characterBible = state.assetSet.characterBible;
+  const currentExtensions = isRecord(characterBible.extensions) ? characterBible.extensions : {};
+  const mergedEvents = dedupeRecentStoryEvents([
+    ...normalizeRecentStoryEvents(currentExtensions.recent_story_events),
+    ...patchEvents,
+  ]);
+
+  return {
+    ...state,
+    assetSet: {
+      ...state.assetSet,
+      characterBible: {
+        ...characterBible,
+        extensions: {
+          ...currentExtensions,
+          recent_story_events: mergedEvents,
         },
       },
     },

@@ -37,13 +37,13 @@
   question. Recent idle replies are passed only when `contextRouting.recentReplies`
   enables the anti-repeat context.
 - New durable story entities can be extracted after a chat reply by `story_library_extraction` and returned as `debug.storyLibraryPatch`. Frontend applies that patch into the local per-pet story-library overlay.
-- Background story events generated from the Telegram bot `/story` command use
-  the same per-pet story overlay instead of a separate events store. The
-  backend stores generated event bricks under
-  `characterBible.extensions.story_library_overlay.bricks` with pool `events`,
-  returns a top-level `storyLibraryPatch` from chat responses and
-  `/api/push/snapshot`, and the frontend applies that patch into localStorage so
-  normal chat RAG can recall the event. `/story` also preserves the
+- Background story events generated from the Telegram bot `/story` command are
+  split into durable consequences and one-off event memory. Durable aftermath
+  goes to `characterBible.extensions.lite_overlay`. The episode itself is
+  stored in the backend push registry as `recentStoryEvents`, returned by
+  `/api/push/snapshot` as `recentStoryEventsPatch`, and applied locally to
+  `characterBible.extensions.recent_story_events` so normal chat can mention
+  past events without making them RAG bricks. `/story` also preserves the
   `contextRouting.worldContext.query` when selecting global stories for the
   background-story dossier.
 - The `/story` character dossier uses the same `ContextPlan` / `contextSources`
@@ -55,6 +55,9 @@
   (`name`, `stage`, optional semantic `params`); descriptive `pet.description`
   belongs to `characterProfile`, not `currentState`. It does not pass raw
   numeric `stats`.
+- `/story` receives `recentStoryEvents` only as an `ANTI_REPEAT` block. That
+  block is a negative constraint against repeating the same event shape, not
+  context to continue or reuse.
 - Runtime speech regulator text that used to be hardcoded in the reply engine now lives in
   `backend/data/speech_runtime.json` and is read by
   `backend/app/services/pet_reply_engine/speech_runtime.py`. It covers persona

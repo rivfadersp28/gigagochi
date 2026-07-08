@@ -52,6 +52,10 @@
 - Do not feed previous generated per-pet stories back into `/story`. They are
   useful as conversational RAG for chat/idle/proactive/push, but using them as
   `/story` source material creates self-reinforcing repetition.
+- Do not save one-off `/story` episodes as `lite_overlay` facts. `lite_overlay`
+  is only for durable consequences that remain true after the episode. Store
+  the episode itself in `recentStoryEvents` / `extensions.recent_story_events`
+  and pass it to `/story` only as `ANTI_REPEAT`.
 - `/api/admin/speech` is intentionally local-dev only. It should stay disabled
   in production by requiring `ALLOW_DEV_TMA_AUTH=true` plus a local client host.
 - Speech/dataset saves validate JSON or JSONL, create backups under

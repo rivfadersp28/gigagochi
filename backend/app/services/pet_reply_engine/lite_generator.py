@@ -715,9 +715,12 @@ def _character_context_block(
         return None
     extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
     lite_overlay = extensions.get("lite_overlay") if _is_record(extensions) else {}
+    recent_story_events = extensions.get("recent_story_events") if _is_record(extensions) else []
     payload = {}
     if include_profile and bible:
         payload["characterBible"] = bible
+        if isinstance(recent_story_events, list) and recent_story_events:
+            payload["recentStoryEvents"] = recent_story_events[-5:]
     if include_lite_overlay and _is_record(lite_overlay):
         payload["liteOverlay"] = lite_overlay
     if not payload:

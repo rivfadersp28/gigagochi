@@ -31,6 +31,7 @@ DAILY_PUSH_REASON = "Ежедневный короткий пуш владель
 MANUAL_PUSH_REASON = "Ручной debug-триггер из админки."
 DEBUG_PUSH_TARGET_TELEGRAM_ID = 62943754
 DEBUG_PUSH_TARGET_FIRST_NAME = "Сергей"
+MAX_RECENT_STORY_EVENTS = 10
 
 _store_lock = Lock()
 
@@ -168,6 +169,53 @@ def _merge_record_lite_overlay_patch(
     merge_lite_overlay_patch(overlay, patch)
 
 
+def _record_recent_story_events(record: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(record, dict):
+        return []
+    raw_events = record.get("recentStoryEvents")
+    events: list[dict[str, Any]] = []
+    if isinstance(raw_events, list):
+        for item in raw_events[-MAX_RECENT_STORY_EVENTS:]:
+            if isinstance(item, dict):
+                events.append(item)
+    if events:
+        return events
+    last_story = record.get("lastStory")
+    if isinstance(last_story, dict):
+        summary = (
+            last_story.get("summary")
+            or last_story.get("storyText")
+            or last_story.get("title")
+        )
+        if isinstance(summary, str) and summary.strip():
+            tags = last_story.get("tags")
+            return [
+                {
+                    "title": last_story.get("title"),
+                    "summary": summary.strip(),
+                    "eventType": last_story.get("eventType"),
+                    "tags": tags if isinstance(tags, list) else [],
+                    "source": "last_story_fallback",
+                }
+            ]
+    return events
+
+
+def _append_recent_story_event(
+    record: dict[str, Any],
+    event: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    events = _record_recent_story_events(record)
+    if isinstance(event, dict) and event:
+        events.append(event)
+    return events[-MAX_RECENT_STORY_EVENTS:]
+
+
+def _recent_story_events_patch(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    events = _record_recent_story_events(record)
+    return {"events": events} if events else None
+
+
 def _clamp_stat(value: Any) -> int:
     numeric = value if isinstance(value, (int, float)) else 0
     return max(0, min(100, round(numeric)))
@@ -220,9 +268,10 @@ def register_push_snapshot(
         "registeredAt": now_iso,
     }
     existing = _read_store().get("records", {}).get(str(user.telegram_id))
+    same_pet = isinstance(existing, dict) and existing.get("petId") == payload.petId
     lite_overlay_patch = (
         _record_lite_overlay_patch(existing)
-        if isinstance(existing, dict) and existing.get("petId") == payload.petId
+        if same_pet
         else None
     )
     if isinstance(existing, dict):
@@ -241,6 +290,8 @@ def register_push_snapshot(
             "lastStory",
         ):
             record[key] = existing.get(key)
+        if same_pet:
+            record["recentStoryEvents"] = _record_recent_story_events(existing)
     _merge_record_lite_overlay_patch(record, lite_overlay_patch)
     _save_record(record)
     return LocalPetPushSnapshotResponse(
@@ -248,6 +299,7 @@ def register_push_snapshot(
         telegramId=user.telegram_id,
         updatedAt=now_iso,
         liteOverlayPatch=lite_overlay_patch,
+        recentStoryEventsPatch=_recent_story_events_patch(record),
     )
 
 
@@ -549,10 +601,12 @@ def generate_story_for_telegram_user(
         memory_context=payload.memoryContext,
         history=_record_history(record),
         recent_replies=_record_recent_replies(record),
+        recent_story_events=_record_recent_story_events(record),
         now_iso=payload.nowIso,
         timezone=payload.timezone,
     )
     now_iso = _iso()
+    recent_story_event = getattr(result, "recent_story_event", None)
     next_record = {
         **record,
         "pet": payload.pet.model_dump(mode="json"),
@@ -567,6 +621,7 @@ def generate_story_for_telegram_user(
             "tags": list(result.tags),
             "ragText": result.rag_text,
         },
+        "recentStoryEvents": _append_recent_story_event(record, recent_story_event),
     }
     _merge_record_lite_overlay_patch(next_record, result.lite_overlay_patch)
     _save_record(next_record)
@@ -578,6 +633,7 @@ def generate_story_for_telegram_user(
         "story": next_record["lastStory"],
         "storyLibraryPatch": None,
         "liteOverlayPatch": result.lite_overlay_patch,
+        "recentStoryEvent": recent_story_event,
         "debug": {"promptDebug": result.prompt_debug} if include_debug else None,
     }
 

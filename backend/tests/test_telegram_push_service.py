@@ -286,6 +286,17 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
             ),
             story_library_patch=None,
             lite_overlay_patch=lite_overlay_patch,
+            recent_story_event={
+                "summary": "На Громма напала меловая тень у каменного порога.",
+                "eventType": "attack",
+                "participants": ["Громм", "меловая тень"],
+                "actions": ["нападение"],
+                "objects": [],
+                "location": "каменный порог",
+                "outcome": "Громм устоял.",
+                "createdAt": "2026-07-08T07:40:00Z",
+                "source": "background_story",
+            },
             prompt_debug=[],
         ),
     )
@@ -304,11 +315,16 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     ]["lite_overlay"]
     assert overlay["facts"][0]["source"] == "background_story_aftermath"
     assert "меловые следы" in overlay["facts"][0]["text"]
+    events = store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["recentStoryEvents"]
+    assert events[0]["summary"] == "На Громма напала меловая тень у каменного порога."
+    assert result["recentStoryEvent"]["eventType"] == "attack"
 
     response = telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
 
     assert response.storyLibraryPatch is None
     assert response.liteOverlayPatch is not None
+    assert response.recentStoryEventsPatch is not None
+    assert response.recentStoryEventsPatch["events"][0]["eventType"] == "attack"
     assert response.liteOverlayPatch["facts"][0]["source"] == "background_story_aftermath"
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
     overlay = store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["pet"]["characterBible"][
@@ -316,6 +332,32 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     ]["lite_overlay"]
     assert len(overlay["facts"]) == 1
     assert overlay["facts"][0]["source"] == "background_story_aftermath"
+    assert store["records"][str(DEBUG_TARGET_TELEGRAM_ID)]["recentStoryEvents"][0][
+        "summary"
+    ] == "На Громма напала меловая тень у каменного порога."
+
+
+def test_recent_story_events_fallback_uses_last_story_for_anti_repeat() -> None:
+    events = telegram_push_service._record_recent_story_events(
+        {
+            "lastStory": {
+                "title": "Падение у миски",
+                "summary": "Громм уже споткнулся у миски.",
+                "eventType": "accident",
+                "tags": ["случайность"],
+            }
+        }
+    )
+
+    assert events == [
+        {
+            "title": "Падение у миски",
+            "summary": "Громм уже споткнулся у миски.",
+            "eventType": "accident",
+            "tags": ["случайность"],
+            "source": "last_story_fallback",
+        }
+    ]
 
 
 def test_telegram_send_error_is_sanitized(monkeypatch, tmp_path) -> None:

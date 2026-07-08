@@ -51,6 +51,7 @@ type PushSnapshotResponse = {
   updatedAt: string;
   storyLibraryPatch?: Record<string, unknown> | null;
   liteOverlayPatch?: Record<string, unknown> | null;
+  recentStoryEventsPatch?: Record<string, unknown> | null;
 };
 
 const REQUIRED_STAGES = ["baby", "teen", "adult"] as const satisfies readonly PetStage[];

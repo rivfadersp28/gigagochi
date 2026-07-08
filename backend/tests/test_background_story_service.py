@@ -130,7 +130,16 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
                     "source": "background_story_aftermath",
                     "confidence": 0.91,
                 }
-            ]
+            ],
+            "recentEvent": {
+                "summary": "Стеклянные улитки поползли к листу Олега у лесной миски.",
+                "eventType": "attack",
+                "participants": ["стеклянные улитки", "Олег"],
+                "actions": ["нападение"],
+                "objects": ["лист"],
+                "location": "лесная миска",
+                "outcome": "Олег пережил налет.",
+            },
         },
         ensure_ascii=False,
     )
@@ -157,6 +166,11 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
     assert result.event_type == "attack"
     assert result.story_library_patch is None
     assert result.lite_overlay_patch is not None
+    assert result.recent_story_event is not None
+    assert result.recent_story_event["summary"] == (
+        "Стеклянные улитки поползли к листу Олега у лесной миски."
+    )
+    assert result.recent_story_event["participants"] == ["стеклянные улитки", "Олег"]
     fact = result.lite_overlay_patch["facts"][0]
     assert fact["sphere"] == "world"
     assert fact["source"] == "background_story_aftermath"
@@ -429,6 +443,58 @@ def test_background_story_never_uses_previous_generated_stories(monkeypatch) -> 
     assert "Каменная тропа" not in prompt
 
 
+def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) -> None:
+    content = json.dumps(
+        {
+            "title": "Новая случайность",
+            "summary": "Олег споткнулся у миски.",
+            "storyText": "Олег споткнулся у миски и поднялся.",
+            "eventType": "accident",
+            "valence": "mixed",
+            "tags": ["случайность"],
+            "ragText": "Олег споткнулся у миски.",
+        },
+        ensure_ascii=False,
+    )
+    completions = FakeBackgroundStoryCompletions(content)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    monkeypatch.setattr(
+        background_story_service,
+        "get_settings",
+        lambda: SimpleNamespace(openai_chat_timeout_seconds=10, openai_chat_reasoning_effort=None),
+    )
+    monkeypatch.setattr(
+        background_story_service,
+        "context_source_mode",
+        lambda surface, source: "disabled",
+    )
+
+    background_story_service.generate_background_story(
+        pet=_pet(),
+        recent_story_events=[
+            {
+                "summary": "Олег уже споткнулся о мягкий камень у миски.",
+                "eventType": "accident",
+                "participants": ["Олег"],
+                "actions": ["споткнулся"],
+                "objects": ["мягкий камень"],
+                "location": "миска",
+                "outcome": "поднялся сам",
+            }
+        ],
+        now_iso="2026-07-08T07:40:00Z",
+        timezone="Europe/Moscow",
+        client=client,
+        model="test-model",
+        timeout=10,
+    )
+
+    prompt = _call_by_schema(completions, "background_story")["messages"][1]["content"]
+    assert "ANTI_REPEAT" in prompt
+    assert "Используй список только как запрет на повтор" in prompt
+    assert "Олег уже споткнулся о мягкий камень" in prompt
+
+
 def test_background_story_aftermath_ignores_ephemeral_events(monkeypatch) -> None:
     story_content = json.dumps(
         {
@@ -453,7 +519,16 @@ def test_background_story_aftermath_ignores_ephemeral_events(monkeypatch) -> Non
                     "source": "background_story_aftermath",
                     "confidence": 0.4,
                 }
-            ]
+            ],
+            "recentEvent": {
+                "summary": "На Олега напала меловая тень и исчезла.",
+                "eventType": "attack",
+                "participants": ["меловая тень", "Олег"],
+                "actions": ["нападение"],
+                "objects": [],
+                "location": "",
+                "outcome": "тень исчезла",
+            },
         },
         ensure_ascii=False,
     )
@@ -481,6 +556,8 @@ def test_background_story_aftermath_ignores_ephemeral_events(monkeypatch) -> Non
 
     assert result.story_library_patch is None
     assert result.lite_overlay_patch is None
+    assert result.recent_story_event is not None
+    assert result.recent_story_event["summary"] == "На Олега напала меловая тень и исчезла."
 
 
 def test_background_story_uses_snapshot_history_when_story_toggles_allow(

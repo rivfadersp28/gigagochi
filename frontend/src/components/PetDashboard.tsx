@@ -328,6 +328,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const pet = localPet.pet;
   const applyLiteOverlayPatch = localPet.applyLiteOverlayPatch;
   const applyStoryLibraryPatch = localPet.applyStoryLibraryPatch;
+  const applyRecentStoryEventsPatch = localPet.applyRecentStoryEventsPatch;
   const includePromptDebug = promptSettings.includePromptDebug;
 
   useEffect(() => {
@@ -599,9 +600,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       .then((response) => {
         applyLiteOverlayPatch(response.liteOverlayPatch ?? undefined);
         applyStoryLibraryPatch(response.storyLibraryPatch ?? undefined);
+        applyRecentStoryEventsPatch(response.recentStoryEventsPatch ?? undefined);
       })
       .catch(() => undefined);
-  }, [applyLiteOverlayPatch, applyStoryLibraryPatch, localPet.status, pet, petId]);
+  }, [
+    applyLiteOverlayPatch,
+    applyRecentStoryEventsPatch,
+    applyStoryLibraryPatch,
+    localPet.status,
+    pet,
+    petId,
+  ]);
 
   function handleFeed() {
     if (!pet) {

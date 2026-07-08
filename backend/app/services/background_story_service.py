@@ -134,9 +134,43 @@ BACKGROUND_STORY_AFTERMATH_SCHEMA: dict[str, Any] = {
                     "confidence",
                 ],
             },
-        }
+        },
+        "recentEvent": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "summary": {"type": "string", "maxLength": 500},
+                "eventType": {"type": "string", "maxLength": 60},
+                "participants": {
+                    "type": "array",
+                    "maxItems": 6,
+                    "items": {"type": "string", "maxLength": 80},
+                },
+                "actions": {
+                    "type": "array",
+                    "maxItems": 6,
+                    "items": {"type": "string", "maxLength": 80},
+                },
+                "objects": {
+                    "type": "array",
+                    "maxItems": 6,
+                    "items": {"type": "string", "maxLength": 80},
+                },
+                "location": {"type": "string", "maxLength": 160},
+                "outcome": {"type": "string", "maxLength": 260},
+            },
+            "required": [
+                "summary",
+                "eventType",
+                "participants",
+                "actions",
+                "objects",
+                "location",
+                "outcome",
+            ],
+        },
     },
-    "required": ["facts"],
+    "required": ["facts", "recentEvent"],
 }
 
 
@@ -151,6 +185,7 @@ class BackgroundStoryResult:
     rag_text: str
     story_library_patch: dict[str, Any] | None
     lite_overlay_patch: dict[str, Any] | None
+    recent_story_event: dict[str, Any] | None
     prompt_debug: list[dict[str, Any]]
 
     def model_dump(self) -> dict[str, Any]:
@@ -164,6 +199,7 @@ class BackgroundStoryResult:
             "ragText": self.rag_text,
             "storyLibraryPatch": self.story_library_patch,
             "liteOverlayPatch": self.lite_overlay_patch,
+            "recentStoryEvent": self.recent_story_event,
             "promptDebug": self.prompt_debug,
         }
 
@@ -342,6 +378,56 @@ def _recent_replies_brief(recent_replies: list[str] | None) -> list[str]:
         for text in (_text_value(item, limit=500) for item in recent_replies[-6:])
         if text
     ]
+
+
+def _story_event_briefs(recent_story_events: list[dict[str, Any]] | None) -> list[str]:
+    if not recent_story_events:
+        return []
+    briefs: list[str] = []
+    for item in recent_story_events[-8:]:
+        if not _is_record(item):
+            continue
+        parts: list[str] = []
+        summary = _text_value(item.get("summary"), limit=360)
+        if summary:
+            parts.append(summary)
+        event_type = _text_value(item.get("eventType"), limit=60)
+        if event_type:
+            parts.append(f"тип: {event_type}")
+        participants = _string_list(item.get("participants"), limit=4)
+        if participants:
+            parts.append(f"участники: {', '.join(participants)}")
+        actions = _string_list(item.get("actions"), limit=4)
+        if actions:
+            parts.append(f"действия: {', '.join(actions)}")
+        objects = _string_list(item.get("objects"), limit=4)
+        if objects:
+            parts.append(f"предметы: {', '.join(objects)}")
+        location = _text_value(item.get("location"), limit=120)
+        if location:
+            parts.append(f"место: {location}")
+        outcome = _text_value(item.get("outcome"), limit=180)
+        if outcome:
+            parts.append(f"исход: {outcome}")
+        brief = "; ".join(parts)
+        if brief:
+            briefs.append(brief)
+    return briefs
+
+
+def _anti_repeat_block(recent_story_events: list[dict[str, Any]] | None) -> str:
+    briefs = _story_event_briefs(recent_story_events)
+    if not briefs:
+        return ""
+    lines = "\n".join(f"- {brief}" for brief in briefs)
+    return (
+        "ANTI_REPEAT: эти события уже происходили. "
+        "Используй список только как запрет на повтор, "
+        "не как источник новых деталей сюжета. "
+        "Не повторяй по сути то же сочетание участник + "
+        "действие/случайность + предмет + место "
+        f"+ исход.\n{lines}"
+    )
 
 
 def _state_params_brief(pet: LocalPetChatContext) -> dict[str, Any]:
@@ -722,6 +808,7 @@ def _normalize_story_payload(payload: dict[str, Any]) -> BackgroundStoryResult:
         rag_text=rag_text,
         story_library_patch=None,
         lite_overlay_patch=None,
+        recent_story_event=None,
         prompt_debug=[],
     )
 
@@ -804,25 +891,58 @@ def _aftermath_story_payload(result: BackgroundStoryResult) -> str:
     )
 
 
-def _parse_aftermath_extraction_payload(raw_content: str) -> dict[str, Any] | None:
+def _normalize_recent_story_event(
+    value: Any,
+    *,
+    story: BackgroundStoryResult,
+) -> dict[str, Any]:
+    item = value if _is_record(value) else {}
+    event = {
+        "title": story.title,
+        "summary": _text_value(item.get("summary"), limit=500) or story.summary,
+        "eventType": _text_value(item.get("eventType"), limit=60) or story.event_type,
+        "participants": _string_list(item.get("participants"), limit=6),
+        "actions": _string_list(item.get("actions"), limit=6),
+        "objects": _string_list(item.get("objects"), limit=6),
+        "location": _text_value(item.get("location"), limit=160),
+        "outcome": _text_value(item.get("outcome"), limit=260),
+        "tags": list(story.tags),
+        "createdAt": _now_iso(),
+        "source": "background_story",
+    }
+    if not event["summary"]:
+        event["summary"] = _truncate_text(story.story_text, 500)
+    return {
+        key: item_value
+        for key, item_value in event.items()
+        if item_value not in (None, "", [], {})
+    }
+
+
+def _parse_aftermath_extraction_payload(
+    raw_content: str,
+    *,
+    story: BackgroundStoryResult,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     parsed = _json_record_from_text(raw_content)
     raw_facts = parsed.get("facts")
-    if not isinstance(raw_facts, list):
-        return None
 
     facts: list[dict[str, Any]] = []
-    for raw_fact in raw_facts:
-        if not _is_record(raw_fact):
-            continue
-        if _clamp_float(raw_fact.get("confidence"), 0.0) < AFTERMATH_CONFIDENCE_THRESHOLD:
-            continue
-        fact = dict(raw_fact)
-        fact["source"] = "background_story_aftermath"
-        facts.append(fact)
-    return overlay_patch_from_extracted_facts(
+    if isinstance(raw_facts, list):
+        for raw_fact in raw_facts:
+            if not _is_record(raw_fact):
+                continue
+            if _clamp_float(raw_fact.get("confidence"), 0.0) < AFTERMATH_CONFIDENCE_THRESHOLD:
+                continue
+            fact = dict(raw_fact)
+            fact["source"] = "background_story_aftermath"
+            facts.append(fact)
+    patch = overlay_patch_from_extracted_facts(
         facts,
         default_source="background_story_aftermath",
     )
+    recent_event = _normalize_recent_story_event(parsed.get("recentEvent"), story=story)
+    return patch, recent_event
 
 
 def _extract_background_story_aftermath_patch(
@@ -833,7 +953,7 @@ def _extract_background_story_aftermath_patch(
     model: str,
     timeout: float,
     prompt_debug: list[dict[str, Any]],
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -867,7 +987,10 @@ def _extract_background_story_aftermath_patch(
     )
     completion = client.chat.completions.create(**request_kwargs)
     log_chat_completion_response("background_story/aftermath_extraction", completion)
-    return _parse_aftermath_extraction_payload(completion.choices[0].message.content or "{}")
+    return _parse_aftermath_extraction_payload(
+        completion.choices[0].message.content or "{}",
+        story=story,
+    )
 
 
 def generate_background_story(
@@ -876,6 +999,7 @@ def generate_background_story(
     memory_context: LocalPetMemoryContext | None = None,
     history: list[LocalChatHistoryItem] | None = None,
     recent_replies: list[str] | None = None,
+    recent_story_events: list[dict[str, Any]] | None = None,
     now_iso: str | None = None,
     timezone: str | None = None,
     client: Any | None = None,
@@ -906,19 +1030,20 @@ def generate_background_story(
         timezone=timezone,
         context_plan=context_plan,
     )
+    user_content = background_story_user_prompt(
+        {
+            "character": character,
+            "event_type": background_story_default_event_type(),
+        }
+    )
+    anti_repeat = _anti_repeat_block(recent_story_events)
+    if anti_repeat:
+        user_content = f"{user_content}\n\n{anti_repeat}"
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
             {"role": "system", "content": background_story_system_prompt()},
-            {
-                "role": "user",
-                "content": background_story_user_prompt(
-                    {
-                        "character": character,
-                        "event_type": background_story_default_event_type(),
-                    }
-                ),
-            },
+            {"role": "user", "content": user_content},
         ],
         "response_format": {
             "type": "json_schema",
@@ -938,8 +1063,9 @@ def generate_background_story(
     content = completion.choices[0].message.content or "{}"
     result = _normalize_story_payload(_json_record_from_text(content))
     lite_overlay_patch: dict[str, Any] | None = None
+    recent_story_event: dict[str, Any] | None = None
     try:
-        lite_overlay_patch = _extract_background_story_aftermath_patch(
+        lite_overlay_patch, recent_story_event = _extract_background_story_aftermath_patch(
             pet=pet,
             story=result,
             client=openai_client,
@@ -949,6 +1075,7 @@ def generate_background_story(
         )
     except Exception:
         logger.exception("background_story_after_extraction failed")
+        recent_story_event = _normalize_recent_story_event(None, story=result)
     return BackgroundStoryResult(
         title=result.title,
         summary=result.summary,
@@ -959,5 +1086,6 @@ def generate_background_story(
         rag_text=result.rag_text,
         story_library_patch=result.story_library_patch,
         lite_overlay_patch=lite_overlay_patch,
+        recent_story_event=recent_story_event,
         prompt_debug=prompt_debug,
     )

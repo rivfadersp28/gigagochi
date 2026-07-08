@@ -270,3 +270,4 @@ class LocalPetPushSnapshotResponse(BaseModel):
     updatedAt: str
     storyLibraryPatch: dict[str, Any] | None = None
     liteOverlayPatch: dict[str, Any] | None = None
+    recentStoryEventsPatch: dict[str, Any] | None = None

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   applyOfflineProgress,
   applyLiteOverlayPatch as applyStoredLiteOverlayPatch,
+  applyRecentStoryEventsPatch as applyStoredRecentStoryEventsPatch,
   applyStoryLibraryPatch as applyStoredStoryLibraryPatch,
   calculatePetMood,
   calculatePetStage,
@@ -39,6 +40,7 @@ type UseLocalPetStateResult = {
   ) => LocalPetState | null;
   applyLiteOverlayPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
   applyStoryLibraryPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
+  applyRecentStoryEventsPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
 };
 
 function saveAndReturn(state: LocalPetState) {
@@ -299,6 +301,21 @@ export function useLocalPetState(): UseLocalPetStateResult {
     return nextPet;
   }, []);
 
+  const applyRecentStoryEventsPatch = useCallback((patch?: Record<string, unknown>) => {
+    if (!patch) {
+      return null;
+    }
+
+    const currentPet = readLocalPetState();
+    if (!currentPet) {
+      return null;
+    }
+
+    const nextPet = saveAndReturn(applyStoredRecentStoryEventsPatch(currentPet, patch));
+    setPet(nextPet);
+    return nextPet;
+  }, []);
+
   return {
     pet,
     status,
@@ -313,5 +330,6 @@ export function useLocalPetState(): UseLocalPetStateResult {
     applyMoodHint,
     applyLiteOverlayPatch,
     applyStoryLibraryPatch,
+    applyRecentStoryEventsPatch,
   };
 }

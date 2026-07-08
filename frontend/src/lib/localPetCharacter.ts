@@ -2,7 +2,12 @@ import type { LocalPetAssetSet } from "./types";
 
 const CHARACTER_INSTANCE_SCHEMA_VERSION = 1;
 const PROMPT_MODEL_SCHEMA_VERSION = 2;
-const MUTABLE_EXTENSION_KEYS = ["lite_overlay", "story_library_overlay", "instance"] as const;
+const MUTABLE_EXTENSION_KEYS = [
+  "lite_overlay",
+  "story_library_overlay",
+  "recent_story_events",
+  "instance",
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -74,6 +79,7 @@ function withInstanceMeta(
     mutableOverlayPaths: {
       liteOverlay: "extensions.lite_overlay",
       storyLibraryOverlay: "extensions.story_library_overlay",
+      recentStoryEvents: "extensions.recent_story_events",
     },
     promptModelVersion: PROMPT_MODEL_SCHEMA_VERSION,
     disabledPromptSections: ["characterBible.voice", "characterBible.dialogue_style", "lore.voice"],
