@@ -772,6 +772,8 @@ def test_character_bible_prompt_uses_world_description_anchors() -> None:
     )
 
     assert "WORLD_DESCRIPTION_ANCHORS" in prompt
+    assert "TONE_PROFILE" in prompt
+    assert "Ironic fantasy" in prompt
     assert "source_text_do_not_copy" in prompt
     assert "Do not copy them" in prompt
     assert "world:waters-edge:" in prompt
@@ -812,6 +814,8 @@ def test_character_bible_prompt_requests_species_specific_lore() -> None:
     prompt = build_character_bible_prompt("маленький дракон с мягкими крыльями")
 
     assert "compact character profile" in prompt
+    assert "TONE_PROFILE" in prompt
+    assert "Ironic fantasy" in prompt
     assert "tiny persona-file shape" in prompt
     assert "physical anchor" in prompt
     assert "mechanism" in prompt

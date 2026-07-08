@@ -741,6 +741,9 @@ def test_lite_prompt_uses_baby_dataset_phrases_only_for_baby() -> None:
     baby_system_message = build_lite_chat_messages(baby)[0]["content"]
     teen_system_message = build_lite_chat_messages(teen)[0]["content"]
 
+    assert "TONE_PROFILE" in baby_system_message
+    assert "Ironic fantasy" in baby_system_message
+    assert "Age changes speech complexity and self-control only" in baby_system_message
     assert "Примеры детской манеры из датасета" in baby_system_message
     assert "Приветик! Ты пришёл!" in baby_system_message
     assert "Примеры детской манеры из датасета" not in teen_system_message

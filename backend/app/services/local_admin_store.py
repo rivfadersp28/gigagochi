@@ -20,6 +20,7 @@ from app.services.pet_reply_engine.speech_runtime import (
 from app.services.story_constructor import story_constructor_catalog
 from app.services.story_library import _catalog as story_library_catalog
 from app.services.story_library import global_story_bricks
+from app.services.tone_runtime import tone_runtime_config, validate_tone_runtime_config
 from app.services.travel_service import _travel_template_catalog
 
 DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
@@ -49,6 +50,13 @@ MANAGED_FILES: tuple[ManagedFile, ...] = (
         "speech_runtime.json",
         "json",
         "Главные правила persona contract, ambient self-prompt и world context для реплик.",
+    ),
+    ManagedFile(
+        "tone_runtime",
+        "Tone profile",
+        "tone_runtime.json",
+        "json",
+        "Общий tone of voice для реплик, мира, персонажей, историй и визуального стиля.",
     ),
     ManagedFile(
         "story_library",
@@ -146,6 +154,8 @@ def _validate_content(spec: ManagedFile, content: str) -> str:
         normalized = _validate_json(content)
         if spec.file_id == "speech_runtime":
             validate_speech_runtime_config(json.loads(normalized))
+        if spec.file_id == "tone_runtime":
+            validate_tone_runtime_config(json.loads(normalized))
         if spec.file_id == "character_bible_template":
             validate_character_bible_template_config(json.loads(normalized))
         return normalized
@@ -212,6 +222,20 @@ def dialogue_influence_manifest() -> dict[str, Any]:
     surfaces = ["chat", "proactive", "ambient", "push"]
     return {
         "modifiers": [
+            {
+                "id": "tone_profile",
+                "label": "Tone profile",
+                "surfaces": [*surfaces, "background_story", "travel", "creation"],
+                "source": "tone_runtime",
+                "editable": True,
+                "fileId": "tone_runtime",
+                "configPath": "activePreset / presets",
+                "summary": (
+                    "Единый стиль мира, конфликтов, видимых реплик, персонажей, "
+                    "путешествий, фоновых историй и image prompts. Возрастная baby-речь "
+                    "остается отдельным слоем."
+                ),
+            },
             {
                 "id": "identity_line",
                 "label": "Identity line",
@@ -557,6 +581,7 @@ def _clear_runtime_caches() -> None:
     _travel_template_catalog.cache_clear()
     load_world_description_dataset.cache_clear()
     age_speech_dataset.cache_clear()
+    tone_runtime_config.cache_clear()
     speech_runtime_config.cache_clear()
     character_bible_template_config.cache_clear()
 

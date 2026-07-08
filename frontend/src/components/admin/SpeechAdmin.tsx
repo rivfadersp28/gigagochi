@@ -36,6 +36,7 @@ type JsonRecord = Record<string, unknown>;
 
 const PUBLISH_POLL_INTERVAL_MS = 1500;
 const SPEECH_RUNTIME_FILE_ID = "speech_runtime";
+const TONE_RUNTIME_FILE_ID = "tone_runtime";
 const CHARACTER_BIBLE_TEMPLATE_FILE_ID = "character_bible_template";
 
 const AGE_STAGES = [
@@ -137,6 +138,17 @@ const CHARACTER_BIBLE_LEGACY_DEFAULTS = [
   { id: "initiativeStyle", label: "initiative_style" },
   { id: "attitudeToUser", label: "attitude_to_user" },
   { id: "provenanceLicenseNotes", label: "provenance license_notes" },
+] as const;
+
+const TONE_SURFACE_FIELDS = [
+  { id: "visibleReply", label: "Visible replies" },
+  { id: "contextRouting", label: "Context routing" },
+  { id: "worldContext", label: "World context" },
+  { id: "characterBible", label: "Character bible" },
+  { id: "backgroundStory", label: "Background story" },
+  { id: "travelStory", label: "Travel story" },
+  { id: "storyboard", label: "Storyboard" },
+  { id: "imagePrompt", label: "Image prompt" },
 ] as const;
 
 const AUXILIARY_FILE_IDS = [
@@ -779,6 +791,116 @@ function SpeechRuntimeEditor({
     </div>
   );
 }
+
+function ToneRuntimeEditor({
+  content,
+  onChange,
+}: {
+  content: string;
+  onChange: (content: string) => void;
+}) {
+  const config = parseJsonObject(content);
+  if (!config) {
+    return (
+      <Alert variant="destructive">
+        <AlertCircle className="size-4" />
+        <AlertTitle>JSON не разобран</AlertTitle>
+        <AlertDescription>Исправь tone_runtime.json.</AlertDescription>
+      </Alert>
+    );
+  }
+
+  const activePreset = stringAt(config, ["activePreset"]);
+  const presets = readPath(config, ["presets"]);
+  const activeConfig =
+    isRecord(presets) && isRecord(presets[activePreset]) ? presets[activePreset] : null;
+
+  const updatePath = (path: string[], value: unknown) => {
+    onChange(formatJson(writePath(config, path, value)));
+  };
+
+  const updatePresetPath = (path: string[], value: unknown) => {
+    updatePath(["presets", activePreset, ...path], value);
+  };
+
+  return (
+    <Section
+      title="Tone profile"
+      meta={<Badge variant="outline">{activePreset || "нет activePreset"}</Badge>}
+    >
+      <RuntimeField
+        label="Active preset id"
+        value={activePreset}
+        rows={2}
+        onChange={(value) => updatePath(["activePreset"], value.trim())}
+      />
+
+      {!activeConfig ? (
+        <Alert variant="destructive">
+          <AlertCircle className="size-4" />
+          <AlertTitle>Пресет не найден</AlertTitle>
+          <AlertDescription>Добавь activePreset в presets.</AlertDescription>
+        </Alert>
+      ) : (
+        <>
+          <RuntimeField
+            label="Label"
+            value={stringAt(config, ["presets", activePreset, "label"])}
+            rows={2}
+            onChange={(value) => updatePresetPath(["label"], value)}
+          />
+          <RuntimeField
+            label="Voice"
+            value={stringAt(config, ["presets", activePreset, "voice"])}
+            rows={4}
+            onChange={(value) => updatePresetPath(["voice"], value)}
+          />
+          <RuntimeField
+            label="World mood"
+            value={stringAt(config, ["presets", activePreset, "worldMood"])}
+            rows={5}
+            onChange={(value) => updatePresetPath(["worldMood"], value)}
+          />
+          <RuntimeField
+            label="Conflict policy"
+            value={stringAt(config, ["presets", activePreset, "conflictPolicy"])}
+            rows={4}
+            onChange={(value) => updatePresetPath(["conflictPolicy"], value)}
+          />
+          <RuntimeField
+            label="Age policy"
+            value={stringAt(config, ["presets", activePreset, "agePolicy"])}
+            rows={4}
+            onChange={(value) => updatePresetPath(["agePolicy"], value)}
+          />
+          <RuntimeField
+            label="Visual style"
+            value={stringAt(config, ["presets", activePreset, "visualStyle"])}
+            rows={5}
+            onChange={(value) => updatePresetPath(["visualStyle"], value)}
+          />
+          <RuntimeField
+            label="Avoid"
+            value={stringAt(config, ["presets", activePreset, "avoid"])}
+            rows={4}
+            onChange={(value) => updatePresetPath(["avoid"], value)}
+          />
+          <div className="grid gap-4 lg:grid-cols-2">
+            {TONE_SURFACE_FIELDS.map((field) => (
+              <RuntimeField
+                key={field.id}
+                label={field.label}
+                value={stringAt(config, ["presets", activePreset, "surfaces", field.id])}
+                rows={4}
+                onChange={(value) => updatePresetPath(["surfaces", field.id], value)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
 function CharacterBibleTemplateEditor({
   content,
   onChange,
@@ -1068,6 +1190,7 @@ export function SpeechAdmin() {
 
   const files = useMemo(() => manifest?.files ?? [], [manifest]);
   const runtimeFile = files.find((file) => file.id === SPEECH_RUNTIME_FILE_ID);
+  const toneFile = files.find((file) => file.id === TONE_RUNTIME_FILE_ID);
   const characterTemplateFile = files.find(
     (file) => file.id === CHARACTER_BIBLE_TEMPLATE_FILE_ID,
   );
@@ -1296,6 +1419,12 @@ export function SpeechAdmin() {
                 <SpeechRuntimeEditor
                   content={drafts[runtimeFile.id] ?? runtimeFile.content}
                   onChange={(content) => updateDraft(runtimeFile, content)}
+                />
+              ) : null}
+              {toneFile ? (
+                <ToneRuntimeEditor
+                  content={drafts[toneFile.id] ?? toneFile.content}
+                  onChange={(content) => updateDraft(toneFile, content)}
                 />
               ) : null}
               {characterTemplateFile ? (

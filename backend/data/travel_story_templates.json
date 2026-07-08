@@ -140,7 +140,7 @@
           {
             "sceneNumber": 2,
             "function": "first_threshold",
-            "purposePattern": "Новая локация: #first_location#. Там появляется первый след и мягкое препятствие.",
+            "purposePattern": "Новая локация: #first_location#. Там появляется первый след и странное препятствие.",
             "visualSeedPattern": "#first_location#, видимый след, движение вперед",
             "mustInclude": [
               "первый след",
@@ -154,7 +154,7 @@
             "sceneNumber": 3,
             "function": "wrong_turn",
             "purposePattern": "Герой #mistake#, поэтому проблема становится конкретнее и ближе.",
-            "visualSeedPattern": "ошибка героя, изменившийся путь, тревожная но мягкая атмосфера",
+            "visualSeedPattern": "ошибка героя, изменившийся путь, тревожная, но не жестокая атмосфера",
             "mustInclude": [
               "понятная ошибка",
               "последствие ошибки"
@@ -262,7 +262,7 @@
             "sceneNumber": 3,
             "function": "guardian_or_rule",
             "purposePattern": "Локация проверки: #first_location#. Герой сталкивается не со злым стражем, а с правилом места.",
-            "visualSeedPattern": "#first_location#, мягкий страж или знак правила",
+            "visualSeedPattern": "#first_location#, странный страж или знак правила",
             "mustInclude": [
               "правило места",
               "проверка внимательности"
@@ -301,7 +301,7 @@
             "sceneNumber": 6,
             "function": "artifact_reveals",
             "purposePattern": "Кульминация: #climax_location#. #artifact# открывается, потому что герой проявляет #hero_quality#.",
-            "visualSeedPattern": "#artifact#, локация кульминации: #climax_location#, мягкое свечение, герой проходит проверку",
+            "visualSeedPattern": "#artifact#, локация кульминации: #climax_location#, резкое странное свечение, герой проходит проверку",
             "mustInclude": [
               "артефакт",
               "проверка характера"
@@ -338,7 +338,7 @@
         ],
         "titlePattern": "Спасение: #rescue_target#",
         "loglinePattern": "#hero# отправляется спасать #rescue_target#, но настоящая опасность оказывается не там, где ожидалось.",
-        "directorialIntent": "Спасение должно быть активным, но мягким: герой помогает через наблюдение, смелость и заботу.",
+        "directorialIntent": "Спасение должно быть активным и не сентиментальным: герой помогает через наблюдение, смелость, хитрость или заботу.",
         "beats": [
           {
             "sceneNumber": 1,
@@ -477,7 +477,7 @@
           {
             "sceneNumber": 3,
             "function": "trap_or_misdirection",
-            "purposePattern": "Вредитель устраивает мягкую ловушку: #soft_obstacle#. Противник: #villain#.",
+            "purposePattern": "Вредитель устраивает странную ловушку: #soft_obstacle#. Противник: #villain#.",
             "visualSeedPattern": "ловушка без насилия, запутанный путь, герой в движении",
             "mustInclude": [
               "ловушка",
@@ -517,7 +517,7 @@
             "sceneNumber": 6,
             "function": "nonviolent_defeat",
             "purposePattern": "Кульминация: #climax_location#. Герой останавливает план через #hero_quality#, не унижая противника.",
-            "visualSeedPattern": "#climax_location#, план разваливается мягко, герой в центре действия",
+            "visualSeedPattern": "#climax_location#, план разваливается неловко, герой в центре действия",
             "mustInclude": [
               "остановленный вред",
               "не силовое решение"
@@ -534,7 +534,7 @@
             "visualSeedPattern": "мир восстановлен, спокойный финал, след бывшего конфликта",
             "mustInclude": [
               "восстановленный мир",
-              "мягкая судьба злодея"
+              "нежестокая судьба противника"
             ],
             "mustAvoid": [
               "новый злодей"
@@ -613,7 +613,7 @@
             "sceneNumber": 5,
             "function": "cost_of_truth",
             "purposePattern": "Чтобы проверить истину, герой должен рискнуть комфортом и проявить #hero_quality#.",
-            "visualSeedPattern": "герой перед выбором, уют позади, тайна впереди",
+            "visualSeedPattern": "герой перед выбором, комфорт позади, тайна впереди",
             "mustInclude": [
               "выбор",
               "личная цена"

@@ -42,6 +42,7 @@ services:
       - generated_assets:/app/static/generated
       - backend_logs:/app/logs
       - ./backend/data/speech_runtime.json:/app/data/speech_runtime.json:ro
+      - ./backend/data/tone_runtime.json:/app/data/tone_runtime.json:ro
       - ./backend/data/story_library.json:/app/data/story_library.json:ro
       - ./backend/data/story_constructor.json:/app/data/story_constructor.json:ro
       - ./backend/data/travel_story_templates.json:/app/data/travel_story_templates.json:ro
@@ -75,6 +76,7 @@ services:
     volumes:
       - backend_logs:/app/logs
       - ./backend/data/speech_runtime.json:/app/data/speech_runtime.json:ro
+      - ./backend/data/tone_runtime.json:/app/data/tone_runtime.json:ro
       - ./backend/data/story_library.json:/app/data/story_library.json:ro
       - ./backend/data/story_constructor.json:/app/data/story_constructor.json:ro
       - ./backend/data/travel_story_templates.json:/app/data/travel_story_templates.json:ro

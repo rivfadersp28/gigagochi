@@ -41,6 +41,7 @@ from app.services.prompt_debug import (
     write_prompt_log_line,
 )
 from app.services.story_constructor import build_story_constructor_context
+from app.services.tone_runtime import tone_prompt_block, tone_visual_style
 
 ADVENTURE_SCENE_COUNT = 7
 TRAVEL_CARD_OUTPUT_HEIGHT = 1080
@@ -110,10 +111,9 @@ STORY_FRAMEWORKS: tuple[StoryFramework, ...] = (
 )
 
 TRAVEL_IMAGE_STYLE_PROMPT = """
-warm cinematic family-animation illustration, handcrafted storybook texture,
-soft volumetric light, clean readable silhouettes, expressive non-human mascot acting,
-rich but controlled color palette with moss green, pumpkin orange, cream, ink blue
-and warm gold accents, painterly cut-paper depth, charming tactile details,
+stylized fantasy key art for a premium game, tactile handcrafted materials,
+expressive non-human mascot acting, clean readable silhouettes, sly magical details,
+controlled color palette with natural neutrals and sharp accent colors, painterly depth,
 high emotional readability, no photorealism, no 3D plastic toy look, no clutter.
 """.strip()
 
@@ -753,7 +753,8 @@ def _build_adventure_story_messages(
                 "You are a senior story artist for animated short. "
                 "Create one complete adventure for a non-human character. Return JSON only. "
                 "All story-facing text must be in Russian. Do not create scenes, panels, "
-                "storyboards, image prompts, captions, UI copy, or camera instructions."
+                "storyboards, image prompts, captions, UI copy, or camera instructions.\n\n"
+                f"{tone_prompt_block('travelStory')}"
             ),
         },
         {
@@ -792,7 +793,7 @@ Story requirements:
 - Use PLOT_TEMPLATE_BRIEF_JSON as a hidden structural scaffold. Follow its
   7 beat functions in order, but do not copy its sentences literally.
 - Use STORY_CONSTRUCTOR_BRICKS_JSON as a low-level palette for concrete objects,
-  places, neighbors, creatures and soft obstacles. Pick only details that become
+  places, neighbors, creatures and strange non-brutal obstacles. Pick only details that become
   causally useful in the story. Never mention the constructor or dataset.
 - Invent fresh concrete locations, sensory details, actions, causes and turns
   inside the scaffold. The output must feel like an original authored adventure,
@@ -867,7 +868,8 @@ def _build_storyboard_messages(
             "content": (
                 "You are a storyboard artist. Convert one complete adventure into exactly "
                 "7 visually distinct storyboard panels. Return JSON only. Russian fields "
-                "are user-facing; imagePrompt must be English. Do not invent a new plot."
+                "are user-facing; imagePrompt must be English. Do not invent a new plot.\n\n"
+                f"{tone_prompt_block('storyboard')}"
             ),
         },
         {
@@ -1104,6 +1106,9 @@ SCENE STORY:
 {scene.text}
 
 SHARED ART STYLE:
+{tone_visual_style()}
+
+BASE ART STYLE:
 {TRAVEL_IMAGE_STYLE_PROMPT}
 
 CHARACTER APPEARANCE TO PRESERVE EXACTLY:

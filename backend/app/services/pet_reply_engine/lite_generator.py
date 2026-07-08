@@ -82,6 +82,7 @@ from app.services.prompt_debug import (
     log_chat_completion_prompt,
     log_chat_completion_response,
 )
+from app.services.tone_runtime import tone_context_payload, tone_prompt_block
 
 MAX_LITE_TOOL_ROUNDS = 3
 MAX_LITE_BABY_EXAMPLES = 8
@@ -114,6 +115,7 @@ class PhrasePlan:
     reply_limit: int
     identity_line: str
     persona_contract: str
+    tone_block: str | None = None
     character_block: str | None = None
     memory_block: str | None = None
     voice_block: str | None = None
@@ -126,6 +128,7 @@ class PhrasePlan:
     def system_content(self) -> str:
         sections = [
             self.identity_line,
+            self.tone_block,
             self.character_block,
             self.voice_block,
             self.recent_events_block,
@@ -541,6 +544,7 @@ def _context_routing_user_payload(
     return {
         "surface": surface,
         "surfacePrompt": surface_prompt_text,
+        "toneProfile": tone_context_payload("contextRouting"),
         "userMessage": getattr(payload, "message", ""),
         "proactiveReason": proactive_reason,
         "pet": _lite_pet_context_payload(payload),
@@ -1134,6 +1138,7 @@ def _phrase_plan_for_chat(
         reply_limit=reply_limit,
         identity_line=_chat_identity_line(payload, reply_limit),
         persona_contract=surface_prompt("chat"),
+        tone_block=tone_prompt_block("visibleReply"),
         character_block=_character_context_block(payload.pet, "chat", context_routing),
         memory_block=(
             _memory_context_block(payload.memoryContext)
@@ -1304,7 +1309,10 @@ def _world_seed_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     return [
         {
             "role": "system",
-            "content": world_seed_system_prompt(),
+            "content": (
+                f"{world_seed_system_prompt()}\n\n"
+                f"{tone_prompt_block('worldContext')}"
+            ),
         },
         {
             "role": "user",
@@ -2243,6 +2251,7 @@ def build_proactive_messages(
             reply_limit=MAX_REPLY_CHARS,
         ),
         persona_contract=surface_prompt("proactive", {"reason": reason}),
+        tone_block=tone_prompt_block("visibleReply"),
         world_block=context_bundle.prompt_block or None,
         character_block=_character_context_block(payload.pet, "proactive", context_plan),
         memory_block=memory_block,
@@ -2293,6 +2302,7 @@ def build_push_messages(
             reply_limit=180,
         ),
         persona_contract=surface_prompt("push", {"reason": _reason_from_payload(payload)}),
+        tone_block=tone_prompt_block("visibleReply"),
         world_block=context_bundle.prompt_block or None,
         character_block=_character_context_block(payload.pet, "push", context_plan),
         memory_block=memory_block,
@@ -2490,6 +2500,7 @@ def build_ambient_messages(
             reply_limit=reply_limit,
         ),
         persona_contract=surface_prompt("ambient", {"recent_replies": recent_ambient_replies}),
+        tone_block=tone_prompt_block("visibleReply"),
         world_block=context_bundle.prompt_block or None,
         character_block=_character_context_block(payload.pet, "ambient", context_plan),
         memory_block=memory_block,

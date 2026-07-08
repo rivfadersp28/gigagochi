@@ -5,6 +5,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
+from app.services.tone_runtime import tone_prompt_block
+
 DATA_PATH = Path(__file__).resolve().parents[3] / "data" / "speech_runtime.json"
 
 VisibleSurface = Literal["chat", "proactive", "ambient", "push"]
@@ -392,7 +394,10 @@ def state_param_labels(
 
 def format_world_context_block(*, lines: str) -> str:
     template = _required_string(speech_runtime_config(), ("worldContext", "template"))
-    return _template_replace(template, {"lines": lines})
+    return (
+        f"{tone_prompt_block('worldContext')}\n\n"
+        f"{_template_replace(template, {'lines': lines})}"
+    )
 
 
 def world_seed_system_prompt() -> str:

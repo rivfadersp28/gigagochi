@@ -103,8 +103,8 @@ Limit the color palette to 2-4 harmonious colors with one optional accent color.
 The character should look like a collectible vinyl toy or premium game mascot rather
 than a realistic creature.
 
-The overall visual style should resemble a polished, timeless, premium family-friendly
-console game aesthetic: charming, colorful, stylized, iconic, and collectible.
+The overall visual style should resemble a polished, timeless, premium stylized console
+game aesthetic: distinctive, colorful, iconic, and collectible.
 
 The rendering should be clean stylized 3D with smooth geometry, rounded forms, matte
 materials, subtle gradients, soft ambient lighting, and minimal texture detail. Avoid

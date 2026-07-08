@@ -151,8 +151,11 @@ def test_adventure_story_prompt_receives_plot_brief_as_hidden_scaffold() -> None
         framework,
         brief,
     )
+    system_content = messages[0]["content"]
     user_content = messages[1]["content"]
 
+    assert "TONE_PROFILE" in system_content
+    assert "Ironic fantasy" in system_content
     assert "PLOT_TEMPLATE_BRIEF_JSON:" in user_content
     assert "STORY_CONSTRUCTOR_BRICKS_JSON:" in user_content
     assert "legendary_artifact_test" in user_content
@@ -189,8 +192,11 @@ def test_storyboard_prompt_maps_panels_to_plot_brief_beats() -> None:
         ),
         brief,
     )
+    system_content = messages[0]["content"]
     user_content = messages[1]["content"]
 
+    assert "TONE_PROFILE" in system_content
+    assert "Ironic fantasy" in system_content
     assert "PLOT_TEMPLATE_BRIEF_JSON:" in user_content
     assert "great_discovery_changes_home" in user_content
     assert "Panel N should visualize beat N" in user_content
@@ -213,6 +219,8 @@ def test_travel_image_prompt_includes_character_asset_references() -> None:
     assert "face placement, colors" in prompt
     assert "ASPECT RATIO:" in prompt
     assert "OUTPUT SIZE:" in prompt
+    assert "Eccentric fantasy illustration" in prompt
+    assert "stylized fantasy key art" in prompt
     assert "640x1072" in prompt
     assert "Simple character description:" in prompt
 

@@ -102,6 +102,13 @@
   product decision. Current prompt behavior relies on character name/description
   instead of `characterBible.voice`, catchphrases, sample replies, or
   `dialogue_style`.
+- Do not use baby age examples as a world-tone control. `age_speech_examples`
+  only shapes diction for baby-stage visible replies; global mood, conflict
+  policy, character generation and visual/story style belong in
+  `backend/data/tone_runtime.json`.
+- Do not inject `tone_runtime` into factual extractors unless there is a separate
+  product decision. Memory and aftermath extractors should stay factual; tone is
+  for generation prompts, context routing and image/story art direction.
 - Admin publish is local-only and opt-in. Keep `ADMIN_PUBLISH_ENABLED=false` on
   Hetzner; the publish job must stage only `managed_admin_git_paths()` and never
   `.admin-backups/` or unrelated dirty/untracked files.

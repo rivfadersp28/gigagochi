@@ -30,7 +30,7 @@ def _seed_admin_files(root) -> None:
         "world_descriptions/world_descriptions_dataset.json",
     ):
         (root / path).write_text('{"meta":{"version":1}}\n', encoding="utf-8")
-    for path in ("speech_runtime.json", "character_bible_template.json"):
+    for path in ("speech_runtime.json", "tone_runtime.json", "character_bible_template.json"):
         (root / path).write_text(
             (DATA_FIXTURE_ROOT / path).read_text(encoding="utf-8"),
             encoding="utf-8",
@@ -67,7 +67,7 @@ def test_local_admin_reads_managed_files(monkeypatch, tmp_path) -> None:
     assert payload["dialogue"]["collections"]
     assert [item["id"] for item in payload["files"]][:2] == [
         "speech_runtime",
-        "story_library",
+        "tone_runtime",
     ]
     assert payload["files"][0]["content"].startswith("{")
 
@@ -358,6 +358,7 @@ def test_production_push_output_parser_ignores_prompt_debug() -> None:
 
 def test_publish_path_filter_rejects_backups_and_unrelated_files() -> None:
     assert unexpected_publish_paths(["backend/data/story_library.json"]) == []
+    assert unexpected_publish_paths(["backend/data/tone_runtime.json"]) == []
     assert unexpected_publish_paths(
         [
             "backend/data/.admin-backups/story_library.json.bak",

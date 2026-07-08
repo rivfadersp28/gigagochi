@@ -93,6 +93,12 @@
   `WORLD_CONTEXT` prompt framing, unified `contextRouting`, shared
   `contextSources`, and the age plus hunger/happiness/energy `stateLayer` used
   by chat/proactive/ambient identity lines and semantic story params.
+- Global tone-of-voice now lives in `backend/data/tone_runtime.json` and is read by
+  `backend/app/services/tone_runtime.py`. The active `ironic_fantasy` preset is injected
+  into visible replies, context routing payloads, `WORLD_CONTEXT`, character-bible
+  generation and repair, `/story` generation and illustration prompts, travel full-story,
+  storyboard and image prompts. Age examples remain a separate speech-diction layer: baby
+  can talk like baby without making the world or plot babyish.
 - Proactive replies keep their memory-derived reason as a neutral context line
   inside the phrase plan. The old configurable `surfaceRules` layer was removed
   so proactive/ambient behavior is shaped by visible reply rules, state, memory,
@@ -131,8 +137,8 @@
   The router is local-dev only: it requires `ALLOW_DEV_TMA_AUTH=true` and a
   local client host.
 - Managed files are defined in `backend/app/services/local_admin_store.py` and
-  include `speech_runtime.json`, story datasets, age speech examples, world
-  descriptions, and the character-bible template.
+  include `speech_runtime.json`, `tone_runtime.json`, story datasets, age speech
+  examples, world descriptions, and the character-bible template.
 - Publishing those local admin data edits is a separate opt-in flow. The
   frontend calls `/api/admin/speech/publish`, backed by
   `backend/app/services/local_admin_publish.py`; the job saves dirty drafts,

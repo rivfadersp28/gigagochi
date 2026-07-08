@@ -47,6 +47,7 @@ from app.services.pet_reply_engine.speech_runtime import (
 )
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
 from app.services.story_library import search_story_library
+from app.services.tone_runtime import tone_context_payload, tone_prompt_block, tone_visual_style
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ STORY_STAT_NEGATIVE_EVIDENCE_RE = re.compile(
     re.IGNORECASE,
 )
 LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
-BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS = 3000
+BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS = 4200
 BACKGROUND_STORY_IMAGE_SCENE_STORY_MAX_CHARS = 2400
 BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS = 900
 BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION = (
@@ -84,13 +85,13 @@ BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION = (
     "всего сюжет должен быть четким как тз для художника"
 )
 BACKGROUND_STORY_IMAGE_STYLE = """
-Детальная японская фэнтези-манга, уютная обложка ранобэ или ключевой арт
-японской ролевой игры. Чистый контур, мягкая аниме-заливка, тёплые приглушённые
-цвета: кремовый, охра, мёд, древесный коричневый, оливковый, бирюза, малые
-красные акценты. Мягкий дневной свет, уютная атмосфера. Рисованные материалы,
-плоские цвета, мягкие тени. Фон с бытовыми деталями, растениями, инструментами,
-украшениями и живыми второстепенными персонажами. Настроение: уютное
-приключение, оптимизм, магическая повседневность.
+Детальная фэнтези-манга, обложка ранобэ или ключевой арт японской ролевой игры.
+Чистый контур, мягкая аниме-заливка, приглушённые природные цвета с резкими
+акцентами. Выразительный свет, странная магическая повседневность, читаемый
+центральный момент. Рисованные материалы, плоские цвета, мягкие тени. Фон с
+бытовыми деталями, растениями, инструментами, украшениями и живыми
+второстепенными персонажами. Настроение: приключение с лёгкой иронией,
+любопытством и ощущением, что магия слегка плохо настроена.
 """.strip()
 BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -568,7 +569,8 @@ def extract_background_story_image_scene(
                 "content": (
                     "Ты арт-директор для генерации иллюстраций. Не отвечай пользователю. "
                     "Верни только JSON по схеме. Сцена должна быть конкретной, визуальной "
-                    "и пригодной как техническое задание художнику."
+                    "и пригодной как техническое задание художнику.\n\n"
+                    f"{tone_prompt_block('imagePrompt')}"
                 ),
             },
             {
@@ -623,7 +625,10 @@ def build_background_story_image_prompt(
 
 Дизайн персонажа: {_background_story_image_identity(pet)}
 
-Стиль: {BACKGROUND_STORY_IMAGE_STYLE}
+Tone style:
+{tone_visual_style()}
+
+Базовая визуальная рамка: {BACKGROUND_STORY_IMAGE_STYLE}
 
 Правила: один законченный кадр, не раскадровка, не коллаж, не интерфейс.
 Питомец хорошо виден как главный герой. Не превращай питомца в человека, если он
@@ -866,6 +871,7 @@ def _background_routing_payload(
         "surface": "backgroundStory",
         "task": "generate_background_story",
         "eventType": background_story_default_event_type(),
+        "toneProfile": tone_context_payload("contextRouting"),
         "now": now_iso or _now_iso(),
         "timezone": timezone,
         "pet": pet_payload,
@@ -1549,7 +1555,13 @@ def generate_background_story(
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
-            {"role": "system", "content": background_story_system_prompt()},
+            {
+                "role": "system",
+                "content": (
+                    f"{background_story_system_prompt()}\n\n"
+                    f"{tone_prompt_block('backgroundStory')}"
+                ),
+            },
             {"role": "user", "content": user_content},
         ],
         "response_format": {

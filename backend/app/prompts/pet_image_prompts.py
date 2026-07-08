@@ -7,6 +7,7 @@ from typing import Any
 
 from app.prompts.style_direction import VISUAL_STYLE_FRAME
 from app.services.character_bible_template import character_bible_prompt_config
+from app.services.tone_runtime import tone_prompt_block, tone_visual_style
 
 PROMPT_MAX_LENGTH = 300
 
@@ -303,6 +304,8 @@ Use a tiny persona-file shape inspired by small AI pet projects:
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
 
+{tone_prompt_block("characterBible")}
+
 {lore_seed_block}
 
 WORLD_DESCRIPTION_ANCHORS:
@@ -412,10 +415,13 @@ def build_pet_sprite_sheet_prompt(
     bible_text = _sprite_bible_text(character_bible)
 
     return f"""
-Create one clean 4-column by 3-row character sprite sheet for a family-friendly virtual pet web app.
+Create one clean 4-column by 3-row character sprite sheet for a virtual pet web app.
 
 STYLE_FRAME:
 {STYLE_FRAME}
+
+TONE_VISUAL_DIRECTION:
+{tone_visual_style()}
 
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
@@ -482,10 +488,13 @@ def build_pet_single_sprite_prompt(
     }
 
     return f"""
-Create one standalone character sprite for a family-friendly virtual pet web app.
+Create one standalone character sprite for a virtual pet web app.
 
 STYLE_FRAME:
 {STYLE_FRAME}
+
+TONE_VISUAL_DIRECTION:
+{tone_visual_style()}
 
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
@@ -540,10 +549,13 @@ def build_pet_state_strip_prompt(
     }
 
     return f"""
-Create one horizontal 3-column character sprite strip for a family-friendly virtual pet web app.
+Create one horizontal 3-column character sprite strip for a virtual pet web app.
 
 STYLE_FRAME:
 {STYLE_FRAME}
+
+TONE_VISUAL_DIRECTION:
+{tone_visual_style()}
 
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
@@ -613,6 +625,9 @@ CORE_CONCEPT:
 
 STYLE_FRAME:
 {STYLE_FRAME}
+
+TONE_VISUAL_DIRECTION:
+{tone_visual_style()}
 
 VISUAL_ANCHORS:
 {bible_text}

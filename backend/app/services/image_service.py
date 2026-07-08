@@ -62,6 +62,7 @@ from app.services.prompt_debug import (
     log_image_generation_prompt,
     log_image_generation_response,
 )
+from app.services.tone_runtime import tone_prompt_block
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +235,8 @@ WORLD_DESCRIPTION_ANCHORS_USED:
 
 CHARACTER_BIBLE_STYLE_DIRECTION:
 {CHARACTER_BIBLE_STYLE_DIRECTION}
+
+{tone_prompt_block("characterBible")}
 
 CREATURE_DESCRIPTION_STYLE_GUIDE:
 Use the same clean creature-description logic as the original prompt: physical anchor,
