@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     openai_image_quality: str = "medium"
     openai_image_size: str = "1536x1152"
     openai_image_output_format: str = "png"
+    kandinsky_api_key: str | None = None
+    kandinsky_base_url: str = "https://studio.kandinskylab.ai/api"
+    kandinsky_t2i_task_type: str = "k6-image-t2i"
+    kandinsky_i2i_task_type: str = "k6-i2i"
+    kandinsky_image_resolution: str = "1280x768"
+    kandinsky_poll_interval_seconds: float = 5
     image_aspect_ratio: str = "322:540"
     openai_character_reasoning_effort: OpenAIReasoningEffort | None = "minimal"
     openai_chat_reasoning_effort: OpenAIReasoningEffort | None = "low"

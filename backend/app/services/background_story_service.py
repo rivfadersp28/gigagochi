@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from app.config import get_settings
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
-from app.services.image_service import generate_openrouter_image_bytes
+from app.services.image_service import generate_kandinsky_image_bytes
 from app.services.lite_overlay import (
     LITE_FACT_KINDS,
     LITE_FACT_SPHERES,
@@ -406,7 +406,7 @@ def build_background_story_image_prompt(
     reference_url = _current_asset_reference_url(pet)
     reference_text = (
         (
-            "A character reference image is attached through input_references.\n"
+            "A character reference image is attached to this image-generation task.\n"
             f"Reference URL for logging only: {reference_url}\n"
             "Use that reference image as the primary source for the pet design: preserve the "
             "same silhouette, face placement, colors, material feel, proportions, signature "
@@ -476,7 +476,7 @@ def generate_background_story_image_bytes(
     pet: LocalPetChatContext,
     story: BackgroundStoryResult,
 ) -> bytes:
-    return generate_openrouter_image_bytes(
+    return generate_kandinsky_image_bytes(
         build_background_story_image_prompt(pet=pet, story=story),
         label="background_story/image",
         input_references=_asset_input_references_for_background_story(pet),

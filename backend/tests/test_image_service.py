@@ -26,6 +26,7 @@ from app.services.image_service import (
     extract_state_strip_cells,
     generate_image_bytes,
     generate_individual_sprite_paths,
+    generate_kandinsky_image_bytes,
     generate_openrouter_image_bytes,
     generate_pet_asset_set,
     generate_sprite_sheet_bytes,
@@ -365,6 +366,135 @@ def test_generate_openrouter_image_bytes_uses_openrouter_with_openai_provider(
         "quality": "medium",
         "n": 1,
         "output_format": "png",
+    }
+
+
+def test_generate_kandinsky_image_bytes_uses_t2i_without_references(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        content = b"kandinsky-image"
+        text = ""
+        status_code = 200
+
+        def __init__(self, payload=None, content: bytes | None = None) -> None:
+            self.payload = payload or {}
+            if content is not None:
+                self.content = content
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    def fake_post(url, **kwargs):
+        captured["post_url"] = url
+        captured["post"] = kwargs
+        return FakeResponse({"task_id": "task-1"})
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/tasks/task-1"):
+            return FakeResponse({"status": "done"})
+        if url.endswith("/tasks/task-1/result"):
+            return FakeResponse(content=b"kandinsky-image")
+        raise AssertionError(f"unexpected GET {url}")
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            kandinsky_api_key="kandinsky-token",
+            kandinsky_base_url="https://studio.kandinskylab.ai/api",
+            kandinsky_t2i_task_type="k6-image-t2i",
+            kandinsky_i2i_task_type="k6-i2i",
+            kandinsky_image_resolution="1280x768",
+            kandinsky_poll_interval_seconds=1,
+            openai_image_timeout_seconds=180,
+        ),
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+
+    result = generate_kandinsky_image_bytes("story prompt", label="background_story/image")
+
+    assert result == b"kandinsky-image"
+    assert captured["post_url"] == "https://studio.kandinskylab.ai/api/tasks/k6-image-t2i"
+    assert captured["post"]["headers"] == {
+        "Authorization": "Bearer kandinsky-token",
+        "Content-Type": "application/json",
+    }
+    assert captured["post"]["json"] == {
+        "params": {
+            "query": "story prompt",
+            "resolution": "1280x768",
+        }
+    }
+
+
+def test_generate_kandinsky_image_bytes_uses_i2i_with_reference(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        text = ""
+        status_code = 200
+
+        def __init__(self, payload=None, content: bytes = b"") -> None:
+            self.payload = payload or {}
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    def fake_post(url, **kwargs):
+        captured["post_url"] = url
+        captured["post"] = kwargs
+        return FakeResponse({"task_id": "task-2"})
+
+    def fake_get(url, **kwargs):
+        if url == "https://cdn.example.test/pet.png":
+            return FakeResponse(content=b"sprite-image")
+        if url.endswith("/tasks/task-2"):
+            return FakeResponse({"status": "done"})
+        if url.endswith("/tasks/task-2/result"):
+            return FakeResponse(content=b"kandinsky-i2i-image")
+        raise AssertionError(f"unexpected GET {url}")
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            kandinsky_api_key="kandinsky-token",
+            kandinsky_base_url="https://studio.kandinskylab.ai/api",
+            kandinsky_t2i_task_type="k6-image-t2i",
+            kandinsky_i2i_task_type="k6-i2i",
+            kandinsky_image_resolution="1280x768",
+            kandinsky_poll_interval_seconds=1,
+            openai_image_timeout_seconds=180,
+        ),
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+
+    result = generate_kandinsky_image_bytes(
+        "story prompt",
+        label="background_story/image",
+        input_references=[
+            {
+                "type": "image_url",
+                "image_url": {"url": "https://cdn.example.test/pet.png"},
+            }
+        ],
+    )
+
+    assert result == b"kandinsky-i2i-image"
+    assert captured["post_url"] == "https://studio.kandinskylab.ai/api/tasks/k6-i2i"
+    assert captured["post"]["json"] == {
+        "params": {
+            "image": [base64.b64encode(b"sprite-image").decode("utf-8")],
+            "query": "story prompt",
+        }
     }
 
 

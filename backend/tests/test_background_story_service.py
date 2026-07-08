@@ -79,14 +79,14 @@ def _pet() -> LocalPetChatContext:
 def test_background_story_image_uses_story_and_pet_identity(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
-    def fake_generate_openrouter_image_bytes(prompt: str, **kwargs):
+    def fake_generate_kandinsky_image_bytes(prompt: str, **kwargs):
         calls.append({"prompt": prompt, **kwargs})
         return b"story-image"
 
     monkeypatch.setattr(
         background_story_service,
-        "generate_openrouter_image_bytes",
-        fake_generate_openrouter_image_bytes,
+        "generate_kandinsky_image_bytes",
+        fake_generate_kandinsky_image_bytes,
     )
     story = background_story_service.BackgroundStoryResult(
         title="След под кроной",
@@ -133,7 +133,7 @@ def test_background_story_image_passes_current_sprite_reference(monkeypatch) -> 
         }
     )
 
-    def fake_generate_openrouter_image_bytes(prompt: str, **kwargs):
+    def fake_generate_kandinsky_image_bytes(prompt: str, **kwargs):
         calls.append({"prompt": prompt, **kwargs})
         return b"story-image"
 
@@ -147,8 +147,8 @@ def test_background_story_image_passes_current_sprite_reference(monkeypatch) -> 
     )
     monkeypatch.setattr(
         background_story_service,
-        "generate_openrouter_image_bytes",
-        fake_generate_openrouter_image_bytes,
+        "generate_kandinsky_image_bytes",
+        fake_generate_kandinsky_image_bytes,
     )
     story = background_story_service.BackgroundStoryResult(
         title="След под кроной",
@@ -179,7 +179,7 @@ def test_background_story_image_passes_current_sprite_reference(monkeypatch) -> 
         }
     ]
     prompt = str(calls[0]["prompt"])
-    assert "A character reference image is attached through input_references" in prompt
+    assert "A character reference image is attached to this image-generation task" in prompt
     assert "Use that reference image as the primary source for the pet design" in prompt
     assert "do not invent a new character design" in prompt
 

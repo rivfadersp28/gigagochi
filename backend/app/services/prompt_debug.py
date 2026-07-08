@@ -283,6 +283,7 @@ def image_generation_prompt_snapshot(
         "quality": request_kwargs.get("quality"),
         "n": request_kwargs.get("n"),
         "output_format": request_kwargs.get("output_format"),
+        "inputReferenceCount": len(request_kwargs.get("input_references") or []),
     }
 
 

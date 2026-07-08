@@ -6,6 +6,7 @@ import logging
 import math
 import re
 import subprocess
+import time
 import uuid
 from collections import deque
 from datetime import UTC, datetime
@@ -63,6 +64,16 @@ from app.services.prompt_debug import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class MissingKandinskyAPIKey(RuntimeError):
+    pass
+
+
+class KandinskyTaskError(RuntimeError):
+    pass
+
+
 BACKGROUND_REMOVAL_SCRIPT = (
     Path(__file__).resolve().parents[2] / "scripts" / "remove_background.mjs"
 )
@@ -855,6 +866,156 @@ def _image_result_bytes(first: Any) -> bytes:
     raise RuntimeError("IMAGE_RESPONSE_EMPTY")
 
 
+def _clean_setting_string(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _kandinsky_api_key(settings: Any) -> str:
+    api_key = _clean_setting_string(getattr(settings, "kandinsky_api_key", None))
+    if not api_key:
+        raise MissingKandinskyAPIKey
+    return api_key
+
+
+def _kandinsky_base_url(settings: Any) -> str:
+    return (
+        _clean_setting_string(getattr(settings, "kandinsky_base_url", None))
+        or "https://studio.kandinskylab.ai/api"
+    ).rstrip("/")
+
+
+def _kandinsky_headers(settings: Any) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {_kandinsky_api_key(settings)}",
+        "Content-Type": "application/json",
+    }
+
+
+def _reference_url_from_entry(reference: dict[str, Any]) -> str:
+    image_url = reference.get("image_url")
+    if isinstance(image_url, dict):
+        return _clean_setting_string(image_url.get("url"))
+    if isinstance(image_url, str):
+        return _clean_setting_string(image_url)
+    return _clean_setting_string(reference.get("url"))
+
+
+def _kandinsky_reference_image_b64(image_url: str) -> str:
+    if image_url.startswith("data:image/"):
+        header, separator, payload = image_url.partition(",")
+        if not separator or not payload:
+            return ""
+        if ";base64" in header:
+            return payload.replace("\n", "").replace("\r", "").strip()
+        return base64.b64encode(payload.encode("utf-8")).decode("utf-8")
+
+    response = httpx.get(image_url, timeout=30)
+    response.raise_for_status()
+    return base64.b64encode(response.content).decode("utf-8")
+
+
+def _kandinsky_reference_images(
+    input_references: list[dict[str, Any]] | None,
+) -> list[str]:
+    encoded_images: list[str] = []
+    for reference in input_references or []:
+        image_url = _reference_url_from_entry(reference)
+        if not image_url:
+            continue
+        encoded_image = _kandinsky_reference_image_b64(image_url)
+        if encoded_image:
+            encoded_images.append(encoded_image)
+        if len(encoded_images) == 4:
+            break
+    return encoded_images
+
+
+def _kandinsky_create_task(
+    settings: Any,
+    *,
+    task_type: str,
+    params: dict[str, Any],
+    label: str,
+) -> str:
+    url = f"{_kandinsky_base_url(settings)}/tasks/{task_type}"
+    response = httpx.post(
+        url,
+        headers=_kandinsky_headers(settings),
+        json={"params": params},
+        timeout=30,
+    )
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError:
+        logger.error(
+            "kandinsky_image_task_create failed label=%s task_type=%s status=%s response=%s",
+            label,
+            task_type,
+            response.status_code,
+            response.text[:2000],
+        )
+        raise
+    payload = response.json()
+    task_id = _clean_setting_string(payload.get("task_id") or payload.get("id"))
+    if not task_id:
+        raise KandinskyTaskError("KANDINSKY_TASK_ID_MISSING")
+    return task_id
+
+
+def _kandinsky_wait_done(settings: Any, *, task_id: str, label: str) -> dict[str, Any]:
+    url = f"{_kandinsky_base_url(settings)}/tasks/{task_id}"
+    headers = _kandinsky_headers(settings)
+    timeout_seconds = max(1.0, float(getattr(settings, "openai_image_timeout_seconds", 180)))
+    poll_seconds = max(1.0, float(getattr(settings, "kandinsky_poll_interval_seconds", 5)))
+    deadline = time.monotonic() + timeout_seconds
+
+    while True:
+        response = httpx.get(url, headers=headers, timeout=30)
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError:
+            logger.error(
+                "kandinsky_image_task_status failed label=%s task_id=%s status=%s response=%s",
+                label,
+                task_id,
+                response.status_code,
+                response.text[:2000],
+            )
+            raise
+        payload = response.json()
+        status = _clean_setting_string(payload.get("status")).lower()
+        if status == "done":
+            return payload
+        if status in {"failed", "error"}:
+            error = payload.get("error") or payload.get("message") or "unknown error"
+            raise KandinskyTaskError(f"KANDINSKY_TASK_FAILED: {error}")
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            raise TimeoutError(f"Kandinsky image task timed out: {task_id}")
+        time.sleep(min(poll_seconds, remaining_seconds))
+
+
+def _kandinsky_download_result(settings: Any, *, task_id: str, label: str) -> bytes:
+    url = f"{_kandinsky_base_url(settings)}/tasks/{task_id}/result"
+    response = httpx.get(url, headers=_kandinsky_headers(settings), timeout=60)
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError:
+        logger.error(
+            "kandinsky_image_result failed label=%s task_id=%s status=%s response=%s",
+            label,
+            task_id,
+            response.status_code,
+            response.text[:2000],
+        )
+        raise
+    if not response.content:
+        raise RuntimeError("KANDINSKY_IMAGE_RESPONSE_EMPTY")
+    return response.content
+
+
 def _generate_openrouter_image_bytes(
     settings: Any,
     prompt: str,
@@ -907,6 +1068,61 @@ def _generate_openrouter_image_bytes(
     if not data:
         raise RuntimeError("IMAGE_RESPONSE_EMPTY")
     return _image_result_bytes(data[0])
+
+
+def generate_kandinsky_image_bytes(
+    prompt: str,
+    *,
+    label: str,
+    input_references: list[dict[str, Any]] | None = None,
+) -> bytes:
+    settings = get_settings()
+    reference_images = _kandinsky_reference_images(input_references)
+    if reference_images:
+        task_type = _clean_setting_string(getattr(settings, "kandinsky_i2i_task_type", None))
+        task_type = task_type or "k6-i2i"
+        params: dict[str, Any] = {
+            "image": reference_images,
+            "query": prompt,
+        }
+    else:
+        task_type = _clean_setting_string(getattr(settings, "kandinsky_t2i_task_type", None))
+        task_type = task_type or "k6-image-t2i"
+        params = {
+            "query": prompt,
+            "resolution": (
+                _clean_setting_string(getattr(settings, "kandinsky_image_resolution", None))
+                or "1280x768"
+            ),
+        }
+
+    request_kwargs = {
+        "model": f"kandinsky/{task_type}",
+        "prompt": prompt,
+        "resolution": params.get("resolution"),
+        "n": 1,
+        "input_references": input_references or [],
+        "timeout": getattr(settings, "openai_image_timeout_seconds", 180),
+    }
+    log_image_generation_prompt(label, request_kwargs)
+    task_id = _kandinsky_create_task(
+        settings,
+        task_type=task_type,
+        params=params,
+        label=label,
+    )
+    status_payload = _kandinsky_wait_done(settings, task_id=task_id, label=label)
+    image_bytes = _kandinsky_download_result(settings, task_id=task_id, label=label)
+    log_image_generation_response(
+        label,
+        request_kwargs,
+        {
+            "id": task_id,
+            "status": status_payload.get("status"),
+            "resultBytes": len(image_bytes),
+        },
+    )
+    return image_bytes
 
 
 def generate_image_bytes(
