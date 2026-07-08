@@ -90,7 +90,6 @@ const AUXILIARY_FILE_IDS = [
   "story_constructor",
   "travel_story_templates",
   "world_descriptions",
-  "external_character_sources",
 ] as const;
 
 function isAuxiliaryFileId(id: string): id is (typeof AUXILIARY_FILE_IDS)[number] {

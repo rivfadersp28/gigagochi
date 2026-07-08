@@ -20,7 +20,6 @@ DATA_FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "data"
 def _seed_admin_files(root) -> None:
     (root / "age_speech_examples").mkdir(parents=True)
     (root / "world_descriptions").mkdir(parents=True)
-    (root / "external_character_sources").mkdir(parents=True)
     for path in (
         "story_library.json",
         "story_constructor.json",
@@ -29,10 +28,6 @@ def _seed_admin_files(root) -> None:
         "world_descriptions/world_descriptions_dataset.json",
     ):
         (root / path).write_text('{"meta":{"version":1}}\n', encoding="utf-8")
-    (root / "external_character_sources/fragments.jsonl").write_text(
-        '{"id":"a","text":"seed","source_url":"https://example.com"}\n',
-        encoding="utf-8",
-    )
     for path in ("speech_runtime.json", "character_bible_template.json"):
         (root / path).write_text(
             (DATA_FIXTURE_ROOT / path).read_text(encoding="utf-8"),

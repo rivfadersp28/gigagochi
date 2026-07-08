@@ -16,10 +16,6 @@ from app.prompts.world_description_anchors import (
     format_world_description_anchors_for_prompt,
     select_world_description_anchors,
 )
-from app.services.external_character_sources import (
-    external_fragments_prompt_block,
-    select_external_character_fragments,
-)
 from app.services.image_service import (
     BACKGROUND_REMOVAL_SCRIPT,
     CHARACTER_BIBLE_SCHEMA,
@@ -562,18 +558,13 @@ def test_character_bible_schema_is_compact() -> None:
 
 
 def test_character_bible_prompt_requests_species_specific_lore() -> None:
-    prompt = build_character_bible_prompt(
-        "маленький дракон с мягкими крыльями",
-        external_source_fragments="- test_source [external; seed_reply; en]: concrete line",
-    )
+    prompt = build_character_bible_prompt("маленький дракон с мягкими крыльями")
 
     assert "compact character profile" in prompt
     assert "tiny persona-file shape" in prompt
     assert "physical anchor" in prompt
     assert "mechanism" in prompt
     assert "habitat" in prompt
-    assert "EXTERNAL_SOURCE_FRAGMENT_MIX" not in prompt
-    assert "test_source" not in prompt
     assert "not an app, AI, game object" in prompt
     assert "digital companion" not in prompt
     assert "visibly blend at least 4 different source fragments" not in prompt
@@ -624,18 +615,6 @@ def test_create_lore_seed_uses_curated_dimensions() -> None:
         "growth_clue",
     }
     assert seed["body_mechanism"] == "заметная часть тела хранит энергию и меняется от состояния"
-
-
-def test_external_source_fragments_are_available_for_character_generation() -> None:
-    fragments = select_external_character_fragments(
-        user_description="робот с чашкой кофе",
-        count=6,
-    )
-    block = external_fragments_prompt_block(fragments)
-
-    assert len(fragments) >= 4
-    assert "external_a16z_companion_app" in block
-    assert all(fragment.source_url.startswith("https://") for fragment in fragments)
 
 
 def test_character_bible_quality_flags_overused_defaults_and_bad_physics() -> None:

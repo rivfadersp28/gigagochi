@@ -103,7 +103,7 @@ def _collect_character_bible_text(value: Any) -> str:
                 collect(child)
         elif isinstance(item, dict):
             for key, child in item.items():
-                if key in ("external_source_fragments_used", "world_description_anchors_used"):
+                if key == "world_description_anchors_used":
                     continue
                 collect(child)
 
@@ -179,7 +179,6 @@ def _repair_character_bible_prompt(
     character_bible: dict[str, Any],
     issues: tuple[str, ...],
     lore_seed: dict[str, str] | None = None,
-    external_source_fragments: str | None = None,
     world_description_anchors: str | None = None,
 ) -> str:
     lore_seed_text = (
@@ -194,9 +193,6 @@ USER_CHARACTER_DESCRIPTION:
 {description}
 {lore_seed_text}
 
-EXTERNAL_SOURCE_FRAGMENT_MIX_USED:
-{external_source_fragments or "нет локального внешнего корпуса"}
-
 WORLD_DESCRIPTION_ANCHORS_USED:
 {world_description_anchors or "нет"}
 
@@ -205,9 +201,7 @@ CHARACTER_BIBLE_STYLE_DIRECTION:
 
 CREATURE_DESCRIPTION_STYLE_GUIDE:
 Use the same clean creature-description logic as the original prompt: physical anchor,
-mechanism, behavior trigger, habitat, want/conflict, and voice. External fragments are weak
-dialogue-rhythm references only; they must not preserve random settings, jobs, props, object
-societies, or backstory.
+mechanism, behavior trigger, habitat, want/conflict, and voice.
 
 QUALITY_ISSUES:
 {", ".join(issues)}
@@ -219,8 +213,6 @@ Repair rules:
 - Preserve Character Profile V2 fields: identity, voice, inner_state, world, dialogue_moves,
   openings, provenance, extensions, and schema_version=2.
 - Keep 8-12 voice.sample_replies, 5-8 lorebook entries, and 3-5 dialogue_moves.
-- Do not preserve random concrete settings from EXTERNAL_SOURCE_FRAGMENT_MIX_USED. Keep only useful
-  reply rhythm if it fits the current creature.
 - Preserve the transformed habitat logic from WORLD_DESCRIPTION_ANCHORS_USED when repairing
   world, home, origin, routines, objects, sensory details, and story seeds. Do not copy anchor
   text verbatim.

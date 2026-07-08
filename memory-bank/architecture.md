@@ -65,7 +65,7 @@
   local client host.
 - Managed files are defined in `backend/app/services/local_admin_store.py` and
   include `speech_runtime.json`, story datasets, age speech examples, world
-  descriptions, and external character-source JSONL.
+  descriptions, and the character-bible template.
 - Publishing those local admin data edits is a separate opt-in flow. The
   frontend calls `/api/admin/speech/publish`, backed by
   `backend/app/services/local_admin_publish.py`; the job saves dirty drafts,

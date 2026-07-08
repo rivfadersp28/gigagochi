@@ -284,7 +284,6 @@ mechanism as the explanation for everything.
 def build_character_bible_prompt(
     user_description: str,
     lore_seed: dict[str, str] | None = None,
-    external_source_fragments: str | None = None,
     world_description_anchors: str | None = None,
 ) -> str:
     safe_description = rewrite_known_character_references(user_description.strip())

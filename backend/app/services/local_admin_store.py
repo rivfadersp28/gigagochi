@@ -92,13 +92,6 @@ MANAGED_FILES: tuple[ManagedFile, ...] = (
         "json",
         "JSON schema и prompt-правила для новых characterBible, включая voice.catchphrases.",
     ),
-    ManagedFile(
-        "external_character_sources",
-        "Внешние фрагменты",
-        "external_character_sources/fragments.jsonl",
-        "jsonl",
-        "Справочный JSONL-корпус; текущий runtime создания не читает его напрямую.",
-    ),
 )
 
 
@@ -491,20 +484,6 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "summary": (
                     "Шаблон новых characterBible: JSON schema, prompt-правила и mapping "
                     "voice.catchphrases -> lore.voice.favorite_phrases."
-                ),
-            },
-            {
-                "id": "external_character_sources",
-                "label": "External character fragments",
-                "role": "seed",
-                "surfaces": [],
-                "source": "backend/data",
-                "editable": True,
-                "fileId": "external_character_sources",
-                "configPath": "jsonl",
-                "summary": (
-                    "Справочный корпус; текущий runtime создания и диалога не читает "
-                    "его напрямую."
                 ),
             },
         ],
