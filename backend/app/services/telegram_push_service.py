@@ -40,6 +40,9 @@ STAT_DECAY_PER_HOUR = 100 / STAT_FULL_DECAY_HOURS
 DAILY_PUSH_REASON = "Ежедневный короткий пуш владельцу от питомца."
 MANUAL_PUSH_REASON = "Ручной debug-триггер из админки."
 MAX_RECENT_STORY_EVENTS = 10
+STORY_STAT_MAX_ITEMS = 2
+STORY_STAT_MAX_SINGLE_DAMAGE = 25
+STORY_STAT_MAX_TOTAL_DAMAGE = 35
 
 logger = logging.getLogger(__name__)
 _store_lock = Lock()
@@ -176,43 +179,173 @@ def _merge_record_lite_overlay_patch(
     merge_lite_overlay_patch(overlay, patch)
 
 
+def _compact_event_text(value: Any, *, limit: int = 500) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).split())[:limit].rstrip()
+
+
+def _event_string_list(value: Any, *, limit: int, item_limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = _compact_event_text(item, limit=item_limit)
+        if text:
+            result.append(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _event_status_changes(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        entity = _compact_event_text(item.get("entity"), limit=120)
+        state = _compact_event_text(item.get("state"), limit=80)
+        owner = _compact_event_text(item.get("owner"), limit=120)
+        if entity and state:
+            result.append({"entity": entity, "state": state, "owner": owner})
+        if len(result) >= 5:
+            break
+    return result
+
+
+def _event_stat_impacts(value: Any, *, legacy: Any = None) -> list[dict[str, Any]]:
+    source = value if isinstance(value, list) else ([legacy] if isinstance(legacy, dict) else [])
+    result: list[dict[str, Any]] = []
+    for item in source:
+        if not isinstance(item, dict):
+            continue
+        stat = item.get("stat")
+        if stat not in STAT_KEYS:
+            continue
+        try:
+            amount = float(item.get("amount"))
+        except (TypeError, ValueError):
+            continue
+        if amount == 0:
+            continue
+        result.append(
+            {
+                "stat": stat,
+                "amount": -max(1, min(STORY_STAT_MAX_SINGLE_DAMAGE, round(abs(amount)))),
+                "reason": _compact_event_text(item.get("reason"), limit=280),
+            }
+        )
+        if len(result) >= STORY_STAT_MAX_ITEMS:
+            break
+    return result
+
+
+def _normalize_recent_story_event_record(
+    item: dict[str, Any],
+    *,
+    last_story: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    source_story = last_story if isinstance(last_story, dict) else {}
+    summary = (
+        _compact_event_text(item.get("summary"), limit=500)
+        or _compact_event_text(item.get("compactText"), limit=500)
+        or _compact_event_text(item.get("storyText"), limit=500)
+        or _compact_event_text(source_story.get("storyText"), limit=500)
+        or _compact_event_text(item.get("title") or source_story.get("title"), limit=120)
+    )
+    if not summary:
+        return None
+    compact_text = _compact_event_text(item.get("compactText"), limit=500) or summary
+    actions = _event_string_list(item.get("actions"), limit=6, item_limit=80)
+    outcome = _compact_event_text(item.get("outcome"), limit=260)
+    canonical_facts = _event_string_list(item.get("canonicalFacts"), limit=5, item_limit=180)
+    if not canonical_facts:
+        canonical_facts = [fact for fact in [*actions[:4], outcome] if fact][:5]
+    event = {
+        **item,
+        "title": _compact_event_text(item.get("title") or source_story.get("title"), limit=120),
+        "summary": summary,
+        "compactText": compact_text,
+        "eventType": _compact_event_text(
+            item.get("eventType") or source_story.get("eventType"),
+            limit=60,
+        ),
+        "valence": _compact_event_text(
+            item.get("valence") or source_story.get("valence"),
+            limit=20,
+        ),
+        "participants": _event_string_list(item.get("participants"), limit=6, item_limit=80),
+        "actions": actions,
+        "objects": _event_string_list(item.get("objects"), limit=6, item_limit=80),
+        "location": _compact_event_text(item.get("location"), limit=160),
+        "outcome": outcome,
+        "canonicalFacts": canonical_facts,
+        "statusChanges": _event_status_changes(item.get("statusChanges")),
+        "statImpacts": _event_stat_impacts(
+            item.get("statImpacts") or source_story.get("statImpacts"),
+            legacy=item.get("statImpact") or source_story.get("statImpact"),
+        ),
+        "tags": _event_string_list(
+            item.get("tags") or source_story.get("tags"),
+            limit=8,
+            item_limit=60,
+        ),
+        "createdAt": _compact_event_text(item.get("createdAt"), limit=80) or _iso(),
+        "source": _compact_event_text(item.get("source"), limit=80) or "background_story",
+    }
+    return {key: value for key, value in event.items() if value not in (None, "", [], {})}
+
+
 def _record_recent_story_events(record: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not isinstance(record, dict):
         return []
     raw_events = record.get("recentStoryEvents")
     events: list[dict[str, Any]] = []
+    last_story = record.get("lastStory") if isinstance(record.get("lastStory"), dict) else None
     if isinstance(raw_events, list):
         for item in raw_events[-MAX_RECENT_STORY_EVENTS:]:
             if isinstance(item, dict):
-                events.append(item)
+                event = _normalize_recent_story_event_record(item, last_story=last_story)
+                if event:
+                    events.append(event)
     if events:
         return events
-    last_story = record.get("lastStory")
     if isinstance(last_story, dict):
         summary = (
             last_story.get("summary") or last_story.get("storyText") or last_story.get("title")
         )
         if isinstance(summary, str) and summary.strip():
-            tags = last_story.get("tags")
-            return [
+            fallback = _normalize_recent_story_event_record(
                 {
                     "title": last_story.get("title"),
                     "summary": summary.strip(),
                     "eventType": last_story.get("eventType"),
-                    "tags": tags if isinstance(tags, list) else [],
+                    "tags": (
+                        last_story.get("tags")
+                        if isinstance(last_story.get("tags"), list)
+                        else []
+                    ),
                     "source": "last_story_fallback",
-                }
-            ]
+                },
+                last_story=last_story,
+            )
+            return [fallback] if fallback else []
     return events
 
 
 def _append_recent_story_event(
     record: dict[str, Any],
     event: dict[str, Any] | None,
+    *,
+    last_story: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     events = _record_recent_story_events(record)
     if isinstance(event, dict) and event:
-        events.append(event)
+        normalized_event = _normalize_recent_story_event_record(event, last_story=last_story)
+        if normalized_event:
+            events.append(normalized_event)
     return events[-MAX_RECENT_STORY_EVENTS:]
 
 
@@ -224,6 +357,50 @@ def _recent_story_events_patch(record: dict[str, Any] | None) -> dict[str, Any] 
 def _clamp_stat(value: Any) -> int:
     numeric = value if isinstance(value, (int, float)) else 0
     return max(0, min(100, round(numeric)))
+
+
+def _story_stat_damage(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return 0
+    if amount == 0:
+        return 0
+    return max(1, min(STORY_STAT_MAX_SINGLE_DAMAGE, round(abs(amount))))
+
+
+def _normalize_story_stat_impacts(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        candidates = [item for item in value if isinstance(item, dict)]
+    elif isinstance(value, dict):
+        applies = value.get("applies") is True and value.get("isNegativeOutcome") is True
+        stat = value.get("stat")
+        candidates = [value] if applies and stat in STAT_KEYS else []
+    else:
+        candidates = []
+
+    result: list[dict[str, Any]] = []
+    seen_stats: set[str] = set()
+    total_damage = 0
+    for item in candidates:
+        stat = item.get("stat")
+        if stat not in STAT_KEYS or stat in seen_stats:
+            continue
+        damage = _story_stat_damage(item.get("amount"))
+        if damage <= 0:
+            continue
+        remaining_total = STORY_STAT_MAX_TOTAL_DAMAGE - total_damage
+        if remaining_total <= 0:
+            break
+        applied_damage = min(damage, remaining_total)
+        result.append({"stat": stat, "damage": applied_damage})
+        seen_stats.add(stat)
+        total_damage += applied_damage
+        if len(result) >= STORY_STAT_MAX_ITEMS:
+            break
+    return result
 
 
 def _stat_tick_map(record: dict[str, Any], fallback: datetime | None = None) -> dict[str, datetime]:
@@ -682,7 +859,7 @@ def send_manual_push(
 
 def _apply_story_stat_impact(
     record: dict[str, Any],
-    stat_impact: dict[str, Any] | None,
+    stat_impact: Any,
     *,
     now: datetime,
 ) -> tuple[
@@ -692,34 +869,47 @@ def _apply_story_stat_impact(
     dict[str, int] | None,
 ]:
     pet = deepcopy(record.get("pet")) if isinstance(record.get("pet"), dict) else {}
-    if not isinstance(stat_impact, dict) or stat_impact.get("applies") is not True:
-        stats_delta = {key: 0 for key in STAT_KEYS} if isinstance(stat_impact, dict) else None
+    raw_impacts = _normalize_story_stat_impacts(stat_impact)
+    if not raw_impacts:
+        stats_delta = (
+            {key: 0 for key in STAT_KEYS}
+            if stat_impact is not None
+            else None
+        )
         return pet, None, None, stats_delta
 
-    stat = stat_impact.get("stat")
-    if stat not in STAT_KEYS:
-        return pet, None, None, {key: 0 for key in STAT_KEYS}
-
-    amount = stat_impact.get("amount")
-    impact_amount = amount if isinstance(amount, (int, float)) else 25
-    impact_amount = max(0, min(100, impact_amount))
-    if impact_amount <= 0:
-        return pet, None, None, {key: 0 for key in STAT_KEYS}
-
     current_stats = _record_current_stats(record, now)
-    previous_value = current_stats[stat]
-    current_stats[stat] = _clamp_stat(current_stats[stat] - impact_amount)
     stats_delta = {key: 0 for key in STAT_KEYS}
-    stats_delta[stat] = max(0, previous_value - current_stats[stat])
+    changed_keys: list[str] = []
+    for impact in raw_impacts:
+        stat = impact["stat"]
+        previous_value = current_stats[stat]
+        current_stats[stat] = _clamp_stat(current_stats[stat] - impact["damage"])
+        delta = max(0, previous_value - current_stats[stat])
+        if delta <= 0:
+            continue
+        stats_delta[stat] += delta
+        changed_keys.append(stat)
+
+    if not changed_keys:
+        return pet, None, None, stats_delta
+
     stats = pet.setdefault("stats", {})
     if not isinstance(stats, dict):
         stats = {}
         pet["stats"] = stats
-    stats[stat] = current_stats[stat]
+    for stat in changed_keys:
+        stats[stat] = current_stats[stat]
 
     ticks = _stat_tick_map(record, fallback=now)
-    ticks[stat] = now
-    return pet, _stats_patch(stats=current_stats, ticks=ticks, keys=(stat,)), ticks, stats_delta
+    for stat in changed_keys:
+        ticks[stat] = now
+    return (
+        pet,
+        _stats_patch(stats=current_stats, ticks=ticks, keys=tuple(changed_keys)),
+        ticks,
+        stats_delta,
+    )
 
 
 def generate_story_for_telegram_user(
@@ -745,10 +935,23 @@ def generate_story_for_telegram_user(
     now = _now()
     now_iso = _iso(now)
     recent_story_event = getattr(result, "recent_story_event", None)
-    stat_impact = getattr(result, "stat_impact", None)
+    stat_impacts = list(getattr(result, "stat_impacts", ()) or [])
+    stat_impact = getattr(result, "stat_impact", None) or (
+        stat_impacts[0] if stat_impacts else None
+    )
+    if not stat_impacts and stat_impact:
+        stat_impacts = [stat_impact]
+    if isinstance(recent_story_event, dict):
+        result.prompt_debug.append(
+            {
+                "event": "background_story_recent_event_saved",
+                "recentEventId": recent_story_event.get("id"),
+                "title": recent_story_event.get("title"),
+            }
+        )
     next_pet, stats_patch, stat_ticks, stats_delta = _apply_story_stat_impact(
         record,
-        stat_impact,
+        stat_impacts,
         now=now,
     )
     last_story = {
@@ -759,7 +962,9 @@ def generate_story_for_telegram_user(
         "valence": result.valence,
         "tags": list(result.tags),
         "ragText": result.rag_text,
+        "statImpacts": stat_impacts,
         "statImpact": stat_impact,
+        "statValidation": getattr(result, "stat_validation", None),
     }
     if stats_delta is not None:
         last_story["statsDelta"] = stats_delta
@@ -773,7 +978,11 @@ def generate_story_for_telegram_user(
         "lastStoryErrorCode": None,
         "lastStoryErrorAt": None,
         "lastStory": last_story,
-        "recentStoryEvents": _append_recent_story_event(record, recent_story_event),
+        "recentStoryEvents": _append_recent_story_event(
+            record,
+            recent_story_event,
+            last_story=last_story,
+        ),
     }
     if stat_ticks is not None:
         next_record["lastStatsTickAt"] = _legacy_stats_tick(stat_ticks)
@@ -806,6 +1015,7 @@ def generate_story_for_telegram_user(
         "liteOverlayPatch": result.lite_overlay_patch,
         "recentStoryEvent": recent_story_event,
         "statsPatch": stats_patch,
+        "statImpacts": stat_impacts,
         "statImpact": stat_impact,
         "debug": {"promptDebug": result.prompt_debug} if include_debug else None,
     }

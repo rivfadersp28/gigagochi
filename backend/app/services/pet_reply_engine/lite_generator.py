@@ -65,6 +65,7 @@ from app.services.pet_reply_engine.speech_runtime import (
     context_routing_sources,
     context_routing_system_prompt,
     context_source_enabled,
+    context_source_mode,
     context_source_modes,
     dialogue_state_modifier,
     identity_prompt,
@@ -101,6 +102,7 @@ USER_MEMORY_KINDS = (
 FACE_HINTS = ("happy", "excited", "curious", "content", "grumpy", "sleepy")
 MAX_MEMORY_CONTEXT_ITEMS = 5
 MAX_RECENT_AMBIENT_REPLIES = 5
+MAX_RECENT_EVENTS_CONTEXT_ITEMS = 3
 AMBIENT_MEMORY_KINDS = {"preference", "relationship", "routine", "boundary"}
 
 PhraseSurface = Literal["chat", "proactive", "ambient", "push"]
@@ -115,6 +117,7 @@ class PhrasePlan:
     character_block: str | None = None
     memory_block: str | None = None
     voice_block: str | None = None
+    recent_events_block: str | None = None
     world_block: str | None = None
     recent_ambient_block: str | None = None
     dialogue_block: str | None = None
@@ -125,6 +128,7 @@ class PhrasePlan:
             self.identity_line,
             self.character_block,
             self.voice_block,
+            self.recent_events_block,
             self.world_block,
             self.memory_block,
             self.recent_ambient_block,
@@ -691,6 +695,189 @@ def _source_enabled(
     )
 
 
+RECENT_EVENT_RECENT_RE = re.compile(
+    r"\b("
+    r"недавн\w*|последн\w*|сейчас|теперь|случил\w*|"
+    r"произош\w*|истори\w*"
+    r")\b",
+    re.IGNORECASE,
+)
+RECENT_EVENT_STATUS_RE = re.compile(
+    r"\b("
+    r"украл\w*|украден\w*|утащил\w*|вернул\w*|верну\w*|"
+    r"защитил\w*|потерял\w*|потерян\w*|где|наш[её]л\w*|"
+    r"нашл\w*|остал\w*)\b",
+    re.IGNORECASE,
+)
+RECENT_EVENT_STOPWORDS = {
+    "что",
+    "как",
+    "где",
+    "кто",
+    "это",
+    "тебя",
+    "тебе",
+    "твой",
+    "твоя",
+    "твое",
+    "твоё",
+    "ты",
+    "он",
+    "она",
+    "оно",
+    "его",
+    "ее",
+    "её",
+    "про",
+    "или",
+    "уже",
+    "сейчас",
+    "после",
+}
+
+
+def _recent_event_tokens(value: Any) -> set[str]:
+    text = _compact_spaces(str(value or "")).casefold()
+    tokens = re.findall(r"[0-9a-zа-яё]{3,}", text, flags=re.IGNORECASE)
+    return {token for token in tokens if token not in RECENT_EVENT_STOPWORDS}
+
+
+def _recent_story_events_from_pet(pet: Any) -> list[dict[str, Any]]:
+    bible = pet.characterBible if _is_record(getattr(pet, "characterBible", None)) else {}
+    extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
+    events = extensions.get("recent_story_events") if _is_record(extensions) else []
+    return [event for event in events if _is_record(event)] if isinstance(events, list) else []
+
+
+def _recent_event_text_parts(event: dict[str, Any]) -> list[str]:
+    parts: list[str] = []
+    for key in ("title", "summary", "compactText", "eventType", "outcome", "location"):
+        value = event.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+    for key in ("participants", "objects", "actions", "canonicalFacts", "tags"):
+        value = event.get(key)
+        if isinstance(value, list):
+            parts.extend(str(item) for item in value if isinstance(item, (str, int, float)))
+    status_changes = event.get("statusChanges")
+    if isinstance(status_changes, list):
+        for item in status_changes:
+            if _is_record(item):
+                parts.extend(
+                    str(item.get(key) or "")
+                    for key in ("entity", "state", "owner")
+                    if item.get(key)
+                )
+    return parts
+
+
+def _recent_event_id(event: dict[str, Any], index: int) -> str:
+    return _text_value(event.get("id")) or f"recent_event_{index}"
+
+
+def _select_recent_events_for_text(
+    *,
+    events: list[dict[str, Any]],
+    text: str,
+    mode: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    debug: dict[str, Any] = {
+        "mode": mode,
+        "includedEventIds": [],
+        "triggerReason": "",
+    }
+    if mode == "disabled" or not events:
+        debug["triggerReason"] = "disabled_or_empty"
+        return [], debug
+
+    newest = list(reversed(events[-10:]))
+    if mode == "always":
+        selected = newest[:MAX_RECENT_EVENTS_CONTEXT_ITEMS]
+        debug["includedEventIds"] = [
+            _recent_event_id(event, idx) for idx, event in enumerate(selected)
+        ]
+        debug["triggerReason"] = "always"
+        return selected, debug
+
+    text_tokens = _recent_event_tokens(text)
+    has_recent_intent = bool(RECENT_EVENT_RECENT_RE.search(text))
+    has_status_intent = bool(RECENT_EVENT_STATUS_RE.search(text))
+    candidates: list[tuple[dict[str, Any], str]] = []
+    for event in newest:
+        event_tokens = set().union(
+            *(_recent_event_tokens(part) for part in _recent_event_text_parts(event))
+        )
+        overlap = len(text_tokens & event_tokens)
+        if overlap <= 0 and not has_recent_intent:
+            continue
+        reason = "token_overlap"
+        if has_status_intent and overlap > 0:
+            reason = "status_overlap"
+        if has_recent_intent:
+            reason = "recent_intent" if overlap == 0 else reason
+        candidates.append((event, reason))
+
+    selected_pairs = candidates[:MAX_RECENT_EVENTS_CONTEXT_ITEMS]
+    selected = [item[0] for item in selected_pairs]
+    debug["includedEventIds"] = [
+        _recent_event_id(event, idx) for idx, event in enumerate(selected)
+    ]
+    debug["triggerReason"] = selected_pairs[0][1] if selected_pairs else "no_match"
+    return selected, debug
+
+
+def _format_recent_events_block(events: list[dict[str, Any]]) -> str | None:
+    if not events:
+        return None
+    lines = [
+        "RECENT_EVENTS",
+        "These are canonical recent events for this pet. Do not contradict them. "
+        "If RECENT_EVENTS conflicts with WORLD_CONTEXT or generic lore, RECENT_EVENTS wins.",
+    ]
+    for index, event in enumerate(events, start=1):
+        title = _text_value(event.get("title")) or f"Событие {index}"
+        summary = _text_value(event.get("summary")) or _text_value(event.get("compactText"))
+        lines.append(f"{index}. {title}")
+        if summary:
+            lines.append(f"Summary: {summary}")
+        raw_canonical_facts = event.get("canonicalFacts")
+        canonical_facts = [
+            _text_value(item)
+            for item in (raw_canonical_facts if isinstance(raw_canonical_facts, list) else [])
+            if _text_value(item)
+        ][:5]
+        if canonical_facts:
+            lines.append("Canonical facts:")
+            lines.extend(f"- {fact}" for fact in canonical_facts)
+        status_changes = event.get("statusChanges")
+        if isinstance(status_changes, list):
+            status_lines: list[str] = []
+            for item in status_changes[:5]:
+                if not _is_record(item):
+                    continue
+                entity = _text_value(item.get("entity"))
+                state = _text_value(item.get("state"))
+                owner = _text_value(item.get("owner"))
+                if entity and state:
+                    owner_suffix = f" ({owner})" if owner else ""
+                    status_lines.append(f"- {entity}: {state}{owner_suffix}")
+            if status_lines:
+                lines.append("Status changes:")
+                lines.extend(status_lines)
+    return "\n".join(lines)
+
+
+def _recent_events_context_for_chat(payload: LocalChatRequest) -> tuple[str | None, dict[str, Any]]:
+    mode = context_source_mode("chat", "recentEvents")
+    events = _recent_story_events_from_pet(payload.pet)
+    selected, debug = _select_recent_events_for_text(
+        events=events,
+        text=payload.message,
+        mode=mode,
+    )
+    return _format_recent_events_block(selected), debug
+
+
 def _character_context_block(
     pet: Any,
     surface: PhraseSurface,
@@ -715,12 +902,9 @@ def _character_context_block(
         return None
     extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
     lite_overlay = extensions.get("lite_overlay") if _is_record(extensions) else {}
-    recent_story_events = extensions.get("recent_story_events") if _is_record(extensions) else []
     payload = {}
     if include_profile and bible:
         payload["characterBible"] = bible
-        if isinstance(recent_story_events, list) and recent_story_events:
-            payload["recentStoryEvents"] = recent_story_events[-5:]
     if include_lite_overlay and _is_record(lite_overlay):
         payload["liteOverlay"] = lite_overlay
     if not payload:
@@ -942,6 +1126,7 @@ def _phrase_plan_for_chat(
     *,
     context_bundle: AssembledPetContext,
     context_routing: ContextRoutingDecision | ContextPlan | None = None,
+    recent_events_block: str | None = None,
 ) -> PhrasePlan:
     reply_limit = payload.replyMaxChars or MAX_REPLY_CHARS
     return PhrasePlan(
@@ -961,6 +1146,7 @@ def _phrase_plan_for_chat(
             )
             else None
         ),
+        recent_events_block=recent_events_block,
         world_block=context_bundle.prompt_block or None,
     )
 
@@ -971,6 +1157,7 @@ def build_lite_chat_messages(
     context_bundle: AssembledPetContext | None = None,
     context_plan: ContextPlan | None = None,
     context_routing: ContextRoutingDecision | ContextPlan | None = None,
+    recent_events_block: str | None = None,
 ) -> list[dict[str, str]]:
     context_plan = context_plan or _context_plan_from_routing(
         surface="chat",
@@ -982,10 +1169,13 @@ def build_lite_chat_messages(
             payload=payload,
             context_routing=context_plan,
         )
+    if recent_events_block is None:
+        recent_events_block, _recent_events_debug = _recent_events_context_for_chat(payload)
     plan = _phrase_plan_for_chat(
         payload,
         context_bundle=context_bundle,
         context_routing=context_plan,
+        recent_events_block=recent_events_block,
     )
     system_content = plan.system_content()
     baby_examples = _baby_phrase_examples_for_prompt(payload)
@@ -1078,6 +1268,7 @@ def _sanitized_character_bible(value: Any) -> dict[str, Any]:
     extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else None
     if isinstance(extensions, dict):
         extensions.pop("story_library_overlay", None)
+        extensions.pop("recent_story_events", None)
         if not extensions:
             bible.pop("extensions", None)
     return bible
@@ -1321,26 +1512,145 @@ def _lite_extraction_context(payload: LiteFactExtractionRequest) -> str:
     )
 
 
+def _recent_events_context_for_lite_extraction(
+    payload: LiteFactExtractionRequest,
+) -> tuple[str | None, dict[str, Any]]:
+    events = _recent_story_events_from_pet(payload.pet)
+    selected, debug = _select_recent_events_for_text(
+        events=events,
+        text=f"{payload.message}\n{payload.reply}",
+        mode=context_source_mode("chat", "recentEvents"),
+    )
+    return _format_recent_events_block(selected), debug
+
+
 def build_lite_fact_extraction_messages(
     payload: LiteFactExtractionRequest,
 ) -> list[dict[str, str]]:
+    recent_events_block, _recent_events_debug = _recent_events_context_for_lite_extraction(payload)
+    system_content = (
+        character_fact_extraction_system_prompt()
+        + "\n\nRecent event canonical facts have priority over the assistant reply. "
+        "Do not save durable facts that contradict RECENT_EVENTS."
+    )
+    user_content = speech_template(
+        "liteFactExtractionUserMessage",
+        {
+            "character_context": _lite_extraction_context(payload),
+            "message": payload.message,
+            "reply": payload.reply,
+        },
+    )
+    if recent_events_block:
+        user_content = f"{user_content}\n\n{recent_events_block}"
     return [
         {
             "role": "system",
-            "content": character_fact_extraction_system_prompt(),
+            "content": system_content,
         },
         {
             "role": "user",
-            "content": speech_template(
-                "liteFactExtractionUserMessage",
-                {
-                    "character_context": _lite_extraction_context(payload),
-                    "message": payload.message,
-                    "reply": payload.reply,
-                },
-            ),
+            "content": user_content,
         },
     ]
+
+
+LITE_FACT_RECOVERY_RE = re.compile(
+    r"\b("
+    r"защитил\w*|защищ[ае]\w*|вернул\w*|верну\w*|наш[её]л\w*|"
+    r"нашл\w*|сохранил\w*|спас\w*)\b",
+    re.IGNORECASE,
+)
+LITE_FACT_UNRESOLVED_RE = re.compile(
+    r"\b(не\s+смог\w*\s+верну\w*|не\s+вернул\w*|не\s+защитил\w*|"
+    r"потерял\w*|потерян\w*|украл\w*|украден\w*|утащил\w*|lost)\b",
+    re.IGNORECASE,
+)
+
+
+def _event_object_tokens(event: dict[str, Any]) -> set[str]:
+    parts: list[str] = []
+    for key in ("objects", "participants"):
+        value = event.get(key)
+        if isinstance(value, list):
+            parts.extend(str(item) for item in value if isinstance(item, (str, int, float)))
+    for key in ("summary", "compactText", "outcome"):
+        value = event.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+    canonical_facts = event.get("canonicalFacts")
+    if isinstance(canonical_facts, list):
+        parts.extend(str(item) for item in canonical_facts if isinstance(item, str))
+    status_changes = event.get("statusChanges")
+    if isinstance(status_changes, list):
+        for item in status_changes:
+            if _is_record(item):
+                parts.append(str(item.get("entity") or ""))
+    return set().union(*(_recent_event_tokens(part) for part in parts)) if parts else set()
+
+
+def _event_canonical_text(event: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in ("summary", "compactText", "outcome"):
+        value = event.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+    canonical_facts = event.get("canonicalFacts")
+    if isinstance(canonical_facts, list):
+        parts.extend(str(item) for item in canonical_facts if isinstance(item, str))
+    status_changes = event.get("statusChanges")
+    if isinstance(status_changes, list):
+        for item in status_changes:
+            if _is_record(item):
+                parts.extend(str(item.get(key) or "") for key in ("entity", "state", "owner"))
+    return "\n".join(parts)
+
+
+def _lite_fact_conflict_reason(
+    fact: dict[str, Any],
+    event: dict[str, Any],
+) -> str | None:
+    fact_text = _text_value(fact.get("text"))
+    if not fact_text:
+        return None
+    fact_tokens = _recent_event_tokens(fact_text)
+    event_tokens = _event_object_tokens(event)
+    if event_tokens and not (fact_tokens & event_tokens):
+        return None
+    canonical_text = _event_canonical_text(event)
+    if not LITE_FACT_UNRESOLVED_RE.search(canonical_text):
+        return None
+    if LITE_FACT_RECOVERY_RE.search(fact_text) and not LITE_FACT_UNRESOLVED_RE.search(fact_text):
+        return "recovery_fact_contradicts_unresolved_recent_event"
+    return None
+
+
+def _filter_lite_overlay_patch_against_recent_events(
+    patch: dict[str, Any] | None,
+    events: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
+    if not patch or not isinstance(patch.get("facts"), list) or not events:
+        return patch, []
+    kept: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    for fact in patch["facts"]:
+        if not _is_record(fact):
+            continue
+        conflict: dict[str, str] | None = None
+        for index, event in enumerate(events):
+            reason = _lite_fact_conflict_reason(fact, event)
+            if reason:
+                conflict = {
+                    "factText": _text_value(fact.get("text")),
+                    "conflictReason": reason,
+                    "conflictingEventId": _recent_event_id(event, index),
+                }
+                break
+        if conflict:
+            skipped.append(conflict)
+            continue
+        kept.append(fact)
+    return overlay_patch_from_extracted_facts(kept), skipped
 
 
 def _tool_call_id(tool_call: Any) -> str:
@@ -1460,10 +1770,12 @@ def generate_lite_pet_reply(
         payload=payload,
         context_routing=context_plan,
     )
+    recent_events_block, recent_events_debug = _recent_events_context_for_chat(payload)
     messages: list[dict[str, Any]] = build_lite_chat_messages(
         payload,
         context_bundle=context_bundle,
         context_plan=context_plan,
+        recent_events_block=recent_events_block,
     )
     tools = _lite_tools_for_routing(context_plan)
     overlay_patch: dict[str, Any] = {}
@@ -1519,6 +1831,14 @@ def generate_lite_pet_reply(
             tool_debug.append(debug)
             messages.append(_tool_response_message(_tool_call_id(tool_call), result))
 
+    included_sources = set(context_plan.debug.get("includedSources", []))
+    if recent_events_debug.get("includedEventIds"):
+        included_sources.add("recentEvents")
+    context_debug = {
+        **context_plan.debug,
+        "includedSources": sorted(included_sources),
+        "recentEvents": recent_events_debug,
+    }
     debug = LocalChatDebug(
         usedFallback=False,
         validationFlags=[],
@@ -1526,7 +1846,7 @@ def generate_lite_pet_reply(
         liteToolCalls=tool_debug,
         liteOverlayPatch=overlay_patch or None,
         storyLibraryDebug=_story_context_debug(context_bundle),
-        contextRoutingDebug=context_plan.debug,
+        contextRoutingDebug=context_debug,
     )
     return LocalChatResponse(
         reply=reply,
@@ -1571,6 +1891,15 @@ def extract_lite_overlay_patch_from_reply(
     completion = openai_client.chat.completions.create(**request_kwargs)
     log_chat_completion_response("pet_reply/lite_fact_extraction", completion)
     patch = _parse_lite_fact_extraction_payload(completion.choices[0].message.content or "{}")
+    selected_events, recent_events_debug = _select_recent_events_for_text(
+        events=_recent_story_events_from_pet(payload.pet),
+        text=f"{payload.message}\n{payload.reply}",
+        mode=context_source_mode("chat", "recentEvents"),
+    )
+    patch, conflict_skips = _filter_lite_overlay_patch_against_recent_events(
+        patch,
+        selected_events,
+    )
     debug = None
     if payload.includeDebug or prompt_debug:
         debug = LocalChatDebug(
@@ -1578,6 +1907,10 @@ def extract_lite_overlay_patch_from_reply(
             validationFlags=[],
             promptDebug=prompt_debug,
             liteOverlayPatch=patch,
+            memoryDebug={
+                "recentEvents": recent_events_debug,
+                "liteFactConflictSkips": conflict_skips,
+            },
         )
     return patch, debug
 

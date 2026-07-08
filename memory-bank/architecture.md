@@ -19,7 +19,7 @@
   `chat`, `ambient`, `proactive`, `push`, and `backgroundStory`. Each source is
   `disabled`, `auto`, or `always`. The shared source ids are
   `characterProfile`, `stateParams`, `liteOverlay`, `storyLibrary`, `storyOverlay`,
-  `userMemory`, `chatHistory`, and `recentReplies`.
+  `recentEvents`, `userMemory`, `chatHistory`, and `recentReplies`.
 - `contextSources.stateParams` controls current mutable pet parameters. Numeric
   hunger/happiness/energy are converted to admin-configured semantic labels in
   `stateLayer.stateParamLabels`; thresholds and optional usage rule live in
@@ -48,15 +48,24 @@
   backend push registry as `recentStoryEvents`, returned by `/api/push/snapshot`
   as `recentStoryEventsPatch`, and applied locally to
   `characterBible.extensions.recent_story_events` so normal chat can mention
-  past events without making them RAG bricks. The aftermath analyzer also
-  returns a partial `statImpact`; negative outcomes lower exactly one internal
-  stat key (`hunger`, `happiness`, or legacy `energy` for user-facing health).
-  Story delivery includes a debug stat footer built from the actual applied
-  `statsDelta` (`здоровье`, `голод`, `настроение`) so manual `/story` calls can
-  verify which stat the analyzer damaged. Server stat changes sync back through
-  `/api/push/snapshot` `statsPatch`.
+  past events without making them RAG bricks. Story generation returns
+  `statImpacts[]` directly; backend validation caps it to at most two negative
+  impacts, max 25 per stat and max 35 total. The aftermath analyzer no longer
+  chooses stats; it extracts durable lite facts and compact recent-event fields
+  (`compactText`, `canonicalFacts`, `statusChanges`). Story delivery includes a
+  debug stat footer built from the actual applied `statsDelta` (`здоровье`,
+  `голод`, `настроение`) and shows only changed stats or `без изменений`. Server
+  stat changes sync back through `/api/push/snapshot` partial `statsPatch`.
   `/story` also preserves the `contextRouting.worldContext.query` when selecting
   global stories for the background-story dossier.
+- Chat has a lightweight deterministic `recentEvents` source for
+  `characterBible.extensions.recent_story_events`. It is not an LLM router
+  source: runtime mode `auto` runs a token/status matcher and injects a
+  `RECENT_EVENTS` canonical block above `WORLD_CONTEXT` only when the user asks
+  about recent events, objects, participants, or unresolved status. The same
+  relevant recent events are passed to lite-fact extraction, and a deterministic
+  post-filter drops extracted durable facts that contradict recent event
+  canonical facts or status changes.
 - The `/story` character dossier uses the same `ContextPlan` / `contextSources`
   matrix as visible replies for optional sources: character profile, semantic
   state params, lite overlay, global story library, user memory, chat history and

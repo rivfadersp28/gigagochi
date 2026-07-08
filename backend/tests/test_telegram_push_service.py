@@ -287,22 +287,32 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
             lite_overlay_patch=lite_overlay_patch,
             recent_story_event={
                 "summary": "На Громма напала меловая тень у каменного порога.",
+                "compactText": "Меловая тень напала на Громма у каменного порога.",
                 "eventType": "attack",
+                "valence": "negative",
                 "participants": ["Громм", "меловая тень"],
                 "actions": ["нападение"],
                 "objects": [],
                 "location": "каменный порог",
                 "outcome": "Громм устоял.",
+                "canonicalFacts": ["меловая тень напала на Громма"],
+                "statusChanges": [],
                 "createdAt": "2026-07-08T07:40:00Z",
                 "source": "background_story",
             },
-            stat_impact={
-                "applies": True,
-                "isNegativeOutcome": True,
-                "stat": "energy",
-                "amount": 25,
-                "reason": "Громм получил урон от меловой тени.",
-            },
+            stat_impacts=(
+                {
+                    "stat": "energy",
+                    "amount": -15,
+                    "reason": "Громм получил урон от меловой тени.",
+                },
+                {
+                    "stat": "happiness",
+                    "amount": -20,
+                    "reason": "Громм расстроился после нападения.",
+                },
+            ),
+            stat_impact=None,
             prompt_debug=[],
         ),
     )
@@ -328,9 +338,21 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     assert result["liteOverlayPatch"] == lite_overlay_patch
     assert result["storyImage"] == {"bytes": b"story-png", "mimeType": "image/png"}
     assert result["storyImageError"] is None
-    assert result["statsPatch"]["stats"] == {"energy": 35}
-    assert result["story"]["statsDelta"] == {"hunger": 0, "happiness": 0, "energy": 25}
-    assert set(result["statsPatch"]["lastStatTickAt"]) == {"energy"}
+    assert result["statsPatch"]["stats"] == {"energy": 45, "happiness": 50}
+    assert result["story"]["statsDelta"] == {"hunger": 0, "happiness": 20, "energy": 15}
+    assert set(result["statsPatch"]["lastStatTickAt"]) == {"energy", "happiness"}
+    assert result["story"]["statImpacts"] == [
+        {
+            "stat": "energy",
+            "amount": -15,
+            "reason": "Громм получил урон от меловой тени.",
+        },
+        {
+            "stat": "happiness",
+            "amount": -20,
+            "reason": "Громм расстроился после нападения.",
+        },
+    ]
     assert image_calls[0]["pet"].name == "Громм"
     assert image_calls[0]["story"].title == "Нападение меловой тени"
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
@@ -341,10 +363,12 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     assert "меловые следы" in overlay["facts"][0]["text"]
     events = store["records"][str(TEST_TELEGRAM_ID)]["recentStoryEvents"]
     assert events[0]["summary"] == "На Громма напала меловая тень у каменного порога."
+    assert events[0]["canonicalFacts"] == ["меловая тень напала на Громма"]
+    assert events[0]["statImpacts"][1]["stat"] == "happiness"
     assert store["records"][str(TEST_TELEGRAM_ID)]["lastStory"]["statsDelta"] == {
         "hunger": 0,
-        "happiness": 0,
-        "energy": 25,
+        "happiness": 20,
+        "energy": 15,
     }
     assert result["recentStoryEvent"]["eventType"] == "attack"
 
@@ -379,15 +403,12 @@ def test_recent_story_events_fallback_uses_last_story_for_anti_repeat() -> None:
         }
     )
 
-    assert events == [
-        {
-            "title": "Падение у миски",
-            "summary": "Громм уже споткнулся у миски.",
-            "eventType": "accident",
-            "tags": ["случайность"],
-            "source": "last_story_fallback",
-        }
-    ]
+    assert events[0]["title"] == "Падение у миски"
+    assert events[0]["summary"] == "Громм уже споткнулся у миски."
+    assert events[0]["compactText"] == "Громм уже споткнулся у миски."
+    assert events[0]["eventType"] == "accident"
+    assert events[0]["tags"] == ["случайность"]
+    assert events[0]["source"] == "last_story_fallback"
 
 
 def test_telegram_send_error_is_sanitized(monkeypatch, tmp_path) -> None:

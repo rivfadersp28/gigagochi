@@ -239,6 +239,13 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
             "eventType": "attack",
             "valence": "negative",
             "tags": ["лес", "улитки"],
+            "statImpacts": [
+                {
+                    "stat": "energy",
+                    "amount": -25,
+                    "reason": "Стеклянные улитки повредили лист Олега.",
+                }
+            ],
             "ragText": (
                 "На Олега у лесной миски напали стеклянные улитки, "
                 "охотившиеся за запахами-сигналами листа."
@@ -269,13 +276,9 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
                 "objects": ["лист"],
                 "location": "лесная миска",
                 "outcome": "Олег пережил налет.",
-            },
-            "statImpact": {
-                "applies": True,
-                "isNegativeOutcome": True,
-                "stat": "energy",
-                "amount": 25,
-                "reason": "Стеклянные улитки повредили лист Олега.",
+                "compactText": "Стеклянные улитки атаковали лист Олега у лесной миски.",
+                "canonicalFacts": ["стеклянные улитки атаковали лист Олега"],
+                "statusChanges": [],
             },
         },
         ensure_ascii=False,
@@ -303,15 +306,17 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
     assert result.lite_overlay_patch is not None
     assert result.recent_story_event is not None
     assert result.stat_impact == {
-        "applies": True,
-        "isNegativeOutcome": True,
         "stat": "energy",
-        "amount": 25,
+        "amount": -25,
         "reason": "Стеклянные улитки повредили лист Олега.",
     }
+    assert list(result.stat_impacts) == [result.stat_impact]
     assert result.recent_story_event["summary"] == (
         "Стеклянные улитки поползли к листу Олега у лесной миски."
     )
+    assert result.recent_story_event["canonicalFacts"] == [
+        "стеклянные улитки атаковали лист Олега"
+    ]
     assert result.recent_story_event["participants"] == ["стеклянные улитки", "Олег"]
     fact = result.lite_overlay_patch["facts"][0]
     assert fact["sphere"] == "world"
@@ -375,6 +380,7 @@ def test_background_story_context_sources_policy_controls_dossier(monkeypatch) -
             "eventType": "attack",
             "valence": "negative",
             "tags": [],
+            "statImpacts": [],
             "ragText": "На Олега напали у миски.",
         },
         ensure_ascii=False,
@@ -448,6 +454,7 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
             "eventType": "attack",
             "valence": "negative",
             "tags": ["свет"],
+            "statImpacts": [],
             "ragText": "На Олега напала световая капля.",
         },
         ensure_ascii=False,
@@ -548,6 +555,7 @@ def test_background_story_never_uses_previous_generated_stories(monkeypatch) -> 
             "eventType": "attack",
             "valence": "negative",
             "tags": [],
+            "statImpacts": [],
             "ragText": "На Олега напали у миски.",
         },
         ensure_ascii=False,
@@ -592,6 +600,7 @@ def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) ->
             "eventType": "accident",
             "valence": "mixed",
             "tags": ["случайность"],
+            "statImpacts": [],
             "ragText": "Олег споткнулся у миски.",
         },
         ensure_ascii=False,
@@ -644,6 +653,7 @@ def test_background_story_aftermath_ignores_ephemeral_events(monkeypatch) -> Non
             "eventType": "attack",
             "valence": "negative",
             "tags": ["тень"],
+            "statImpacts": [],
             "ragText": "На Олега напала меловая тень.",
         },
         ensure_ascii=False,
@@ -668,13 +678,9 @@ def test_background_story_aftermath_ignores_ephemeral_events(monkeypatch) -> Non
                 "objects": [],
                 "location": "",
                 "outcome": "тень исчезла",
-            },
-            "statImpact": {
-                "applies": False,
-                "isNegativeOutcome": False,
-                "stat": "none",
-                "amount": 0,
-                "reason": "Последствий для параметров нет.",
+                "compactText": "На Олега напала меловая тень и исчезла.",
+                "canonicalFacts": ["на Олега напала меловая тень"],
+                "statusChanges": [],
             },
         },
         ensure_ascii=False,
@@ -718,6 +724,7 @@ def test_background_story_uses_snapshot_history_when_story_toggles_allow(
             "eventType": "attack",
             "valence": "negative",
             "tags": ["тропа"],
+            "statImpacts": [],
             "ragText": "На Олега напали у тропы.",
         },
         ensure_ascii=False,

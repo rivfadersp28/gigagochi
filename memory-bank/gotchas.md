@@ -56,6 +56,12 @@
   is only for durable consequences that remain true after the episode. Store
   the episode itself in `recentStoryEvents` / `extensions.recent_story_events`
   and pass it to `/story` only as `ANTI_REPEAT`.
+- Do not make the background-story aftermath analyzer choose stats again.
+  `statImpacts[]` comes from the story generation payload and backend caps it;
+  aftermath only extracts durable lite facts plus compact recent-event data.
+- Do not put `extensions.recent_story_events` back into `CHARACTER_PROFILE`.
+  Chat recall uses the deterministic `recentEvents` source and the canonical
+  `RECENT_EVENTS` block, which must stay above generic `WORLD_CONTEXT`.
 - `/story` image generation should keep the pre-image scene extraction step.
   Do not silently fall back to sending the raw generated story to the image
   model if `background_story_image_scene` returns an empty scene; let image

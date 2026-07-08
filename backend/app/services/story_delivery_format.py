@@ -34,27 +34,43 @@ def _stats_delta(story: dict[str, Any]) -> dict[str, float]:
                 delta[key] = max(0.0, value)
         return delta
 
+    stat_impacts = story.get("statImpacts")
+    if isinstance(stat_impacts, list):
+        for item in stat_impacts:
+            if not isinstance(item, dict):
+                continue
+            stat = item.get("stat")
+            if stat not in delta:
+                continue
+            delta[stat] += max(0.0, abs(_number(item.get("amount")) or 0.0))
+        return delta
+
     stat_impact = story.get("statImpact")
-    if not isinstance(stat_impact, dict) or stat_impact.get("applies") is not True:
+    if not isinstance(stat_impact, dict) or stat_impact.get("applies") is False:
         return delta
     stat = stat_impact.get("stat")
     if stat not in delta:
         return delta
-    delta[stat] = max(0.0, _number(stat_impact.get("amount")) or 0.0)
+    delta[stat] = max(0.0, abs(_number(stat_impact.get("amount")) or 0.0))
     return delta
 
 
 def _story_stat_debug_block(story: dict[str, Any]) -> str:
-    if not isinstance(story.get("statsDelta"), dict) and not isinstance(
-        story.get("statImpact"),
-        dict,
-    ):
+    has_stat_context = (
+        isinstance(story.get("statsDelta"), dict)
+        or isinstance(story.get("statImpacts"), list)
+        or isinstance(story.get("statImpact"), dict)
+    )
+    if not has_stat_context:
         return ""
     delta = _stats_delta(story)
     lines = ["Влияние на параметры:"]
-    lines.extend(
-        f"{label}: минус {_format_amount(delta[key])}" for key, label in STAT_DEBUG_LABELS
-    )
+    changed = [
+        f"{label}: минус {_format_amount(delta[key])}"
+        for key, label in STAT_DEBUG_LABELS
+        if delta[key] > 0
+    ]
+    lines.extend(changed or ["без изменений"])
     return "\n".join(lines)
 
 

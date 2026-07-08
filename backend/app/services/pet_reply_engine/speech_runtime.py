@@ -43,6 +43,7 @@ CONTEXT_SOURCE_KEYS = (
     "liteOverlay",
     "storyLibrary",
     "storyOverlay",
+    "recentEvents",
     "userMemory",
     "chatHistory",
     "recentReplies",

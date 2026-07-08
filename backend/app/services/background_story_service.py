@@ -55,6 +55,26 @@ MAX_DOSSIER_LIST_ITEMS = 12
 MAX_AFTERMATH_CONTEXT_CHARS = 12000
 AFTERMATH_CONFIDENCE_THRESHOLD = 0.7
 BACKGROUND_ROUTING_SOURCE_IDS = CONTEXT_ROUTING_SOURCE_IDS
+STORY_STAT_KEYS = {"hunger", "happiness", "energy"}
+STORY_STAT_MAX_ITEMS = 2
+STORY_STAT_MAX_SINGLE_DAMAGE = 25
+STORY_STAT_MAX_TOTAL_DAMAGE = 35
+STORY_STAT_NO_LOSS_RE = re.compile(
+    r"\b("
+    r"без\s+потерь|без\s+ущерба|не\s+пострадал\w*|"
+    r"никто\s+не\s+пострадал\w*|ничего\s+не\s+потерял\w*|"
+    r"ничего\s+не\s+случил\w*|без\s+последствий"
+    r")\b",
+    re.IGNORECASE,
+)
+STORY_STAT_NEGATIVE_EVIDENCE_RE = re.compile(
+    r"\b("
+    r"потерял\w*|потерян\w*|украл\w*|украден\w*|утащил\w*|"
+    r"не\s+смог\w*|устал\w*|выдох\w*|ранен\w*|травм\w*|"
+    r"повред\w*|груст\w*|испуг\w*|голод\w*|лишил\w*|сломал\w*"
+    r")\b",
+    re.IGNORECASE,
+)
 LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS = 3000
 BACKGROUND_STORY_IMAGE_SCENE_STORY_MAX_CHARS = 2400
@@ -89,6 +109,27 @@ BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
             "maxItems": 8,
             "items": {"type": "string", "maxLength": 40},
         },
+        "statImpacts": {
+            "type": "array",
+            "maxItems": STORY_STAT_MAX_ITEMS,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "stat": {
+                        "type": "string",
+                        "enum": ["hunger", "happiness", "energy"],
+                    },
+                    "amount": {
+                        "type": "number",
+                        "minimum": -STORY_STAT_MAX_SINGLE_DAMAGE,
+                        "maximum": -1,
+                    },
+                    "reason": {"type": "string", "maxLength": 280},
+                },
+                "required": ["stat", "amount", "reason"],
+            },
+        },
         "ragText": {"type": "string", "maxLength": 900},
     },
     "required": [
@@ -98,6 +139,7 @@ BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
         "eventType",
         "valence",
         "tags",
+        "statImpacts",
         "ragText",
     ],
 }
@@ -177,6 +219,26 @@ BACKGROUND_STORY_AFTERMATH_SCHEMA: dict[str, Any] = {
                 },
                 "location": {"type": "string", "maxLength": 160},
                 "outcome": {"type": "string", "maxLength": 260},
+                "compactText": {"type": "string", "maxLength": 500},
+                "canonicalFacts": {
+                    "type": "array",
+                    "maxItems": 5,
+                    "items": {"type": "string", "maxLength": 180},
+                },
+                "statusChanges": {
+                    "type": "array",
+                    "maxItems": 5,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "entity": {"type": "string", "maxLength": 120},
+                            "state": {"type": "string", "maxLength": 80},
+                            "owner": {"type": "string", "maxLength": 120},
+                        },
+                        "required": ["entity", "state", "owner"],
+                    },
+                },
             },
             "required": [
                 "summary",
@@ -186,25 +248,13 @@ BACKGROUND_STORY_AFTERMATH_SCHEMA: dict[str, Any] = {
                 "objects",
                 "location",
                 "outcome",
+                "compactText",
+                "canonicalFacts",
+                "statusChanges",
             ],
         },
-        "statImpact": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "applies": {"type": "boolean"},
-                "isNegativeOutcome": {"type": "boolean"},
-                "stat": {
-                    "type": "string",
-                    "enum": ["hunger", "happiness", "energy", "none"],
-                },
-                "amount": {"type": "number", "minimum": 0, "maximum": 100},
-                "reason": {"type": "string", "maxLength": 280},
-            },
-            "required": ["applies", "isNegativeOutcome", "stat", "amount", "reason"],
-        },
     },
-    "required": ["facts", "recentEvent", "statImpact"],
+    "required": ["facts", "recentEvent"],
 }
 BACKGROUND_STORY_IMAGE_SCENE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -232,9 +282,21 @@ class BackgroundStoryResult:
     lite_overlay_patch: dict[str, Any] | None
     recent_story_event: dict[str, Any] | None
     prompt_debug: list[dict[str, Any]]
+    stat_impacts: tuple[dict[str, Any], ...] = ()
     stat_impact: dict[str, Any] | None = None
+    stat_validation: dict[str, Any] | None = None
 
     def model_dump(self) -> dict[str, Any]:
+        stat_impacts = list(self.stat_impacts)
+        if not stat_impacts and self.stat_impact:
+            stat_impacts = list(
+                _normalize_story_stat_impacts(
+                    None,
+                    legacy=self.stat_impact,
+                    valence=self.valence,
+                )
+            )
+        legacy_stat_impact = self.stat_impact or (stat_impacts[0] if stat_impacts else None)
         return {
             "title": self.title,
             "summary": self.summary,
@@ -247,7 +309,9 @@ class BackgroundStoryResult:
             "liteOverlayPatch": self.lite_overlay_patch,
             "recentStoryEvent": self.recent_story_event,
             "promptDebug": self.prompt_debug,
-            "statImpact": self.stat_impact,
+            "statImpacts": stat_impacts,
+            "statImpact": legacy_stat_impact,
+            "statValidation": self.stat_validation,
         }
 
 
@@ -1073,6 +1137,104 @@ def _clean_tags(value: Any) -> tuple[str, ...]:
     return tuple(result)
 
 
+def _story_stat_damage(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return 0
+    if amount == 0:
+        return 0
+    return max(1, min(STORY_STAT_MAX_SINGLE_DAMAGE, round(abs(amount))))
+
+
+def _iter_raw_story_stat_impacts(
+    value: Any,
+    *,
+    legacy: Any = None,
+) -> list[dict[str, Any]]:
+    raw_items = value if isinstance(value, list) else []
+    items = [item for item in raw_items if _is_record(item)]
+    if items:
+        return items
+    if not _is_record(legacy):
+        return []
+    applies = legacy.get("applies") is True and legacy.get("isNegativeOutcome") is True
+    stat = _text_value(legacy.get("stat"), limit=40)
+    if not applies or stat not in STORY_STAT_KEYS:
+        return []
+    return [
+        {
+            "stat": stat,
+            "amount": -_story_stat_damage(legacy.get("amount")),
+            "reason": legacy.get("reason"),
+        }
+    ]
+
+
+def _normalize_story_stat_impacts(
+    value: Any,
+    *,
+    legacy: Any = None,
+    valence: str,
+) -> tuple[dict[str, Any], ...]:
+    if valence not in {"negative", "mixed"}:
+        return ()
+
+    result: list[dict[str, Any]] = []
+    seen_stats: set[str] = set()
+    total_damage = 0
+    for raw in _iter_raw_story_stat_impacts(value, legacy=legacy):
+        stat = _text_value(raw.get("stat"), limit=40)
+        if stat not in STORY_STAT_KEYS or stat in seen_stats:
+            continue
+        damage = _story_stat_damage(raw.get("amount"))
+        if damage <= 0:
+            continue
+        remaining_total = STORY_STAT_MAX_TOTAL_DAMAGE - total_damage
+        if remaining_total <= 0:
+            break
+        applied_damage = min(damage, remaining_total)
+        result.append(
+            {
+                "stat": stat,
+                "amount": -applied_damage,
+                "reason": _text_value(raw.get("reason"), limit=280),
+            }
+        )
+        seen_stats.add(stat)
+        total_damage += applied_damage
+        if len(result) >= STORY_STAT_MAX_ITEMS:
+            break
+    return tuple(result)
+
+
+def _validate_story_stat_impacts_against_text(
+    stat_impacts: tuple[dict[str, Any], ...],
+    *,
+    summary: str,
+    story_text: str,
+) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
+    validation = {
+        "dropped": False,
+        "reason": "",
+    }
+    if not stat_impacts:
+        return stat_impacts, validation
+    combined_text = f"{summary}\n{story_text}"
+    if STORY_STAT_NO_LOSS_RE.search(combined_text) and not STORY_STAT_NEGATIVE_EVIDENCE_RE.search(
+        combined_text
+    ):
+        validation = {
+            "dropped": True,
+            "reason": "explicit_no_loss_text_without_negative_evidence",
+        }
+        logger.debug("background_story_stat_impacts_dropped: %s", validation["reason"])
+        return (), validation
+    return stat_impacts, validation
+
+
 def _normalize_story_payload(payload: dict[str, Any]) -> BackgroundStoryResult:
     max_story_chars = max(200, background_story_max_story_chars())
     max_rag_chars = max(120, background_story_max_rag_chars())
@@ -1094,6 +1256,16 @@ def _normalize_story_payload(payload: dict[str, Any]) -> BackgroundStoryResult:
         story_text = summary
     if not rag_text:
         rag_text = summary
+    stat_impacts = _normalize_story_stat_impacts(
+        payload.get("statImpacts"),
+        legacy=payload.get("statImpact"),
+        valence=valence,
+    )
+    stat_impacts, stat_validation = _validate_story_stat_impacts_against_text(
+        stat_impacts,
+        summary=summary,
+        story_text=story_text,
+    )
 
     return BackgroundStoryResult(
         title=title,
@@ -1107,6 +1279,9 @@ def _normalize_story_payload(payload: dict[str, Any]) -> BackgroundStoryResult:
         lite_overlay_patch=None,
         recent_story_event=None,
         prompt_debug=[],
+        stat_impacts=stat_impacts,
+        stat_impact=stat_impacts[0] if stat_impacts else None,
+        stat_validation=stat_validation,
     )
 
 
@@ -1174,6 +1349,7 @@ def _aftermath_story_payload(result: BackgroundStoryResult) -> str:
                 "eventType": result.event_type,
                 "valence": result.valence,
                 "tags": list(result.tags),
+                "statImpacts": list(result.stat_impacts),
                 "ragText": result.rag_text,
             },
             ensure_ascii=False,
@@ -1184,27 +1360,73 @@ def _aftermath_story_payload(result: BackgroundStoryResult) -> str:
     )
 
 
+def _status_change_list(value: Any, *, limit: int = 5) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in value:
+        if not _is_record(item):
+            continue
+        entity = _text_value(item.get("entity"), limit=120)
+        state = _text_value(item.get("state"), limit=80)
+        owner = _text_value(item.get("owner"), limit=120)
+        if not entity or not state:
+            continue
+        result.append({"entity": entity, "state": state, "owner": owner})
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _recent_story_event_id(*, created_at: str, story: BackgroundStoryResult) -> str:
+    seed = f"{created_at}:{story.title}:{story.summary}"
+    suffix = re.sub(r"[^0-9a-z]+", "", seed.casefold())[:48]
+    return f"evt_{suffix or 'story'}"
+
+
 def _normalize_recent_story_event(
     value: Any,
     *,
     story: BackgroundStoryResult,
 ) -> dict[str, Any]:
     item = value if _is_record(value) else {}
+    summary = _text_value(item.get("summary"), limit=500) or story.summary
+    compact_text = (
+        _text_value(item.get("compactText"), limit=500)
+        or summary
+        or _truncate_text(story.story_text, 500)
+    )
+    canonical_facts = _string_list(item.get("canonicalFacts"), limit=5)
+    actions = _string_list(item.get("actions"), limit=6)
+    outcome = _text_value(item.get("outcome"), limit=260)
+    if not canonical_facts:
+        canonical_facts = [*actions[:4], outcome][:5]
+        canonical_facts = [fact for fact in canonical_facts if fact]
+    created_at = _now_iso()
     event = {
+        "id": _text_value(item.get("id"), limit=120)
+        or _recent_story_event_id(created_at=created_at, story=story),
         "title": story.title,
-        "summary": _text_value(item.get("summary"), limit=500) or story.summary,
+        "summary": summary,
+        "compactText": compact_text,
         "eventType": _text_value(item.get("eventType"), limit=60) or story.event_type,
+        "valence": story.valence,
         "participants": _string_list(item.get("participants"), limit=6),
-        "actions": _string_list(item.get("actions"), limit=6),
+        "actions": actions,
         "objects": _string_list(item.get("objects"), limit=6),
         "location": _text_value(item.get("location"), limit=160),
-        "outcome": _text_value(item.get("outcome"), limit=260),
+        "outcome": outcome,
+        "canonicalFacts": canonical_facts,
+        "statusChanges": _status_change_list(item.get("statusChanges"), limit=5),
+        "statImpacts": list(story.stat_impacts),
         "tags": list(story.tags),
-        "createdAt": _now_iso(),
+        "createdAt": created_at,
         "source": "background_story",
     }
     if not event["summary"]:
         event["summary"] = _truncate_text(story.story_text, 500)
+    if not event["compactText"]:
+        event["compactText"] = event["summary"]
     return {
         key: item_value for key, item_value in event.items() if item_value not in (None, "", [], {})
     }
@@ -1214,7 +1436,7 @@ def _parse_aftermath_extraction_payload(
     raw_content: str,
     *,
     story: BackgroundStoryResult,
-) -> tuple[dict[str, Any] | None, dict[str, Any], dict[str, Any] | None]:
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     parsed = _json_record_from_text(raw_content)
     raw_facts = parsed.get("facts")
 
@@ -1233,30 +1455,7 @@ def _parse_aftermath_extraction_payload(
         default_source="background_story_aftermath",
     )
     recent_event = _normalize_recent_story_event(parsed.get("recentEvent"), story=story)
-    stat_impact = _normalize_stat_impact(parsed.get("statImpact"))
-    return patch, recent_event, stat_impact
-
-
-def _normalize_stat_impact(value: Any) -> dict[str, Any] | None:
-    if not _is_record(value):
-        return None
-    stat = _text_value(value.get("stat"), limit=40)
-    applies = value.get("applies") is True and value.get("isNegativeOutcome") is True
-    if not applies or stat not in {"hunger", "happiness", "energy"}:
-        return None
-    try:
-        amount = float(value.get("amount"))
-    except (TypeError, ValueError):
-        amount = 25.0
-    if amount <= 0:
-        amount = 25.0
-    return {
-        "applies": True,
-        "isNegativeOutcome": True,
-        "stat": stat,
-        "amount": min(100.0, amount),
-        "reason": _text_value(value.get("reason"), limit=280),
-    }
+    return patch, recent_event
 
 
 def _extract_background_story_aftermath_patch(
@@ -1267,7 +1466,7 @@ def _extract_background_story_aftermath_patch(
     model: str,
     timeout: float,
     prompt_debug: list[dict[str, Any]],
-) -> tuple[dict[str, Any] | None, dict[str, Any], dict[str, Any] | None]:
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -1375,20 +1574,28 @@ def generate_background_story(
     completion = openai_client.chat.completions.create(**request_kwargs)
     log_chat_completion_response("background_story/generate", completion)
     content = completion.choices[0].message.content or "{}"
-    result = _normalize_story_payload(_json_record_from_text(content))
+    raw_story_payload = _json_record_from_text(content)
+    result = _normalize_story_payload(raw_story_payload)
     lite_overlay_patch: dict[str, Any] | None = None
     recent_story_event: dict[str, Any] | None = None
-    stat_impact: dict[str, Any] | None = None
+    prompt_debug.append(
+        {
+            "event": "background_story_stat_impacts",
+            "rawStatImpacts": raw_story_payload.get("statImpacts"),
+            "legacyStatImpact": raw_story_payload.get("statImpact"),
+            "appliedStatImpacts": list(result.stat_impacts),
+            "statValidation": result.stat_validation,
+            "valence": result.valence,
+        }
+    )
     try:
-        lite_overlay_patch, recent_story_event, stat_impact = (
-            _extract_background_story_aftermath_patch(
-                pet=pet,
-                story=result,
-                client=openai_client,
-                model=model,
-                timeout=timeout,
-                prompt_debug=prompt_debug,
-            )
+        lite_overlay_patch, recent_story_event = _extract_background_story_aftermath_patch(
+            pet=pet,
+            story=result,
+            client=openai_client,
+            model=model,
+            timeout=timeout,
+            prompt_debug=prompt_debug,
         )
     except Exception:
         logger.exception("background_story_after_extraction failed")
@@ -1405,5 +1612,7 @@ def generate_background_story(
         lite_overlay_patch=lite_overlay_patch,
         recent_story_event=recent_story_event,
         prompt_debug=prompt_debug,
-        stat_impact=stat_impact,
+        stat_impacts=result.stat_impacts,
+        stat_impact=result.stat_impact,
+        stat_validation=result.stat_validation,
     )

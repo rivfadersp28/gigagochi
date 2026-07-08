@@ -274,24 +274,95 @@ function normalizeStringList(value: unknown, limit: number, itemLimit: number): 
     .slice(0, limit);
 }
 
+function normalizeStatusChanges(value: unknown): Record<string, string>[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const result: Record<string, string>[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) {
+      continue;
+    }
+    const entity = normalizeText(item.entity, 120);
+    const state = normalizeText(item.state, 80);
+    const owner = normalizeText(item.owner, 120);
+    if (entity && state) {
+      result.push({ entity, state, owner });
+      if (result.length >= 5) {
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+function normalizeStatImpactItem(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const stat = normalizeText(value.stat, 40);
+  const amount =
+    typeof value.amount === "number" && Number.isFinite(value.amount)
+      ? Math.max(-25, Math.min(-1, value.amount < 0 ? value.amount : -value.amount))
+      : null;
+  if (!STAT_KEYS.includes(stat as PetStatKey) || amount === null) {
+    return null;
+  }
+  return {
+    stat,
+    amount,
+    reason: normalizeText(value.reason, 280),
+  };
+}
+
+function normalizeStatImpacts(value: unknown, legacy?: unknown): Record<string, unknown>[] {
+  const source = Array.isArray(value) ? value : isRecord(legacy) ? [legacy] : [];
+  const result: Record<string, unknown>[] = [];
+  for (const item of source) {
+    if (isRecord(item) && item.applies === false) {
+      continue;
+    }
+    const impact = normalizeStatImpactItem(item);
+    if (!impact) {
+      continue;
+    }
+    result.push(impact);
+    if (result.length >= 2) {
+      break;
+    }
+  }
+  return result;
+}
+
 function normalizeRecentStoryEvent(value: unknown): Record<string, unknown> | null {
   if (!isRecord(value)) {
     return null;
   }
-  const summary = normalizeText(value.summary, 500);
+  const compactText = normalizeText(value.compactText, 500);
+  const summary =
+    normalizeText(value.summary, 500) ||
+    compactText ||
+    normalizeText(value.storyText, 500) ||
+    normalizeText(value.title, 120);
   if (!summary) {
     return null;
   }
   return {
     ...value,
+    id: normalizeText(value.id, 120),
     title: normalizeText(value.title, 120),
     summary,
+    compactText: compactText || summary,
     eventType: normalizeText(value.eventType, 60),
+    valence: normalizeText(value.valence, 20),
     participants: normalizeStringList(value.participants, 6, 80),
     actions: normalizeStringList(value.actions, 6, 80),
     objects: normalizeStringList(value.objects, 6, 80),
     location: normalizeText(value.location, 160),
     outcome: normalizeText(value.outcome, 260),
+    canonicalFacts: normalizeStringList(value.canonicalFacts, 5, 180),
+    statusChanges: normalizeStatusChanges(value.statusChanges),
+    statImpacts: normalizeStatImpacts(value.statImpacts, value.statImpact),
     tags: normalizeStringList(value.tags, 8, 60),
     createdAt: isIsoDate(value.createdAt) ? value.createdAt : new Date().toISOString(),
     source: normalizeText(value.source, 80) || "background_story",
@@ -308,6 +379,10 @@ function normalizeRecentStoryEvents(value: unknown): Record<string, unknown>[] {
 }
 
 function storyEventKey(event: Record<string, unknown>): string {
+  const id = normalizeText(event.id, 120);
+  if (id) {
+    return id.toLocaleLowerCase("ru-RU");
+  }
   return [
     normalizeText(event.eventType, 60),
     normalizeText(event.title, 120),

@@ -24,6 +24,7 @@ CONTEXT_SOURCE_TO_ROUTER_SOURCE: dict[str, str | None] = {
     "liteOverlay": "characterProfile",
     "storyLibrary": "worldContext",
     "storyOverlay": None,
+    "recentEvents": None,
     "userMemory": "userMemory",
     "chatHistory": "chatHistory",
     "recentReplies": "recentReplies",

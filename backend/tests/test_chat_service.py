@@ -172,6 +172,48 @@ def lite_payload(**overrides) -> LocalChatRequest:
     return LocalChatRequest.model_validate(data)
 
 
+def pet_with_recent_story_event() -> dict:
+    pet = lite_payload().pet.model_dump()
+    pet["characterBible"] = {
+        "extensions": {
+            "recent_story_events": [
+                {
+                    "id": "evt_bell_theft",
+                    "title": "Украденный звон",
+                    "summary": "Хорек украл колокольчик, и Громм не смог его вернуть.",
+                    "compactText": (
+                        "Хорек украл колокольчик. Громм устал и не смог вернуть предмет."
+                    ),
+                    "eventType": "theft",
+                    "valence": "negative",
+                    "participants": ["Громм", "сумрачный хорек"],
+                    "objects": ["колокольчик"],
+                    "actions": [
+                        "хорек украл колокольчик",
+                        "Громм не смог вернуть колокольчик",
+                    ],
+                    "outcome": "Громм потерял колокольчик.",
+                    "canonicalFacts": [
+                        "хорек украл колокольчик",
+                        "Громм не смог вернуть колокольчик",
+                        "Громм не защитил колокольчик",
+                    ],
+                    "statusChanges": [
+                        {
+                            "entity": "колокольчик",
+                            "state": "lost",
+                            "owner": "Громм",
+                        }
+                    ],
+                    "createdAt": "2026-07-08T07:40:00Z",
+                    "source": "background_story",
+                }
+            ]
+        }
+    }
+    return pet
+
+
 def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     client, completions = fake_lite_client(
         SimpleNamespace(content="Я стою и слушаю. Говори.", tool_calls=None)
@@ -199,6 +241,63 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert "response_format" not in request
     assert [tool["function"]["name"] for tool in request["tools"]] == ["update_pet_name"]
     assert "STORY_LIBRARY" not in system_message
+
+
+def test_chat_prompt_includes_matching_recent_events_before_world_context() -> None:
+    messages = build_lite_chat_messages(
+        lite_payload(
+            message="ты защитил колокольчик?",
+            pet=pet_with_recent_story_event(),
+        ),
+        context_routing=ContextRoutingDecision(
+            surface="chat",
+            enabled_sources=frozenset({"worldContext"}),
+            queries={"worldContext": "хорьки и колокольчики"},
+        ),
+    )
+
+    system_message = messages[0]["content"]
+    assert "RECENT_EVENTS" in system_message
+    assert "Громм не смог вернуть колокольчик" in system_message
+    assert "колокольчик: lost" in system_message
+    if "WORLD_CONTEXT" in system_message:
+        assert system_message.index("RECENT_EVENTS") < system_message.index("WORLD_CONTEXT")
+
+
+def test_chat_recent_events_keeps_newer_matching_event_first() -> None:
+    pet = pet_with_recent_story_event()
+    events = pet["characterBible"]["extensions"]["recent_story_events"]
+    events.append(
+        {
+            "id": "evt_bell_found",
+            "title": "Колокольчик найден",
+            "summary": "Громм нашел колокольчик под корнем.",
+            "compactText": "Громм нашел колокольчик под корнем и забрал его.",
+            "eventType": "recovery",
+            "valence": "positive",
+            "participants": ["Громм"],
+            "objects": ["колокольчик"],
+            "actions": ["Громм нашел колокольчик"],
+            "outcome": "Колокольчик снова у Громма.",
+            "canonicalFacts": ["Громм нашел колокольчик"],
+            "statusChanges": [
+                {
+                    "entity": "колокольчик",
+                    "state": "found",
+                    "owner": "Громм",
+                }
+            ],
+            "createdAt": "2026-07-08T08:10:00Z",
+            "source": "background_story",
+        }
+    )
+
+    system_message = build_lite_chat_messages(
+        lite_payload(message="ты защитил колокольчик?", pet=pet),
+        context_routing=ContextRoutingDecision(surface="chat"),
+    )[0]["content"]
+
+    assert system_message.index("Колокольчик найден") < system_message.index("Украденный звон")
 
 
 def test_lite_prompt_includes_age_role_hint() -> None:
@@ -606,7 +705,8 @@ def test_speech_runtime_config_controls_reply_and_extractor_prompts(
     assert "CUSTOM_ADULT_AGE" in system_message
     assert "CUSTOM_HUNGRY_STATE" in system_message
     assert "CUSTOM_IDLE_PROMPT" in ambient_system_message
-    assert extraction_messages[0]["content"] == "CUSTOM_FACT_EXTRACTION_PROMPT"
+    assert extraction_messages[0]["content"].startswith("CUSTOM_FACT_EXTRACTION_PROMPT")
+    assert "RECENT_EVENTS" in extraction_messages[0]["content"]
 
 
 def test_lite_clamps_reply_to_300_chars() -> None:
@@ -1307,6 +1407,50 @@ def test_lite_fact_extraction_groups_facts_by_sphere() -> None:
     assert [fact["sphere"] for fact in patch["facts"]] == ["world", "appearance"]
     assert debug is not None
     assert debug.liteOverlayPatch == patch
+
+
+def test_lite_fact_extraction_filters_conflicting_recent_event_fact() -> None:
+    client, _completions = fake_lite_client(
+        SimpleNamespace(
+            content=json.dumps(
+                {
+                    "facts": [
+                        {
+                            "sphere": "world",
+                            "kind": "world_fact",
+                            "text": "Громм защитил колокольчик от хорька.",
+                            "pathHint": "lite_overlay.spheres.world",
+                            "source": "lite_post_reply_extractor",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            tool_calls=None,
+        )
+    )
+
+    patch, debug = extract_lite_overlay_patch_from_reply(
+        LiteFactExtractionRequest.model_validate(
+            {
+                "message": "ты защитил колокольчик?",
+                "reply": "Да, я защитил колокольчик.",
+                "pet": pet_with_recent_story_event(),
+                "history": [],
+                "includeDebug": True,
+            }
+        ),
+        client=client,
+        model="gpt-5.5",
+        timeout=10,
+    )
+
+    assert patch is None
+    assert debug is not None
+    assert debug.memoryDebug is not None
+    skips = debug.memoryDebug["liteFactConflictSkips"]
+    assert skips[0]["conflictingEventId"] == "evt_bell_theft"
+    assert skips[0]["conflictReason"] == "recovery_fact_contradicts_unresolved_recent_event"
 
 
 def test_memory_extraction_prompt_uses_user_message_as_source() -> None:

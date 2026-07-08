@@ -11,9 +11,7 @@ from app.services.story_delivery_format import TELEGRAM_PHOTO_CAPTION_LIMIT, for
 TEST_TELEGRAM_ID = 62943754
 STORY_IMPACT_TEXT = (
     "Влияние на параметры:\n"
-    "здоровье: минус 25\n"
-    "голод: минус 0\n"
-    "настроение: минус 0"
+    "здоровье: минус 25"
 )
 
 
@@ -150,9 +148,7 @@ def test_story_command_falls_back_to_message_without_image(monkeypatch) -> None:
         "След под кроной\n\n"
         "Олег нашел теплый знак под древним дубом.\n\n"
         "Влияние на параметры:\n"
-        "здоровье: минус 0\n"
-        "голод: минус 0\n"
-        "настроение: минус 0"
+        "без изменений"
     )
     assert "photo" not in sent
 
@@ -176,7 +172,5 @@ def test_story_caption_preserves_stat_debug_tail() -> None:
     assert len(caption) <= TELEGRAM_PHOTO_CAPTION_LIMIT
     assert caption.endswith(
         "Влияние на параметры:\n"
-        "здоровье: минус 0\n"
-        "голод: минус 25\n"
-        "настроение: минус 0"
+        "голод: минус 25"
     )
