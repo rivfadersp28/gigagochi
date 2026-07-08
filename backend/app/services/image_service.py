@@ -74,6 +74,8 @@ class KandinskyTaskError(RuntimeError):
     pass
 
 
+KANDINSKY_HTTP_MAX_ATTEMPTS = 2
+KANDINSKY_HTTP_RETRY_SECONDS = (3.0,)
 BACKGROUND_REMOVAL_SCRIPT = (
     Path(__file__).resolve().parents[2] / "scripts" / "remove_background.mjs"
 )
@@ -893,6 +895,69 @@ def _kandinsky_headers(settings: Any) -> dict[str, str]:
     }
 
 
+def _kandinsky_http_timeout(settings: Any) -> float:
+    return max(30.0, float(getattr(settings, "openai_image_timeout_seconds", 180)))
+
+
+def _is_retryable_kandinsky_error(exc: Exception) -> bool:
+    if isinstance(exc, httpx.TransportError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        return status_code == 429 or status_code >= 500
+    return False
+
+
+def _kandinsky_retry_delay(attempt_index: int) -> float:
+    return KANDINSKY_HTTP_RETRY_SECONDS[min(attempt_index, len(KANDINSKY_HTTP_RETRY_SECONDS) - 1)]
+
+
+def _kandinsky_with_retry(label: str, operation: str, call: Any) -> Any:
+    for attempt_index in range(KANDINSKY_HTTP_MAX_ATTEMPTS):
+        try:
+            response = call()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                is_last_attempt = attempt_index == KANDINSKY_HTTP_MAX_ATTEMPTS - 1
+                if is_last_attempt or not _is_retryable_kandinsky_error(exc):
+                    return response
+                retry_delay = _kandinsky_retry_delay(attempt_index)
+                logger.warning(
+                    "kandinsky_image_%s retry label=%s attempt=%s maxAttempts=%s "
+                    "retryDelaySeconds=%s errorType=%s status=%s response=%s",
+                    operation,
+                    label,
+                    attempt_index + 1,
+                    KANDINSKY_HTTP_MAX_ATTEMPTS,
+                    retry_delay,
+                    type(exc).__name__,
+                    exc.response.status_code,
+                    exc.response.text[:1000],
+                )
+                time.sleep(retry_delay)
+                continue
+            return response
+        except Exception as exc:
+            is_last_attempt = attempt_index == KANDINSKY_HTTP_MAX_ATTEMPTS - 1
+            if is_last_attempt or not _is_retryable_kandinsky_error(exc):
+                raise
+            retry_delay = _kandinsky_retry_delay(attempt_index)
+            logger.warning(
+                "kandinsky_image_%s retry label=%s attempt=%s maxAttempts=%s "
+                "retryDelaySeconds=%s errorType=%s error=%s",
+                operation,
+                label,
+                attempt_index + 1,
+                KANDINSKY_HTTP_MAX_ATTEMPTS,
+                retry_delay,
+                type(exc).__name__,
+                str(exc),
+            )
+            time.sleep(retry_delay)
+    raise RuntimeError("unreachable kandinsky retry state")
+
+
 def _reference_url_from_entry(reference: dict[str, Any]) -> str:
     image_url = reference.get("image_url")
     if isinstance(image_url, dict):
@@ -940,11 +1005,15 @@ def _kandinsky_create_task(
     label: str,
 ) -> str:
     url = f"{_kandinsky_base_url(settings)}/tasks/{task_type}"
-    response = httpx.post(
-        url,
-        headers=_kandinsky_headers(settings),
-        json={"params": params},
-        timeout=30,
+    response = _kandinsky_with_retry(
+        label,
+        "task_create",
+        lambda: httpx.post(
+            url,
+            headers=_kandinsky_headers(settings),
+            json={"params": params},
+            timeout=_kandinsky_http_timeout(settings),
+        ),
     )
     try:
         response.raise_for_status()
@@ -972,7 +1041,15 @@ def _kandinsky_wait_done(settings: Any, *, task_id: str, label: str) -> dict[str
     deadline = time.monotonic() + timeout_seconds
 
     while True:
-        response = httpx.get(url, headers=headers, timeout=30)
+        response = _kandinsky_with_retry(
+            label,
+            "task_status",
+            lambda: httpx.get(
+                url,
+                headers=headers,
+                timeout=_kandinsky_http_timeout(settings),
+            ),
+        )
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError:
@@ -999,7 +1076,15 @@ def _kandinsky_wait_done(settings: Any, *, task_id: str, label: str) -> dict[str
 
 def _kandinsky_download_result(settings: Any, *, task_id: str, label: str) -> bytes:
     url = f"{_kandinsky_base_url(settings)}/tasks/{task_id}/result"
-    response = httpx.get(url, headers=_kandinsky_headers(settings), timeout=60)
+    response = _kandinsky_with_retry(
+        label,
+        "result",
+        lambda: httpx.get(
+            url,
+            headers=_kandinsky_headers(settings),
+            timeout=_kandinsky_http_timeout(settings),
+        ),
+    )
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError:

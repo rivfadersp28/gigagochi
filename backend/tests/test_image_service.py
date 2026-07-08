@@ -5,6 +5,7 @@ import json
 import uuid
 from types import SimpleNamespace
 
+import httpx
 from PIL import Image, ImageDraw
 
 from app.prompts.pet_image_prompts import (
@@ -496,6 +497,71 @@ def test_generate_kandinsky_image_bytes_uses_i2i_with_reference(monkeypatch) -> 
             "query": "story prompt",
         }
     }
+
+
+def test_generate_kandinsky_image_bytes_retries_create_timeout(monkeypatch) -> None:
+    post_calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        text = ""
+        status_code = 200
+
+        def __init__(self, payload=None, content: bytes = b"") -> None:
+            self.payload = payload or {}
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    def fake_post(url, **kwargs):
+        post_calls.append({"url": url, **kwargs})
+        if len(post_calls) == 1:
+            raise httpx.ReadTimeout("slow kandinsky create")
+        return FakeResponse({"task_id": "task-retry"})
+
+    def fake_get(url, **kwargs):
+        if url == "https://cdn.example.test/pet.png":
+            return FakeResponse(content=b"sprite-image")
+        if url.endswith("/tasks/task-retry"):
+            return FakeResponse({"status": "done"})
+        if url.endswith("/tasks/task-retry/result"):
+            return FakeResponse(content=b"kandinsky-retry-image")
+        raise AssertionError(f"unexpected GET {url}")
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            kandinsky_api_key="kandinsky-token",
+            kandinsky_base_url="https://studio.kandinskylab.ai/api",
+            kandinsky_t2i_task_type="k6-image-t2i",
+            kandinsky_i2i_task_type="k6-i2i",
+            kandinsky_image_resolution="1280x768",
+            kandinsky_poll_interval_seconds=1,
+            openai_image_timeout_seconds=180,
+        ),
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+    monkeypatch.setattr("app.services.image_service.time.sleep", lambda _seconds: None)
+
+    result = generate_kandinsky_image_bytes(
+        "story prompt",
+        label="background_story/image",
+        input_references=[
+            {
+                "type": "image_url",
+                "image_url": {"url": "https://cdn.example.test/pet.png"},
+            }
+        ],
+    )
+
+    assert result == b"kandinsky-retry-image"
+    assert len(post_calls) == 2
+    assert post_calls[0]["timeout"] == 180
+    assert post_calls[1]["timeout"] == 180
 
 
 def test_generate_pet_asset_set_generates_only_three_teen_skins(monkeypatch, tmp_path) -> None:
