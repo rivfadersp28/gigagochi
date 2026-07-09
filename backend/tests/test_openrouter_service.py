@@ -6,6 +6,7 @@ import pytest
 
 from app.services.openai_service import (
     MissingOpenAIAPIKey,
+    chat_reasoning_effort_kwargs,
     get_ai_api_key,
     get_character_model,
     get_chat_model,
@@ -60,6 +61,12 @@ def test_character_model_can_be_overridden() -> None:
         openai_character_model="gpt-5-mini",
     )
     assert get_character_model(openai_settings) == "gpt-5-mini"
+
+
+def test_reasoning_effort_none_omits_api_parameter() -> None:
+    assert chat_reasoning_effort_kwargs("none") == {}
+    assert chat_reasoning_effort_kwargs(None) == {}
+    assert chat_reasoning_effort_kwargs("minimal") == {"reasoning_effort": "minimal"}
 
 
 def test_openrouter_accepts_legacy_openai_env_only_for_openrouter_keys() -> None:

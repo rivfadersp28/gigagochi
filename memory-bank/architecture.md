@@ -93,12 +93,17 @@
   `WORLD_CONTEXT` prompt framing, unified `contextRouting`, shared
   `contextSources`, and the age plus hunger/happiness/energy `stateLayer` used
   by chat/proactive/ambient identity lines and semantic story params.
-- Global tone-of-voice now lives in `backend/data/tone_runtime.json` and is read by
-  `backend/app/services/tone_runtime.py`. The active `dark_fantasy` preset is injected
-  into visible replies, context routing payloads, `WORLD_CONTEXT`, character-bible
-  generation and repair, `/story` generation and illustration prompts, travel full-story,
-  storyboard and image prompts. Age examples remain a separate speech-diction layer: baby
-  can talk like baby without making the world or plot babyish.
+- Global generation profile now lives in `backend/data/tone_runtime.json` and
+  is read by `backend/app/services/tone_runtime.py`. The active preset exposes
+  `setting`, `toneOfVoice`, conflict/age policies, visual style and per-surface
+  rules. Full `GENERATION_PROFILE` blocks are injected into visible replies,
+  context routing payloads, `WORLD_CONTEXT`, `/story` generation and
+  illustration prompts, travel full-story, storyboard and image prompts.
+  Character-bible generation intentionally receives only a short `SETTING_HINT`
+  so the user creature idea stays primary. Factual extractors for user memory,
+  lite overlay and story aftermath do not receive the generation profile. Age
+  examples remain a separate speech-diction layer: baby can talk like baby
+  without making the world or plot babyish.
 - Proactive replies keep their memory-derived reason as a neutral context line
   inside the phrase plan. The old configurable `surfaceRules` layer was removed
   so proactive/ambient behavior is shaped by visible reply rules, state, memory,
@@ -139,15 +144,15 @@
 - Managed files are defined in `backend/app/services/local_admin_store.py` and
   include `speech_runtime.json`, `tone_runtime.json`, story datasets, age speech
   examples, world descriptions, and the character-bible template. New character
-  creation currently uses a model-only content path: `TONE_PROFILE`, schema and
-  template rules still shape the output, but world-description datasets,
+  creation currently uses a model-only content path: a short `SETTING_HINT`,
+  schema and template rules shape the output, but world-description datasets,
   few-shot habitat anchors and random lore seed fragments are not injected into
   the character bible prompt.
 - Publishing those local admin data edits is a separate opt-in flow. The
   frontend calls `/api/admin/speech/publish`, backed by
   `backend/app/services/local_admin_publish.py`; the job saves dirty drafts,
   commits only managed `backend/data` paths to GitHub, runs a Hetzner data-only
-  deploy over SSH (`up -d --no-build backend bot`), and exposes polling
+  deploy over SSH (`up -d --no-build --force-recreate backend bot`), and exposes polling
   logs/status back to the admin UI. Production compose bind-mounts individual
   managed `./backend/data` files/directories into backend and bot containers as
   read-only mounts, while `push_data` remains a separate writable

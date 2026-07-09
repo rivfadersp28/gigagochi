@@ -799,9 +799,10 @@ def test_lite_prompt_uses_baby_dataset_phrases_only_for_baby() -> None:
     baby_system_message = build_lite_chat_messages(baby)[0]["content"]
     teen_system_message = build_lite_chat_messages(teen)[0]["content"]
 
-    assert "TONE_PROFILE" in baby_system_message
-    assert "Dark fantasy" in baby_system_message
-    assert "Age changes speech complexity and self-control only" in baby_system_message
+    assert "GENERATION_PROFILE" in baby_system_message
+    assert "Cyberpunk" in baby_system_message
+    assert "Dark fantasy" not in baby_system_message
+    assert "Age changes speech complexity and impulsiveness only" in baby_system_message
     assert "Примеры детской манеры из датасета" in baby_system_message
     assert "Приветик! Ты пришёл!" in baby_system_message
     assert "Примеры детской манеры из датасета" not in teen_system_message
@@ -810,16 +811,16 @@ def test_lite_prompt_uses_baby_dataset_phrases_only_for_baby() -> None:
 
 def test_lite_prompt_includes_preselected_world_context_for_story_query() -> None:
     system_message = build_lite_chat_messages(
-        lite_payload(message="есть ли в твоем мире монстры?"),
+        lite_payload(message="есть ли в твоем мире препятствия?"),
         context_routing=ContextRoutingDecision(
             surface="chat",
             enabled_sources=frozenset({"worldContext"}),
-            queries={"worldContext": "монстры в мире питомца"},
+            queries={"worldContext": "препятствия в мире питомца"},
         ),
     )[0]["content"]
 
     assert "WORLD_CONTEXT" in system_message
-    assert "Опасности и монстры" in system_message
+    assert "Препятствия и риски" in system_message
     assert "STORY_LIBRARY" not in system_message
     assert "search_story_library" not in system_message
 
@@ -1607,6 +1608,10 @@ def test_memory_extraction_prompt_uses_user_message_as_source() -> None:
     assert "Извлекай только факты, которые сказал" in messages[0]["content"]
     assert "У меня завтра экзамен" in messages[1]["content"]
     assert "2026-07-06T12:00:00+03:00" in messages[1]["content"]
+    assert "GENERATION_PROFILE" not in messages[0]["content"]
+    assert "GENERATION_PROFILE" not in messages[1]["content"]
+    assert "Cyberpunk" not in messages[0]["content"]
+    assert "Cyberpunk" not in messages[1]["content"]
 
 
 def test_memory_extraction_returns_structured_operations() -> None:

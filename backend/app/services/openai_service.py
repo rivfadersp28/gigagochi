@@ -118,6 +118,8 @@ def get_openrouter_image_url(settings: Any) -> str:
 
 def chat_reasoning_effort_kwargs(reasoning_effort: str | None) -> dict[str, str]:
     effort = (reasoning_effort or "").strip()
+    if effort == "none":
+        return {}
     return {"reasoning_effort": effort} if effort else {}
 
 

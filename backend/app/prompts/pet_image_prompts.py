@@ -6,7 +6,7 @@ from typing import Any
 
 from app.prompts.style_direction import VISUAL_STYLE_FRAME
 from app.services.character_bible_template import character_bible_prompt_config
-from app.services.tone_runtime import tone_visual_style
+from app.services.tone_runtime import tone_context_payload, tone_visual_style
 
 PROMPT_MAX_LENGTH = 300
 
@@ -193,6 +193,7 @@ def _sanitize_retry_image_prompt_value(value: Any) -> Any:
 def build_character_bible_prompt(user_description: str) -> str:
     safe_description = rewrite_known_character_references(user_description.strip())
     template = character_bible_prompt_config()
+    setting = tone_context_payload("characterBible")
     persona_shape = "\n".join(f"- {item}" for item in template["personaShape"])
     top_level_fields = "\n".join(f"- {item}" for item in template["topLevelFields"])
     language_rules = "\n".join(f"- {item}" for item in template["languageRules"])
@@ -206,6 +207,14 @@ Use a tiny persona-file shape inspired by small persona-file projects:
 
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
+
+SETTING_HINT:
+Use this only as a light lens for habitat, objects, voice and story hooks.
+Do not replace USER_CHARACTER_DESCRIPTION with the setting.
+- preset: {setting["preset"]} ({setting["label"]})
+- setting: {setting["setting"]}
+- tone of voice: {setting["toneOfVoice"]}
+- surface: {setting["surfaceRule"]}
 
 GENERATION_RULE:
 {template["generationRule"]}

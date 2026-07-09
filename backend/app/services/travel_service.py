@@ -111,10 +111,11 @@ STORY_FRAMEWORKS: tuple[StoryFramework, ...] = (
 )
 
 TRAVEL_IMAGE_STYLE_PROMPT = """
-stylized fantasy key art for a premium game, tactile handcrafted materials,
-expressive non-human mascot acting, clean readable silhouettes, sly magical details,
-controlled color palette with natural neutrals and sharp accent colors, painterly depth,
-high emotional readability, no photorealism, no 3D plastic toy look, no clutter.
+single finished premium illustration for a character adventure, expressive non-human
+mascot acting, clean readable silhouettes, tactile materials, controlled color palette,
+clear foreground/midground/background, high emotional readability, no photorealism,
+no 3D plastic toy look, no clutter. The active generation profile defines the setting,
+surface details, lighting mood and genre flavor.
 """.strip()
 
 ADVENTURE_STORY_SCHEMA: dict[str, Any] = {
@@ -784,7 +785,7 @@ Required output:
 - mainObjective
 - importantCharacters
 - importantLocations
-- importantObjects: 0-3 ordinary or magical objects, only if each directly moves the plot
+- importantObjects: 0-3 plot-relevant objects, only if each directly moves the plot
 - fullStory: 8-12 paragraphs
 
 Story requirements:
@@ -807,22 +808,22 @@ Story requirements:
   what is preventing the character, what the character decides to do next, and why the next
   event happens.
 - Every paragraph must naturally lead to the next one through cause and effect.
-- Avoid introducing magical objects, characters or locations unless they
-  directly move the story forward.
+- Avoid introducing special objects, characters or locations unless they
+  naturally follow from the active generation profile and directly move the story forward.
 - Do not introduce concepts that exist only for one paragraph or one storyboard
   scene.
 - Every event must either reveal new information, create a new obstacle, solve
   part of the problem, or move the character closer to the goal.
 - If an event can be removed without changing the story, do not include it.
-- Introduce at most one magical idea. Everything else should be an ordinary
-  consequence of that idea.
-- Do not invent multiple magical artifacts, mysterious characters or fantasy
-  rules unless they are absolutely necessary.
+- Introduce at most one special setting rule or unusual premise. Everything else
+  should be an ordinary consequence of that rule.
+- Do not invent multiple special objects, mysterious characters or setting rules
+  unless they are absolutely necessary.
 - Keep all characters, locations and objects internally consistent and reusable
   across the plot when they appear.
 - Include one memorable climax and an emotionally satisfying ending.
 - The character succeeds through curiosity, creativity, courage, agility or strength.
-- Never solve conflict through violence, threats, weapons, or cruelty.
+- Never solve conflict through violence, intimidation, harm-focused props, or cruelty.
 - Keep the character's species, personality, home logic, visual identity and age stage
   consistent with CHARACTER_CONTEXT_JSON.
 """.strip(),
@@ -1136,7 +1137,7 @@ Composition rules:
   dynamic movement, and instantly understandable emotional action.
 - Keep the character clearly visible as the main character while showing the environment
   and the story beat.
-- No violence, weapons, threats, horror, adult themes or copyrighted characters.
+- No violence, intimidation, harm-focused props, horror, adult themes or copyrighted characters.
 """.strip()
 
 

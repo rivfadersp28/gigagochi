@@ -139,11 +139,11 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
     assert "лист на его лице светится" in prompt
     assert "древний дуб отвечает шепотом листа" not in prompt
     assert "чел с листом вместо лица" in prompt
-    assert "TONE_PROFILE" in prompt
-    assert "Dark fantasy" in prompt
-    assert "Детальная фэнтези-манга" in prompt
-    assert "японской ролевой игры" in prompt
-    assert "магия слегка плохо настроена" in prompt
+    assert "GENERATION_PROFILE" in prompt
+    assert "Cyberpunk" in prompt
+    assert "Dark fantasy" not in prompt
+    assert "Цельная детальная иллюстрация" in prompt
+    assert "активный generation profile" in prompt.lower()
     assert "Не превращай питомца в человека" in prompt
     assert "тон: позитивный" in prompt
     assert len(prompt) <= background_story_service.BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS

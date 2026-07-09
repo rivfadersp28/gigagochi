@@ -53,10 +53,10 @@ MANAGED_FILES: tuple[ManagedFile, ...] = (
     ),
     ManagedFile(
         "tone_runtime",
-        "Tone profile",
+        "Generation profile",
         "tone_runtime.json",
         "json",
-        "Общий tone of voice для реплик, мира, персонажей, историй и визуального стиля.",
+        "Одна ручка setting / tone of voice / visual style для реплик, мира, историй и картинок.",
     ),
     ManagedFile(
         "story_library",
@@ -224,16 +224,16 @@ def dialogue_influence_manifest() -> dict[str, Any]:
         "modifiers": [
             {
                 "id": "tone_profile",
-                "label": "Tone profile",
+                "label": "Generation profile",
                 "surfaces": [*surfaces, "background_story", "travel", "creation"],
                 "source": "tone_runtime",
                 "editable": True,
                 "fileId": "tone_runtime",
-                "configPath": "activePreset / presets",
+                "configPath": "activePreset / presets / setting / toneOfVoice / visualStyle",
                 "summary": (
-                    "Единый стиль мира, конфликтов, видимых реплик, персонажей, "
-                    "путешествий, фоновых историй и image prompts. Возрастная baby-речь "
-                    "остается отдельным слоем."
+                    "Единый active preset для сеттинга, тона, конфликтов, путешествий, "
+                    "фоновых историй и image prompts. Возрастная baby-речь остается "
+                    "отдельным слоем."
                 ),
             },
             {

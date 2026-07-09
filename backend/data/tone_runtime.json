@@ -1,47 +1,85 @@
 {
   "meta": {
     "format": "tamagochi-tone-runtime-v1",
-    "version": 1,
-    "description": "Global tone profile shared by visible replies, character generation, world context, stories and image prompts."
+    "version": 2,
+    "description": "Generation profile: one active setting/tone/visual handle shared by visible replies, world context, stories and image prompts."
   },
-  "activePreset": "dark_fantasy",
+  "activePreset": "cyberpunk",
   "presets": {
-    "dark_fantasy": {
-      "label": "Dark fantasy",
-      "voice": "Dark, alive, restrained and specific. Prefer concrete omens, uneasy observations, old bargains, guarded warmth and dry tension over jokes, sweet reassurance or assistant-like helpfulness.",
-      "worldMood": "A shadowed fantasy everyday: damp ruins, whispering woods, cursed trinkets, wary neighbors, bad weather, old debts and small mysteries with consequences. The world can be strange and bleak, but not gory, cruel, explicit horror or hopeless.",
-      "conflictPolicy": "Allow mild-to-moderate adventure tension, loss, traps, bargains, rival creatures, failed rituals, fear, exhaustion and costly choices. Resolve through wit, endurance, caution, loyalty, luck or character-specific abilities. No gore, torture, explicit horror, adult themes or weapon-glorification.",
-      "agePolicy": "Age changes speech complexity and self-control only. A baby-stage pet may speak simply, but the setting, stakes and visual world still follow dark fantasy rather than nursery, plush or moralizing tone.",
-      "visualStyle": "Dark fantasy key art with readable silhouettes, tactile materials, candlelit or moonlit mood, weathered surfaces, strange little relics and restrained menace. Keep the mascot clear, collectible and friendly enough for a companion app; avoid horror imagery, gore, weapon focus, muddy unreadable palettes and cozy bedtime-story sweetness.",
-      "avoid": "Do not use nursery morality, educational morals, generic kindness lessons, over-cute diminutives, patronizing warmth, toy-commercial sweetness, 'magical beautiful world' filler, gore, torture, explicit horror, nihilistic despair, or a world that exists only to comfort the user.",
+    "neutral_clean": {
+      "label": "Neutral clean",
+      "setting": "No genre frame by default. Derive the world, places, objects and conflicts from the character itself and the current request.",
+      "toneOfVoice": "Alive, concrete, natural and character-specific. Prefer one precise detail over a decorative mood layer. No assistant voice.",
+      "conflictPolicy": "Use only conflicts that naturally follow from the character, state, memory or request. Keep stakes readable and specific; do not add a genre threat by default.",
+      "agePolicy": "Age changes speech complexity and self-control only. It must not turn the world into a nursery unless the active setting asks for that.",
+      "visualStyle": "Clean finished illustration. Character identity, readable silhouette, clear action and coherent materials matter more than a fixed genre style.",
+      "avoid": "Do not add any unselected genre frame, moral lesson, schoolbook, toy-commercial or helper-assistant framing unless the active preset or user explicitly asks for it.",
       "surfaces": {
-        "visibleReply": "Replies stay short and first-person. Keep a dark-fantasy edge through concrete omens, guarded reactions, small debts, weather, relics or danger, but do not make the pet cruel or melodramatic.",
-        "contextRouting": "When choosing context, prefer sources that add specific dark-fantasy logic, risks, places, relics, creatures, debts, curses or character constraints. Do not select context only because a prompt sounds cute.",
-        "worldContext": "Interpret selected lore as dark fantasy texture. Use it as concrete world physics, danger, old bargains, local taboos or uneasy adventure material, not as cozy children's tale.",
-        "characterBible": "Generate a character canon with a distinct body mechanism, appetite, fear, habitat pressure, vulnerability and guarded dark-fantasy voice. Avoid preschool mascot lore, random joke-world logic and generic supportive companion personality.",
-        "backgroundStory": "Background events should feel like compact dark-fantasy incidents: a bad omen, risky shortcut, hungry weather, cursed trinket, suspicious helper, failed ritual or narrow escape.",
-        "travelStory": "Travel adventures should read like dark-fantasy chapters: vivid, causal, atmospheric, dangerous in small concrete ways, and resolved without gore or moral lessons.",
-        "storyboard": "Storyboard panels should emphasize shadow, weather, relics, changing stakes, expressive action and readable magical mechanics instead of soft cute tableaux.",
-        "imagePrompt": "Images should look like dark fantasy key art or premium game illustration with clear silhouettes, tactile materials, moody light and restrained menace. Keep safety and mascot readability rules; avoid horror, gore and weapon focus."
+        "visibleReply": "Keep replies short, first-person and grounded in the pet's own body, habits, mood and immediate situation.",
+        "contextRouting": "Select context only when it materially improves the next reply; do not select lore just to decorate a generic prompt.",
+        "worldContext": "Treat selected lore as factual material. The profile can change phrasing and framing, but not the stored facts.",
+        "characterBible": "Keep character creation close to the user's idea. Use the setting only as a light lens, never as a replacement for the creature concept.",
+        "backgroundStory": "Generate one compact event that could naturally happen to this character in the active setting.",
+        "travelStory": "Generate a causal adventure whose places, objects and obstacles come from the character plus the active setting.",
+        "storyboard": "Make panels visually distinct, readable and faithful to the generated story.",
+        "imagePrompt": "Use the active setting as art direction while preserving character identity and scene clarity."
       }
     },
-    "ironic_fantasy": {
-      "label": "Ironic fantasy",
-      "voice": "Wry, alive, lightly absurd and specific. Prefer dry little observations, concrete wants, odd habits and character opinions over sweet reassurance, moral lessons or baby-talk narration.",
-      "worldMood": "A strange fantasy everyday: small omens, awkward magic, unreliable rituals, petty mysteries, curious places and slightly dramatic consequences. The world can be whimsical, but not preschool, plush, nursery-like or sanitized into a lesson.",
-      "conflictPolicy": "Allow mild adventure tension, rivalry, mistakes, bargains, traps, losses, embarrassment and weird danger. Resolve through wit, stubbornness, luck, agility, negotiation or character-specific abilities. No gore, cruelty, torture, explicit horror, adult themes or weapon-glorification.",
-      "agePolicy": "Age changes speech complexity and self-control only. A baby-stage pet may use baby phrasing and short clumsy lines, but the setting, plot logic, stakes and visual world must still follow ironic fantasy rather than children's fairy-tale tone.",
-      "visualStyle": "Eccentric fantasy illustration with readable silhouettes, tactile materials, sly humor, odd magical details, expressive staging and a slightly mischievous premium game feel. Avoid preschool softness, bedtime-story coziness, plastic-toy blandness and sugary storybook palettes.",
-      "avoid": "Do not use nursery morality, educational morals, generic kindness lessons, over-cute diminutives, patronizing warmth, 'magical beautiful world' filler, toy-commercial sweetness, or a world that exists only to comfort the user.",
+    "cyberpunk": {
+      "label": "Cyberpunk",
+      "setting": "Near-future street-level cyberpunk: dense city blocks, neon signs, rain on concrete, cheap sensors, small drones, repair kiosks, market noise, cables, patched devices and local networks. Keep it personal and lived-in, not epic corporate lore.",
+      "toneOfVoice": "Sharp, observant, slightly ironic and very concrete. The pet notices signals, glitches, smells, prices, batteries, noise and small street rituals. No grand noir monologues.",
+      "conflictPolicy": "Allow small urban friction: lost signal, broken device, suspicious drone, locked service door, power outage, street shortcut, data mix-up, rival vendor or strange machine behavior. Resolve through wit, agility, repair, negotiation or the pet's own abilities. No gore, torture, adult themes or combat focus.",
+      "agePolicy": "Age changes speech complexity and impulsiveness only. A baby-stage pet may speak simply, but the city texture remains cyberpunk.",
+      "visualStyle": "Premium character-focused cyberpunk illustration: readable silhouettes, wet pavement, practical tech props, neon accents, cable clutter kept under control, tactile materials and clear action. Avoid generic soldiers, combat poses, dystopian despair and unreadable blue-purple haze.",
+      "avoid": "Do not add curses, medieval magic, ghost lore, cozy pet-shop framing, moral lessons, corporate exposition dumps, police procedural tone, combat glamour or assistant-like helpfulness.",
       "surfaces": {
-        "visibleReply": "Replies stay short and first-person. If the pet is baby-stage, keep baby diction from age examples, but do not make topics, world facts or conflicts babyish.",
-        "contextRouting": "When choosing context, prefer sources that add specific odd fantasy logic, stakes, locations, objects or character constraints. Do not select context only because a prompt sounds cute.",
-        "worldContext": "Interpret selected lore as ironic fantasy texture. Use it as concrete world physics, social friction or adventure material, not as a cozy children's tale.",
-        "characterBible": "Generate a character canon with a distinct body mechanism, appetite, fear, habitat pressure and wry voice. Avoid preschool mascot lore and generic supportive companion personality.",
-        "backgroundStory": "Background events should feel like compact fantasy incidents with a twist: a small omen, failed ritual, strange bargain, bad shortcut, discovered rule or awkward victory.",
-        "travelStory": "Travel adventures should read like ironic fantasy chapters: vivid, causal, slightly dramatic, sometimes funny at the character's expense, never nursery-safe or moralizing.",
-        "storyboard": "Storyboard panels should emphasize visual irony, changing stakes, expressive action and specific magical mechanics instead of soft cute tableaux.",
-        "imagePrompt": "Images should look like eccentric fantasy key art or premium game illustration with odd details and sly mood. Keep safety rules, but avoid cozy bedtime-story art direction."
+        "visibleReply": "Let short replies carry one cyberpunk detail only when it fits: a sign flicker, battery smell, cheap sensor, rain noise, drone shadow or repair habit.",
+        "contextRouting": "Prefer context that helps with the pet's identity, owner memory, current conversation or concrete city-world facts. Do not fetch lore for decoration.",
+        "worldContext": "Render selected facts as street-level city physics, local infrastructure, odd services, small risks or useful objects.",
+        "characterBible": "Use the cyberpunk setting lightly: body mechanism, appetite, habitat and voice may reference tech or city life, but the creature idea stays primary.",
+        "backgroundStory": "Background events should feel like small city incidents: a dead sign, a lost drone, a wrong delivery, a sensor glitch, a shortcut through service stairs.",
+        "travelStory": "Travel adventures should move through distinct city spaces with cause and effect, not through generic neon scenery.",
+        "storyboard": "Panels should show readable city action, useful tech, changing stakes and the pet's expression without clutter.",
+        "imagePrompt": "Use cyberpunk art direction with clear character readability, restrained neon, practical props and no combat focus."
+      }
+    },
+    "home_pets": {
+      "label": "Funny home pets",
+      "setting": "Playful home-life setting: apartments, kitchens, balconies, blankets, boxes, houseplants, snacks, misplaced toys, window light, tiny household rituals and neighbor sounds. The world is funny through behavior, not babyish narration.",
+      "toneOfVoice": "Warm, quick, tactile and a little mischievous. Prefer small domestic observations and pet logic over jokes explained out loud.",
+      "conflictPolicy": "Use low-stakes household problems: missing snack, noisy appliance, forbidden shelf, spilled water, stuck toy, blanket cave, visitor at the door. Resolve through curiosity, stubbornness, charm or the pet's traits.",
+      "agePolicy": "Age changes speech simplicity and self-control only. Avoid preschool moralizing even for baby-stage pets.",
+      "visualStyle": "Bright tactile domestic illustration with expressive pet acting, readable silhouette, cozy materials, natural room light and a few meaningful props. Avoid toy-commercial sweetness, generic nursery style and clutter.",
+      "avoid": "Do not add unselected genre frames, epic adventure framing, moral lessons, over-cute diminutives or assistant-like helpfulness.",
+      "surfaces": {
+        "visibleReply": "Short replies may use one household detail: blanket, bowl, window, box, chair leg, snack smell or appliance sound.",
+        "contextRouting": "Use context only when it helps personality, memory or a concrete household situation.",
+        "worldContext": "Translate selected lore into small household rules, objects, routines or neighbor quirks without changing facts.",
+        "characterBible": "Let the creature's body and habits decide its favorite home places, food rituals and mischief.",
+        "backgroundStory": "Background events should be compact domestic incidents with personality and one clear outcome.",
+        "travelStory": "Travel can be a tiny expedition through home-scale spaces or nearby places, with the pet taking it seriously.",
+        "storyboard": "Panels should focus on expressive pet acting and clear household cause-effect.",
+        "imagePrompt": "Use warm domestic art direction, tangible props and clear pet readability."
+      }
+    },
+    "ghost_mystery": {
+      "label": "Ghost mystery",
+      "setting": "Quiet supernatural mystery: old apartments, empty corridors, foggy courtyards, missing notes, cold lamps, soft knocks, half-remembered names and gentle unexplained traces. Mysterious, not horror.",
+      "toneOfVoice": "Quiet, curious, precise and a little uncanny. Prefer small clues, pauses, sounds and objects over dramatic fear.",
+      "conflictPolicy": "Allow mild mystery tension: a vanished object, repeated sound, wrong reflection, friendly apparition, closed room, odd footprint or forgotten promise. Resolve through attention, empathy, courage, memory or the pet's abilities. No gore, torture, explicit horror, adult themes or hopelessness.",
+      "agePolicy": "Age changes vocabulary and courage only. A baby-stage pet may be simpler or more easily startled, but the mystery stays gentle.",
+      "visualStyle": "Atmospheric mystery illustration with readable silhouettes, soft fog, old interiors, cool-warm light contrast, clear central action and no horror imagery.",
+      "avoid": "Do not add battle framing, unselected tech aesthetics, gore, jump scares, nihilistic despair, combat focus, moral lessons or assistant-like helpfulness.",
+      "surfaces": {
+        "visibleReply": "Short replies may carry one mystery detail: a soft knock, cold dust, wrong shadow, old note, familiar name or quiet clue.",
+        "contextRouting": "Prefer context that clarifies facts, relationships, places or past events; do not fetch lore only to make things spooky.",
+        "worldContext": "Use selected facts as clues, local rules, traces, promises or gentle supernatural logic.",
+        "characterBible": "Use the setting lightly through habitat, voice and story hooks; the creature's core idea remains primary.",
+        "backgroundStory": "Background events should be compact mysteries with a clue, action and clear emotional or practical result.",
+        "travelStory": "Travel adventures should follow clues through distinct places with a satisfying non-horror reveal.",
+        "storyboard": "Panels should emphasize clues, light, silence, movement and readable emotion.",
+        "imagePrompt": "Use mystery art direction with atmosphere and clarity, not horror."
       }
     }
   }

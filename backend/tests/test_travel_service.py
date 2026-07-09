@@ -144,7 +144,7 @@ def test_adventure_story_prompt_receives_plot_brief_as_hidden_scaffold() -> None
     brief = travel_service._build_travel_plot_brief(
         travel_payload(),
         framework,
-        template=adventure_template("legendary_artifact_test"),
+        template=adventure_template("useful_object_test"),
     )
     messages = travel_service._build_adventure_story_messages(
         travel_payload(),
@@ -154,16 +154,17 @@ def test_adventure_story_prompt_receives_plot_brief_as_hidden_scaffold() -> None
     system_content = messages[0]["content"]
     user_content = messages[1]["content"]
 
-    assert "TONE_PROFILE" in system_content
-    assert "Dark fantasy" in system_content
+    assert "GENERATION_PROFILE" in system_content
+    assert "Cyberpunk" in system_content
+    assert "Dark fantasy" not in system_content
     assert "PLOT_TEMPLATE_BRIEF_JSON:" in user_content
     assert "STORY_CONSTRUCTOR_BRICKS_JSON:" in user_content
-    assert "legendary_artifact_test" in user_content
+    assert "useful_object_test" in user_content
     assert "hidden structural scaffold" in user_content
     assert "low-level palette" in user_content
     assert "not a filled template" in user_content
     assert "7 beat functions in order" in user_content
-    assert brief.selectedSlots["artifact"] in user_content
+    assert brief.selectedSlots["key_item"] in user_content
 
 
 def test_storyboard_prompt_maps_panels_to_plot_brief_beats() -> None:
@@ -195,8 +196,9 @@ def test_storyboard_prompt_maps_panels_to_plot_brief_beats() -> None:
     system_content = messages[0]["content"]
     user_content = messages[1]["content"]
 
-    assert "TONE_PROFILE" in system_content
-    assert "Dark fantasy" in system_content
+    assert "GENERATION_PROFILE" in system_content
+    assert "Cyberpunk" in system_content
+    assert "Dark fantasy" not in system_content
     assert "PLOT_TEMPLATE_BRIEF_JSON:" in user_content
     assert "great_discovery_changes_home" in user_content
     assert "Panel N should visualize beat N" in user_content
@@ -219,8 +221,8 @@ def test_travel_image_prompt_includes_character_asset_references() -> None:
     assert "face placement, colors" in prompt
     assert "ASPECT RATIO:" in prompt
     assert "OUTPUT SIZE:" in prompt
-    assert "Dark fantasy key art" in prompt
-    assert "stylized fantasy key art" in prompt
+    assert "Premium character-focused cyberpunk illustration" in prompt
+    assert "single finished premium illustration" in prompt
     assert "640x1072" in prompt
     assert "Simple character description:" in prompt
 
@@ -296,7 +298,7 @@ def test_adventure_story_prompt_uses_compact_story_context_without_asset_urls() 
     assert "https://cdn.example.test/assets/baby-idle.png" not in user_content
     assert "one central\n  problem focused from beginning to end" in user_content
     assert "chapter from an adventure book" in user_content
-    assert "Introduce at most one magical idea" in user_content
+    assert "Introduce at most one special setting rule or unusual premise" in user_content
     assert "If an event can be removed without changing the story" in user_content
     assert "where the pet is" not in user_content
     assert "where the character is" in user_content

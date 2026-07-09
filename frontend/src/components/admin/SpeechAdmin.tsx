@@ -823,17 +823,34 @@ function ToneRuntimeEditor({
     updatePath(["presets", activePreset, ...path], value);
   };
 
+  const presetIds = isRecord(presets) ? Object.keys(presets).sort() : [];
+
   return (
     <Section
-      title="Tone profile"
+      title="Generation profile"
       meta={<Badge variant="outline">{activePreset || "нет activePreset"}</Badge>}
     >
-      <RuntimeField
-        label="Active preset id"
-        value={activePreset}
-        rows={2}
-        onChange={(value) => updatePath(["activePreset"], value.trim())}
-      />
+      <div className="grid gap-2">
+        <Label>Active preset</Label>
+        <div className="flex flex-wrap gap-2">
+          {presetIds.map((presetId) => (
+            <Button
+              key={presetId}
+              type="button"
+              size="sm"
+              variant={presetId === activePreset ? "default" : "outline"}
+              onClick={() => updatePath(["activePreset"], presetId)}
+            >
+              {presetId}
+            </Button>
+          ))}
+        </div>
+        <Input
+          value={activePreset}
+          onChange={(event) => updatePath(["activePreset"], event.target.value.trim())}
+          placeholder="custom preset id"
+        />
+      </div>
 
       {!activeConfig ? (
         <Alert variant="destructive">
@@ -850,16 +867,16 @@ function ToneRuntimeEditor({
             onChange={(value) => updatePresetPath(["label"], value)}
           />
           <RuntimeField
-            label="Voice"
-            value={stringAt(config, ["presets", activePreset, "voice"])}
-            rows={4}
-            onChange={(value) => updatePresetPath(["voice"], value)}
+            label="Setting"
+            value={stringAt(config, ["presets", activePreset, "setting"])}
+            rows={5}
+            onChange={(value) => updatePresetPath(["setting"], value)}
           />
           <RuntimeField
-            label="World mood"
-            value={stringAt(config, ["presets", activePreset, "worldMood"])}
-            rows={5}
-            onChange={(value) => updatePresetPath(["worldMood"], value)}
+            label="Tone of voice"
+            value={stringAt(config, ["presets", activePreset, "toneOfVoice"])}
+            rows={4}
+            onChange={(value) => updatePresetPath(["toneOfVoice"], value)}
           />
           <RuntimeField
             label="Conflict policy"

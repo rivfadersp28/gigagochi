@@ -763,6 +763,10 @@ def test_character_bible_prompt_omits_curated_generation_context() -> None:
     prompt = build_character_bible_prompt("водяной зверек с ракушкой")
 
     assert "TONE_PROFILE" not in prompt
+    assert "GENERATION_PROFILE" not in prompt
+    assert "SETTING_HINT" in prompt
+    assert "Cyberpunk" in prompt
+    assert "Near-future street-level cyberpunk" in prompt
     assert "Dark fantasy" not in prompt
     assert "WORLD_DESCRIPTION_ANCHORS" not in prompt
     assert "source_text_do_not_copy" not in prompt
@@ -828,6 +832,8 @@ def test_character_bible_prompt_requests_species_specific_lore() -> None:
     assert "what does it usually do" in prompt
     assert "roleplay_contract" in prompt
     assert "TONE_PROFILE" not in prompt
+    assert "GENERATION_PROFILE" not in prompt
+    assert "SETTING_HINT" in prompt
     assert "safe fictional behavior pattern" not in prompt
     assert "forbidden_random_additions" not in prompt
     assert "never_say" not in prompt
