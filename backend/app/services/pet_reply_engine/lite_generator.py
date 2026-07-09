@@ -423,6 +423,76 @@ def _clean_optional_text(value: str | None, limit: int) -> str | None:
     return _truncate_text(text, limit) if text else None
 
 
+_CASUAL_CHARACTER_SMALL_TALK_RE = re.compile(
+    r"(^|\b)(как дела|как ты|ты как|как сам|как сама|как жизнь|как настроение|"
+    r"что нового|чем занимаешься|что делаешь)(\b|[?!.,;:]*$)",
+    re.IGNORECASE,
+)
+_CHARACTER_DETAIL_REQUEST_RE = re.compile(
+    r"(кто ты|ты кто|что ты такое|како[йеая] ты|расскажи о себе|"
+    r"внешн|выгляд|тело|уш|глаз|лап|хвост|крыл|рог|зуб|шерст|чешу|"
+    r"привыч|любим|боишь|умеешь|способност|характер|дом|жив[её]шь|"
+    r"прошл|истори|пита|\bешь\b|ед[ауеы]|батар|нюх|вывес)",
+    re.IGNORECASE,
+)
+_CASUAL_CHARACTER_SUPPRESSED_SOURCES = frozenset({"characterProfile", "liteOverlay"})
+
+
+def _is_casual_character_small_talk(message: str) -> bool:
+    text = _compact_spaces(message).casefold()
+    if not text or len(text) > 120:
+        return False
+    if _CHARACTER_DETAIL_REQUEST_RE.search(text):
+        return False
+    return bool(_CASUAL_CHARACTER_SMALL_TALK_RE.search(text))
+
+
+def _context_plan_without_sources(
+    plan: ContextPlan,
+    sources: frozenset[str],
+    *,
+    reason: str,
+) -> ContextPlan:
+    suppressed = sorted(plan.included_sources.intersection(sources))
+    if not suppressed:
+        return plan
+    included_sources = frozenset(
+        source for source in plan.included_sources if source not in sources
+    )
+    queries = {
+        key: value
+        for key, value in plan.queries.items()
+        if key not in _CASUAL_CHARACTER_SUPPRESSED_SOURCES
+    }
+    debug = deepcopy(plan.debug)
+    debug["includedSources"] = sorted(included_sources)
+    debug["suppressedSources"] = sorted(
+        set(debug.get("suppressedSources", [])) | set(suppressed)
+    )
+    debug["suppressionReason"] = reason
+    return ContextPlan(
+        surface=plan.surface,
+        modes=plan.modes,
+        router_decision=plan.router_decision,
+        included_sources=included_sources,
+        queries=queries,
+        debug=debug,
+    )
+
+
+def _apply_chat_casual_context_guard(
+    payload: LocalChatRequest,
+    plan: ContextPlan,
+) -> ContextPlan:
+    if not _is_casual_character_small_talk(payload.message):
+        return plan
+    return _context_plan_without_sources(
+        plan,
+        _CASUAL_CHARACTER_SUPPRESSED_SOURCES,
+        reason="generic_chat_small_talk_does_not_need_character_profile",
+    )
+
+
 def _memory_context_block(memory_context: LocalPetMemoryContext | None) -> str | None:
     if not memory_context:
         return None
@@ -666,16 +736,16 @@ def _plan_contexts_for_visible_reply(
     log_chat_completion_response("pet_reply/context_routing", completion)
     content = completion.choices[0].message.content or "{}"
     routing = _parse_context_routing_decision(surface=surface, raw_content=content)
-    return (
-        build_context_plan(
-            surface=surface,
-            modes=modes,
-            routing=routing,
-            source_enabled=context_source_enabled,
-            auto_default_sources=_visible_context_plan_auto_defaults(surface),
-        ),
-        prompt_debug,
+    context_plan = build_context_plan(
+        surface=surface,
+        modes=modes,
+        routing=routing,
+        source_enabled=context_source_enabled,
+        auto_default_sources=_visible_context_plan_auto_defaults(surface),
     )
+    if surface == "chat" and isinstance(payload, LocalChatRequest):
+        context_plan = _apply_chat_casual_context_guard(payload, context_plan)
+    return (context_plan, prompt_debug)
 
 
 def _source_enabled(
@@ -1297,6 +1367,7 @@ def build_lite_chat_messages(
         surface="chat",
         routing=context_routing,
     )
+    context_plan = _apply_chat_casual_context_guard(payload, context_plan)
     if context_bundle is None:
         context_bundle = _story_context_for_routing(
             surface="chat",

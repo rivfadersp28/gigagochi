@@ -113,8 +113,11 @@
   short and uses only the display name plus age/state/reply limit; pet
   description, character capsule and `characterBible` details are included only
   through `characterProfile` / `liteOverlay` routing so casual replies do not
-  repeat concrete creation details. `voice_profile.py` remains in the codebase
-  but is not on the visible-reply path.
+  repeat concrete creation details. Chat also applies a deterministic
+  `ContextPlan` guard for generic small talk such as "как дела?": it suppresses
+  `characterProfile` and `liteOverlay` even if the LLM router enabled them, while
+  explicit identity/body/habit/home questions still allow those sources.
+  `voice_profile.py` remains in the codebase but is not on the visible-reply path.
 - Generated pets follow a template -> instance contract in frontend local
   storage. `assetSet.characterTemplate` is the cleaned immutable snapshot from
   generation, while `assetSet.characterBible` is the mutable per-pet instance.

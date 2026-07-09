@@ -536,6 +536,45 @@ def test_lite_prompt_includes_character_capsule_only_for_character_profile() -> 
     assert "Do not invent new powers" not in system_message
 
 
+def test_chat_small_talk_suppresses_character_profile_even_if_router_enables_it() -> None:
+    system_message = build_lite_chat_messages(
+        lite_payload(
+            message="как дела?",
+            pet={
+                "name": "Пипс",
+                "description": "маленькое существо с мокрыми ушами и привычкой нюхать батарейки",
+                "stage": "teen",
+                "mood": "idle",
+                "stats": {
+                    "hunger": 72,
+                    "happiness": 81,
+                    "energy": 64,
+                },
+                "characterBible": {
+                    "extensions": {
+                        "lite_overlay": {
+                            "identity": ["мокрые уши", "нюхает батарейки"],
+                            "habits": ["прислушивается к вывескам"],
+                        }
+                    }
+                },
+            },
+        ),
+        context_routing=ContextRoutingDecision(
+            surface="chat",
+            enabled_sources=frozenset({"characterProfile"}),
+            queries={"characterProfile": "как дела"},
+        ),
+    )[0]["content"]
+
+    assert "Отвечай как Пипс. Ты живой персонаж, не ассистент." in system_message
+    assert "CHARACTER_CAPSULE" not in system_message
+    assert "CHARACTER_PROFILE" not in system_message
+    assert "мокрыми ушами" not in system_message
+    assert "нюхать батарейки" not in system_message
+    assert "прислушивается к вывескам" not in system_message
+
+
 def test_lite_prompt_includes_memory_context_only_when_present() -> None:
     empty_system_message = build_lite_chat_messages(lite_payload())[0]["content"]
     assert "Ты помнишь о пользователе" not in empty_system_message
