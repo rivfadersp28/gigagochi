@@ -279,6 +279,7 @@ def test_travel_accepts_local_pet_state(monkeypatch) -> None:
 
     def fake_generate_travel(payload):
         captured["pet"] = payload.pet.model_dump()
+        captured["includeDebug"] = payload.includeDebug
         return GenerateTravelResponse(
             travelId="travel-1",
             generatedAt=datetime(2026, 7, 6, 12, 0, tzinfo=UTC),
@@ -364,6 +365,7 @@ def test_travel_accepts_local_pet_state(monkeypatch) -> None:
             "idle": "https://cdn.example.test/assets/baby-idle.png",
         }
     }
+    assert captured["includeDebug"] is False
 
     app.dependency_overrides.clear()
 
@@ -492,8 +494,6 @@ def test_generate_pet_job_records_provider_failure(monkeypatch, caplog, tmp_path
         "code": "OPENAI_BAD_REQUEST",
         "error": "generation_failed",
         "message": "Не удалось создать питомца. Попробуйте еще раз.",
-        "providerStatus": 400,
-        "providerMessage": "unsupported image model",
         "requestId": "req-job",
     }
     assert any(

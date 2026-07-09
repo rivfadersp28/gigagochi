@@ -221,7 +221,9 @@
 - Visible reply prompts no longer inject the global `tone_runtime` setting and
   no longer duplicate JSON-schema limits/enums in prose. Structured response
   validation remains enforced by `response_format`.
-- API `debug` payloads are returned only for `includeDebug=true`. Server prompt
+- API `debug` payloads are returned only when `includeDebug=true` and
+  `ALLOW_DEV_TMA_AUTH=true`; production Telegram clients cannot request system
+  prompts or prompt-context diagnostics. Server prompt
   logs contain hashes, sizes, model and schema metadata by default; full prompt
   text/stdout requires `AI_PROMPT_LOG_FULL=true`.
 - Lite chat can read character JSON for explicit lore questions, but no longer

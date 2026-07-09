@@ -62,7 +62,6 @@ type PushSnapshotResponse = {
 
 const REQUIRED_STAGES = ["baby", "teen", "adult"] as const satisfies readonly PetStage[];
 const REQUIRED_MOODS = ["idle", "happy", "hungry", "sad"] as const satisfies readonly PetMood[];
-const MAX_ERROR_BODY_CHARS = 900;
 const GENERATION_POLL_INTERVAL_MS = 2000;
 const MAX_GENERATION_POLL_MS = 25 * 60 * 1000;
 
@@ -70,8 +69,6 @@ type ApiErrorDetail = {
   error?: unknown;
   message?: unknown;
   code?: unknown;
-  providerStatus?: unknown;
-  providerMessage?: unknown;
   requestId?: unknown;
   retryAfterSeconds?: unknown;
 };
@@ -86,10 +83,6 @@ export class ApiError extends Error {
     this.code = code;
     this.status = status;
   }
-}
-
-function compactText(value: string, limit = MAX_ERROR_BODY_CHARS): string {
-  return value.replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -137,79 +130,40 @@ function errorDetail(payload: unknown): ApiErrorDetail {
 }
 
 function errorMessageFromResponse(
-  path: string,
   response: Response,
   payload: unknown,
-  rawBody: string,
 ): { message: string; code?: string } {
   const detail = errorDetail(payload);
   const statusLine = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`;
   const code = stringValue(detail.code);
-  const error = stringValue(detail.error);
   const message = stringValue(detail.message) ?? stringValue((payload as { message?: unknown })?.message);
-  const providerStatus = numericValue(detail.providerStatus);
-  const providerMessage = stringValue(detail.providerMessage);
-  const requestId = stringValue(detail.requestId);
 
   if (code === "rate_limited") {
     return { message: rateLimitMessage(detail, message), code };
   }
 
-  const lines = [message ?? statusLine, `Endpoint: ${path}`, `Status: ${statusLine}`];
-  if (code) {
-    lines.push(`Code: ${code}`);
-  }
-  if (error) {
-    lines.push(`Error: ${error}`);
-  }
-  if (providerStatus !== undefined) {
-    lines.push(`Provider status: ${providerStatus}`);
-  }
-  if (providerMessage) {
-    lines.push(`Provider message: ${providerMessage}`);
-  }
-  if (requestId) {
-    lines.push(`Request ID: ${requestId}`);
-  }
-  if (!payload && rawBody.trim()) {
-    lines.push(`Response: ${compactText(rawBody)}`);
-  }
-  return { message: lines.join("\n"), code };
+  return {
+    message:
+      message ??
+      (response.status >= 500
+        ? "Сервис временно недоступен. Попробуйте позже."
+        : `Не получилось выполнить действие (${statusLine}). Попробуйте снова.`),
+    code,
+  };
 }
 
-function errorMessageFromDetail(
-  path: string,
-  statusLine: string,
-  detail: ApiErrorDetail,
-): { message: string; code?: string } {
+function errorMessageFromDetail(detail: ApiErrorDetail): { message: string; code?: string } {
   const code = stringValue(detail.code);
-  const error = stringValue(detail.error);
   const message = stringValue(detail.message);
-  const providerStatus = numericValue(detail.providerStatus);
-  const providerMessage = stringValue(detail.providerMessage);
-  const requestId = stringValue(detail.requestId);
 
   if (code === "rate_limited") {
     return { message: rateLimitMessage(detail, message), code };
   }
 
-  const lines = [message ?? statusLine, `Endpoint: ${path}`, `Status: ${statusLine}`];
-  if (code) {
-    lines.push(`Code: ${code}`);
-  }
-  if (error) {
-    lines.push(`Error: ${error}`);
-  }
-  if (providerStatus !== undefined) {
-    lines.push(`Provider status: ${providerStatus}`);
-  }
-  if (providerMessage) {
-    lines.push(`Provider message: ${providerMessage}`);
-  }
-  if (requestId) {
-    lines.push(`Request ID: ${requestId}`);
-  }
-  return { message: lines.join("\n"), code };
+  return {
+    message: message ?? "Не получилось создать питомца. Попробуйте снова.",
+    code,
+  };
 }
 
 function delay(ms: number): Promise<void> {
@@ -242,9 +196,11 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
-  } catch (caught) {
-    const message = caught instanceof Error ? caught.message : String(caught);
-    throw new ApiError(`Network error\nEndpoint: ${path}\nURL: ${url}\nMessage: ${message}`, "NETWORK_ERROR");
+  } catch {
+    throw new ApiError(
+      "Не удалось связаться с сервисом. Проверьте подключение и попробуйте снова.",
+      "NETWORK_ERROR",
+    );
   }
 
   if (!response.ok) {
@@ -256,7 +212,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     } catch {
       payload = undefined;
     }
-    const { message, code } = errorMessageFromResponse(path, response, payload, rawBody);
+    const { message, code } = errorMessageFromResponse(response, payload);
     throw new ApiError(message, code, response.status);
   }
 
@@ -454,11 +410,7 @@ async function waitForGeneratedPet(initialJob: GeneratePetJobResponse): Promise<
     }
 
     if (job.status === "failed") {
-      const { message, code } = errorMessageFromDetail(
-        `/api/generate-pet/jobs/${job.jobId}`,
-        "generation failed",
-        job.error ?? {},
-      );
+      const { message, code } = errorMessageFromDetail(job.error ?? {});
       throw new ApiError(message, code);
     }
 

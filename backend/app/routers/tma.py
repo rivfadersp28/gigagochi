@@ -268,6 +268,22 @@ def error_detail(error: str, code: str, message: str, exc: Exception) -> dict[st
     }
 
 
+def public_error_detail(detail: dict[str, object]) -> dict[str, object]:
+    return {
+        key: detail[key]
+        for key in ("code", "error", "message", "requestId")
+        if detail.get(key) is not None
+    }
+
+
+def _without_untrusted_debug(payload: Any) -> Any:
+    if not getattr(payload, "includeDebug", False):
+        return payload
+    if getattr(get_settings(), "allow_dev_tma_auth", False):
+        return payload
+    return payload.model_copy(update={"includeDebug": False})
+
+
 def _now_utc() -> datetime:
     return datetime.now(UTC)
 
@@ -322,7 +338,7 @@ def ai_failure_http_exception(
     log_ai_request_failure(endpoint, detail, exc)
     return HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
-        detail=detail,
+        detail=public_error_detail(detail),
     )
 
 
@@ -346,7 +362,7 @@ def _build_generation_failure(
         code,
         type(exc).__name__,
     )
-    return detail
+    return public_error_detail(detail)
 
 
 generation_job_service: GenerationJobService | None = None
@@ -422,6 +438,7 @@ def generation_job(job_id: str, user: TelegramUser) -> GeneratePetJobResponse:
 @router.post("/chat", response_model=LocalChatResponse, response_model_exclude_none=True)
 def chat(payload: LocalChatRequest, user: TelegramUser) -> LocalChatResponse:
     check_rate_limit("chat", user)
+    payload = _without_untrusted_debug(payload)
     prompt_log_token = set_prompt_log_context({"endpoint": "/api/chat"})
     try:
         return chat_with_local_pet(payload)
@@ -456,6 +473,7 @@ def push_snapshot(
 @router.post("/travel", response_model=GenerateTravelResponse, response_model_exclude_none=True)
 def travel(payload: GenerateTravelRequest, user: TelegramUser) -> GenerateTravelResponse:
     check_rate_limit("generation", user)
+    payload = _without_untrusted_debug(payload)
     settings = get_settings()
     has_ai_key = bool(
         getattr(settings, "openai_api_key", None) or getattr(settings, "openrouter_api_key", None)
@@ -499,6 +517,7 @@ def ambient_chat(
     user: TelegramUser,
 ) -> LocalChatResponse:
     check_rate_limit("chat", user)
+    payload = _without_untrusted_debug(payload)
     prompt_log_token = set_prompt_log_context({"endpoint": "/api/chat/ambient"})
     try:
         return generate_ambient_pet_message(payload)
@@ -532,6 +551,7 @@ def extract_lite_facts(
     user: TelegramUser,
 ) -> LiteFactExtractionResponse:
     check_rate_limit("lite_facts", user)
+    payload = _without_untrusted_debug(payload)
     patch, debug = extract_lite_overlay_patch_from_reply(payload)
     return LiteFactExtractionResponse(liteOverlayPatch=patch, debug=debug)
 
@@ -546,6 +566,7 @@ def extract_memory(
     user: TelegramUser,
 ) -> MemoryExtractionResponse:
     check_rate_limit("memory", user)
+    payload = _without_untrusted_debug(payload)
     return extract_user_memory_operations(payload)
 
 
@@ -559,6 +580,7 @@ def consolidate_memory(
     user: TelegramUser,
 ) -> MemoryConsolidationResponse:
     check_rate_limit("memory", user)
+    payload = _without_untrusted_debug(payload)
     return consolidate_user_memory(payload)
 
 
@@ -572,6 +594,7 @@ def proactive_chat(
     user: TelegramUser,
 ) -> LocalProactiveResponse:
     check_rate_limit("memory", user)
+    payload = _without_untrusted_debug(payload)
     try:
         return generate_proactive_pet_message(payload)
     except MissingOpenAIAPIKey:

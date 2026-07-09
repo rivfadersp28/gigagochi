@@ -76,9 +76,13 @@
 - A dashboard ambient/proactive hook is durable only when the user answers it:
   append the hook before the user message and send both as normal history. Do
   not reintroduce regex gating for whether the user's text counts as a reply.
-- Full AI prompt content must not be logged or returned by default. Use
-  `includeDebug=true` for an authenticated client debug payload and
+- Full AI prompt content must not be logged or returned by default. Client
+  `includeDebug=true` is honored only together with `ALLOW_DEV_TMA_AUTH=true`;
+  production users must never receive prompt snapshots. Use
   `AI_PROMPT_LOG_FULL=true` only in an explicit local diagnostic session.
+- Provider status and provider response text belong in server failure logs,
+  not API responses or visible frontend errors. Public AI errors may contain
+  the stable app code, safe message and provider request ID for correlation.
 - In `ContextPlan`, `routing=None` means no router was available and selected
   direct builders may use their legacy `auto_default` sources. An empty
   `ContextRoutingDecision` means the router ran or was intentionally skipped and
