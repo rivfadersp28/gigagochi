@@ -18,9 +18,22 @@
   logged. Do not use silent `except Exception` around it; otherwise lost
   patches are impossible to diagnose.
 - The worktree may contain unrelated dirty frontend/deploy files. Do not stage or revert them unless the task explicitly targets them.
+- `frontend/public/figma/main-pet-bg.png` is not a full scene background; it is
+  a transparent pet/backdrop layer. Main-screen scene background color/shape
+  still lives in CSS unless `main-screen-bg.png` is explicitly used for the
+  full 402x874 scene.
+- In `frontend/src/app/globals.css`, plain `backdrop-filter: blur(...)` may be
+  compiled to only `-webkit-backdrop-filter` by the current Next/Tailwind CSS
+  pipeline. For main-screen glass surfaces, keep the Tailwind-style
+  `--tw-backdrop-blur` rule that emits standard `backdrop-filter`, and verify
+  with computed styles in the browser.
 - Pet creation intentionally keeps generated sprite stage fallbacks fake/cheap
   for now. Do not change `FAST_GENERATION_STATE_FALLBACKS` unless the visual
-  staging decision changes explicitly.
+  staging decision changes explicitly. Current blink experiment is such a
+  visual staging exception: happy/sad/hungry temporarily fall back to idle.
+- Image-edit variants of a pet sprite can keep the same PNG dimensions while
+  changing the visible character bbox. For overlay assets such as blink, align
+  the edited foreground back to the source sprite canvas/bbox before saving.
 - Do not mutate character template fields during chat. Evolving per-pet
   character facts belong in `extensions.lite_overlay`; evolving story entities
   belong in `extensions.story_library_overlay`.
@@ -117,8 +130,10 @@
   containers and keeps `push_data` mounted at `/app/data/push`. Do not mount
   the whole `/app/data` parent as read-only: Docker cannot create the nested
   `/app/data/push` volume mountpoint and backend startup fails. Use
-  `up -d --no-build backend bot` for admin data publishes; use full `--build`
-  only for code/dependency/image changes.
+  `up -d --no-build --force-recreate backend bot` for admin data publishes so
+  bind-mounted managed files such as `tone_runtime.json` are definitely visible
+  inside running containers. Use full `--build` only for code/dependency/image
+  changes.
 - Admin server-sync is also local-only and opt-in. Keep
   `ADMIN_SYNC_FROM_SERVER_ENABLED=false` on Hetzner; local sync should refuse to
   overwrite managed data files when they already differ from the server commit.
@@ -141,6 +156,10 @@
   `frontend/.env.local` `BACKEND_URL` aligned with the local backend port
   (`8000` in the current dev setup), and keep `127.0.0.1`/`localhost` in
   `next.config.ts` `allowedDevOrigins` so Next dev HMR is not blocked.
+- Next dev/Turbopack can keep serving stale compiled global CSS after editing
+  `frontend/src/app/globals.css`, even when source and server chunks show newer
+  component code. If localhost visually ignores CSS-only changes, restart the
+  frontend dev server and re-check the served `/_next/static/chunks/*.css`.
 - `npm run build` in `frontend/` rewrites `frontend/next-env.d.ts` from
   `./.next/dev/types/routes.d.ts` to `./.next/types/routes.d.ts`. Treat it as a
   generated build side effect and revert it unless the Next config/source setup

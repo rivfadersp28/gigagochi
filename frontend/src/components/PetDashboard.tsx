@@ -52,13 +52,13 @@ import {
   defaultIdleAnimationSettings,
   type IdleAnimationSettings,
 } from "./pet-dashboard/IdleAnimationControls";
-import { MainPetBackdrop } from "./pet-dashboard/MainPetBackdrop";
 import { PetCharacterMessage, type PetReplyMessage } from "./pet-dashboard/PetCharacterMessage";
 import { PetTapParticleBurst } from "./pet-dashboard/PetTapParticleBurst";
 import { StatProgressRing } from "./pet-dashboard/StatProgressRing";
 import { TravelStoryOverlay } from "./pet-dashboard/TravelStoryOverlay";
 import { shouldReduceMotion } from "./pet-dashboard/motion";
 import {
+  generatedBlinkSpriteUrl,
   generatedSpriteUrl,
   stageLabels,
   stateLabels,
@@ -122,9 +122,13 @@ const SPEECH_BUBBLE_MIN_HEIGHT = 86;
 const SPEECH_BUBBLE_RADIUS = 43;
 const SPEECH_BUBBLE_TAIL_HEIGHT = 21;
 const SPEECH_BUBBLE_TAIL_HALF_WIDTH = 22;
-const ACTION_ICON_CACHE_VERSION = "20260706-action-colors-4";
-const MAIN_PET_BACKDROP_CACHE_VERSION = "20260706-main-pet-bg-1";
-const mainPetBackdropSrc = `/figma/main-pet-bg.png?v=${MAIN_PET_BACKDROP_CACHE_VERSION}`;
+const ACTION_ICON_CACHE_VERSION = "20260709-action-colors-1";
+const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
+const MAIN_PET_IMAGE_CACHE_VERSION = "20260709-main-pet-1";
+const MAIN_PET_SHADOW_CACHE_VERSION = "20260709-main-pet-shadow-1";
+const mainSceneBackgroundSrc = `/figma/main-screen-bg.png?v=${MAIN_SCENE_BACKGROUND_CACHE_VERSION}`;
+const mainPetSrc = `/figma/main-pet.png?v=${MAIN_PET_IMAGE_CACHE_VERSION}`;
+const mainPetShadowSrc = `/figma/main-pet-shadow.svg?v=${MAIN_PET_SHADOW_CACHE_VERSION}`;
 const actionIconSrc = {
   chat: `/figma/action-chat-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
   feed: `/figma/action-feed-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
@@ -157,35 +161,6 @@ const feedFoodAssets = [
     rotation: 6,
   },
 ] satisfies FoodAsset[];
-
-const mainActionButtonGlassStyle = {
-  height: "58.203px",
-  padding: "14px 17px 16px 13px",
-  borderRadius: "24px",
-  backgroundColor: "rgba(41, 41, 41, 0.4)",
-  color: "#ffffff",
-  boxShadow: "inset 0 2px 4px rgba(255, 255, 255, 0.09)",
-  backdropFilter: "blur(20px)",
-  WebkitBackdropFilter: "blur(20px)",
-  lineHeight: "normal",
-} satisfies CSSProperties;
-
-const mainActionButtonStyle = {
-  chat: { ...mainActionButtonGlassStyle, width: 192 },
-  feed: { ...mainActionButtonGlassStyle, width: 198 },
-  travel: { ...mainActionButtonGlassStyle, width: 241 },
-} satisfies Record<"chat" | "feed" | "travel", CSSProperties>;
-
-const mainScreenStyle = {
-  backgroundColor: "#000000",
-} satisfies CSSProperties;
-
-const speechBubbleGlassStyle = {
-  backgroundColor: "rgba(41, 41, 41, 0.4)",
-  boxShadow: "inset 0 2px 4px rgba(255, 255, 255, 0.09)",
-  backdropFilter: "blur(20px)",
-  WebkitBackdropFilter: "blur(20px)",
-} satisfies CSSProperties;
 
 function buildSpeechBubbleClipPath({ width, height }: SpeechBubbleSize) {
   const w = Math.max(SPEECH_BUBBLE_MIN_WIDTH, width);
@@ -861,9 +836,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const displayedStage = selectedSprite?.stage ?? pet.stage;
   const displayedState = selectedSprite?.state ?? pet.mood;
   const visiblePetImage =
-    generatedSpriteUrl(pet, displayedStage, displayedState) ?? "/figma/main-pet.png";
-  const visiblePetBackdropImage =
-    visiblePetImage === "/figma/main-pet.png" ? mainPetBackdropSrc : visiblePetImage;
+    generatedSpriteUrl(pet, displayedStage, displayedState) ?? mainPetSrc;
+  const isFigmaFallbackPet = visiblePetImage === mainPetSrc;
+  const visiblePetBlinkImage = isFigmaFallbackPet ? null : generatedBlinkSpriteUrl(pet);
   const displayedReply = petReplyMessage ?? {
     id: 0,
     text: INITIAL_PET_REPLY_FALLBACK,
@@ -899,18 +874,16 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     transformOrigin: PET_TAP_TRANSFORM_ORIGIN,
   };
   const conversationSceneStyle: ConversationSceneStyle = {
-    ...mainScreenStyle,
     "--conversation-visible-height": `${conversationVisibleHeight}px`,
   };
   const speechBubbleClipPath = buildSpeechBubbleClipPath(speechBubbleSize);
   const speechBubbleShapeStyle = {
-    ...speechBubbleGlassStyle,
     clipPath: `path("${speechBubbleClipPath}")`,
     WebkitClipPath: `path("${speechBubbleClipPath}")`,
   } satisfies CSSProperties;
 
   return (
-    <main className="tma-screen relative overflow-hidden bg-black text-white" style={mainScreenStyle}>
+    <main className="main-shell tma-screen relative overflow-hidden">
       {localPet.error ? (
         <div className="fixed left-5 right-5 top-[max(20px,calc(var(--tma-safe-top)+12px))] z-20 rounded-[8px] border border-[var(--danger-line)] bg-white px-4 py-3 text-sm text-[var(--danger)] sm:left-8 sm:right-auto sm:max-w-sm">
           {localPet.error}
@@ -923,7 +896,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       ) : null}
 
       <section
-        className={`main-mobile-scene tma-screen relative mx-auto w-full max-w-[402px] overflow-hidden bg-black ${
+        className={`main-mobile-scene tma-screen relative mx-auto w-full max-w-[402px] overflow-hidden ${
           isChatMode ? "main-mobile-scene--chat" : ""
         } ${
           isFeedMode ? "main-mobile-scene--feed" : ""
@@ -939,7 +912,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           <div className="conversation-appbar__blur" aria-hidden="true" />
         </div>
 
-        <MainPetBackdrop src={visiblePetBackdropImage} />
+        <img
+          src={mainSceneBackgroundSrc}
+          alt=""
+          aria-hidden="true"
+          className="main-scene-background"
+          draggable={false}
+        />
 
         <div className="hidden" aria-hidden="true">
           <IdleAnimationControls
@@ -1016,9 +995,19 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           </div>
         </div>
 
+        <img
+          src={mainPetShadowSrc}
+          alt=""
+          aria-hidden="true"
+          className="main-pet-shadow"
+          draggable={false}
+        />
+
         <div
           ref={feedDropTargetRef}
-          className="main-pet-stage absolute left-0 top-[277px] z-20 h-[372px] w-[402px]"
+          className={`main-pet-stage absolute left-0 top-[277px] z-20 h-[372px] w-[402px] ${
+            isFigmaFallbackPet ? "main-pet-stage--figma" : ""
+          }`}
         >
           <div className="pet-idle-rotation absolute left-0 top-0 h-[357px] w-[402px]" style={idleRotationStyle}>
             {petTapParticleBursts.map((burstId) => (
@@ -1041,16 +1030,35 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               data-button-press-sound="off"
               aria-label="Погладить персонажа"
             >
-              <img
-                src={visiblePetImage}
-                alt=""
-                aria-hidden="true"
-                className="pet-idle-y-animation h-full w-full max-w-none object-contain"
+              <span
+                className={`main-pet-layer-stack pet-idle-y-animation h-full w-full max-w-none ${
+                  isFigmaFallbackPet ? "main-pet-layer-stack--figma" : ""
+                }`}
                 style={idleStretchStyle}
-                width={402}
-                height={362}
-                draggable={false}
-              />
+              >
+                <img
+                  src={visiblePetImage}
+                  alt=""
+                  aria-hidden="true"
+                  className={`main-pet-image-layer h-full w-full max-w-none object-contain ${
+                    isFigmaFallbackPet ? "main-pet-image--figma" : ""
+                  }`}
+                  width={402}
+                  height={362}
+                  draggable={false}
+                />
+                {visiblePetBlinkImage ? (
+                  <img
+                    src={visiblePetBlinkImage}
+                    alt=""
+                    aria-hidden="true"
+                    className="main-pet-image-layer main-pet-blink-overlay h-full w-full max-w-none object-contain"
+                    width={402}
+                    height={362}
+                    draggable={false}
+                  />
+                ) : null}
+              </span>
             </button>
           </div>
         </div>
@@ -1111,7 +1119,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             setIsIdleControlsOpen(false);
             setIsDebugPanelOpen(true);
           }}
-          className="feed-fade-target conversation-fade-target absolute left-[327px] top-[685px] z-40 grid size-[58.203px] place-items-center overflow-hidden rounded-[24px] bg-[rgba(41,41,41,0.4)] text-white/90 shadow-[inset_0_2px_4px_rgba(255,255,255,0.09)] transition-colors hover:bg-[rgba(55,55,55,0.5)] focus:outline-none focus:ring-2 focus:ring-white/20"
+          className="main-debug-button feed-fade-target conversation-fade-target absolute left-[327px] top-[685px] z-40"
         >
           <Bug className="size-[22px]" aria-hidden="true" />
         </button>
@@ -1145,7 +1153,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           <button
             type="button"
             className="main-action-button main-action-button--chat"
-            style={mainActionButtonStyle.chat}
             onClick={handleOpenChatMode}
           >
             <img
@@ -1162,7 +1169,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             onClick={handleFeed}
             disabled={isFeeding}
             className="main-action-button main-action-button--feed disabled:cursor-not-allowed disabled:opacity-70"
-            style={mainActionButtonStyle.feed}
           >
             {isFeeding ? (
               <Loader2 className="size-[24px] animate-spin" aria-hidden="true" />
@@ -1183,7 +1189,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             onClick={handleTravel}
             disabled={isTravelGenerating}
             className="main-action-button main-action-button--travel disabled:cursor-not-allowed disabled:opacity-70"
-            style={mainActionButtonStyle.travel}
           >
             {isTravelGenerating ? (
               <Loader2 className="size-[24px] animate-spin" aria-hidden="true" />

@@ -206,14 +206,16 @@ def _character_reasoning_effort_kwargs(settings: Any, model: str) -> dict[str, s
 STAGE_ROWS = ("baby", "teen", "adult")
 STATE_COLUMNS = ("idle", "happy", "sad", "hungry")
 FAST_GENERATION_STAGE = "teen"
-FAST_GENERATION_STATES = ("idle", "happy", "sad")
+FAST_GENERATION_STATES = ("idle",)
 FAST_GENERATION_SKINS = tuple((FAST_GENERATION_STAGE, state) for state in FAST_GENERATION_STATES)
+STATE_STRIP_STATES = ("idle", "happy", "sad")
 FAST_GENERATION_STATE_FALLBACKS = {
     "idle": ("teen", "idle"),
-    "happy": ("teen", "happy"),
-    "sad": ("teen", "sad"),
-    "hungry": ("teen", "sad"),
+    "happy": ("teen", "idle"),
+    "sad": ("teen", "idle"),
+    "hungry": ("teen", "idle"),
 }
+BLINK_IMAGE_PROMPT = "Закрой ему глаза"
 SPRITE_FOREGROUND_DISTANCE = 28
 SPRITE_COMPONENT_DILATION_PX = 25
 SPRITE_SEARCH_PADDING_X_RATIO = 0.2
@@ -411,17 +413,18 @@ def extract_state_strip_cells(
     image: Image.Image,
     *,
     stage: str = FAST_GENERATION_STAGE,
+    states: tuple[str, ...] = STATE_STRIP_STATES,
 ) -> dict[tuple[str, str], Image.Image]:
     normalized = image.convert("RGBA")
-    cell_width = normalized.width // len(FAST_GENERATION_STATES)
+    cell_width = normalized.width // len(states)
     cell_height = normalized.height
     output_side = min(cell_width, cell_height)
     cell_images: dict[tuple[str, str], Image.Image] = {}
     background_pixel = background_pixel_for(normalized)
 
-    for col, state in enumerate(FAST_GENERATION_STATES):
+    for col, state in enumerate(states):
         left = col * cell_width
-        right = normalized.width if col == len(FAST_GENERATION_STATES) - 1 else left + cell_width
+        right = normalized.width if col == len(states) - 1 else left + cell_width
         cell_box = (left, 0, right, cell_height)
         content_bbox = foreground_component_bbox(normalized, cell_box)
         if content_bbox is None:
@@ -842,6 +845,24 @@ def build_openrouter_image_generate_kwargs(
     )
 
 
+def build_image_edit_kwargs(
+    settings: Any,
+    prompt: str,
+    *,
+    model: str | None = None,
+    size: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "model": model or get_image_model(settings),
+        "prompt": prompt,
+        "size": size or settings.openai_image_size,
+        "quality": settings.openai_image_quality,
+        "n": 1,
+        "output_format": settings.openai_image_output_format,
+        "timeout": settings.openai_image_timeout_seconds,
+    }
+
+
 def _image_result_bytes(first: Any) -> bytes:
     b64_json = (
         first.get("b64_json") if isinstance(first, dict) else getattr(first, "b64_json", None)
@@ -1235,6 +1256,40 @@ def generate_image_bytes(
     return _image_result_bytes(response.data[0])
 
 
+def _image_path_data_url(path: Path) -> str:
+    return f"data:image/png;base64,{base64.b64encode(path.read_bytes()).decode('utf-8')}"
+
+
+def generate_image_edit_bytes(
+    prompt: str,
+    source_path: Path,
+    *,
+    label: str,
+) -> bytes:
+    settings = get_settings()
+    input_references = [
+        {
+            "type": "image_url",
+            "image_url": {"url": _image_path_data_url(source_path)},
+        }
+    ]
+    if is_openrouter_provider(settings):
+        return generate_image_bytes(
+            prompt,
+            label=label,
+            input_references=input_references,
+        )
+
+    client = get_openai_client()
+    kwargs = build_image_edit_kwargs(settings, prompt)
+    log_image_generation_prompt(label, {**kwargs, "input_references": input_references})
+    with source_path.open("rb") as image_file:
+        response = client.images.edit(**kwargs, image=image_file)
+    response_payload = response.model_dump() if hasattr(response, "model_dump") else {}
+    log_image_generation_response(label, kwargs, response_payload)
+    return _image_result_bytes(response.data[0])
+
+
 def generate_openrouter_image_bytes(
     prompt: str,
     *,
@@ -1322,8 +1377,48 @@ def normalize_single_sprite_image(image_bytes: bytes) -> bytes:
         return buffer.getvalue()
 
 
+def align_sprite_to_reference_canvas(image_bytes: bytes, reference_path: Path) -> bytes:
+    with Image.open(BytesIO(image_bytes)) as image, Image.open(reference_path) as reference:
+        sprite_image = image.convert("RGBA")
+        reference_image = reference.convert("RGBA")
+        reference_bbox = foreground_component_bbox(
+            reference_image,
+            (0, 0, reference_image.width, reference_image.height),
+        )
+        sprite_bbox = foreground_component_bbox(
+            sprite_image,
+            (0, 0, sprite_image.width, sprite_image.height),
+        )
+        if reference_bbox is None or sprite_bbox is None:
+            return normalize_single_sprite_image(image_bytes)
+
+        target_left, target_top, target_right, target_bottom = reference_bbox
+        source_left, source_top, source_right, source_bottom = sprite_bbox
+        target_width = max(1, target_right - target_left)
+        target_height = max(1, target_bottom - target_top)
+        sprite = sprite_image.crop((source_left, source_top, source_right, source_bottom))
+        sprite = sprite.resize((target_width, target_height), Image.Resampling.LANCZOS)
+
+        canvas = Image.new("RGBA", reference_image.size, (255, 255, 255, 0))
+        canvas.alpha_composite(sprite, (target_left, target_top))
+        buffer = BytesIO()
+        canvas.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
 def generate_single_sprite_image_bytes(prompt: str) -> bytes:
     return normalize_single_sprite_image(remove_image_background(generate_image_bytes(prompt)))
+
+
+def generate_blink_sprite_image_bytes(source_path: Path) -> bytes:
+    blink_bytes = remove_image_background(
+        generate_image_edit_bytes(
+            BLINK_IMAGE_PROMPT,
+            source_path,
+            label="pet_creation/blink",
+        )
+    )
+    return align_sprite_to_reference_canvas(blink_bytes, source_path)
 
 
 def generate_individual_sprite_paths(
@@ -1359,6 +1454,11 @@ def generate_individual_sprite_paths(
         path = output_dir / f"{stage}-{state}.png"
         path.write_bytes(sprite_bytes)
         output_paths[(stage, state)] = (path, prompt)
+
+        if stage == FAST_GENERATION_STAGE and state == "idle":
+            blink_path = output_dir / f"{stage}-blink.png"
+            blink_path.write_bytes(generate_blink_sprite_image_bytes(path))
+            output_paths[(stage, "blink")] = (blink_path, BLINK_IMAGE_PROMPT)
 
     return output_paths
 
@@ -1438,6 +1538,7 @@ def generate_pet_asset_set(description: str) -> dict[str, Any]:
         "assetSetId": str(asset_set_id),
         "generatedAt": datetime.now(UTC),
         "images": images,
+        "blinkImageUrl": generated_urls.get((FAST_GENERATION_STAGE, "blink")),
         "spriteSheetUrl": None,
         "characterBible": None,
     }

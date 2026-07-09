@@ -144,8 +144,8 @@
   `create_character_bible` and returns no `characterBible`; image prompts use the
   user's raw character description as the visual seed plus the global
   `VISUAL_STYLE_FRAME` from `backend/app/prompts/style_direction.py`. The current
-  asset style frame is the user-provided independent blind-box vinyl designer toy
-  prompt copied verbatim. Standalone sprite image prompts intentionally contain
+  asset style frame is the user-provided quiet melancholic collectible designer
+  art toy prompt copied verbatim. Standalone sprite image prompts intentionally contain
   only `{user_description}` plus `VISUAL_STYLE_FRAME`: no generation profile,
   stage/state variant, character bible, or output requirement blocks. Per-pet
   story events stay in `characterBible.extensions.recent_story_events` for old

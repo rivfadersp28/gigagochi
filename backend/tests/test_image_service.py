@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import uuid
+from io import BytesIO
 from types import SimpleNamespace
 
 import httpx
@@ -16,11 +17,14 @@ from app.services.image_service import (
     BACKGROUND_REMOVAL_SCRIPT,
     CHARACTER_BIBLE_SCHEMA,
     _character_reasoning_effort_kwargs,
+    align_sprite_to_reference_canvas,
     character_bible_quality_issues,
     create_character_bible,
     extract_sprite_cells,
     extract_state_strip_cells,
+    foreground_component_bbox,
     generate_image_bytes,
+    generate_image_edit_bytes,
     generate_individual_sprite_paths,
     generate_kandinsky_image_bytes,
     generate_openrouter_image_bytes,
@@ -559,8 +563,72 @@ def test_generate_kandinsky_image_bytes_retries_create_timeout(monkeypatch) -> N
     assert post_calls[1]["timeout"] == 180
 
 
-def test_generate_pet_asset_set_generates_three_separate_teen_skins(monkeypatch, tmp_path) -> None:
+def test_generate_image_edit_bytes_uses_openai_image_edit(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+    source_path = tmp_path / "teen-idle.png"
+    source_path.write_bytes(b"source-image")
+
+    class FakeImages:
+        def edit(self, **kwargs):
+            captured.update(kwargs)
+            assert kwargs["image"].read() == b"source-image"
+            return SimpleNamespace(
+                data=[SimpleNamespace(b64_json=base64.b64encode(b"edited-image").decode())]
+            )
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            ai_provider="openai",
+            openai_image_model="gpt-image-2",
+            openai_image_size="1536x1152",
+            openai_image_quality="medium",
+            openai_image_output_format="png",
+            openai_image_timeout_seconds=180,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.get_openai_client",
+        lambda: SimpleNamespace(images=FakeImages()),
+    )
+
+    result = generate_image_edit_bytes(
+        "Закрой ему глаза",
+        source_path,
+        label="pet_creation/blink",
+    )
+
+    assert result == b"edited-image"
+    assert captured["model"] == "gpt-image-2"
+    assert captured["prompt"] == "Закрой ему глаза"
+    assert captured["timeout"] == 180
+
+
+def test_align_sprite_to_reference_canvas_matches_reference_bbox(tmp_path) -> None:
+    reference = Image.new("RGBA", (100, 100), (255, 255, 255, 0))
+    reference_draw = ImageDraw.Draw(reference)
+    reference_draw.rectangle((30, 10, 70, 90), fill=(20, 140, 70, 255))
+    reference_path = tmp_path / "teen-idle.png"
+    reference.save(reference_path, format="PNG")
+
+    shifted = Image.new("RGBA", (200, 200), (255, 255, 255, 0))
+    shifted_draw = ImageDraw.Draw(shifted)
+    shifted_draw.rectangle((20, 100, 180, 190), fill=(40, 90, 190, 255))
+
+    output = Image.open(
+        BytesIO(align_sprite_to_reference_canvas(png_bytes(shifted), reference_path))
+    ).convert("RGBA")
+
+    assert output.size == reference.size
+    assert foreground_component_bbox(output, (0, 0, output.width, output.height)) == color_bbox(
+        reference,
+        (20, 140, 70, 255),
+    )
+
+
+def test_generate_pet_asset_set_generates_idle_and_blink_overlay(monkeypatch, tmp_path) -> None:
     generated_prompts: list[str] = []
+    blink_sources: list[str] = []
 
     monkeypatch.setattr(
         "app.services.image_service.generated_dir_for",
@@ -569,7 +637,10 @@ def test_generate_pet_asset_set_generates_three_separate_teen_skins(monkeypatch,
     def fail_create_character_bible(_description):
         raise AssertionError("pet asset generation must not create character bible")
 
-    monkeypatch.setattr("app.services.image_service.create_character_bible", fail_create_character_bible)
+    monkeypatch.setattr(
+        "app.services.image_service.create_character_bible",
+        fail_create_character_bible,
+    )
 
     def fake_prompt(_description, _character_bible, *, stage, state):
         return f"single:{stage}:{state}"
@@ -578,12 +649,14 @@ def test_generate_pet_asset_set_generates_three_separate_teen_skins(monkeypatch,
         generated_prompts.append(prompt)
         image = Image.new("RGBA", (100, 100), (255, 255, 255, 255))
         draw = ImageDraw.Draw(image)
-        color = {
-            "single:teen:idle": (20, 140, 70, 255),
-            "single:teen:happy": (220, 180, 40, 255),
-            "single:teen:sad": (40, 90, 190, 255),
-        }[prompt]
-        draw.rectangle((30, 30, 70, 70), fill=color)
+        draw.rectangle((30, 30, 70, 70), fill=(20, 140, 70, 255))
+        return png_bytes(image)
+
+    def fake_blink_bytes(source_path):
+        blink_sources.append(source_path.name)
+        image = Image.new("RGBA", (100, 100), (255, 255, 255, 255))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((30, 30, 70, 70), fill=(40, 90, 190, 255))
         return png_bytes(image)
 
     monkeypatch.setattr("app.services.image_service.build_pet_single_sprite_prompt", fake_prompt)
@@ -595,28 +668,29 @@ def test_generate_pet_asset_set_generates_three_separate_teen_skins(monkeypatch,
         "app.services.image_service.remove_image_background",
         lambda image_bytes: image_bytes,
     )
+    monkeypatch.setattr(
+        "app.services.image_service.generate_blink_sprite_image_bytes",
+        fake_blink_bytes,
+    )
 
     result = generate_pet_asset_set("электрический дракон")
 
-    assert generated_prompts == [
-        "single:teen:idle",
-        "single:teen:happy",
-        "single:teen:sad",
-    ]
+    assert generated_prompts == ["single:teen:idle"]
+    assert blink_sources == ["teen-idle.png"]
     assert sorted(path.name for path in next(tmp_path.iterdir()).iterdir()) == [
-        "teen-happy.png",
+        "teen-blink.png",
         "teen-idle.png",
-        "teen-sad.png",
     ]
 
     images = result["images"]
     assert result["characterBible"] is None
+    assert "/teen-blink.png" in result["blinkImageUrl"]
     for stage in ("baby", "teen", "adult"):
         assert set(images[stage]) == {"idle", "happy", "hungry", "sad"}
+        assert images[stage]["idle"] == images[stage]["happy"]
+        assert images[stage]["idle"] == images[stage]["sad"]
+        assert images[stage]["idle"] == images[stage]["hungry"]
         assert "/teen-idle.png" in images[stage]["idle"]
-        assert "/teen-happy.png" in images[stage]["happy"]
-        assert "/teen-sad.png" in images[stage]["sad"]
-        assert "/teen-sad.png" in images[stage]["hungry"]
 
 
 def test_state_strip_prompt_omits_lore_only_do_not_change() -> None:
@@ -667,7 +741,7 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
 
     def fake_image_bytes(prompt):
         calls.append(prompt)
-        if prompt == "standard:teen:happy":
+        if prompt == "standard:teen:idle":
             raise RuntimeError("blocked")
         image = Image.new("RGBA", (100, 100), (255, 255, 255, 255))
         draw = ImageDraw.Draw(image)
@@ -679,6 +753,10 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
         "app.services.image_service.remove_image_background",
         lambda image_bytes: image_bytes,
     )
+    monkeypatch.setattr(
+        "app.services.image_service.generate_blink_sprite_image_bytes",
+        lambda _source_path: png_bytes(Image.new("RGBA", (100, 100), (255, 255, 255, 0))),
+    )
 
     result = generate_individual_sprite_paths(
         uuid.uuid4(),
@@ -688,14 +766,11 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
 
     assert calls == [
         "standard:teen:idle",
-        "standard:teen:happy",
-        "safe-retry:teen:happy",
-        "standard:teen:sad",
+        "safe-retry:teen:idle",
     ]
     assert sorted(path.name for path, _prompt in result.values()) == [
-        "teen-happy.png",
+        "teen-blink.png",
         "teen-idle.png",
-        "teen-sad.png",
     ]
 
 

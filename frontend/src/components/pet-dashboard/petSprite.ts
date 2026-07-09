@@ -32,3 +32,7 @@ export const spriteStateOptions = [
 export function generatedSpriteUrl(pet: LocalPetState, stage: PetStage, state: PetState) {
   return pet.assetSet?.images[stage]?.[state] || null;
 }
+
+export function generatedBlinkSpriteUrl(pet: LocalPetState) {
+  return pet.assetSet?.blinkImageUrl || null;
+}

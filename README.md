@@ -29,6 +29,18 @@ Telegram Mini App MVP for the AI Tamagotchi core loop:
 
 ## Local Setup
 
+One-command local runner:
+
+```bash
+./scripts/local-dev.sh start
+./scripts/local-dev.sh stop
+./scripts/local-dev.sh status
+./scripts/local-dev.sh logs
+```
+
+It starts PostgreSQL, backend, and frontend together. Logs and PID files live in
+`.local-dev/`.
+
 Start PostgreSQL through Docker if you need the legacy DB routes:
 
 ```bash

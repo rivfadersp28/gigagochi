@@ -326,7 +326,7 @@ export function PetCharacterMessage({
 
   return (
     <div
-      className="main-speech-bubble__message text-center text-[20.357px] font-bold leading-[normal] text-white"
+      className="main-speech-bubble__message text-center text-[20.357px] font-bold leading-[normal]"
       style={petMessageStackStyle}
       aria-live="polite"
     >

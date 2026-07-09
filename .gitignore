@@ -23,6 +23,7 @@ backend/static/generated/
 backend/logs/
 backend/data/push/
 backend-dev.log
+.local-dev/
 backend/data/.admin-backups/
 backend/data/calibration/*.jsonl
 /speech_*.wav

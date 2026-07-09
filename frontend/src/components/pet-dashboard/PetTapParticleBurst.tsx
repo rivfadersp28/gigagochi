@@ -11,10 +11,10 @@ const petTapParticleConfig = {
   elementSize: 28,
   lifetime: 170,
   colors: [
-    "rgba(255, 255, 255, 0.78)",
-    "rgba(129, 212, 250, 0.58)",
-    "rgba(41, 182, 246, 0.48)",
-    "rgba(255, 241, 118, 0.5)",
+    "rgba(255, 250, 243, 0.78)",
+    "rgba(255, 132, 163, 0.52)",
+    "rgba(133, 82, 154, 0.44)",
+    "rgba(238, 170, 53, 0.46)",
   ],
   physics: {
     gravity: -0.04,

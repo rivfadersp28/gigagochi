@@ -401,6 +401,7 @@ export async function generatePetAssets(description: string): Promise<GeneratePe
     ...response,
     characterBible: response.characterBible ?? undefined,
     images: completeGeneratedImages(response),
+    blinkImageUrl: response.blinkImageUrl ? publicImageUrl(response.blinkImageUrl) : undefined,
     spriteSheetUrl: response.spriteSheetUrl ? publicImageUrl(response.spriteSheetUrl) : undefined,
   };
 }
