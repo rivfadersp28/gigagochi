@@ -264,15 +264,19 @@ def chat_completion_prompt_snapshot(
 def log_chat_completion_prompt(label: str, request_kwargs: Mapping[str, Any]) -> dict[str, Any]:
     payload = chat_completion_prompt_snapshot(label, request_kwargs)
     messages = payload.get("messages", [])
-    log_payload = payload if _full_prompt_logging_enabled() else {
-        "label": label,
-        "model": payload.get("model"),
-        "promptHash": _prompt_hash(messages),
-        "promptMessageCount": len(messages) if isinstance(messages, list) else 0,
-        "promptContentChars": _message_content_length(messages),
-        "hasTools": "tools" in payload,
-        "responseFormat": payload.get("response_format"),
-    }
+    log_payload = (
+        payload
+        if _full_prompt_logging_enabled()
+        else {
+            "label": label,
+            "model": payload.get("model"),
+            "promptHash": _prompt_hash(messages),
+            "promptMessageCount": len(messages) if isinstance(messages, list) else 0,
+            "promptContentChars": _message_content_length(messages),
+            "hasTools": "tools" in payload,
+            "responseFormat": payload.get("response_format"),
+        }
+    )
     line_payload = write_prompt_log_line(
         {
             "event": "ai_prompt",
@@ -316,9 +320,11 @@ def image_generation_prompt_snapshot(
 def log_image_generation_prompt(label: str, request_kwargs: Mapping[str, Any]) -> dict[str, Any]:
     payload = image_generation_prompt_snapshot(label, request_kwargs)
     prompt = str(payload.get("prompt") or "")
-    log_payload = payload if _full_prompt_logging_enabled() else {
-        key: value for key, value in payload.items() if key != "prompt"
-    }
+    log_payload = (
+        payload
+        if _full_prompt_logging_enabled()
+        else {key: value for key, value in payload.items() if key != "prompt"}
+    )
     if not _full_prompt_logging_enabled():
         log_payload["promptHash"] = _text_hash(prompt)
         log_payload["promptChars"] = len(prompt)

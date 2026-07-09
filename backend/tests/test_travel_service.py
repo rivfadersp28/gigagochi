@@ -155,9 +155,7 @@ def test_adventure_story_prompt_receives_plot_brief_as_hidden_scaffold() -> None
     user_content = messages[1]["content"]
 
     assert "GENERATION_PROFILE" in system_content
-    assert "- setting: cyberpunk" in system_content
-    assert "- tone: natural" in system_content
-    assert "Dark fantasy" not in system_content
+    assert travel_service.tone_prompt_block("travelStory") in system_content
     assert "PLOT_TEMPLATE_BRIEF_JSON:" in user_content
     assert "STORY_CONSTRUCTOR_BRICKS_JSON:" not in user_content
     assert "useful_object_test" in user_content
@@ -198,9 +196,7 @@ def test_storyboard_prompt_maps_panels_to_plot_brief_beats() -> None:
     user_content = messages[1]["content"]
 
     assert "GENERATION_PROFILE" in system_content
-    assert "- setting: cyberpunk" in system_content
-    assert "- tone: natural" in system_content
-    assert "Dark fantasy" not in system_content
+    assert travel_service.tone_prompt_block("storyboard") in system_content
     assert "PLOT_TEMPLATE_BRIEF_JSON:" in user_content
     assert "great_discovery_changes_home" in user_content
     assert "Panel N should visualize beat N" in user_content
@@ -223,7 +219,7 @@ def test_travel_image_prompt_includes_character_asset_references() -> None:
     assert "face placement, colors" in prompt
     assert "ASPECT RATIO:" in prompt
     assert "OUTPUT SIZE:" in prompt
-    assert "- setting: cyberpunk" in prompt
+    assert travel_service.tone_visual_style() in prompt
     assert "single finished premium illustration" in prompt
     assert "640x1072" in prompt
     assert "Simple character description:" in prompt
@@ -318,8 +314,7 @@ def test_adventure_story_schema_allows_no_important_objects() -> None:
             "adventureTitle": "Тихая тропа",
             "coreIdea": core_idea,
             "world": (
-                "Обычный сад после дождя, где все события следуют из мокрой земли, "
-                "луж и ветра."
+                "Обычный сад после дождя, где все события следуют из мокрой земли, луж и ветра."
             ),
             "mainObjective": "Найти сухой путь обратно к дому под листом.",
             "importantCharacters": ["Листик — маленький листолицый питомец."],

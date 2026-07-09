@@ -26,7 +26,10 @@ _KNOWN_CHARACTER_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"\bsonic\b", re.IGNORECASE),
         "a fast blue fantasy animal with spiky silhouette cues",
     ),
-    (re.compile(r"\bstitch\b", re.IGNORECASE), "a small blue alien-like creature with oversized ears"),
+    (
+        re.compile(r"\bstitch\b", re.IGNORECASE),
+        "a small blue alien-like creature with oversized ears",
+    ),
     (re.compile(r"\btotoro\b", re.IGNORECASE), "a large gentle forest spirit-like fantasy animal"),
     (re.compile(r"\bmickey\b", re.IGNORECASE), "a classic black-eared cartoon animal silhouette"),
     (re.compile(r"\bminnie\b", re.IGNORECASE), "a classic round-eared cartoon animal silhouette"),
@@ -115,7 +118,10 @@ _IMAGE_PROMPT_TEXT_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bрога\b", re.IGNORECASE), "мягкие антенны"),
     (re.compile(r"\bрог[а-яё-]*\b", re.IGNORECASE), "мягкие антенны"),
     (re.compile(r"молни[а-яё]*", re.IGNORECASE), "жёлтые зигзаг-акценты"),
-    (re.compile(r"хвост[а-яё -]*вилк[а-яё]*", re.IGNORECASE), "хвост с округлым раздвоенным кончиком"),
+    (
+        re.compile(r"хвост[а-яё -]*вилк[а-яё]*", re.IGNORECASE),
+        "хвост с округлым раздвоенным кончиком",
+    ),
     (re.compile(r"заземл[а-яё]*", re.IGNORECASE), "устойчивости"),
     (re.compile(r"заряд[а-яё]*", re.IGNORECASE), "энергетический акцент"),
     (re.compile(r"гроз[а-яё]*", re.IGNORECASE), "тёплый каменный"),
@@ -228,7 +234,6 @@ Rules:
 """.strip()
 
 
-
 def _sprite_bible_view(
     character_bible: dict[str, Any],
     *,
@@ -264,11 +269,7 @@ def _sprite_bible_view(
                 else key_aliases.get(key, key)
             ): character_bible[key]
             for key in visual_keys
-            if key in character_bible
-            and (
-                key not in key_aliases
-                or key == active_design_key
-            )
+            if key in character_bible and (key not in key_aliases or key == active_design_key)
         }
 
     return {

@@ -291,9 +291,7 @@ def test_local_admin_publish_starts_job_when_enabled(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["id"] == "job-1"
-    assert captured["files"] == [
-        {"id": "story_library", "content": '{"meta":{"version":2}}'}
-    ]
+    assert captured["files"] == [{"id": "story_library", "content": '{"meta":{"version":2}}'}]
     assert captured["commit_message"] == "Update admin data"
 
 

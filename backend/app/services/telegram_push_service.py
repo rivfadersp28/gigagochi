@@ -324,9 +324,7 @@ def _record_recent_story_events(record: dict[str, Any] | None) -> list[dict[str,
                     "summary": summary.strip(),
                     "eventType": last_story.get("eventType"),
                     "tags": (
-                        last_story.get("tags")
-                        if isinstance(last_story.get("tags"), list)
-                        else []
+                        last_story.get("tags") if isinstance(last_story.get("tags"), list) else []
                     ),
                     "source": "last_story_fallback",
                 },
@@ -537,8 +535,7 @@ def register_push_snapshot(
         "createdAt": payload.createdAt,
         "updatedAt": payload.updatedAt,
         "lastStatsTickAt": fallback_stat_tick,
-        "lastStatTickAt": payload.lastStatTickAt
-        or {key: fallback_stat_tick for key in STAT_KEYS},
+        "lastStatTickAt": payload.lastStatTickAt or {key: fallback_stat_tick for key in STAT_KEYS},
         "timezone": payload.timezone,
         "registeredAt": now_iso,
     }
@@ -880,11 +877,7 @@ def _apply_story_stat_impact(
     pet = deepcopy(record.get("pet")) if isinstance(record.get("pet"), dict) else {}
     raw_impacts = _normalize_story_stat_impacts(stat_impact)
     if not raw_impacts:
-        stats_delta = (
-            {key: 0 for key in STAT_KEYS}
-            if stat_impact is not None
-            else None
-        )
+        stats_delta = {key: 0 for key in STAT_KEYS} if stat_impact is not None else None
         return pet, None, None, stats_delta
 
     current_stats = _record_current_stats(record, now)
@@ -1164,10 +1157,7 @@ def _due_records(now: datetime) -> list[dict[str, Any]]:
     for record in records.values():
         if not isinstance(record, dict):
             continue
-        if (
-            not _has_snapshot(record)
-            or record.get("chatReachable") is not True
-        ):
+        if not _has_snapshot(record) or record.get("chatReachable") is not True:
             continue
         base_time = _latest_time(record.get("lastPushAt"), record.get("lastPushAttemptAt"))
         if base_time is None:
@@ -1264,10 +1254,6 @@ def start_daily_push_scheduler() -> asyncio.Task[None] | None:
 
 def start_background_story_scheduler() -> asyncio.Task[None] | None:
     settings = get_settings()
-    if (
-        not settings.background_story_enabled
-        or not settings.bot_token
-        or not settings.webapp_url
-    ):
+    if not settings.background_story_enabled or not settings.bot_token or not settings.webapp_url:
         return None
     return asyncio.create_task(_background_story_loop())

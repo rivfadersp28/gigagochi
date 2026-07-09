@@ -30,6 +30,7 @@ CONTEXT_SOURCE_TO_ROUTER_SOURCE: dict[str, str | None] = {
     "recentReplies": "recentReplies",
 }
 
+
 @dataclass(frozen=True)
 class ContextRoutingDecision:
     surface: ContextSurface
@@ -88,11 +89,7 @@ def build_context_plan(
 ) -> ContextPlan:
     router_decision = routing or ContextRoutingDecision(surface=surface)
     auto_defaults = auto_default_sources or frozenset()
-    source_modes = {
-        source: modes[source]
-        for source in CONTEXT_SOURCE_KEYS
-        if source in modes
-    }
+    source_modes = {source: modes[source] for source in CONTEXT_SOURCE_KEYS if source in modes}
     included: set[str] = set()
     for source in source_modes:
         router_source = router_source_for_context_source(source)

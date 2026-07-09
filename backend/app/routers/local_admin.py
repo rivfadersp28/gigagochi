@@ -75,14 +75,9 @@ def speech_admin_manifest(source: AdminSource = "local") -> dict[str, Any]:
     settings = get_settings()
     deploy_enabled = bool(getattr(settings, "admin_publish_enabled", False))
     deploy_message = (
-        (
-            "Deploy отправит data-файлы в GitHub и применит их на Hetzner."
-        )
+        ("Deploy отправит data-файлы в GitHub и применит их на Hetzner.")
         if deploy_enabled
-        else (
-            "Deploy отключен. "
-            "Задай ADMIN_PUBLISH_ENABLED=true и SSH-настройки."
-        )
+        else ("Deploy отключен. Задай ADMIN_PUBLISH_ENABLED=true и SSH-настройки.")
     )
     try:
         if source == "production":
@@ -128,6 +123,7 @@ def save_speech_admin(payload: AdminSaveRequest, source: AdminSource = "local") 
             detail=result,
         )
     return result
+
 
 @router.post("/speech/publish")
 def publish_speech_admin(payload: AdminPublishRequest) -> dict[str, Any]:

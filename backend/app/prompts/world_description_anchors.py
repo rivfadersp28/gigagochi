@@ -259,9 +259,7 @@ def select_world_description_anchors(
             if not isinstance(payload, dict):
                 continue
             examples = [
-                str(item).strip()
-                for item in payload.get("examples", ())
-                if str(item).strip()
+                str(item).strip() for item in payload.get("examples", ()) if str(item).strip()
             ]
             if not examples:
                 continue
@@ -336,8 +334,6 @@ def all_world_anchor_texts() -> tuple[str, ...]:
         if not isinstance(payload, dict):
             continue
         values.extend(
-            str(item).strip()
-            for item in payload.get("examples", ())
-            if str(item).strip()
+            str(item).strip() for item in payload.get("examples", ()) if str(item).strip()
         )
     return tuple(values)

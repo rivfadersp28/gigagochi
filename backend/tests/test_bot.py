@@ -9,10 +9,7 @@ from app.services import telegram_push_service
 from app.services.story_delivery_format import TELEGRAM_PHOTO_CAPTION_LIMIT, format_story_caption
 
 TEST_TELEGRAM_ID = 62943754
-STORY_IMPACT_TEXT = (
-    "Влияние на параметры:\n"
-    "здоровье: минус 25"
-)
+STORY_IMPACT_TEXT = "Влияние на параметры:\nздоровье: минус 25"
 
 
 def _story_update() -> dict:
@@ -68,9 +65,7 @@ def test_story_command_sends_generated_image_as_photo(monkeypatch) -> None:
     assert sent["chat_id"] == TEST_TELEGRAM_ID
     assert sent["photo"] == b"png"
     assert sent["caption"] == (
-        "След под кроной\n\n"
-        "Олег нашел теплый знак под древним дубом.\n\n"
-        f"{STORY_IMPACT_TEXT}"
+        f"След под кроной\n\nОлег нашел теплый знак под древним дубом.\n\n{STORY_IMPACT_TEXT}"
     )
     assert "text" not in sent
 
@@ -170,10 +165,7 @@ def test_story_caption_preserves_stat_debug_tail() -> None:
     )
 
     assert len(caption) <= TELEGRAM_PHOTO_CAPTION_LIMIT
-    assert caption.endswith(
-        "Влияние на параметры:\n"
-        "голод: минус 25"
-    )
+    assert caption.endswith("Влияние на параметры:\nголод: минус 25")
 
 
 def test_story_caption_shows_recovery_as_plus() -> None:
@@ -185,8 +177,4 @@ def test_story_caption_shows_recovery_as_plus() -> None:
         }
     )
 
-    assert caption.endswith(
-        "Влияние на параметры:\n"
-        "здоровье: плюс 18\n"
-        "настроение: плюс 7"
-    )
+    assert caption.endswith("Влияние на параметры:\nздоровье: плюс 18\nнастроение: плюс 7")

@@ -617,9 +617,7 @@ def _context_plan_without_sources(
     }
     debug = deepcopy(plan.debug)
     debug["includedSources"] = sorted(included_sources)
-    debug["suppressedSources"] = sorted(
-        set(debug.get("suppressedSources", [])) | set(suppressed)
-    )
+    debug["suppressedSources"] = sorted(set(debug.get("suppressedSources", [])) | set(suppressed))
     debug["suppressionReason"] = reason
     return ContextPlan(
         surface=plan.surface,
@@ -913,13 +911,17 @@ def _plan_contexts_for_visible_reply(
     if auto_router_sources.issubset(deterministic_sources):
         enabled_sources: set[str] = set()
         memory_context = getattr(payload, "memoryContext", None)
-        if "userMemory" in auto_router_sources and memory_context and any(
-            (
-                memory_context.summary,
-                memory_context.userProfile,
-                memory_context.relevantMemories,
-                memory_context.episodes,
-                memory_context.proactiveCandidate,
+        if (
+            "userMemory" in auto_router_sources
+            and memory_context
+            and any(
+                (
+                    memory_context.summary,
+                    memory_context.userProfile,
+                    memory_context.relevantMemories,
+                    memory_context.episodes,
+                    memory_context.proactiveCandidate,
+                )
             )
         ):
             enabled_sources.add("userMemory")
@@ -1106,11 +1108,7 @@ def _recent_event_stem(token: str) -> str:
 def _recent_event_tokens(value: Any) -> set[str]:
     text = _compact_spaces(str(value or "")).casefold()
     tokens = re.findall(r"[0-9a-zа-яё]{3,}", text, flags=re.IGNORECASE)
-    return {
-        _recent_event_stem(token)
-        for token in tokens
-        if token not in RECENT_EVENT_STOPWORDS
-    }
+    return {_recent_event_stem(token) for token in tokens if token not in RECENT_EVENT_STOPWORDS}
 
 
 def _recent_event_token_overlap(query_tokens: set[str], event_tokens: set[str]) -> int:
@@ -1202,9 +1200,7 @@ def _select_recent_events_for_text(
 
     selected_pairs = candidates[:MAX_RECENT_EVENTS_CONTEXT_ITEMS]
     selected = [item[0] for item in selected_pairs]
-    debug["includedEventIds"] = [
-        _recent_event_id(event, idx) for idx, event in enumerate(selected)
-    ]
+    debug["includedEventIds"] = [_recent_event_id(event, idx) for idx, event in enumerate(selected)]
     debug["triggerReason"] = selected_pairs[0][1] if selected_pairs else "no_match"
     return selected, debug
 
@@ -1326,8 +1322,7 @@ def _relevant_lite_overlay_block(pet: Any, query: str, *, limit: int = 3) -> str
                 for query_token in query_tokens
                 if len(query_token) >= 5
                 and any(
-                    fact_token.startswith(query_token[:5])
-                    or query_token.startswith(fact_token[:5])
+                    fact_token.startswith(query_token[:5]) or query_token.startswith(fact_token[:5])
                     for fact_token in fact_tokens
                     if len(fact_token) >= 5
                 )
@@ -1337,9 +1332,7 @@ def _relevant_lite_overlay_block(pet: Any, query: str, *, limit: int = 3) -> str
     if not scored:
         return None
     selected = [text for _score, text in sorted(scored, reverse=True)[:limit]]
-    return "Релевантные устойчивые факты персонажа:\n" + "\n".join(
-        f"- {text}" for text in selected
-    )
+    return "Релевантные устойчивые факты персонажа:\n" + "\n".join(f"- {text}" for text in selected)
 
 
 def _record_at(value: Any, key: str) -> dict[str, Any]:
@@ -1793,10 +1786,7 @@ def _world_seed_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     return [
         {
             "role": "system",
-            "content": (
-                f"{world_seed_system_prompt()}\n\n"
-                f"{tone_prompt_block('worldContext')}"
-            ),
+            "content": (f"{world_seed_system_prompt()}\n\n{tone_prompt_block('worldContext')}"),
         },
         {
             "role": "user",

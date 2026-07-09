@@ -63,8 +63,7 @@ def _is_context_routing_call(kwargs: dict) -> bool:
 
 def _is_visible_reply_call(kwargs: dict) -> bool:
     return (
-        kwargs.get("response_format", {}).get("json_schema", {}).get("name")
-        == "visible_pet_reply"
+        kwargs.get("response_format", {}).get("json_schema", {}).get("name") == "visible_pet_reply"
     )
 
 
@@ -121,8 +120,7 @@ def _fake_context_routing_response(kwargs: dict) -> str:
             "где твой",
         )
     ) or any(
-        marker in surface_text
-        for marker in ("опереться на мир", "основываться на world context")
+        marker in surface_text for marker in ("опереться на мир", "основываться на world context")
     )
     if "фан-факт" in surface_text and not any(
         marker in decision_text for marker in ("мир", "монстр", "существ", "предмет", "дом")
@@ -145,8 +143,8 @@ def _fake_context_routing_response(kwargs: dict) -> str:
     if isinstance(memory_brief, dict):
         episodes = memory_brief.get("episodes")
         has_memory = isinstance(episodes, list) and bool(episodes)
-    recent_replies_enabled = surface == "ambient" and isinstance(recent_replies, list) and bool(
-        recent_replies
+    recent_replies_enabled = (
+        surface == "ambient" and isinstance(recent_replies, list) and bool(recent_replies)
     )
 
     result = {
@@ -426,9 +424,10 @@ def test_lite_prompt_includes_state_modifier() -> None:
         }
     )
 
-    assert "Ты сейчас радостный, здоровый, полный сил." not in build_lite_chat_messages(happy)[0][
-        "content"
-    ]
+    assert (
+        "Ты сейчас радостный, здоровый, полный сил."
+        not in build_lite_chat_messages(happy)[0]["content"]
+    )
     assert "Ты сейчас голодный." in build_lite_chat_messages(hungry)[0]["content"]
 
 
@@ -1116,8 +1115,7 @@ def test_proactive_prompt_does_not_include_character_voice_control() -> None:
     assert "нос подсказывает" not in system_message
     assert (
         "Напиши владельцу первым одну короткую живую реплику. "
-        "Повод: пользователь обещал вернуться вечером"
-        in system_message
+        "Повод: пользователь обещал вернуться вечером" in system_message
     )
     assert "Ты сам решил написать пользователю первым" not in system_message
     assert "Напиши одну живую реплику" not in system_message
@@ -1199,9 +1197,9 @@ def test_ambient_prompt_uses_idle_field_without_forced_world_context(
 ) -> None:
     runtime_path = tmp_path / "speech_runtime.json"
     runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))
-    runtime["surfacePrompts"][
-        "idle"
-    ] = "Скажи одну короткую самостоятельную idle-реплику.\n{recent_replies}"
+    runtime["surfacePrompts"]["idle"] = (
+        "Скажи одну короткую самостоятельную idle-реплику.\n{recent_replies}"
+    )
     runtime_path.write_text(
         json.dumps(runtime, ensure_ascii=False),
         encoding="utf-8",

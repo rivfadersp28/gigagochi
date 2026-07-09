@@ -122,13 +122,11 @@ def _sentence_rhythm(sample_replies: list[str]) -> str:
         base = "короткие реплики из example messages: прямой ответ и одна конкретная деталь"
     elif average_words <= 18:
         base = (
-            "средние реплики из example messages: реакция, конкретная деталь "
-            "и короткое продолжение"
+            "средние реплики из example messages: реакция, конкретная деталь и короткое продолжение"
         )
     else:
         base = (
-            "развернутые реплики из example messages: эмоция, сцена "
-            "и несколько конкретных деталей"
+            "развернутые реплики из example messages: эмоция, сцена и несколько конкретных деталей"
         )
     additions = []
     if has_questions:

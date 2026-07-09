@@ -323,8 +323,7 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "fileId": "speech_runtime",
                 "configPath": "identityTemplate",
                 "summary": (
-                    "Один шаблон identity/age/state/reply-limit строки для всех "
-                    "видимых реплик."
+                    "Один шаблон identity/age/state/reply-limit строки для всех видимых реплик."
                 ),
             },
             {
@@ -395,8 +394,7 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "fileId": None,
                 "configPath": "replyMaxChars / MAX_REPLY_CHARS",
                 "summary": (
-                    "Лимит символов попадает в identity line и влияет на форму всех "
-                    "видимых реплик."
+                    "Лимит символов попадает в identity line и влияет на форму всех видимых реплик."
                 ),
             },
             {
@@ -551,11 +549,7 @@ def read_admin_manifest(
         "deploy": {
             "enabled": deploy_enabled,
             "message": (
-                deploy_message
-                or (
-                    "Публикация отключена. "
-                    "После сохранения нужен обычный deploy."
-                )
+                deploy_message or ("Публикация отключена. После сохранения нужен обычный deploy.")
             ),
         },
     }

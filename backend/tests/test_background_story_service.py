@@ -159,9 +159,7 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
     assert "Опорный дизайн" not in prompt
     assert "Tone style" not in prompt
     assert "Базовая визуальная рамка" not in prompt
-    normalized_shared_style = " ".join(
-        background_story_service.VISUAL_CHARACTER_STYLE.split()
-    )
+    normalized_shared_style = " ".join(background_story_service.VISUAL_CHARACTER_STYLE.split())
     assert normalized_shared_style in prompt
     assert "collectible designer art toy" in prompt
     assert "pure white seamless background" not in prompt
@@ -748,9 +746,7 @@ def test_background_story_aftermath_keeps_episode_but_ignores_ephemeral_lite_fac
     assert result.story_library_patch is None
     assert result.lite_overlay_patch is None
     assert result.recent_story_event is not None
-    assert result.recent_story_event["summary"] == (
-        "На Олега напала меловая тень и исчезла."
-    )
+    assert result.recent_story_event["summary"] == ("На Олега напала меловая тень и исчезла.")
     assert result.recent_story_event["participants"] == ["меловая тень", "Олег"]
     assert result.recent_story_event["canonicalFacts"] == ["на Олега напала меловая тень"]
 
@@ -804,9 +800,7 @@ def test_background_story_aftermath_persists_acquired_item_and_relationship(
                 "outcome": "Теплая искра осталась у Олега.",
                 "compactText": "Олег спас фонарщика и сохранил подаренную теплую искру.",
                 "canonicalFacts": ["фонарщик подарил Олегу теплую искру"],
-                "statusChanges": [
-                    {"entity": "теплая искра", "state": "owned", "owner": "Олег"}
-                ],
+                "statusChanges": [{"entity": "теплая искра", "state": "owned", "owner": "Олег"}],
             },
         },
         ensure_ascii=False,

@@ -371,4 +371,3 @@ def search_story_library(
         "poolHints": pool_hints if isinstance(pool_hints, list) else [],
         "bricks": bricks,
     }
-

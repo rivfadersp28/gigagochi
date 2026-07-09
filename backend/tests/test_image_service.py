@@ -300,9 +300,7 @@ def test_generate_image_bytes_uses_openai_edit_for_input_reference(monkeypatch) 
             captured["reference_bytes"] = image.read()
             return SimpleNamespace(
                 data=[
-                    SimpleNamespace(
-                        b64_json=base64.b64encode(b"openai-reference-image").decode()
-                    )
+                    SimpleNamespace(b64_json=base64.b64encode(b"openai-reference-image").decode())
                 ]
             )
 
@@ -335,9 +333,7 @@ def test_generate_image_bytes_uses_openai_edit_for_input_reference(monkeypatch) 
         input_references=[
             {
                 "type": "image_url",
-                "image_url": {
-                    "url": "https://cdn.example.test/assets/baby-happy.png"
-                },
+                "image_url": {"url": "https://cdn.example.test/assets/baby-happy.png"},
             }
         ],
     )
@@ -641,9 +637,7 @@ def test_generate_image_edit_bytes_uses_openai_image_edit(monkeypatch, tmp_path)
     assert captured["timeout"] == 180
 
 
-def test_generate_openrouter_video_bytes_uses_fixed_aspect_ratio(
-    monkeypatch, tmp_path
-) -> None:
+def test_generate_openrouter_video_bytes_uses_fixed_aspect_ratio(monkeypatch, tmp_path) -> None:
     captured: dict[str, object] = {}
     source_path = tmp_path / "teen-idle.png"
     source_path.write_bytes(png_bytes(Image.new("RGB", (720, 1280), (20, 140, 70))))
@@ -859,6 +853,7 @@ def test_generate_pet_asset_set_generates_idle_scene(monkeypatch, tmp_path) -> N
         "app.services.image_service.generated_dir_for",
         lambda asset_id: tmp_path / str(asset_id),
     )
+
     def fail_create_character_bible(_description):
         raise AssertionError("pet asset generation must not create character bible")
 
@@ -1109,7 +1104,7 @@ def test_character_bible_prompt_omits_curated_generation_context() -> None:
     assert "GENERATION_PROFILE" not in prompt
     assert "SETTING_HINT" in prompt
     character_profile = tone_context_payload("characterBible")
-    assert f'setting: {character_profile["setting"]}' in prompt
+    assert f"setting: {character_profile['setting']}" in prompt
     assert "tone: natural" in prompt
     assert "Dark fantasy" not in prompt
     assert "WORLD_DESCRIPTION_ANCHORS" not in prompt
@@ -1154,10 +1149,7 @@ def test_character_bible_schema_is_compact() -> None:
         "how_to_answer_who_are_you"
         in CHARACTER_BIBLE_SCHEMA["properties"]["roleplay_contract"]["required"]
     )
-    assert (
-        "never_say"
-        not in CHARACTER_BIBLE_SCHEMA["properties"]["roleplay_contract"]["required"]
-    )
+    assert "never_say" not in CHARACTER_BIBLE_SCHEMA["properties"]["roleplay_contract"]["required"]
     assert "growth_forms" in CHARACTER_BIBLE_SCHEMA["properties"]["visual"]["required"]
     assert "sample_replies" in CHARACTER_BIBLE_SCHEMA["properties"]["voice"]["required"]
     assert "drives" not in CHARACTER_BIBLE_SCHEMA["properties"]["inner_state"]["required"]

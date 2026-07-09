@@ -167,8 +167,7 @@ def validate_speech_runtime_config(config: Any) -> None:
     for placeholder in ("{character_context}", "{story_payload}"):
         if placeholder not in aftermath_template:
             raise ValueError(
-                "backgroundStory.aftermathExtractionUserTemplate must include "
-                f"{placeholder}"
+                f"backgroundStory.aftermathExtractionUserTemplate must include {placeholder}"
             )
     for surface in CONTEXT_SURFACES:
         for source in CONTEXT_SOURCE_KEYS:
@@ -398,10 +397,7 @@ def state_param_labels(
 
 def format_world_context_block(*, lines: str) -> str:
     template = _required_string(speech_runtime_config(), ("worldContext", "template"))
-    return (
-        f"{tone_prompt_block('worldContext')}\n\n"
-        f"{_template_replace(template, {'lines': lines})}"
-    )
+    return f"{tone_prompt_block('worldContext')}\n\n{_template_replace(template, {'lines': lines})}"
 
 
 def world_seed_system_prompt() -> str:

@@ -116,17 +116,21 @@ def tone_prompt_block(surface: str) -> str:
         return f"Общий стиль: {setting}. Манера речи: {tone}."
     if surface == "worldContext":
         return f"Окраска мира: {setting}. Тон: {tone}."
-    return "\n".join([
-        "GENERATION_PROFILE:",
-        f"- setting: {setting}",
-        f"- tone: {tone}",
-    ])
+    return "\n".join(
+        [
+            "GENERATION_PROFILE:",
+            f"- setting: {setting}",
+            f"- tone: {tone}",
+        ]
+    )
 
 
 def tone_visual_style(surface: str = "imagePrompt") -> str:
     preset = active_tone_preset()
-    return "\n".join([
-        "GENERATION_PROFILE:",
-        f"- setting: {_profile_setting(preset)}",
-        f"- tone: {_profile_tone_of_voice(preset)}",
-    ])
+    return "\n".join(
+        [
+            "GENERATION_PROFILE:",
+            f"- setting: {_profile_setting(preset)}",
+            f"- tone: {_profile_tone_of_voice(preset)}",
+        ]
+    )

@@ -224,17 +224,14 @@ def format_age_message_examples_for_prompt(
 ) -> str:
     age_stage = reply_input.pet.age_stage
     rules = tuple(
-        adapt_template(rule, reply_input)
-        for rule in stage_speech_rules(age_stage, limit=11)
+        adapt_template(rule, reply_input) for rule in stage_speech_rules(age_stage, limit=11)
     )
     categories = categories_for_reply(reply_input, detected_intent)
     examples = phrases_for_categories(reply_input, categories, per_category=2, max_examples=12)
 
     rule_lines = "\n".join(f"- {rule}" for rule in rules) if rules else "- нет"
     category_line = ", ".join(categories[:6]) if categories else "нет"
-    example_lines = "\n".join(
-        f"- {category}: {phrase}" for category, phrase in examples
-    ) or "- нет"
+    example_lines = "\n".join(f"- {category}: {phrase}" for category, phrase in examples) or "- нет"
 
     return f"""
 - selected_stage: {age_stage}

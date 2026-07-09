@@ -541,8 +541,7 @@ def generate_pet(payload: GeneratePetRequest, user: TelegramUser) -> GeneratePet
     description = payload.description.strip()
     settings = get_settings()
     has_ai_key = bool(
-        getattr(settings, "openai_api_key", None)
-        or getattr(settings, "openrouter_api_key", None)
+        getattr(settings, "openai_api_key", None) or getattr(settings, "openrouter_api_key", None)
     )
     if not has_ai_key:
         raise public_error(
@@ -596,8 +595,7 @@ def travel(payload: GenerateTravelRequest, user: TelegramUser) -> GenerateTravel
     check_rate_limit("generation", user)
     settings = get_settings()
     has_ai_key = bool(
-        getattr(settings, "openai_api_key", None)
-        or getattr(settings, "openrouter_api_key", None)
+        getattr(settings, "openai_api_key", None) or getattr(settings, "openrouter_api_key", None)
     )
     if not has_ai_key:
         raise public_error(

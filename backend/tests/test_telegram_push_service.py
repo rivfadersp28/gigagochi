@@ -387,8 +387,7 @@ def test_background_story_can_restore_stats() -> None:
         "updatedAt": now.isoformat().replace("+00:00", "Z"),
         "lastStatsTickAt": now.isoformat().replace("+00:00", "Z"),
         "lastStatTickAt": {
-            key: now.isoformat().replace("+00:00", "Z")
-            for key in ("hunger", "happiness", "energy")
+            key: now.isoformat().replace("+00:00", "Z") for key in ("hunger", "happiness", "energy")
         },
         "pet": {
             "description": "земляной великан",

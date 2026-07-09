@@ -1491,8 +1491,7 @@ def generate_background_story(
             {
                 "role": "system",
                 "content": (
-                    f"{background_story_system_prompt()}\n\n"
-                    f"{tone_prompt_block('backgroundStory')}"
+                    f"{background_story_system_prompt()}\n\n{tone_prompt_block('backgroundStory')}"
                 ),
             },
             {"role": "user", "content": user_content},

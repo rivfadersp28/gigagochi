@@ -1014,9 +1014,7 @@ def _reference_image_bytes(image_url: str) -> bytes:
         if not separator or not payload:
             return b""
         if ";base64" in header:
-            return base64.b64decode(
-                payload.replace("\n", "").replace("\r", "").strip()
-            )
+            return base64.b64decode(payload.replace("\n", "").replace("\r", "").strip())
         return payload.encode("utf-8")
 
     response = httpx.get(image_url, timeout=30)

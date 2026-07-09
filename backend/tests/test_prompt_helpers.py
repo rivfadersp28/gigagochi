@@ -49,9 +49,7 @@ def test_sprite_sheet_prompt_uses_visual_bible_slice() -> None:
             "main_colors": ["зеленый", "кремовый"],
             "materials": ["гладкий винил"],
             "lore": {
-                "world": {
-                    "story": "эта длинная история мира не должна попадать в image prompt"
-                }
+                "world": {"story": "эта длинная история мира не должна попадать в image prompt"}
             },
         },
     )
@@ -60,24 +58,24 @@ def test_sprite_sheet_prompt_uses_visual_bible_slice() -> None:
     assert "эта длинная история мира" not in prompt
 
 
-def test_single_sprite_prompt_forbids_grid_and_multiple_characters() -> None:
+def test_single_sprite_prompt_uses_raw_description_and_shared_style_frame() -> None:
     prompt = build_pet_single_sprite_prompt(
         "серый челик с листом вместо лица",
         {"species": "листолицое семечко", "signature_features": ["крупный лист вместо лица"]},
         stage="baby",
         state="happy",
     )
+    normalized = " ".join(prompt.split())
 
-    assert "Create one standalone character sprite" in prompt
-    assert "No sprite sheet, no grid, no panels, no multiple characters" in prompt
-    assert "Square app viewport composition" in prompt
-    assert "without cropping any body part" in prompt
-    assert "Stage: Small growth form" in prompt
-    assert "State: Happy" in prompt
-    assert "крупный лист вместо лица" in prompt
+    assert prompt.startswith("серый челик с листом вместо лица\n\n")
+    assert "collectible designer art toy" in prompt
+    assert "SPRITE_PRESENTATION:" in prompt
+    assert "pure white seamless background" in normalized
+    assert "листолицое семечко" not in prompt
+    assert "VARIANT:" not in prompt
 
 
-def test_single_sprite_safety_retry_forbids_grid_and_multiple_characters() -> None:
+def test_single_sprite_safety_retry_keeps_minimal_prompt_contract() -> None:
     prompt = build_pet_single_sprite_safety_retry_prompt(
         "электрический дракон",
         {"signature_features": ["мягкие рога", "светящийся хвост"]},
@@ -85,13 +83,14 @@ def test_single_sprite_safety_retry_forbids_grid_and_multiple_characters() -> No
         state="sad",
     )
 
-    assert "Create one standalone sprite" in prompt
-    assert "No sprite sheet, no grid, no panels, no multiple characters" in prompt
-    assert "Growth form: middle rounded form" in prompt
-    assert "Pose and expression: mildly sad or sleepy pose" in prompt
+    assert prompt.startswith("электрический дракон\n\n")
+    assert "collectible designer art toy" in prompt
+    assert "SPRITE_PRESENTATION:" in prompt
+    assert "светящийся хвост" not in prompt
+    assert "VARIANT:" not in prompt
 
 
-def test_single_sprite_prompt_avoids_minor_age_words_for_middle_growth_form() -> None:
+def test_single_sprite_prompt_does_not_inject_growth_metadata() -> None:
     prompt = build_pet_single_sprite_prompt(
         "электрический дракон",
         {
@@ -104,17 +103,15 @@ def test_single_sprite_prompt_avoids_minor_age_words_for_middle_growth_form() ->
         state="idle",
     )
 
-    assert "Middle growth form" in prompt
-    assert "Teen" not in prompt
-    assert "active_growth_form_design" in prompt
-    assert "чуть выше, с яркими мягкими антеннами" in prompt
+    assert "active_growth_form_design" not in prompt
+    assert "чуть выше, с яркими рогами" not in prompt
     assert "teen_design" not in prompt
     assert "small_growth_form_design" not in prompt
     assert "middle_growth_form_design" not in prompt
     assert "mature_growth_form_design" not in prompt
     assert "малыш с коротким хвостом" not in prompt
     assert "взрослая форма с широкими крыльями" not in prompt
-    assert "Only growth form" in prompt
+    assert "VARIANT:" not in prompt
 
 
 def test_state_strip_prompt_uses_one_middle_growth_form_with_three_states() -> None:
@@ -177,8 +174,10 @@ def test_state_strip_safety_retry_keeps_visual_style_frame() -> None:
         {"signature_features": ["мягкие рога", "светящийся хвост"]},
         stage="teen",
     )
+    normalized = " ".join(prompt.split())
 
     assert "STYLE_FRAME:" in prompt
-    assert "one bold, memorable visual idea" in prompt
-    assert "sphere, cube, drop, crystal, bean, star, cloud" in prompt
-    assert "Prioritize iconic silhouette over anatomy" in prompt
+    assert "collectible designer art toy" in prompt
+    assert "unexpected handcrafted wearable elements" in prompt
+    assert "bold instantly recognizable silhouette" in normalized
+    assert "SPRITE_PRESENTATION:" in prompt

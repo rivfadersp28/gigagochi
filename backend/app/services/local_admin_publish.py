@@ -209,10 +209,7 @@ def read_admin_manifest_from_server(
         """
     ).strip()
     remote_script = remote_script.replace("PATHS_JSON", repr(paths_json))
-    remote_command = (
-        f"set -e; cd {shlex.quote(remote_path)}; "
-        f"python3 - <<'PY'\n{remote_script}\nPY"
-    )
+    remote_command = f"set -e; cd {shlex.quote(remote_path)}; python3 - <<'PY'\n{remote_script}\nPY"
     try:
         output = _run_capture(
             [
@@ -529,8 +526,7 @@ def _publish_admin_data(
             )
         job.saved_files = save_result["files"]
         job.log(
-            "Сохранено локально: "
-            + ", ".join(file["path"] for file in save_result["files"]),
+            "Сохранено локально: " + ", ".join(file["path"] for file in save_result["files"]),
         )
 
     job.log("Проверяю JSON/JSONL на диске.")
@@ -553,10 +549,7 @@ def _publish_admin_data(
     if behind_count:
         raise AdminPublishError(
             "ADMIN_PUBLISH_BRANCH_BEHIND",
-            (
-                f"Локальная ветка отстаёт от {remote}/{branch} "
-                f"на {behind_count} commit."
-            ),
+            (f"Локальная ветка отстаёт от {remote}/{branch} на {behind_count} commit."),
         )
 
     unpublished_before = _unpublished_paths(job, remote, branch, timeout)
@@ -564,10 +557,7 @@ def _publish_admin_data(
     if unexpected_before:
         raise AdminPublishError(
             "ADMIN_PUBLISH_UNEXPECTED_COMMITS",
-            (
-                "Неопубликовано вне админки: "
-                + ", ".join(unexpected_before)
-            ),
+            ("Неопубликовано вне админки: " + ", ".join(unexpected_before)),
         )
 
     changed_allowed = _changed_paths(allowed_paths, timeout)
@@ -577,10 +567,7 @@ def _publish_admin_data(
         if staged_unexpected:
             raise AdminPublishError(
                 "ADMIN_PUBLISH_UNEXPECTED_STAGED",
-                (
-                    "В index уже лежат файлы вне админки: "
-                    + ", ".join(staged_unexpected)
-                ),
+                ("В index уже лежат файлы вне админки: " + ", ".join(staged_unexpected)),
             )
         _run_logged_command(
             job,
@@ -592,10 +579,7 @@ def _publish_admin_data(
         if staged_unexpected:
             raise AdminPublishError(
                 "ADMIN_PUBLISH_UNEXPECTED_STAGED",
-                (
-                    "После git add в index попали файлы вне админки: "
-                    + ", ".join(staged_unexpected)
-                ),
+                ("После git add в index попали файлы вне админки: " + ", ".join(staged_unexpected)),
             )
         message = _commit_message(commit_message)
         _run_logged_command(
@@ -618,10 +602,7 @@ def _publish_admin_data(
     if unexpected_after:
         raise AdminPublishError(
             "ADMIN_PUBLISH_UNEXPECTED_COMMITS",
-            (
-                "Перед push найдено вне админки: "
-                + ", ".join(unexpected_after)
-            ),
+            ("Перед push найдено вне админки: " + ", ".join(unexpected_after)),
         )
 
     job.log(f"Отправляю изменения в GitHub: {remote} HEAD:{branch}.")
@@ -720,9 +701,7 @@ def _server_head_commit(settings: Any, timeout: float) -> str:
         timeout=timeout,
     )
     sha = output.strip()
-    if len(sha) < 7 or len(sha) > 64 or any(
-        char not in "0123456789abcdefABCDEF" for char in sha
-    ):
+    if len(sha) < 7 or len(sha) > 64 or any(char not in "0123456789abcdefABCDEF" for char in sha):
         raise AdminPublishError(
             "ADMIN_SYNC_SERVER_COMMIT_INVALID",
             f"Сервер вернул некорректный git commit: {sha!r}.",
@@ -877,8 +856,7 @@ def _run_capture(args: list[str], *, cwd: Path, timeout: float) -> str:
     output = (completed.stdout or "") + (completed.stderr or "")
     if completed.returncode != 0:
         message = (
-            f"Команда завершилась с кодом {completed.returncode}: "
-            f"{_format_command(args)}\n{output}"
+            f"Команда завершилась с кодом {completed.returncode}: {_format_command(args)}\n{output}"
         )
         raise AdminPublishError(
             "ADMIN_PUBLISH_COMMAND_FAILED",
@@ -926,10 +904,7 @@ def _run_logged_command(
                 process.wait(timeout=5)
                 raise AdminPublishError(
                     "ADMIN_PUBLISH_COMMAND_TIMEOUT",
-                    (
-                        f"Команда не завершилась за {timeout:.0f} сек: "
-                        f"{_format_command(args)}"
-                    ),
+                    (f"Команда не завершилась за {timeout:.0f} сек: {_format_command(args)}"),
                 )
         for line in process.stdout.read().splitlines():
             job.log(line.rstrip())
@@ -938,10 +913,7 @@ def _run_logged_command(
         process.stdout.close()
 
     if process.returncode != 0:
-        message = (
-            f"Команда завершилась с кодом {process.returncode}: "
-            f"{_format_command(args)}"
-        )
+        message = f"Команда завершилась с кодом {process.returncode}: {_format_command(args)}"
         raise AdminPublishError(
             "ADMIN_PUBLISH_COMMAND_FAILED",
             message,

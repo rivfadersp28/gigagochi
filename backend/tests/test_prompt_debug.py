@@ -97,8 +97,7 @@ def test_prompt_debug_writes_response_log_with_generation_id(monkeypatch, tmp_pa
         prompt_debug.reset_prompt_log_context(token)
 
     responses = [
-        json.loads(line)
-        for line in response_log_path.read_text(encoding="utf-8").splitlines()
+        json.loads(line) for line in response_log_path.read_text(encoding="utf-8").splitlines()
     ]
     assert responses[0]["event"] == "ai_response"
     assert responses[0]["promptType"] == "chat_completion"

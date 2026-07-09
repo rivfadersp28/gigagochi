@@ -113,7 +113,4 @@ def character_bible_prompt_config() -> dict[str, Any]:
 
 def character_bible_legacy_defaults() -> dict[str, str]:
     config = character_bible_template_config()
-    return {
-        path[-1]: _string_at(config, path)
-        for path in LEGACY_DEFAULT_PATHS
-    }
+    return {path[-1]: _string_at(config, path) for path in LEGACY_DEFAULT_PATHS}
