@@ -35,6 +35,10 @@
 - The dashboard background is now the generated composed pet scene. Do not add
   a separate centered pet sprite, shadow, blink overlay, tap animation, or
   background-removal step unless the visual pipeline is intentionally changed.
+- Pet scene image and Seedance first frame must stay the same `720x1280` 9:16
+  PNG. Do not send the raw composed `1024x1536` image directly to Seedance or
+  use it as the dashboard poster; the aspect mismatch can reintroduce initial
+  reframe/jitter.
 - Pet creation waits for an OpenRouter video job after image composition and
   returns `assetSet.videoUrl`. The frontend generation polling timeout must stay
   at least as long as `OPENROUTER_VIDEO_TIMEOUT_SECONDS`, otherwise the UI can

@@ -149,14 +149,16 @@
   standalone character from `{user_description}` plus `VISUAL_STYLE_FRAME`, then
   sends that character and `backend/static/backgrounds/pet-generation-forest.png`
   to a multi-image edit prompt: `Добавь персонажа с первой картинки на вторую`.
-  The composed image is then sent as the `first_frame` to OpenRouter Videos API
-  with `OPENROUTER_VIDEO_MODEL` (default `bytedance/seedance-2.0`), `size=720x1280`,
-  `duration=4`, `generate_audio=false`, and a locked-camera blink-only prompt.
-  The saved public `assetSet.images` point to the final composed scene image and
-  `assetSet.videoUrl` points to the generated mp4. The dashboard renders the mp4
-  as the full-height background with the composed image as poster/fallback; there
-  is no separate centered pet sprite, blink overlay, tap animation, or background
-  removal step on the active path. Per-pet story events stay in
+  The raw composed image is center-cropped/resized to `720x1280` before saving as
+  `teen-idle.png`; that exact PNG is also sent as the `first_frame` to OpenRouter
+  Videos API with `OPENROUTER_VIDEO_MODEL` (default `bytedance/seedance-2.0`),
+  `resolution=720p`, `aspect_ratio=9:16`, `duration=4`, `generate_audio=false`,
+  and a locked-camera blink-only prompt. The saved public `assetSet.images` point
+  to the normalized scene PNG and `assetSet.videoUrl` points to the generated
+  mp4. The dashboard renders the mp4 as the full-height background with the same
+  normalized image as poster/fallback; there is no separate centered pet sprite,
+  blink overlay, tap animation, or background removal step on the active path.
+  Per-pet story events stay in
   `characterBible.extensions.recent_story_events` for old pets when present, but
   chat canon should come from history/memory rather than `lite_overlay`.
 - Frontend character instance normalization strips prompt-scaffolding fields

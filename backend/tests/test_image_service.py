@@ -27,8 +27,10 @@ from app.services.image_service import (
     generate_individual_sprite_paths,
     generate_kandinsky_image_bytes,
     generate_openrouter_image_bytes,
+    generate_openrouter_video_bytes,
     generate_pet_asset_set,
     generation_error_code,
+    normalize_pet_scene_video_frame_bytes,
 )
 
 
@@ -54,6 +56,18 @@ def png_bytes(image: Image.Image) -> bytes:
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def test_normalize_pet_scene_video_frame_bytes_crops_to_seedance_frame() -> None:
+    image = Image.new("RGB", (1024, 1536), (200, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((80, 0, 944, 1536), fill=(0, 160, 80))
+
+    output = Image.open(BytesIO(normalize_pet_scene_video_frame_bytes(png_bytes(image))))
+
+    assert output.size == (720, 1280)
+    assert output.getpixel((0, 0)) == (0, 160, 80)
+    assert output.getpixel((719, 1279)) == (0, 160, 80)
 
 
 def test_extract_sprite_cells_selects_component_and_aligns_bottom_padding() -> None:
@@ -555,6 +569,77 @@ def test_generate_image_edit_bytes_uses_openai_image_edit(monkeypatch, tmp_path)
     assert captured["timeout"] == 180
 
 
+def test_generate_openrouter_video_bytes_uses_fixed_aspect_ratio(
+    monkeypatch, tmp_path
+) -> None:
+    captured: dict[str, object] = {}
+    source_path = tmp_path / "teen-idle.png"
+    source_path.write_bytes(png_bytes(Image.new("RGB", (720, 1280), (20, 140, 70))))
+
+    class FakePostResponse:
+        status_code = 200
+
+        def json(self):
+            return {"id": "video-job-1"}
+
+    class FakePollResponse:
+        status_code = 200
+        content = b""
+
+        def json(self):
+            return {"status": "completed"}
+
+    class FakeContentResponse:
+        status_code = 200
+        content = b"video-bytes"
+
+        def json(self):
+            return {}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return FakePostResponse()
+
+    def fake_get(url, *, headers, timeout):
+        captured.setdefault("get_urls", []).append(url)
+        if url.endswith("/content"):
+            return FakeContentResponse()
+        return FakePollResponse()
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            openrouter_api_key="sk-or-test",
+            openrouter_base_url="https://openrouter.ai/api/v1",
+            openrouter_video_model="bytedance/seedance-2.0",
+            openrouter_video_timeout_seconds=10,
+            openrouter_video_poll_interval_seconds=1,
+            openrouter_site_url="https://app.example",
+            openrouter_app_title="Test Tamagotchi",
+            backend_public_url=None,
+            webapp_url=None,
+        ),
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+
+    result = generate_openrouter_video_bytes(source_path, label="pet_creation/scene_video")
+
+    assert result == b"video-bytes"
+    assert captured["url"] == "https://openrouter.ai/api/v1/videos"
+    assert captured["timeout"] == 60
+    assert captured["json"]["resolution"] == "720p"
+    assert captured["json"]["aspect_ratio"] == "9:16"
+    assert "size" not in captured["json"]
+    assert captured["json"]["frame_images"][0]["frame_type"] == "first_frame"
+    assert captured["json"]["frame_images"][0]["image_url"]["url"].startswith(
+        "data:image/png;base64,"
+    )
+
+
 def test_align_sprite_to_reference_canvas_matches_reference_bbox(tmp_path) -> None:
     reference = Image.new("RGBA", (100, 100), (255, 255, 255, 0))
     reference_draw = ImageDraw.Draw(reference)
@@ -635,6 +720,8 @@ def test_generate_pet_asset_set_generates_idle_scene(monkeypatch, tmp_path) -> N
         "teen-idle.mp4",
         "teen-idle.png",
     ]
+    output_dir = next(tmp_path.iterdir())
+    assert Image.open(output_dir / "teen-idle.png").size == (720, 1280)
 
     images = result["images"]
     assert result["characterBible"] is None

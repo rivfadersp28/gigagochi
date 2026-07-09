@@ -229,6 +229,8 @@ PET_SCENE_VIDEO_PROMPT = (
     "during the blink."
 )
 PET_SCENE_VIDEO_SIZE = "720x1280"
+PET_SCENE_VIDEO_RESOLUTION = "720p"
+PET_SCENE_VIDEO_ASPECT_RATIO = "9:16"
 PET_SCENE_VIDEO_DURATION_SECONDS = 4
 SPRITE_FOREGROUND_DISTANCE = 28
 SPRITE_COMPONENT_DILATION_PX = 25
@@ -1401,6 +1403,42 @@ def _download_openrouter_video_bytes(settings: Any, job_id: str) -> bytes:
     return response.content
 
 
+def _parse_pixel_size(size: str) -> tuple[int, int]:
+    match = re.fullmatch(r"\s*(\d+)x(\d+)\s*", size)
+    if not match:
+        raise ValueError(f"Invalid pixel size: {size}")
+    width = int(match.group(1))
+    height = int(match.group(2))
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Invalid pixel size: {size}")
+    return width, height
+
+
+def normalize_pet_scene_video_frame_bytes(image_bytes: bytes) -> bytes:
+    target_width, target_height = _parse_pixel_size(PET_SCENE_VIDEO_SIZE)
+    target_ratio = target_width / target_height
+
+    with Image.open(BytesIO(image_bytes)) as image:
+        normalized = image.convert("RGB")
+        source_ratio = normalized.width / normalized.height
+        if source_ratio > target_ratio:
+            crop_width = max(1, round(normalized.height * target_ratio))
+            left = max(0, (normalized.width - crop_width) // 2)
+            crop_box = (left, 0, left + crop_width, normalized.height)
+        else:
+            crop_height = max(1, round(normalized.width / target_ratio))
+            top = max(0, (normalized.height - crop_height) // 2)
+            crop_box = (0, top, normalized.width, top + crop_height)
+
+        output = normalized.crop(crop_box)
+        if output.size != (target_width, target_height):
+            output = output.resize((target_width, target_height), Image.Resampling.LANCZOS)
+
+        buffer = BytesIO()
+        output.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
 def generate_openrouter_video_bytes(
     source_path: Path,
     *,
@@ -1412,7 +1450,8 @@ def generate_openrouter_video_bytes(
         "model": model,
         "prompt": PET_SCENE_VIDEO_PROMPT,
         "duration": PET_SCENE_VIDEO_DURATION_SECONDS,
-        "size": PET_SCENE_VIDEO_SIZE,
+        "resolution": PET_SCENE_VIDEO_RESOLUTION,
+        "aspect_ratio": PET_SCENE_VIDEO_ASPECT_RATIO,
         "generate_audio": False,
         "frame_images": [
             {
@@ -1589,7 +1628,8 @@ def generate_individual_sprite_paths(
         character_path.write_bytes(sprite_bytes)
 
         path = output_dir / f"{stage}-{state}.png"
-        path.write_bytes(generate_pet_scene_image_bytes(character_path))
+        scene_bytes = generate_pet_scene_image_bytes(character_path)
+        path.write_bytes(normalize_pet_scene_video_frame_bytes(scene_bytes))
         output_paths[(stage, state)] = (path, PET_SCENE_COMPOSITION_PROMPT)
         if stage == FAST_GENERATION_STAGE and state == "idle":
             video_path = output_dir / f"{stage}-{state}.mp4"
