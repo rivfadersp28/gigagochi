@@ -84,7 +84,7 @@ MANAGED_FILES: tuple[ManagedFile, ...] = (
         "Фразы по возрастам",
         "age_speech_examples/creature_phrases_dataset.json",
         "json",
-        "Примеры манеры baby/teen/adult; быстрый слой настройки тона персонажей.",
+        "Архивные примеры манеры baby/teen/adult; сейчас не подмешиваются в prompt.",
     ),
     ManagedFile(
         "world_descriptions",
@@ -466,8 +466,8 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "fileId": "age_speech_examples",
                 "configPath": "creature_phrases_dataset",
                 "summary": (
-                    "Примеры детской манеры для baby-стадии; используются как "
-                    "rhythm/examples, не как шаблон."
+                    "Архивные примеры детской манеры; текущий baby prompt использует "
+                    "только identity-строку без dataset examples."
                 ),
             },
             {

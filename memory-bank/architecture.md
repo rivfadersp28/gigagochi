@@ -111,8 +111,8 @@
   uses the selected structural plot brief plus the same short generation profile.
   Character-bible generation is not used for new pets. Legacy factual
   extractors remain in code/admin for compatibility but are not called by the
-  active frontend chat turn. Age examples remain a separate speech-diction
-  layer: baby can talk like baby without making the world or plot babyish.
+  active frontend chat turn. Age speech examples are archival admin data and are
+  not injected into visible reply prompts.
 - Proactive replies keep their dialogue-derived reason as a neutral context line
   inside the phrase plan. The old configurable `surfaceRules` layer was removed
   so proactive/ambient behavior is shaped by visible reply rules, state,
@@ -120,7 +120,9 @@
 - Backend chat/proactive/ambient prompts no longer use generated
   `characterBible`/`liteOverlay` as speech canon. The identity line is
   deliberately short and uses the display name, or the raw pet description when
-  the name is missing, plus age/state/reply limit;
+  the name is missing, plus state/reply limit. Baby stage only rewrites that
+  identity as `маленький/маленькая {identity}` instead of adding separate
+  dataset examples or a verbose age hint;
   durable personality details should emerge from recent chat history and
   dialogue-memory episodes, not from pre-generated favorite phrases, conflicts,
   appetites or voice rules. The context router receives only minimal pet state (`name`, `stage`,

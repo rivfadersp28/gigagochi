@@ -307,11 +307,10 @@ def test_lite_prompt_includes_age_role_hint() -> None:
     baby = payload.model_copy(update={"pet": payload.pet.model_copy(update={"stage": "baby"})})
     teen = payload.model_copy(update={"pet": payload.pet.model_copy(update={"stage": "teen"})})
     adult = payload.model_copy(update={"pet": payload.pet.model_copy(update={"stage": "adult"})})
+    baby_system_message = build_lite_chat_messages(baby)[0]["content"]
 
-    assert (
-        "Сейчас ты недавно родившийся субъект такого существа."
-        in build_lite_chat_messages(baby)[0]["content"]
-    )
+    assert baby_system_message.startswith("Отвечай как маленький Громм.")
+    assert "Сейчас ты недавно родившийся субъект такого существа." not in baby_system_message
     assert "Сейчас ты подросток такого существа." in build_lite_chat_messages(teen)[0]["content"]
     assert (
         "Сейчас ты взрослый, сформировавшийся представитель такого существа."
@@ -422,7 +421,7 @@ def test_lite_prompt_does_not_include_character_voice_control() -> None:
 
     system_message = build_lite_chat_messages(payload)[0]["content"]
 
-    assert "Отвечай как Пончик. Ты живой персонаж, не ассистент." in system_message
+    assert "Отвечай как маленький Пончик. Ты живой персонаж, не ассистент." in system_message
     assert "кремовый котенок-компаньон" not in system_message
     assert "VOICE_CONTROL" not in system_message
     assert "нижний регулятор всех видимых реплик питомца" not in system_message
@@ -914,7 +913,7 @@ def test_lite_strips_hidden_thought_and_face_lines() -> None:
     assert response.faceHint == "content"
 
 
-def test_lite_prompt_uses_baby_dataset_phrases_only_for_baby() -> None:
+def test_lite_prompt_does_not_include_baby_dataset_phrases() -> None:
     payload = lite_payload()
     baby = payload.model_copy(update={"pet": payload.pet.model_copy(update={"stage": "baby"})})
     teen = payload.model_copy(update={"pet": payload.pet.model_copy(update={"stage": "teen"})})
@@ -928,8 +927,9 @@ def test_lite_prompt_uses_baby_dataset_phrases_only_for_baby() -> None:
     assert "Dark fantasy" not in baby_system_message
     assert "age policy" not in baby_system_message
     assert "conflict policy" not in baby_system_message
-    assert "Примеры детской манеры из датасета" in baby_system_message
-    assert "Приветик! Ты пришёл!" in baby_system_message
+    assert "Примеры детской манеры из датасета" not in baby_system_message
+    assert "Приветик! Ты пришёл!" not in baby_system_message
+    assert "Уля-ля! Весело-весело!" not in baby_system_message
     assert "Примеры детской манеры из датасета" not in teen_system_message
     assert "Приветик! Ты пришёл!" not in teen_system_message
 
@@ -1186,7 +1186,7 @@ def test_ambient_identity_falls_back_to_pet_description_when_name_is_missing() -
 
     system_message = build_ambient_messages(payload)[0]["content"]
 
-    assert "Отвечай как крыса." in system_message
+    assert "Отвечай как маленькая крыса." in system_message
     assert "Отвечай как без имени." not in system_message
 
 

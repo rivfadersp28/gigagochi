@@ -563,12 +563,6 @@ function SpeechRuntimeEditor({
           onChange={(value) => updatePath(["memoryUsageRule"], value)}
         />
         <RuntimeField
-          label="Baby examples intro"
-          value={stringAt(config, ["visibleReply", "babyExamplesIntro"])}
-          rows={2}
-          onChange={(value) => updatePath(["visibleReply", "babyExamplesIntro"], value)}
-        />
-        <RuntimeField
           label="Identity template"
           value={stringAt(config, ["identityTemplate"])}
           rows={4}

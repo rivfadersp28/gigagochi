@@ -102,10 +102,10 @@
   product decision. Current prompt behavior relies on character name/description
   instead of `characterBible.voice`, catchphrases, sample replies, or
   `dialogue_style`.
-- Do not use baby age examples as a world-tone control. `age_speech_examples`
-  only shapes diction for baby-stage visible replies; global mood, conflict
-  policy, character generation and visual/story style belong in
-  `backend/data/tone_runtime.json`.
+- Do not re-enable baby age examples as a visible-reply prompt layer without an
+  explicit product decision. `age_speech_examples` is archival admin data now;
+  baby stage should affect visible replies only through the compact identity
+  wording such as `маленький/маленькая {identity}`.
 - Do not inject `tone_runtime` into factual extractors unless there is a separate
   product decision. Memory and aftermath extractors should stay factual; tone is
   for generation prompts, context routing and image/story art direction.

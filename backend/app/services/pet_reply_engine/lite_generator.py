@@ -38,10 +38,6 @@ from app.services.openai_service import (
     get_chat_model,
     get_openai_client,
 )
-from app.services.pet_reply_engine.age_message_examples import (
-    categories_for_reply,
-    phrases_for_categories,
-)
 from app.services.pet_reply_engine.context_plan import (
     CONTEXT_ROUTING_SOURCE_IDS,
     ContextPlan,
@@ -49,18 +45,9 @@ from app.services.pet_reply_engine.context_plan import (
     build_context_plan,
     router_sources_for_auto_modes,
 )
-from app.services.pet_reply_engine.models import (
-    PetPersonality,
-    PetRecentMessage,
-    PetReplyInput,
-    PetReplyPet,
-    PetStats,
-    PetVisualIdentity,
-)
 from app.services.pet_reply_engine.reply_limits import MAX_REPLY_CHARS, clamp_reply_text
 from app.services.pet_reply_engine.speech_runtime import (
     age_role_hint,
-    baby_examples_intro,
     character_fact_extraction_system_prompt,
     context_routing_sources,
     context_routing_system_prompt,
@@ -86,7 +73,6 @@ from app.services.prompt_debug import (
 from app.services.tone_runtime import tone_context_payload, tone_prompt_block
 
 MAX_LITE_TOOL_ROUNDS = 3
-MAX_LITE_BABY_EXAMPLES = 8
 MAX_LITE_EXTRACTION_CONTEXT_CHARS = 12000
 
 USER_MEMORY_KINDS = (
@@ -1245,55 +1231,6 @@ def _age_role_hint(payload: LocalChatRequest) -> str:
     return _age_role_hint_for_pet(payload.pet)
 
 
-def _lite_reply_input_for_examples(payload: LocalChatRequest) -> PetReplyInput:
-    bible = payload.pet.characterBible if _is_record(payload.pet.characterBible) else {}
-    lore = bible.get("lore") if _is_record(bible.get("lore")) else None
-    return PetReplyInput(
-        user_action="chat_message",
-        user_text=payload.message,
-        recent_messages=tuple(
-            PetRecentMessage(role=item.role, text=item.text) for item in payload.history[-8:]
-        ),
-        pet=PetReplyPet(
-            age_stage=payload.pet.stage,
-            mood=payload.pet.mood,
-            stats=PetStats(
-                hunger=payload.pet.stats.hunger,
-                happiness=payload.pet.stats.happiness,
-                energy=payload.pet.stats.energy,
-            ),
-            visual_identity=PetVisualIdentity(
-                raw_description=payload.pet.description,
-                species=payload.pet.description,
-            ),
-            personality=PetPersonality(),
-            lore=lore,
-            name=payload.pet.name,
-            character_profile_v2=bible if bible else None,
-            effective_character_bible=bible if bible else None,
-        ),
-    )
-
-
-def _baby_phrase_examples_for_prompt(payload: LocalChatRequest) -> str | None:
-    if payload.pet.stage != "baby":
-        return None
-
-    reply_input = _lite_reply_input_for_examples(payload)
-    categories = categories_for_reply(reply_input)
-    examples = phrases_for_categories(
-        reply_input,
-        categories,
-        per_category=2,
-        max_examples=MAX_LITE_BABY_EXAMPLES,
-    )
-    if not examples:
-        return None
-
-    lines = "\n".join(f"- {phrase}" for _, phrase in examples)
-    return f"{baby_examples_intro()}\n{lines}"
-
-
 def _lite_tools_for_routing(
     context_routing: ContextRoutingDecision | ContextPlan,
 ) -> list[dict[str, Any]] | None:
@@ -1349,6 +1286,27 @@ def _history_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     ]
 
 
+BABY_DESCRIPTION_PREFIX_RE = re.compile(
+    r"^\s*(маленьк\w*|малыш\w*|дет[её]ныш\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def _baby_identity_description(description: str) -> str:
+    text = _compact_spaces(description)
+    if not text or BABY_DESCRIPTION_PREFIX_RE.search(text):
+        return text
+    first_word_match = re.match(r"[\wёЁ-]+", text)
+    first_word = first_word_match.group(0).casefold() if first_word_match else ""
+    if first_word.endswith(("а", "я")):
+        prefix = "маленькая"
+    elif first_word.endswith(("о", "е")):
+        prefix = "маленькое"
+    else:
+        prefix = "маленький"
+    return f"{prefix} {text}"
+
+
 def _identity_line_for_pet(
     *,
     surface: PhraseSurface,
@@ -1359,7 +1317,10 @@ def _identity_line_for_pet(
     flags = state_layer_surface_flags(surface)
     age_hint = ""
     if flags.get("age", False):
-        age_hint = _age_role_hint_for_pet(pet)
+        if pet.stage == "baby":
+            description = _baby_identity_description(description)
+        else:
+            age_hint = _age_role_hint_for_pet(pet)
     state_modifier = _state_role_modifier_for_pet(pet, surface)
     system_content = identity_prompt(
         {
@@ -1443,9 +1404,6 @@ def build_lite_chat_messages(
         recent_events_block=recent_events_block,
     )
     system_content = plan.system_content()
-    baby_examples = _baby_phrase_examples_for_prompt(payload)
-    if baby_examples:
-        system_content = f"{system_content}\n\n{baby_examples}"
     history_messages = (
         _history_messages(payload)
         if _source_enabled(

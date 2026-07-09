@@ -61,7 +61,6 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("contextRouting", "systemPrompt"),
     ("identityTemplate",),
     ("memoryUsageRule",),
-    ("visibleReply", "babyExamplesIntro"),
     ("visibleReply", "transientContextRule"),
     ("stateLayer", "stateParamUsageRule"),
     ("worldContext", "template"),
@@ -297,10 +296,6 @@ def identity_prompt(values: dict[str, str]) -> str:
 
 def memory_usage_rule() -> str:
     return _required_string(speech_runtime_config(), ("memoryUsageRule",))
-
-
-def baby_examples_intro() -> str:
-    return _required_string(speech_runtime_config(), ("visibleReply", "babyExamplesIntro"))
 
 
 def transient_context_rule() -> str:
