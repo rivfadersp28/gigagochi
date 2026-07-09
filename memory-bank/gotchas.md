@@ -41,8 +41,10 @@
   reframe/jitter.
 - Seedance can preserve its input image for the first two frames and then
   recompose it abruptly around 0.1 seconds. Dashboard playback intentionally
-  skips that preroll and loops manually from the same offset; native `autoPlay`
-  / `loop` makes the startup stretch recur on every loop.
+  skips that preroll and loops manually from the same offset; native `loop`
+  makes the startup stretch recur on every loop. Keep the muted `autoPlay`
+  attribute: gating initial `play()` on `seeked` can stall in Telegram WebView
+  when mobile preload is deferred.
 - Pet creation waits for an OpenRouter video job after image composition and
   returns `assetSet.videoUrl`. The frontend generation polling timeout must stay
   at least as long as `OPENROUTER_VIDEO_TIMEOUT_SECONDS`, otherwise the UI can

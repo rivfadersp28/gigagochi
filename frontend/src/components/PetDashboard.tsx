@@ -96,15 +96,18 @@ const statusIconSrc = {
 const speechBubbleSrc = `/figma/speech-bubble-new.svg?v=${ACTION_ICON_CACHE_VERSION}`;
 const conversationSendIconSrc = `/figma/conversation-send-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`;
 
-function restartSceneVideo(video: HTMLVideoElement) {
+function seekSceneVideoToStart(video: HTMLVideoElement) {
   const startTime = Math.min(
     SCENE_VIDEO_START_OFFSET_SECONDS,
     Math.max(0, video.duration - 0.05),
   );
   if (Math.abs(video.currentTime - startTime) > 0.01) {
     video.currentTime = startTime;
-    return;
   }
+}
+
+function restartSceneVideo(video: HTMLVideoElement) {
+  seekSceneVideoToStart(video);
   void video.play().catch(() => undefined);
 }
 
@@ -778,13 +781,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               src={sceneVideoSrc}
               poster={sceneBackgroundSrc}
               className="main-scene-background"
+              autoPlay
               muted
               playsInline
               preload="auto"
-              onLoadedMetadata={(event) => restartSceneVideo(event.currentTarget)}
-              onSeeked={(event) => {
-                void event.currentTarget.play().catch(() => undefined);
-              }}
+              onLoadedMetadata={(event) => seekSceneVideoToStart(event.currentTarget)}
               onEnded={(event) => restartSceneVideo(event.currentTarget)}
             />
           ) : null}
