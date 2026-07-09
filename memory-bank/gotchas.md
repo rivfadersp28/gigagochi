@@ -46,9 +46,9 @@
   sections, and do not expose `auto` for `stateParams` unless it gets a real
   router signal.
 - `/story` `currentState` must stay minimal: `name`, `stage`, and optional
-  semantic `params`. Do not put `pet.description` there; it belongs to
-  `characterProfile` so the admin `Профиль` toggle actually controls
-  descriptive identity.
+  semantic `params`. Do not put `pet.description` there; use the separate
+  compact `identitySeed` for `name` plus raw description. The admin `Профиль`
+  toggle should still control only the larger character-profile dossier.
 - Do not feed previous generated per-pet stories back into `/story`. They are
   useful as conversational RAG for chat/idle/proactive/push, but using them as
   `/story` source material creates self-reinforcing repetition.

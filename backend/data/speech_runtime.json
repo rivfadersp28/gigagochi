@@ -90,7 +90,7 @@
         "recentEvents": "disabled",
         "userMemory": "disabled",
         "chatHistory": "auto",
-        "recentReplies": "always"
+        "recentReplies": "disabled"
       }
     }
   },

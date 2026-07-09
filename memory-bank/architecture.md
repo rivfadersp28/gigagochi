@@ -71,13 +71,14 @@
   matrix as visible replies for optional sources: character profile, semantic
   state params, lite overlay, global story library, dialogue-memory episodes,
   chat history and recent replies. Current runtime disables character profile,
-  lite overlay, global story library and dialogue-memory episodes for
-  backgroundStory; chat history and recent replies remain the active optional
-  continuity sources. It does not consume the per-pet stories overlay: generated
-  stories are conversation memory for chat/idle/proactive/push, not source
-  material for new `/story` events. Its `currentState` is intentionally minimal
-  (`name`, `stage`, optional semantic `params`); descriptive `pet.description`
-  belongs to `characterProfile`, not `currentState`. It does not pass raw
+  lite overlay, global story library, dialogue-memory episodes and recent
+  replies for backgroundStory; chat history remains the active optional
+  continuity source. The dossier always includes a compact `identitySeed`
+  (`name` plus raw `pet.description`) so the story knows who the hero is without
+  enabling the full character profile. It does not consume the per-pet stories
+  overlay: generated stories are conversation memory for chat/idle/proactive/push,
+  not source material for new `/story` events. Its `currentState` is intentionally
+  minimal (`name`, `stage`, optional semantic `params`) and does not pass raw
   numeric `stats`.
 - `/story` receives `recentStoryEvents` only as an `ANTI_REPEAT` block. That
   block is a negative constraint against repeating the same event shape, not

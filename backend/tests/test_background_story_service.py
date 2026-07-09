@@ -326,7 +326,8 @@ def test_background_story_profile_toggle_controls_description() -> None:
         timezone="Europe/Moscow",
     )
 
-    assert "чел с листом вместо лица" not in without_profile
+    assert '"identitySeed": "Олег: чел с листом вместо лица"' in without_profile
+    assert '"description": "чел с листом вместо лица"' not in without_profile
     assert '"description": "чел с листом вместо лица"' in with_profile
 
 
@@ -381,7 +382,8 @@ def test_background_story_context_sources_policy_controls_dossier(monkeypatch) -
     )
 
     prompt = _call_by_schema(completions, "background_story")["messages"][1]["content"]
-    assert "чел с листом вместо лица" not in prompt
+    assert "Олег: чел с листом вместо лица" in prompt
+    assert '"description": "чел с листом вместо лица"' not in prompt
     assert "params" not in prompt
     assert "наевшийся" not in prompt
     assert "Лист на лице стук" not in prompt

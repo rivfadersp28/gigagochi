@@ -864,7 +864,7 @@ def _background_routing_payload(
     }
     if context_source_enabled("backgroundStory", "stateParams", auto_default=True):
         pet_payload["params"] = _state_params_brief(pet)
-    return {
+    payload = {
         "surface": "backgroundStory",
         "task": "generate_background_story",
         "eventType": background_story_default_event_type(),
@@ -875,8 +875,18 @@ def _background_routing_payload(
         "sources": context_routing_sources(),
         "memoryBrief": _memory_brief(memory_context) or {},
         "recentChatHistory": _history_brief(history),
-        "recentReplies": _recent_replies_brief(recent_replies),
     }
+    if context_source_mode("backgroundStory", "recentReplies") != "disabled":
+        payload["recentReplies"] = _recent_replies_brief(recent_replies)
+    return payload
+
+
+def _background_story_identity_seed(pet: LocalPetChatContext) -> str:
+    name = _text_value(pet.name, limit=80)
+    description = _text_value(pet.description, limit=220)
+    if name and description:
+        return f"{name}: {description}"
+    return name or description
 
 
 def _parse_background_routing_payload(value: str) -> ContextRoutingDecision:
@@ -1013,6 +1023,7 @@ def character_dossier_for_background_story(
     dossier: dict[str, Any] = {
         "now": now_iso or _now_iso(),
         "timezone": timezone,
+        "identitySeed": _background_story_identity_seed(pet),
         "currentState": current_state,
     }
 
