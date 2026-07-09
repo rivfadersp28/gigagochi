@@ -76,7 +76,7 @@ const INITIAL_PET_REPLY_FALLBACK = "…";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 220;
 const DEFAULT_STATUS_NAME = "Челепиздрик";
 const PUSH_SNAPSHOT_SYNC_MIN_INTERVAL_MS = 10 * 60_000;
-const ACTION_ICON_CACHE_VERSION = "20260709-figma-117-1029-2";
+const ACTION_ICON_CACHE_VERSION = "20260709-figma-117-1029-3";
 const VIDEO_FILTER_CACHE_VERSION = "20260709-video-filter-normal-2";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
 const mainSceneBackgroundSrc = `/figma/main-screen-bg.png?v=${MAIN_SCENE_BACKGROUND_CACHE_VERSION}`;
@@ -92,6 +92,7 @@ const statusIconSrc = {
   energy: `/figma/status-energy-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
 } as const;
 const speechBubbleSrc = `/figma/speech-bubble-new.svg?v=${ACTION_ICON_CACHE_VERSION}`;
+const conversationSendIconSrc = `/figma/conversation-send-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`;
 
 const feedFoodAssets = [
   {
@@ -830,7 +831,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             disabled={!isChatMode || isSendingChat}
             tabIndex={isChatMode ? 0 : -1}
             className="conversation-input"
-            placeholder="Как у тебя прошел день?"
+            placeholder="Расскажи о себе"
             aria-label="Сообщение персонажу"
             autoComplete="off"
             autoCapitalize="sentences"
@@ -852,9 +853,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             className="conversation-send-button"
           >
             {isSendingChat ? (
-              <Loader2 className="size-[18px] animate-spin" aria-hidden="true" />
-            ) : null}
-            <span>Отправить</span>
+              <Loader2 className="size-[20px] animate-spin" aria-hidden="true" />
+            ) : (
+              <img
+                src={conversationSendIconSrc}
+                alt=""
+                className="conversation-send-button__icon"
+                aria-hidden="true"
+                draggable={false}
+              />
+            )}
+            <span className="sr-only">Отправить</span>
           </button>
         </form>
 

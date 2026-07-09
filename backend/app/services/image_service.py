@@ -213,7 +213,7 @@ FAST_GENERATION_STATE_FALLBACKS = {
     "sad": ("teen", "idle"),
     "hungry": ("teen", "idle"),
 }
-PET_SCENE_COMPOSITION_PROMPT = "Добавь персонажа с первой картинки на вторую"
+PET_SCENE_COMPOSITION_PROMPT = "Добавь персонажа с первой картинки на вторую в центр"
 PET_SCENE_IMAGE_SIZE = "1024x1536"
 PET_SCENE_BACKGROUND_PATH = (
     Path(__file__).resolve().parents[2] / "static" / "backgrounds" / "pet-generation-forest.png"

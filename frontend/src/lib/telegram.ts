@@ -148,7 +148,7 @@ export function setTelegramViewportCssVars() {
   }
 
   const root = document.documentElement;
-  const viewportHeight = webApp.viewportHeight ?? webApp.stableViewportHeight;
+  const viewportHeight = webApp.stableViewportHeight ?? webApp.viewportHeight;
   if (viewportHeight) {
     root.style.setProperty("--tma-viewport-height", `${viewportHeight}px`);
   }
