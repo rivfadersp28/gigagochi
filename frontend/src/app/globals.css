@@ -899,8 +899,9 @@ body {
 .conversation-input-panel {
   position: absolute;
   --conversation-keyboard-gap: 17px;
+  --conversation-input-rest-bottom: 57px;
 
-  bottom: 349px;
+  bottom: var(--conversation-input-rest-bottom);
   left: 20px;
   z-index: 45;
   width: 362px;
@@ -917,6 +918,7 @@ body {
   pointer-events: none;
   transform: translate3d(0, 20px, 0);
   transition:
+    bottom 250ms ease-out,
     background-color 180ms ease,
     border-radius 180ms ease,
     box-shadow 180ms ease,
