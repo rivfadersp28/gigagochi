@@ -375,65 +375,7 @@ def build_pet_single_sprite_prompt(
     stage: str,
     state: str,
 ) -> str:
-    safe_description = _sanitize_image_prompt_text(
-        rewrite_known_character_references(user_description.strip())
-    )
-    bible_text = _sprite_bible_text(character_bible, active_stage=stage)
-    stage_labels = {
-        "baby": "Small growth form: smaller, rounder, simpler, softer proportions",
-        "teen": "Middle growth form: slightly taller, more energetic, same creature identity",
-        "adult": "Mature growth form: fully developed, stable silhouette, same identity",
-    }
-    state_labels = {
-        "idle": "Idle: calm neutral pose and expression",
-        "happy": "Happy: clearly happy, lively expression, friendly body language",
-        "sad": "Sad: sad or tired expression, subdued body language",
-        "hungry": "Hungry: hungry expression or gesture, wanting food, not aggressive",
-    }
-
-    return f"""
-Create one standalone character sprite for a virtual pet web app.
-
-STYLE_FRAME:
-{STYLE_FRAME}
-
-TONE_VISUAL_DIRECTION:
-{tone_visual_style()}
-
-USER_CHARACTER_DESCRIPTION:
-{safe_description}
-
-CHARACTER_BIBLE:
-{bible_text}
-
-VARIANT:
-- Stage: {stage_labels.get(stage, stage)}
-- State: {state_labels.get(state, state)}
-
-CONSISTENCY_RULES:
-- USER_CHARACTER_DESCRIPTION and CHARACTER_BIBLE.visual_constraints define the visible body,
-  species, costume, silhouette, and sprite anatomy. They override generic style-frame avoids
-  and any inherited source-card anatomy if there is a conflict.
-- If visual_constraints.forbidden_features is present, do not draw those features unless the
-  USER_CHARACTER_DESCRIPTION explicitly asks for them.
-- Preserve core visual concept, colors, accessories, silhouette, materials, and signature features.
-- Only growth form, pose, expression, and emotional state may change.
-
-OUTPUT_REQUIREMENTS:
-- Exactly one full-body character, centered, with comfortable padding around it.
-- No sprite sheet, no grid, no panels, no multiple characters, no alternate poses in the same image.
-- Square app viewport composition: the complete character fits comfortably inside the square image
-  with visible padding on all sides.
-- Support very round, very tall, very wide, tailed, eared, winged, or asymmetric silhouettes
-  without cropping any body part, accessory, ear, horn, tail, wing, or shadowless extremity.
-- Keep the character visually centered and grounded inside the square viewport.
-- Flat pure white background.
-- Do not use transparency, alpha-channel background, checkerboard pattern, transparency grid, or tiled square backdrop.
-- The character must not cast any shadow outside its body.
-- No cast shadow, contact shadow, ground shadow, floor shadow, drop shadow, glow, halo, vignette, or backdrop.
-- Keep only internal 3D form shading on the character itself; the white background must stay clean and shadow-free.
-- No text, no labels, no UI, no logo, no watermark, no borders.
-        """.strip()
+    return f"{user_description.strip()}\n\n{STYLE_FRAME}".strip()
 
 
 def build_pet_single_sprite_safety_retry_prompt(
@@ -443,56 +385,7 @@ def build_pet_single_sprite_safety_retry_prompt(
     stage: str,
     state: str,
 ) -> str:
-    safe_description = _sanitize_retry_image_prompt_text(
-        rewrite_known_character_references(user_description.strip())
-    )
-    bible_text = _sprite_bible_retry_text(character_bible, active_stage=stage)
-    stage_labels = {
-        "baby": "small rounded form",
-        "teen": "middle rounded form, a little taller but still simple",
-        "adult": "mature rounded form with the same friendly toy identity",
-    }
-    state_labels = {
-        "idle": "calm neutral pose",
-        "happy": "happy friendly pose",
-        "sad": "mildly sad or sleepy pose",
-        "hungry": "hungry expression or gentle food-wanting gesture",
-    }
-
-    return f"""
-Create one standalone sprite of a harmless rounded collectible toy mascot.
-
-CORE_CONCEPT:
-{safe_description}
-
-STYLE_FRAME:
-{STYLE_FRAME}
-
-VISUAL_ANCHORS:
-{bible_text}
-
-VARIANT:
-- Growth form: {stage_labels.get(stage, stage)}
-- Pose and expression: {state_labels.get(state, state)}
-
-VISUAL_RULES:
-- Rounded stylized 3D vinyl-toy mascot, full body, centered in the image.
-- Soft simple shapes, oversized head or body, tiny limbs, large clean color areas.
-- All tips and decorative details are rounded and toy-like.
-- Energy or element cues appear only as small markings, material accents, or gentle color
-  details on the character itself.
-- Friendly cute expression only; no scary creature styling, no action scene, no external effects.
-- Preserve the core colors, silhouette, tiny wings if present, rounded split tail tip if present,
-  and soft zigzag antenna-like horns if present.
-
-OUTPUT_REQUIREMENTS:
-- Exactly one character in one square app viewport composition.
-- No sprite sheet, no grid, no panels, no multiple characters, no alternate poses.
-- Complete character fits comfortably inside the square image with visible padding on all sides.
-- Flat pure white background.
-- No text, labels, UI, logo, watermark, border, shadow, glow, halo, background scene, or props
-  beyond one tiny harmless decorative object if it is part of the visual anchors.
-        """.strip()
+    return f"{user_description.strip()}\n\n{STYLE_FRAME}".strip()
 
 
 def build_pet_state_strip_prompt(

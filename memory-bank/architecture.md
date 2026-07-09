@@ -145,9 +145,12 @@
   user's raw character description as the visual seed plus the global
   `VISUAL_STYLE_FRAME` from `backend/app/prompts/style_direction.py`. The current
   asset style frame is the user-provided independent blind-box vinyl designer toy
-  prompt copied verbatim. Per-pet story events stay in
-  `characterBible.extensions.recent_story_events` for old pets when present, but
-  chat canon should come from history/memory rather than `lite_overlay`.
+  prompt copied verbatim. Standalone sprite image prompts intentionally contain
+  only `{user_description}` plus `VISUAL_STYLE_FRAME`: no generation profile,
+  stage/state variant, character bible, or output requirement blocks. Per-pet
+  story events stay in `characterBible.extensions.recent_story_events` for old
+  pets when present, but chat canon should come from history/memory rather than
+  `lite_overlay`.
 - Frontend character instance normalization strips prompt-scaffolding fields
   (`voice`, `dialogue_style`, `lore.voice`) from `characterBible` and records
   the prompt model version in `extensions.instance`. The original
