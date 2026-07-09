@@ -5,17 +5,10 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends nodejs npm \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
-
 COPY pyproject.toml ./
 COPY app ./app
 COPY data ./data
-COPY scripts ./scripts
+COPY static ./static
 
 RUN pip install --no-cache-dir .
 
