@@ -1,5 +1,12 @@
 # Architecture
 
+## Persistence
+
+- The active MVP has no relational database dependency. Pet/chat/memory state is
+  local to the frontend origin, Telegram delivery state uses the locked JSON
+  registry, and generated assets plus push state use Docker volumes. Local and
+  production Compose files therefore do not start PostgreSQL.
+
 ## Backend Jobs and Errors
 
 - Backend phrase generation lives in `backend/app/services/pet_reply_engine/lite_generator.py`.

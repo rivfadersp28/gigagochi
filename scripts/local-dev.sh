@@ -130,12 +130,6 @@ ensure_frontend_ready() {
   fi
 }
 
-start_postgres() {
-  require_command docker
-  echo "Starting postgres"
-  (cd "$ROOT_DIR" && docker compose up -d postgres)
-}
-
 start_backend() {
   ensure_backend_ready
   echo "Starting backend on port $BACKEND_PORT"
@@ -166,7 +160,6 @@ start_all() {
   stop_port "$BACKEND_PORT"
   stop_port "$FRONTEND_PORT"
 
-  start_postgres
   start_backend
   start_frontend
 
@@ -195,11 +188,6 @@ stop_all() {
   stop_pid_file backend "$BACKEND_PID_FILE"
   stop_port "$FRONTEND_PORT"
   stop_port "$BACKEND_PORT"
-
-  if command -v docker >/dev/null 2>&1; then
-    echo "Stopping postgres"
-    (cd "$ROOT_DIR" && docker compose stop postgres)
-  fi
 }
 
 status_one() {
@@ -224,9 +212,6 @@ status_one() {
 status_all() {
   status_one backend "$BACKEND_PID_FILE" "$BACKEND_PORT"
   status_one frontend "$FRONTEND_PID_FILE" "$FRONTEND_PORT"
-  if command -v docker >/dev/null 2>&1; then
-    (cd "$ROOT_DIR" && docker compose ps postgres)
-  fi
 }
 
 logs_all() {

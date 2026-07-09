@@ -1,59 +1,37 @@
-# AI Tamagotchi Telegram Mini App MVP
+# AI Tamagotchi Telegram Mini App
 
-Telegram Mini App MVP for the AI Tamagotchi core loop:
+Telegram Mini App с локальным питомцем, AI-диалогами, путешествиями и фоновыми
+Telegram-историями.
 
-1. Open the app inside Telegram.
-2. Describe a virtual pet.
-3. Generate a consistent 4 x 3 sprite sheet through the backend.
-4. Store pet progress and chat history in the frontend `localStorage`.
-5. Feed, play, quick chat, and full chat with the pet.
-6. Reopen the Mini App on the same device without losing local progress.
+## Как работает приложение
 
-## Stack
+1. Пользователь описывает питомца.
+2. Backend создаёт асинхронную job: генерирует вертикальную сцену с персонажем,
+   затем короткое видео и сохраняет ассеты в `/static/generated`.
+3. Frontend хранит питомца, параметры, чат и память в `localStorage`.
+4. Mini App синхронизирует компактный snapshot с backend для Telegram push и
+   фоновых историй.
+5. Bot и backend совместно используют JSON registry с межпроцессной блокировкой
+   и атомарной записью.
 
-- Frontend: Next.js, React, TypeScript, Tailwind CSS
-- Backend: FastAPI, SQLAlchemy, Alembic
-- Persistence: frontend `localStorage` for MVP
-- Database: PostgreSQL remains for legacy routes and post-MVP persistence
-- AI: OpenRouter for chat/image model routing, with optional OpenAI fallback
+Прогресс привязан к origin и устройству браузера: стабильный production-домен
+нельзя менять без миграции `localStorage`.
 
-## MVP Notes
+## Стек
 
-- `localStorage` is the source of truth for pet progress and local chat history.
-- Backend does not store Telegram user progress in the MVP flow.
-- AI endpoints are `/api/generate-pet` and `/api/chat`.
-- Production AI endpoints require valid Telegram Mini App `initData`.
-- `initDataUnsafe` is never trusted by the backend.
-- Generated assets are served from `/static/generated/...`.
-- Use a stable production domain before launch because `localStorage` is origin-bound.
+- Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS, Radix UI, Vitest.
+- Backend: FastAPI, Pydantic, OpenAI/OpenRouter clients, Pillow.
+- Runtime storage: frontend `localStorage`, backend JSON push registry,
+  Docker volumes для сгенерированных ассетов и push state.
+- Bot: Telegram Bot API long polling.
+- Production: Docker Compose, Caddy или внешний reverse proxy.
 
-## Local Setup
+База данных в активном приложении не используется.
 
-One-command local runner:
+## Локальный запуск
 
-```bash
-./scripts/local-dev.sh start
-./scripts/local-dev.sh stop
-./scripts/local-dev.sh status
-./scripts/local-dev.sh logs
-```
-
-It starts PostgreSQL, backend, and frontend together. Logs and PID files live in
-`.local-dev/`.
-
-Start PostgreSQL through Docker if you need the legacy DB routes:
-
-```bash
-docker compose up -d postgres
-```
-
-Or use a local PostgreSQL 16 server with:
-
-```txt
-POSTGRES_USER=tamagotchi
-POSTGRES_PASSWORD=tamagotchi
-POSTGRES_DB=tamagotchi
-```
+Нужны Python 3.12+, Node.js и npm. Менеджер frontend-зависимостей определяется
+по `package-lock.json`: используйте npm.
 
 Backend:
 
@@ -63,27 +41,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env
-alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
-
-Fill `backend/.env` with keys before real AI/Telegram checks:
-
-```env
-BOT_TOKEN=
-AI_PROVIDER=openrouter
-OPENROUTER_API_KEY=sk-or-...
-OPENROUTER_CHAT_MODEL=~openai/gpt-latest
-OPENROUTER_IMAGE_MODEL=bytedance-seed/seedream-4.5
-WEBAPP_URL=http://localhost:3000
-BACKEND_PUBLIC_URL=http://localhost:3000
-ALLOW_DEV_TMA_AUTH=true
-```
-
-To temporarily use direct OpenAI again, set `AI_PROVIDER=openai` and fill `OPENAI_API_KEY`,
-`OPENAI_CHAT_MODEL`, and `OPENAI_IMAGE_MODEL`.
-
-For production, set `ALLOW_DEV_TMA_AUTH=false`.
 
 Frontend:
 
@@ -94,7 +53,25 @@ cp .env.example .env.local
 npm run dev -- --port 3000
 ```
 
-For browser-only local development without Telegram auth, set both:
+Или управляйте обоими процессами из корня:
+
+```bash
+./scripts/local-dev.sh start
+./scripts/local-dev.sh status
+./scripts/local-dev.sh logs
+./scripts/local-dev.sh stop
+```
+
+Runner перед стартом завершает старые backend/frontend процессы на выбранных
+портах. Логи и PID-файлы лежат в `.local-dev/`.
+
+Адреса:
+
+- Mini App: http://localhost:3000
+- Backend health: http://localhost:8000/health
+- OpenAPI: http://localhost:8000/docs
+
+## Локальная авторизация без Telegram
 
 ```env
 # backend/.env
@@ -102,41 +79,56 @@ ALLOW_DEV_TMA_AUTH=true
 
 # frontend/.env.local
 NEXT_PUBLIC_ENABLE_TMA_DEV_FALLBACK=true
+BACKEND_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_API_URL=
 ```
 
-Open:
+В production `ALLOW_DEV_TMA_AUTH` и `NEXT_PUBLIC_ENABLE_TMA_DEV_FALLBACK`
+должны быть `false`.
 
-- Frontend: http://localhost:3000
-- Backend health: http://localhost:8000/health
+Для реальной генерации заполните в `backend/.env` как минимум
+`OPENROUTER_API_KEY` (или `OPENAI_API_KEY` при `AI_PROVIDER=openai`),
+`BOT_TOKEN`, `WEBAPP_URL` и `BACKEND_PUBLIC_URL`. Полный список и defaults
+находятся в `backend/.env.example`.
 
-Telegram Mini App local launch uses one HTTPS frontend tunnel. Keep backend local and let Next
-proxy same-origin requests:
+## Telegram tunnel
+
+Для проверки внутри Telegram поднимите один HTTPS tunnel к frontend. Backend
+остаётся локальным, а Next проксирует same-origin `/api` и `/static`:
 
 ```bash
 cd frontend
 NEXT_PUBLIC_API_URL= npm run dev -- --hostname 0.0.0.0
-
 cloudflared tunnel --url http://localhost:3000 --no-autoupdate
 ```
 
-Put the generated `https://*.trycloudflare.com` URL in:
+Укажите выданный URL в `WEBAPP_URL`, `BACKEND_PUBLIC_URL`, BotFather и
+`CORS_ORIGINS`. Не задавайте клиенту `NEXT_PUBLIC_API_URL=http://127.0.0.1:8000`:
+в Telegram WebView это адрес устройства пользователя.
 
-```env
-# backend/.env
-WEBAPP_URL=https://your-tunnel.trycloudflare.com
-BACKEND_PUBLIC_URL=https://your-tunnel.trycloudflare.com
-CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000","https://your-tunnel.trycloudflare.com"]
+## API
 
-# frontend/.env.local
-NEXT_PUBLIC_API_URL=
+Пользовательские endpoints требуют валидный Telegram `initData`:
+
+- `POST /api/generate-pet` и `GET /api/generate-pet/jobs/{job_id}`
+- `POST /api/chat`, `/api/chat/ambient`, `/api/chat/proactive`
+- `POST /api/travel`
+- `POST /api/push/snapshot`
+- legacy memory/lite endpoints под `/api/chat/*`
+
+Frontend-типы генерируются из FastAPI OpenAPI. После изменения Pydantic schema
+или route выполните:
+
+```bash
+cd backend
+.venv/bin/python scripts/export_openapi.py ../frontend/openapi.json
+cd ../frontend
+npm run contracts
 ```
 
-Do not point `NEXT_PUBLIC_API_URL` at `127.0.0.1` for Telegram testing: inside Telegram that would
-mean the user's device, not your backend.
+`make check` и CI отклоняют устаревшие contract-файлы.
 
-## Telegram Bot
-
-Run the minimal polling bot after `BOT_TOKEN` and `WEBAPP_URL` are set:
+## Telegram bot
 
 ```bash
 cd backend
@@ -144,57 +136,27 @@ source .venv/bin/activate
 python -m app.bot
 ```
 
-Commands:
+Команды: `/start`, `/app`, `/help`, `/story`. Генерация `/story`
+выполняется в ограниченном worker pool и не блокирует polling.
 
-- `/start` sends the Mini App button.
-- `/app` sends the Mini App button again.
-- `/help` sends a short help message.
+## Docker и production
 
-For Telegram WebView development without a domain, expose the frontend through the temporary HTTPS
-tunnel above and put that URL in `WEBAPP_URL`, BotFather, and/or the bot menu button.
-
-## Docker Compose
+Локальный compose:
 
 ```bash
 docker compose up --build
 ```
 
-The compose setup includes frontend, backend, PostgreSQL, and a persistent `generated_assets`
-volume for `/app/static/generated`.
+Production-конфигурация: `docker-compose.prod.yml`, `deploy/Caddyfile` и
+`deploy/HETZNER.md`. Persistent volumes: `generated_assets`, `push_data`,
+`backend_logs`; container Caddy включается профилем `container-caddy`.
 
-## Hetzner Production Deploy
-
-The selected production proxy is Caddy. Production deployment files live in:
-
-- `docker-compose.prod.yml`
-- `deploy/Caddyfile`
-- `deploy/Caddyfile.host.example`
-- `deploy/HETZNER.md`
-- `deploy/backend.env.production.example`
-- `deploy/compose.env.production.example`
-
-For the current Hetzner server, use `gigagochi.serega.works` as the stable production origin.
-Caddy terminates HTTPS and routes `/api/*`, `/static/*`, and `/health` to the backend, with the
-remaining traffic going to the frontend. If the server already has host Caddy, use
-`deploy/Caddyfile.host.example`; the compose Caddy service is opt-in through the `container-caddy`
-profile. Keep the production origin stable because local pet progress is tied to the browser origin.
-
-## Verification
-
-Backend:
+## Проверки
 
 ```bash
-cd backend
-source .venv/bin/activate
-pytest
-ruff check app tests
-ruff format app tests --check
+make check
+cd frontend && npm run build
 ```
 
-Frontend:
-
-```bash
-cd frontend
-npm run lint
-npm run build
-```
+`make check` запускает Ruff, backend tests, OpenAPI drift check, ESLint,
+TypeScript и Vitest.

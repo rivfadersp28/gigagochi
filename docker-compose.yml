@@ -6,8 +6,6 @@ services:
       - ./backend/.env
     ports:
       - "8000:8000"
-    depends_on:
-      - postgres
     volumes:
       - generated_assets:/app/static/generated
       - push_data:/app/data/push
@@ -23,18 +21,6 @@ services:
     depends_on:
       - backend
 
-  postgres:
-    image: postgres:16
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: tamagotchi
-      POSTGRES_PASSWORD: tamagotchi
-      POSTGRES_DB: tamagotchi
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
 volumes:
-  postgres_data:
   generated_assets:
   push_data:
