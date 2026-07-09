@@ -278,6 +278,10 @@ body {
 }
 
 .main-shell {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
   background: var(--main-scene-bg);
   color: var(--main-scene-ink);
 }
@@ -296,12 +300,7 @@ body {
   overflow: hidden;
   pointer-events: none;
   transform: translate3d(0, 0, 0);
-  transition: transform 500ms ease-out;
   user-select: none;
-}
-
-.main-mobile-scene--keyboard .main-scene-media {
-  transform: translate3d(0, -150px, 0);
 }
 
 .main-scene-background {
@@ -915,7 +914,6 @@ body {
 
 .conversation-input-panel {
   position: absolute;
-  --conversation-keyboard-gap: 17px;
   --conversation-input-rest-bottom: 57px;
 
   bottom: var(--conversation-input-rest-bottom);
@@ -933,14 +931,16 @@ body {
     inset 0 2px 4px rgba(255, 255, 255, 0.09);
   opacity: 0;
   pointer-events: none;
-  transform: translate3d(0, 20px, 0);
+  transform: translate3d(
+    0,
+    calc(var(--conversation-input-offset-y, 0px) + 20px),
+    0
+  );
   transition:
-    bottom 250ms ease-out,
-    background-color 180ms ease,
-    border-radius 180ms ease,
-    box-shadow 180ms ease,
-    opacity 240ms ease,
-    transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    background-color 160ms ease-out,
+    border-radius 160ms ease-out,
+    box-shadow 160ms ease-out,
+    opacity 160ms ease-out;
 }
 
 .main-action-button,
@@ -965,13 +965,7 @@ body {
 .main-mobile-scene--chat .conversation-input-panel {
   pointer-events: auto;
   opacity: 1;
-  transform: translate3d(0, 0, 0);
-}
-
-.main-mobile-scene--keyboard .conversation-input-panel {
-  bottom: calc(
-    100% - var(--conversation-visible-height, 542px) + var(--conversation-keyboard-gap)
-  );
+  transform: translate3d(0, var(--conversation-input-offset-y, 0px), 0);
 }
 
 .conversation-input {

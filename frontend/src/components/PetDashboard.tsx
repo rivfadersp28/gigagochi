@@ -60,7 +60,7 @@ type PetDashboardProps = {
 };
 
 type ConversationSceneStyle = CSSProperties & {
-  "--conversation-visible-height": string;
+  "--conversation-input-offset-y": string;
 };
 
 type ShowPetReplyOptions = {
@@ -70,9 +70,8 @@ type ShowPetReplyOptions = {
 };
 
 const FIGMA_SCREEN_HEIGHT = 874;
-const FIGMA_KEYBOARD_VISIBLE_HEIGHT = 542;
-const KEYBOARD_EAGER_SYNC_MS = 750;
-const KEYBOARD_DISMISS_SUPPRESS_MS = 900;
+const CONVERSATION_INPUT_REST_BOTTOM = 57;
+const CONVERSATION_KEYBOARD_GAP = 17;
 const INITIAL_PET_REPLY_FALLBACK = "…";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 220;
 const DEFAULT_STATUS_NAME = "Челепиздрик";
@@ -147,19 +146,6 @@ function isPointNearRect(clientX: number, clientY: number, rect: DOMRect, paddin
   );
 }
 
-function estimatedKeyboardVisibleHeight(fullHeight: number) {
-  const ratio = FIGMA_KEYBOARD_VISIBLE_HEIGHT / FIGMA_SCREEN_HEIGHT;
-  return Math.max(320, Math.min(fullHeight, Math.round(fullHeight * ratio)));
-}
-
-function shouldEagerlyUseKeyboardLayout() {
-  return (
-    window.innerWidth <= 480 ||
-    navigator.maxTouchPoints > 0 ||
-    window.matchMedia("(pointer: coarse)").matches
-  );
-}
-
 export function PetDashboard({ petId }: PetDashboardProps) {
   const router = useRouter();
   const localPet = useLocalPetState();
@@ -167,8 +153,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
   const [isChatMode, setIsChatMode] = useState(false);
   const [isFeedMode, setIsFeedMode] = useState(false);
-  const [isKeyboardRaised, setIsKeyboardRaised] = useState(false);
-  const [conversationVisibleHeight, setConversationVisibleHeight] = useState(874);
+  const [conversationInputOffsetY, setConversationInputOffsetY] = useState(0);
   const [chatInput, setChatInput] = useState("");
   const [chatError, setChatError] = useState<string | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
@@ -190,12 +175,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const petReplyMessageRef = useRef<PetReplyMessage | null>(null);
   const activeDialogueHookRef = useRef<string | null>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
+  const sceneRef = useRef<HTMLElement>(null);
   const feedDropTargetRef = useRef<HTMLDivElement>(null);
   const isSendingChatRef = useRef(false);
   const isTravelGeneratingRef = useRef(false);
-  const conversationFullHeightRef = useRef(0);
-  const keyboardSyncUntilRef = useRef(0);
-  const keyboardDismissUntilRef = useRef(0);
   const pet = localPet.pet;
   const applyStoryLibraryPatch = localPet.applyStoryLibraryPatch;
   const applyRecentStoryEventsPatch = localPet.applyRecentStoryEventsPatch;
@@ -270,10 +253,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [includePromptDebug, localPet, pet, showPetReplyMessage]);
 
   const closeChatMode = useCallback(() => {
-    keyboardSyncUntilRef.current = 0;
-    keyboardDismissUntilRef.current = 0;
     setIsChatMode(false);
-    setIsKeyboardRaised(false);
+    setConversationInputOffsetY(0);
     setChatError(null);
     setConversationReplyMessageId(null);
     requestAmbientReply();
@@ -308,57 +289,53 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
 
-    const baseHeight = conversationFullHeightRef.current || window.innerHeight || FIGMA_SCREEN_HEIGHT;
-    const estimatedVisibleHeight = estimatedKeyboardVisibleHeight(baseHeight);
+    let animationFrameId: number | null = null;
 
-    function updateKeyboardState() {
+    function updateKeyboardOffset() {
+      animationFrameId = null;
+      const sceneHeight =
+        sceneRef.current?.clientHeight || window.innerHeight || FIGMA_SCREEN_HEIGHT;
       const visualViewport = window.visualViewport;
-      const visibleHeight = visualViewport
-        ? visualViewport.height + visualViewport.offsetTop
+      const visibleBottom = visualViewport
+        ? visualViewport.offsetTop + visualViewport.height
         : window.innerHeight;
-      const roundedVisibleHeight = Math.round(visibleHeight);
-      const keyboardIsVisible = baseHeight - visibleHeight > 120;
-      const shouldHoldKeyboardLayout = performance.now() < keyboardSyncUntilRef.current;
-      const shouldHoldDismissedLayout = performance.now() < keyboardDismissUntilRef.current;
+      const nextOffset = Math.min(
+        0,
+        Math.round(
+          visibleBottom -
+            sceneHeight +
+            CONVERSATION_INPUT_REST_BOTTOM -
+            CONVERSATION_KEYBOARD_GAP,
+        ),
+      );
 
-      if (shouldHoldDismissedLayout) {
-        setConversationVisibleHeight(baseHeight);
-        setIsKeyboardRaised(false);
-        return;
-      }
-
-      if (keyboardIsVisible) {
-        setConversationVisibleHeight(roundedVisibleHeight);
-        setIsKeyboardRaised(true);
-        return;
-      }
-
-      if (shouldHoldKeyboardLayout) {
-        setConversationVisibleHeight((currentHeight) =>
-          currentHeight >= baseHeight - 1 ? estimatedVisibleHeight : currentHeight,
-        );
-        setIsKeyboardRaised(true);
-        return;
-      }
-
-      setConversationVisibleHeight(roundedVisibleHeight);
-      setIsKeyboardRaised(false);
+      setConversationInputOffsetY((currentOffset) =>
+        currentOffset === nextOffset ? currentOffset : nextOffset,
+      );
     }
 
-    updateKeyboardState();
-    const syncTimeoutId = window.setTimeout(
-      updateKeyboardState,
-      KEYBOARD_EAGER_SYNC_MS + 40,
-    );
-    window.addEventListener("resize", updateKeyboardState);
-    window.visualViewport?.addEventListener("resize", updateKeyboardState);
-    window.visualViewport?.addEventListener("scroll", updateKeyboardState);
+    function scheduleKeyboardOffsetUpdate() {
+      if (animationFrameId === null) {
+        animationFrameId = window.requestAnimationFrame(updateKeyboardOffset);
+      }
+    }
+
+    scheduleKeyboardOffsetUpdate();
+    window.addEventListener("resize", scheduleKeyboardOffsetUpdate, { passive: true });
+    window.visualViewport?.addEventListener("resize", scheduleKeyboardOffsetUpdate, {
+      passive: true,
+    });
+    window.visualViewport?.addEventListener("scroll", scheduleKeyboardOffsetUpdate, {
+      passive: true,
+    });
 
     return () => {
-      window.clearTimeout(syncTimeoutId);
-      window.removeEventListener("resize", updateKeyboardState);
-      window.visualViewport?.removeEventListener("resize", updateKeyboardState);
-      window.visualViewport?.removeEventListener("scroll", updateKeyboardState);
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+      window.removeEventListener("resize", scheduleKeyboardOffsetUpdate);
+      window.visualViewport?.removeEventListener("resize", scheduleKeyboardOffsetUpdate);
+      window.visualViewport?.removeEventListener("scroll", scheduleKeyboardOffsetUpdate);
     };
   }, [isChatMode]);
 
@@ -506,12 +483,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }
 
   function dismissChatKeyboard() {
-    keyboardSyncUntilRef.current = 0;
-    keyboardDismissUntilRef.current = performance.now() + KEYBOARD_DISMISS_SUPPRESS_MS;
-    setConversationVisibleHeight(
-      conversationFullHeightRef.current || window.innerHeight || FIGMA_SCREEN_HEIGHT,
-    );
-    setIsKeyboardRaised(false);
     chatInputRef.current?.blur();
   }
 
@@ -520,19 +491,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     setIsDebugPanelOpen(false);
     setChatError(null);
     setConversationReplyMessageId(null);
-    const fullHeight = window.innerHeight || FIGMA_SCREEN_HEIGHT;
-    const shouldSyncKeyboard = shouldEagerlyUseKeyboardLayout();
-    conversationFullHeightRef.current = fullHeight;
-    keyboardDismissUntilRef.current = 0;
-    keyboardSyncUntilRef.current = shouldSyncKeyboard
-      ? performance.now() + KEYBOARD_EAGER_SYNC_MS
-      : 0;
 
     flushSync(() => {
-      setConversationVisibleHeight(
-        shouldSyncKeyboard ? estimatedKeyboardVisibleHeight(fullHeight) : fullHeight,
-      );
-      setIsKeyboardRaised(shouldSyncKeyboard);
+      setConversationInputOffsetY(0);
       setIsChatMode(true);
     });
     focusChatInput();
@@ -552,9 +513,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     void primePetSpeechAudio();
     if (options.dismissKeyboard) {
       dismissChatKeyboard();
-    } else {
-      keyboardSyncUntilRef.current = performance.now() + KEYBOARD_EAGER_SYNC_MS;
-      setIsKeyboardRaised(true);
     }
     setChatInput("");
     setChatError(null);
@@ -736,11 +694,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const roundedMoodPercent = Math.round(moodPercent);
   const roundedHealthPercent = Math.round(healthPercent);
   const conversationSceneStyle: ConversationSceneStyle = {
-    "--conversation-visible-height": `${conversationVisibleHeight}px`,
+    "--conversation-input-offset-y": `${conversationInputOffsetY}px`,
   };
 
   return (
-    <main className="main-shell tma-screen relative overflow-hidden">
+    <main className="main-shell tma-screen overflow-clip">
       {localPet.error ? (
         <div className="fixed left-5 right-5 top-[max(20px,calc(var(--tma-safe-top)+12px))] z-20 rounded-[8px] border border-[var(--danger-line)] bg-white px-4 py-3 text-sm text-[var(--danger)] sm:left-8 sm:right-auto sm:max-w-sm">
           {localPet.error}
@@ -753,12 +711,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       ) : null}
 
       <section
+        ref={sceneRef}
         className={`main-mobile-scene tma-screen relative mx-auto w-full max-w-[402px] overflow-hidden ${
           isChatMode ? "main-mobile-scene--chat" : ""
         } ${
           isFeedMode ? "main-mobile-scene--feed" : ""
-        } ${
-          isKeyboardRaised ? "main-mobile-scene--keyboard" : ""
         } ${
           shouldShowConversationReply ? "main-mobile-scene--reply" : ""
         }`}
