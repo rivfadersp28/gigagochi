@@ -110,7 +110,7 @@ def speech_admin_manifest(source: AdminSource = "local") -> dict[str, Any]:
 def save_speech_admin(payload: AdminSaveRequest, source: AdminSource = "local") -> dict[str, Any]:
     if source == "production":
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "code": "ADMIN_PRODUCTION_DIRECT_SAVE_DISABLED",
                 "message": "Production меняется только через publish/deploy.",
@@ -119,7 +119,7 @@ def save_speech_admin(payload: AdminSaveRequest, source: AdminSource = "local") 
     result = save_admin_files([item.model_dump() for item in payload.files])
     if not result["saved"]:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=result,
         )
     return result
@@ -135,7 +135,7 @@ def publish_speech_admin(payload: AdminPublishRequest) -> dict[str, Any]:
         )
     except AdminPublishError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": exc.code, "message": exc.message},
         ) from exc
 
