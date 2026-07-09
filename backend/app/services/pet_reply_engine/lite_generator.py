@@ -1182,7 +1182,8 @@ def _extract_hidden_reaction(raw_reply: str) -> tuple[str, str | None, str | Non
 
 def _reply_identity_label(pet: Any) -> str:
     name = _compact_spaces(pet.name or "")
-    return name or speech_template("unnamedPet")
+    description = _compact_spaces(getattr(pet, "description", "") or "")
+    return name or description or speech_template("unnamedPet")
 
 
 def _short_character_description(payload: LocalChatRequest) -> str:

@@ -118,7 +118,8 @@
   dialogue-memory episodes and the idle self-prompt only.
 - Backend chat/proactive/ambient prompts no longer use generated
   `characterBible`/`liteOverlay` as speech canon. The identity line is
-  deliberately short and uses only the display name plus age/state/reply limit;
+  deliberately short and uses the display name, or the raw pet description when
+  the name is missing, plus age/state/reply limit;
   durable personality details should emerge from recent chat history and
   dialogue-memory episodes, not from pre-generated favorite phrases, conflicts,
   appetites or voice rules. The context router receives only minimal pet state (`name`, `stage`,

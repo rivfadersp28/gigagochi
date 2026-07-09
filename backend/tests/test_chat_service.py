@@ -1109,6 +1109,32 @@ def test_ambient_prompt_uses_idle_field_without_forced_world_context(
     assert "выбранному диалоговому ходу" not in system_message
 
 
+def test_ambient_identity_falls_back_to_pet_description_when_name_is_missing() -> None:
+    payload = LocalAmbientRequest.model_validate(
+        {
+            "pet": {
+                "name": None,
+                "description": "крыса",
+                "stage": "baby",
+                "mood": "happy",
+                "stats": {
+                    "hunger": 80,
+                    "happiness": 80,
+                    "energy": 80,
+                },
+                "characterBible": None,
+            },
+            "history": [],
+            "replyMaxChars": 120,
+        }
+    )
+
+    system_message = build_ambient_messages(payload)[0]["content"]
+
+    assert "Отвечай как крыса." in system_message
+    assert "Отвечай как без имени." not in system_message
+
+
 def test_ambient_prompt_skips_world_context_when_story_library_disabled() -> None:
     payload = LocalAmbientRequest.model_validate(
         {
