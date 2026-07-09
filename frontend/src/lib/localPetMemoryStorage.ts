@@ -11,7 +11,7 @@ import type {
 
 const PET_MEMORY_STORAGE_KEY_PREFIX = "tamagochi:v1:pet-memory:";
 const MAX_LEARNINGS = 100;
-const MAX_MEMORIES = 80;
+const MAX_MEMORIES = 50;
 const MAX_PROACTIVE_LOG = 30;
 const MAX_TEXT = 500;
 const MAX_SUMMARY = 1000;

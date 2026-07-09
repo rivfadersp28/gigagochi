@@ -4,6 +4,13 @@ import {
   createLocalId,
   readLocalChatHistory,
 } from "./localPetStorage";
+import { extractDeterministicMemoryOperations } from "./localPetDeterministicMemory";
+import {
+  applyMemoryOperations,
+  markMemoryContextUsed,
+  readLocalPetMemory,
+  writeLocalPetMemory,
+} from "./localPetMemoryStorage";
 import {
   buildMemoryContextForMessage,
   shouldUseDialogueHookContext,
@@ -55,6 +62,7 @@ export async function runLocalPetChatTurn({
   };
   const fullHistoryBeforeMessage = history ?? readLocalChatHistory().messages;
   const historyBeforeMessage = fullHistoryBeforeMessage.slice(-12);
+  const memoryBeforeMessage = readLocalPetMemory(pet.petId);
   const visibleContext = dialogueHookMessage && shouldUseDialogueHookContext(message)
     ? { lastPetLine: dialogueHookMessage.text }
     : undefined;
@@ -62,6 +70,7 @@ export async function runLocalPetChatTurn({
     fullHistoryBeforeMessage,
     message,
     new Date(now),
+    memoryBeforeMessage,
   );
 
   if (includePromptDebug) {
@@ -94,6 +103,16 @@ export async function runLocalPetChatTurn({
     ? [...nextHistory.messages.slice(0, -2), dialogueHookMessage, userMessage, assistantMessage]
     : nextHistory.messages;
   onHistoryChange?.(nextMessages);
+
+  const usedMemoryIds = memoryContext.relevantMemories.map((item) => item.id);
+  const memoryOperations = extractDeterministicMemoryOperations(message);
+  if (usedMemoryIds.length || memoryOperations.length) {
+    let nextMemory = markMemoryContextUsed(memoryBeforeMessage, usedMemoryIds);
+    if (memoryOperations.length) {
+      nextMemory = applyMemoryOperations(nextMemory, memoryOperations, [userMessage.id]);
+    }
+    writeLocalPetMemory(nextMemory);
+  }
 
   return {
     response,

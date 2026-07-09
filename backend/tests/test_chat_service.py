@@ -43,7 +43,7 @@ class FakeLiteCompletions:
                 tool_calls=None,
             )
             return SimpleNamespace(choices=[SimpleNamespace(message=message)])
-        message = self._messages.pop(0)
+        message = _visible_reply_message_for_call(self._messages.pop(0), kwargs)
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
 
@@ -59,6 +59,34 @@ def _is_context_routing_call(kwargs: dict) -> bool:
         return False
     content = messages[0].get("content") if isinstance(messages[0], dict) else ""
     return isinstance(content, str) and content.startswith("CONTEXT_ROUTING:")
+
+
+def _is_visible_reply_call(kwargs: dict) -> bool:
+    return (
+        kwargs.get("response_format", {}).get("json_schema", {}).get("name")
+        == "visible_pet_reply"
+    )
+
+
+def _visible_reply_message_for_call(message: SimpleNamespace, kwargs: dict) -> SimpleNamespace:
+    if not _is_visible_reply_call(kwargs) or getattr(message, "tool_calls", None):
+        return message
+    content = getattr(message, "content", None)
+    if not isinstance(content, str) or content.lstrip().startswith("{"):
+        return message
+    return SimpleNamespace(
+        **{
+            **vars(message),
+            "content": json.dumps(
+                {
+                    "reply": content,
+                    "faceHint": None,
+                    "moodHint": None,
+                },
+                ensure_ascii=False,
+            ),
+        }
+    )
 
 
 def _fake_context_routing_response(kwargs: dict) -> str:
@@ -239,8 +267,8 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert "Персонаж:" not in system_message
     assert "используй update_pet_name" in system_message
     assert "Ответь владельцу на последнее сообщение как этот персонаж." in system_message
-    assert "Верни только JSON" not in system_message
-    assert "response_format" not in request
+    assert "Верни только JSON" in system_message
+    assert request["response_format"]["json_schema"]["name"] == "visible_pet_reply"
     assert [tool["function"]["name"] for tool in request["tools"]] == ["update_pet_name"]
     assert "STORY_LIBRARY" not in system_message
 
@@ -898,10 +926,17 @@ def test_lite_clamps_reply_to_300_chars() -> None:
     assert not response.reply.endswith("…")
 
 
-def test_lite_strips_hidden_thought_and_face_lines() -> None:
+def test_lite_reads_structured_face_and_mood_hints() -> None:
     client, _completions = fake_lite_client(
         SimpleNamespace(
-            content="Я рядом, слышу тебя.\nTHOUGHT: тепло внутри\nFACE: content",
+            content=json.dumps(
+                {
+                    "reply": "Я рядом, слышу тебя.",
+                    "faceHint": "content",
+                    "moodHint": "happy",
+                },
+                ensure_ascii=False,
+            ),
             tool_calls=None,
         )
     )
@@ -909,8 +944,27 @@ def test_lite_strips_hidden_thought_and_face_lines() -> None:
     response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
 
     assert response.reply == "Я рядом, слышу тебя."
-    assert response.innerThought == "тепло внутри"
+    assert response.innerThought is None
     assert response.faceHint == "content"
+    assert response.moodHint == "happy"
+    assert response.debug is not None
+    assert response.debug.structuredReplyDebug["normalizedResponse"]["faceHint"] == "content"
+
+
+def test_lite_uses_safe_fallback_for_invalid_structured_reply() -> None:
+    client, _completions = fake_lite_client(
+        SimpleNamespace(
+            content="{not json",
+            tool_calls=None,
+        )
+    )
+
+    response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
+
+    assert response.reply == "Я рядом."
+    assert response.debug is not None
+    assert response.debug.usedFallback is True
+    assert response.debug.validationFlags == ["structured_reply_invalid_json"]
 
 
 def test_lite_prompt_does_not_include_baby_dataset_phrases() -> None:
@@ -1139,13 +1193,13 @@ def test_ambient_prompt_uses_idle_field_without_forced_world_context(
     system_message = messages[0]["content"]
 
     assert len(messages) == 1
-    assert "Скажи одну короткую самостоятельную idle-реплику." in system_message
+    assert "Скажи одну короткую самостоятельную реплику персонажа." in system_message
     assert "IDLE_DIALOGUE_ENGINE" not in system_message
     assert "Спроси меня что-нибудь" not in system_message
     assert "пять минут" not in system_message
     assert "Привет, я Листик. Я просто рядом." in system_message
-    assert "это только защита от повтора" in system_message
-    assert "Не повторяй их заметные слова" in system_message
+    assert "Это только anti-repeat" in system_message
+    assert "Не повторяй заметные существительные" in system_message
     assert "Есть ли в твоем мире монстры?" not in system_message
     assert "Я нашел крошечный ключ от Врат Забвения." not in system_message
     assert "ask_school_or_work_role" not in system_message

@@ -2,6 +2,7 @@ import type {
   LocalChatMemoryEpisode,
   LocalPetMemoryContext,
   LocalPetMemoryStateV1,
+  LocalPetUserMemory,
 } from "./localPetMemoryTypes";
 import type { LocalChatMessage, LocalPetState } from "./types";
 
@@ -9,6 +10,7 @@ const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 const RECENT_DIRECT_HISTORY_MESSAGES = 12;
 const MAX_RECALL_EPISODES = 3;
+const MAX_RELEVANT_MEMORIES = 5;
 const EPISODE_CONTEXT_RADIUS = 2;
 const STOP_WORDS = new Set([
   "меня",
@@ -19,6 +21,7 @@ const STOP_WORDS = new Set([
   "это",
   "что",
   "как",
+  "зовут",
   "где",
   "когда",
   "почему",
@@ -37,6 +40,9 @@ const STOP_WORDS = new Set([
   "your",
   "with",
 ]);
+const MEMORY_RECALL_RE = /(помнишь|запомнил|как меня зовут|как я тебя зову|что я люблю|что мне нравится|что я просил|что ты обещал)/iu;
+const STYLE_PREFERENCE_QUERY_RE = /(расскажи|скажи|ответь|повесели|развесели|придумай)/iu;
+const STYLE_PREFERENCE_MEMORY_RE = /(коротк|длинн|ответ|стиль|говори|общайся)/iu;
 const IDENTITY_DIALOGUE_RE = new RegExp(
   [
     "кто\\s+ты",
@@ -150,6 +156,73 @@ function tokenOverlapScore(text: string, queryTokens: Set<string>) {
   return score;
 }
 
+function isMemoryRecallQuestion(text: string) {
+  const compact = text.trim().replace(/\s+/g, " ");
+  return compact.length <= 200 && MEMORY_RECALL_RE.test(compact);
+}
+
+function memoryTime(memory: LocalPetUserMemory) {
+  const updatedAt = Date.parse(memory.updatedAt);
+  if (!Number.isNaN(updatedAt)) {
+    return updatedAt;
+  }
+  const createdAt = Date.parse(memory.createdAt);
+  return Number.isNaN(createdAt) ? 0 : createdAt;
+}
+
+function memorySelectionScore(
+  memory: LocalPetUserMemory,
+  message: string,
+  queryTokens: Set<string>,
+) {
+  const overlap = tokenOverlapScore(memory.text, queryTokens);
+  if (overlap > 0) {
+    return overlap + memory.importance;
+  }
+  if (isMemoryRecallQuestion(message)) {
+    if (
+      memory.normalizedKey === "user-name"
+      || memory.normalizedKey === "pet-nickname"
+      || memory.kind === "promise"
+      || memory.kind === "boundary"
+    ) {
+      return 2 + memory.importance;
+    }
+  }
+  if (
+    memory.kind === "preference"
+    && STYLE_PREFERENCE_QUERY_RE.test(message)
+    && STYLE_PREFERENCE_MEMORY_RE.test(memory.text)
+  ) {
+    return 1.5 + memory.importance;
+  }
+  return 0;
+}
+
+function selectRelevantMemories(
+  memory: LocalPetMemoryStateV1 | undefined,
+  message: string,
+  queryTokens: Set<string>,
+): LocalPetMemoryContext["relevantMemories"] {
+  if (!memory?.memories.length) {
+    return [];
+  }
+  return memory.memories
+    .map((item) => ({
+      item,
+      score: memorySelectionScore(item, message, queryTokens),
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score || memoryTime(right.item) - memoryTime(left.item))
+    .slice(0, MAX_RELEVANT_MEMORIES)
+    .map(({ item }) => ({
+      id: item.id,
+      kind: item.kind,
+      text: item.text,
+      dueAt: item.dueAt,
+    }));
+}
+
 function mergeWindows(
   windows: { start: number; end: number; score: number; latestAt: number }[],
 ) {
@@ -192,10 +265,12 @@ export function buildMemoryContextForMessage(
   history: LocalChatMessage[],
   message: string,
   now = new Date(),
+  memory?: LocalPetMemoryStateV1,
 ): LocalPetMemoryContext {
   const queryTokens = tokenize(message);
+  const relevantMemories = selectRelevantMemories(memory, message, queryTokens);
   if (!queryTokens.size || history.length <= RECENT_DIRECT_HISTORY_MESSAGES) {
-    return { relevantMemories: [] };
+    return { relevantMemories };
   }
 
   const searchableCount = Math.max(0, history.length - RECENT_DIRECT_HISTORY_MESSAGES);
@@ -220,7 +295,7 @@ export function buildMemoryContextForMessage(
     .sort((left, right) => left.start - right.start);
 
   return {
-    relevantMemories: [],
+    relevantMemories,
     episodes: selectedWindows.map((window) => episodeFromWindow(history, window)),
   };
 }

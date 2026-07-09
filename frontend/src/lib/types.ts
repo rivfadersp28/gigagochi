@@ -107,10 +107,12 @@ export type LocalChatResponse = {
     usedFallback?: boolean;
     validationFlags?: string[];
     promptDebug?: ChatPromptDebug[];
+    structuredReplyDebug?: Record<string, unknown>;
     liteToolCalls?: Record<string, unknown>[];
     liteOverlayPatch?: Record<string, unknown>;
     storyLibraryPatch?: Record<string, unknown>;
     storyLibraryDebug?: Record<string, unknown>;
+    contextRoutingDebug?: Record<string, unknown>;
     memoryDebug?: Record<string, unknown>;
   };
 };

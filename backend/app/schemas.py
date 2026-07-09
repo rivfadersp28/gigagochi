@@ -142,6 +142,7 @@ class LocalChatDebug(BaseModel):
     usedFallback: bool = False
     validationFlags: list[str] = Field(default_factory=list)
     promptDebug: list[dict[str, Any]] = Field(default_factory=list)
+    structuredReplyDebug: dict[str, Any] | None = None
     liteToolCalls: list[dict[str, Any]] = Field(default_factory=list)
     liteOverlayPatch: dict[str, Any] | None = None
     storyLibraryPatch: dict[str, Any] | None = None
