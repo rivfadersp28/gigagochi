@@ -9,10 +9,12 @@ import time
 import uuid
 from collections import deque
 from contextlib import ExitStack
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
 
 import httpx
 from openai import (
@@ -73,6 +75,7 @@ KANDINSKY_HTTP_MAX_ATTEMPTS = 2
 KANDINSKY_HTTP_RETRY_SECONDS = (3.0,)
 OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS = 3
 OPENROUTER_VIDEO_HTTP_RETRY_SECONDS = (1.0, 3.0)
+OPENROUTER_VIDEO_POLL_RETRY_SECONDS = (1.0, 2.0, 4.0, 8.0, 15.0)
 PLANT_DESCRIPTION_PATTERN = re.compile(
     r"(?:лист|растен|цвет|гриб|мох|сад|теплиц|оранжер|росток|кактус|трава|дерев)",
     re.IGNORECASE,
@@ -240,6 +243,15 @@ SPRITE_SEARCH_PADDING_X_RATIO = 0.2
 SPRITE_SEARCH_PADDING_Y_RATIO = 0.45
 SPRITE_CONTENT_PADDING_RATIO = 0.025
 SPRITE_BOTTOM_PADDING_RATIO = 0.08
+
+
+@dataclass(frozen=True)
+class PetAssetImageSet:
+    asset_set_id: uuid.UUID
+    generated_paths: dict[tuple[str, str], tuple[Path, str]]
+    scene_path: Path
+    version: int
+    generated_at: datetime
 
 
 def is_sprite_foreground(pixel: tuple[int, int, int, int]) -> bool:
@@ -1472,16 +1484,53 @@ def _submit_openrouter_video_job(
 def _poll_openrouter_video_job(
     settings: Any,
     job_id: str,
+    *,
+    polling_url: str | None = None,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + float(settings.openrouter_video_timeout_seconds)
     poll_interval = max(1.0, float(settings.openrouter_video_poll_interval_seconds))
-    poll_url = f"{get_openrouter_video_url(settings)}/{job_id}"
+    poll_url = polling_url or f"{get_openrouter_video_url(settings)}/{job_id}"
     headers = _openrouter_video_content_headers(settings)
+    consecutive_errors = 0
 
     while time.monotonic() < deadline:
-        response = httpx.get(poll_url, headers=headers, timeout=60)
+        try:
+            response = httpx.get(poll_url, headers=headers, timeout=60)
+        except httpx.TransportError as exc:
+            if consecutive_errors >= len(OPENROUTER_VIDEO_POLL_RETRY_SECONDS):
+                raise
+            retry_delay = OPENROUTER_VIDEO_POLL_RETRY_SECONDS[consecutive_errors]
+            consecutive_errors += 1
+            logger.warning(
+                "openrouter_video_poll retry jobId=%s consecutiveErrors=%s "
+                "retryDelaySeconds=%s errorType=%s error=%s",
+                job_id,
+                consecutive_errors,
+                retry_delay,
+                type(exc).__name__,
+                str(exc),
+            )
+            time.sleep(retry_delay)
+            continue
+
         if response.status_code >= 400:
+            is_retryable = response.status_code == 429 or response.status_code >= 500
+            if is_retryable and consecutive_errors < len(OPENROUTER_VIDEO_POLL_RETRY_SECONDS):
+                retry_delay = OPENROUTER_VIDEO_POLL_RETRY_SECONDS[consecutive_errors]
+                consecutive_errors += 1
+                logger.warning(
+                    "openrouter_video_poll retry jobId=%s consecutiveErrors=%s "
+                    "retryDelaySeconds=%s error=%s",
+                    job_id,
+                    consecutive_errors,
+                    retry_delay,
+                    _openrouter_video_error(response),
+                )
+                time.sleep(retry_delay)
+                continue
             raise _openrouter_video_error(response)
+
+        consecutive_errors = 0
         payload = response.json()
         status_value = str(payload.get("status") or "").lower()
         if status_value == "completed":
@@ -1585,7 +1634,22 @@ def generate_openrouter_video_bytes(
     if not job_id:
         raise RuntimeError(f"OpenRouter video response missing job id: {submit_payload}")
 
-    _poll_openrouter_video_job(settings, job_id)
+    polling_url_value = submit_payload.get("polling_url")
+    polling_url = (
+        urljoin(
+            f"{get_openrouter_video_url(settings)}/",
+            str(polling_url_value).strip(),
+        )
+        if polling_url_value
+        else None
+    )
+    logger.info(
+        "OpenRouter video job submitted label=%s jobId=%s initialStatus=%s",
+        label,
+        job_id,
+        submit_payload.get("status"),
+    )
+    _poll_openrouter_video_job(settings, job_id, polling_url=polling_url)
     return _download_openrouter_video_bytes(settings, job_id)
 
 
@@ -1696,11 +1760,25 @@ def generate_individual_sprite_paths(
     asset_id: uuid.UUID,
     description: str,
     character_bible: str | dict[str, Any],
-) -> tuple[dict[tuple[str, str], tuple[Path, str]], Path | None]:
+) -> tuple[dict[tuple[str, str], tuple[Path, str]], Path]:
+    output_paths = generate_individual_sprite_image_paths(
+        asset_id,
+        description,
+        character_bible,
+    )
+    scene_path = output_paths[(FAST_GENERATION_STAGE, "idle")][0]
+    video_path = generate_pet_scene_video_path(asset_id, scene_path)
+    return output_paths, video_path
+
+
+def generate_individual_sprite_image_paths(
+    asset_id: uuid.UUID,
+    description: str,
+    character_bible: str | dict[str, Any],
+) -> dict[tuple[str, str], tuple[Path, str]]:
     output_dir = generated_dir_for(asset_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_paths: dict[tuple[str, str], tuple[Path, str]] = {}
-    video_path: Path | None = None
 
     for stage, state in FAST_GENERATION_SKINS:
         prompt = build_pet_single_sprite_prompt(
@@ -1730,22 +1808,15 @@ def generate_individual_sprite_paths(
         scene_bytes = generate_pet_scene_image_bytes(character_path)
         path.write_bytes(normalize_pet_scene_video_frame_bytes(scene_bytes))
         output_paths[(stage, state)] = (path, PET_SCENE_COMPOSITION_PROMPT)
-        if stage == FAST_GENERATION_STAGE and state == "idle":
-            try:
-                video_bytes = generate_pet_scene_video_bytes(path)
-            except Exception:
-                logger.exception(
-                    "Pet scene video generation failed; continuing without video "
-                    "assetId=%s stage=%s state=%s",
-                    asset_id,
-                    stage,
-                    state,
-                )
-            else:
-                video_path = output_dir / f"{stage}-{state}.mp4"
-                video_path.write_bytes(video_bytes)
 
-    return output_paths, video_path
+    return output_paths
+
+
+def generate_pet_scene_video_path(asset_id: uuid.UUID, scene_path: Path) -> Path:
+    video_bytes = generate_pet_scene_video_bytes(scene_path)
+    video_path = generated_dir_for(asset_id) / f"{FAST_GENERATION_STAGE}-idle.mp4"
+    video_path.write_bytes(video_bytes)
+    return video_path
 
 
 def crop_sprite_sheet(pet_id: uuid.UUID, sprite_path: Path) -> dict[tuple[str, str], Path]:
@@ -1797,13 +1868,33 @@ def generation_error_code(exc: Exception) -> str:
     return "GENERATION_FAILED"
 
 
-def generate_pet_asset_set(description: str) -> dict[str, Any]:
+def generate_pet_image_asset_set(description: str) -> PetAssetImageSet:
     asset_set_id = uuid.uuid4()
     output_dir = generated_dir_for(asset_set_id)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    generated_paths, video_path = generate_individual_sprite_paths(asset_set_id, description, {})
-    version = int(datetime.now(UTC).timestamp())
+    generated_paths = generate_individual_sprite_image_paths(asset_set_id, description, {})
+    generated_at = datetime.now(UTC)
+    return PetAssetImageSet(
+        asset_set_id=asset_set_id,
+        generated_paths=generated_paths,
+        scene_path=generated_paths[(FAST_GENERATION_STAGE, "idle")][0],
+        version=int(generated_at.timestamp()),
+        generated_at=generated_at,
+    )
+
+
+def generate_pet_video_for_image_asset_set(image_set: PetAssetImageSet) -> Path:
+    return generate_pet_scene_video_path(image_set.asset_set_id, image_set.scene_path)
+
+
+def build_pet_asset_set_response(
+    image_set: PetAssetImageSet,
+    video_path: Path,
+) -> dict[str, Any]:
+    asset_set_id = image_set.asset_set_id
+    generated_paths = image_set.generated_paths
+    version = image_set.version
 
     generated_urls = {
         key: f"/static/generated/{asset_set_id}/{path.name}?v={version}"
@@ -1817,14 +1908,16 @@ def generate_pet_asset_set(description: str) -> dict[str, Any]:
 
     return {
         "assetSetId": str(asset_set_id),
-        "generatedAt": datetime.now(UTC),
+        "generatedAt": image_set.generated_at,
         "images": images,
-        "videoUrl": (
-            f"/static/generated/{asset_set_id}/{video_path.name}?v={version}"
-            if video_path
-            else None
-        ),
+        "videoUrl": f"/static/generated/{asset_set_id}/{video_path.name}?v={version}",
         "blinkImageUrl": generated_urls.get((FAST_GENERATION_STAGE, "blink")),
         "spriteSheetUrl": None,
         "characterBible": None,
     }
+
+
+def generate_pet_asset_set(description: str) -> dict[str, Any]:
+    image_set = generate_pet_image_asset_set(description)
+    video_path = generate_pet_video_for_image_asset_set(image_set)
+    return build_pet_asset_set_response(image_set, video_path)

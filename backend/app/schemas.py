@@ -9,6 +9,12 @@ PetStageValue = Literal["baby", "teen", "adult"]
 PetStateValue = Literal["idle", "happy", "sad", "hungry"]
 PetStatKeyValue = Literal["hunger", "happiness", "energy"]
 GeneratePetJobStatusValue = Literal["queued", "running", "succeeded", "failed"]
+GeneratePetJobPhaseValue = Literal[
+    "queued",
+    "generating_images",
+    "generating_video",
+    "completed",
+]
 UserMemoryKind = Literal[
     "user_fact",
     "preference",
@@ -61,6 +67,7 @@ class GeneratePetAssetResponse(BaseModel):
 class GeneratePetJobResponse(BaseModel):
     jobId: str
     status: GeneratePetJobStatusValue
+    phase: GeneratePetJobPhaseValue = "queued"
     createdAt: datetime
     updatedAt: datetime
     result: GeneratePetAssetResponse | None = None

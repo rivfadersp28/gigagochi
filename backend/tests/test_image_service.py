@@ -7,6 +7,7 @@ from io import BytesIO
 from types import SimpleNamespace
 
 import httpx
+import pytest
 from PIL import Image, ImageDraw
 
 from app.prompts.pet_image_prompts import (
@@ -764,6 +765,69 @@ def test_generate_openrouter_video_bytes_retries_server_error(monkeypatch, tmp_p
     assert retry_delays == [1.0]
 
 
+def test_generate_openrouter_video_bytes_retries_poll_errors(monkeypatch, tmp_path) -> None:
+    source_path = tmp_path / "teen-idle.png"
+    source_path.write_bytes(png_bytes(Image.new("RGB", (720, 1280), (20, 140, 70))))
+    poll_statuses = [500, 429, 200]
+    retry_delays: list[float] = []
+    requested_urls: list[str] = []
+
+    class FakeResponse:
+        content = b""
+
+        def __init__(self, status_code: int, payload: dict[str, object]) -> None:
+            self.status_code = status_code
+            self.payload = payload
+
+        def json(self):
+            return self.payload
+
+    def fake_post(*_args, **_kwargs):
+        return FakeResponse(
+            200,
+            {
+                "id": "video-job-1",
+                "polling_url": "/api/v1/videos/video-job-1",
+                "status": "pending",
+            },
+        )
+
+    def fake_get(url, **_kwargs):
+        requested_urls.append(url)
+        if url.endswith("/content"):
+            response = FakeResponse(200, {})
+            response.content = b"video-bytes"
+            return response
+        status_code = poll_statuses.pop(0)
+        payload = {"status": "completed"} if status_code == 200 else {"error": "temporary"}
+        return FakeResponse(status_code, payload)
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            openrouter_api_key="sk-or-test",
+            openrouter_base_url="https://openrouter.ai/api/v1",
+            openrouter_video_model="bytedance/seedance-2.0",
+            openrouter_video_timeout_seconds=10,
+            openrouter_video_poll_interval_seconds=1,
+            openrouter_site_url=None,
+            openrouter_app_title="Test Tamagotchi",
+            backend_public_url=None,
+            webapp_url=None,
+        ),
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+    monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
+
+    result = generate_openrouter_video_bytes(source_path, label="pet_creation/scene_video")
+
+    assert result == b"video-bytes"
+    assert poll_statuses == []
+    assert retry_delays == [1.0, 2.0]
+    assert requested_urls[:3] == ["https://openrouter.ai/api/v1/videos/video-job-1"] * 3
+
+
 def test_align_sprite_to_reference_canvas_matches_reference_bbox(tmp_path) -> None:
     reference = Image.new("RGBA", (100, 100), (255, 255, 255, 0))
     reference_draw = ImageDraw.Draw(reference)
@@ -941,7 +1005,7 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
     assert video_path.name == "teen-idle.mp4"
 
 
-def test_generate_individual_sprite_paths_continues_without_video(monkeypatch, tmp_path) -> None:
+def test_generate_individual_sprite_paths_requires_video(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         "app.services.image_service.generated_dir_for",
         lambda asset_id: tmp_path / str(asset_id),
@@ -967,14 +1031,13 @@ def test_generate_individual_sprite_paths_continues_without_video(monkeypatch, t
         fail_video,
     )
 
-    output_paths, video_path = generate_individual_sprite_paths(
-        uuid.uuid4(),
-        "электрический дракон",
-        {},
-    )
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        generate_individual_sprite_paths(
+            uuid.uuid4(),
+            "электрический дракон",
+            {},
+        )
 
-    assert sorted(path.name for path, _prompt in output_paths.values()) == ["teen-idle.png"]
-    assert video_path is None
     assert not list(tmp_path.rglob("*.mp4"))
 
 

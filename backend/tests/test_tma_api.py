@@ -113,42 +113,53 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
     )
     captured: dict[str, object] = {}
 
-    def fake_generate_pet_asset_set(description: str, **kwargs):
+    def fake_generate_pet_image_asset_set(description: str, **kwargs):
         captured["description"] = description
         captured["kwargs"] = kwargs
-        return {
-            "assetSetId": "asset-1",
-            "generatedAt": datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
-            "images": {
-                "baby": {
-                    "idle": "/static/generated/asset-1/baby-idle.png",
-                    "happy": "/static/generated/asset-1/baby-happy.png",
-                    "hungry": "/static/generated/asset-1/baby-hungry.png",
-                    "sad": "/static/generated/asset-1/baby-sad.png",
-                },
-                "teen": {
-                    "idle": "/static/generated/asset-1/teen-idle.png",
-                    "happy": "/static/generated/asset-1/teen-happy.png",
-                    "hungry": "/static/generated/asset-1/teen-hungry.png",
-                    "sad": "/static/generated/asset-1/teen-sad.png",
-                },
-                "adult": {
-                    "idle": "/static/generated/asset-1/adult-idle.png",
-                    "happy": "/static/generated/asset-1/adult-happy.png",
-                    "hungry": "/static/generated/asset-1/adult-hungry.png",
-                    "sad": "/static/generated/asset-1/adult-sad.png",
-                },
+        return SimpleNamespace(asset_set_id="asset-1")
+
+    generated_response = {
+        "assetSetId": "asset-1",
+        "generatedAt": datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
+        "images": {
+            "baby": {
+                "idle": "/static/generated/asset-1/baby-idle.png",
+                "happy": "/static/generated/asset-1/baby-happy.png",
+                "hungry": "/static/generated/asset-1/baby-hungry.png",
+                "sad": "/static/generated/asset-1/baby-sad.png",
             },
-            "spriteSheetUrl": "/static/generated/asset-1/sprite-sheet.png",
-            "characterBible": {
-                "species": "small dragon mascot",
-                "main_colors": ["green", "yellow"],
+            "teen": {
+                "idle": "/static/generated/asset-1/teen-idle.png",
+                "happy": "/static/generated/asset-1/teen-happy.png",
+                "hungry": "/static/generated/asset-1/teen-hungry.png",
+                "sad": "/static/generated/asset-1/teen-sad.png",
             },
-        }
+            "adult": {
+                "idle": "/static/generated/asset-1/adult-idle.png",
+                "happy": "/static/generated/asset-1/adult-happy.png",
+                "hungry": "/static/generated/asset-1/adult-hungry.png",
+                "sad": "/static/generated/asset-1/adult-sad.png",
+            },
+        },
+        "spriteSheetUrl": "/static/generated/asset-1/sprite-sheet.png",
+        "videoUrl": "/static/generated/asset-1/teen-idle.mp4",
+        "characterBible": {
+            "species": "small dragon mascot",
+            "main_colors": ["green", "yellow"],
+        },
+    }
 
     monkeypatch.setattr(
-        "app.routers.tma.generate_pet_asset_set",
-        fake_generate_pet_asset_set,
+        "app.routers.tma.generate_pet_image_asset_set",
+        fake_generate_pet_image_asset_set,
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.generate_pet_video_for_image_asset_set",
+        lambda _image_set: SimpleNamespace(name="teen-idle.mp4"),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.build_pet_asset_set_response",
+        lambda _image_set, _video_path: generated_response,
     )
     client = tma_client()
 
@@ -159,6 +170,7 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
     assert job["status"] in {"queued", "running", "succeeded"}
     payload = wait_for_generation_job(client, job["jobId"])
     assert payload["status"] == "succeeded"
+    assert payload["phase"] == "completed"
     result = payload["result"]
     assert result is not None
     assert result["assetSetId"] == "asset-1"
@@ -468,7 +480,7 @@ def test_generate_pet_job_records_provider_failure(monkeypatch, caplog, tmp_path
         )
         raise httpx.HTTPStatusError("bad request", request=request, response=response)
 
-    monkeypatch.setattr("app.routers.tma.generate_pet_asset_set", fail_generate)
+    monkeypatch.setattr("app.routers.tma.generate_pet_image_asset_set", fail_generate)
     client = tma_client()
 
     response = client.post("/api/generate-pet", json={"description": "дракон"})
@@ -733,33 +745,43 @@ def test_generation_rate_limit(monkeypatch) -> None:
             openrouter_api_key="test-openrouter-key",
         ),
     )
-    monkeypatch.setattr(
-        "app.routers.tma.generate_pet_asset_set",
-        lambda description, **kwargs: {
-            "assetSetId": "asset-1",
-            "generatedAt": datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
-            "images": {
-                "baby": {
-                    "idle": "/static/generated/asset-1/baby-idle.png",
-                    "happy": "/static/generated/asset-1/baby-happy.png",
-                    "hungry": "/static/generated/asset-1/baby-hungry.png",
-                    "sad": "/static/generated/asset-1/baby-sad.png",
-                },
-                "teen": {
-                    "idle": "/static/generated/asset-1/teen-idle.png",
-                    "happy": "/static/generated/asset-1/teen-happy.png",
-                    "hungry": "/static/generated/asset-1/teen-hungry.png",
-                    "sad": "/static/generated/asset-1/teen-sad.png",
-                },
-                "adult": {
-                    "idle": "/static/generated/asset-1/adult-idle.png",
-                    "happy": "/static/generated/asset-1/adult-happy.png",
-                    "hungry": "/static/generated/asset-1/adult-hungry.png",
-                    "sad": "/static/generated/asset-1/adult-sad.png",
-                },
+    generated_response = {
+        "assetSetId": "asset-1",
+        "generatedAt": datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
+        "images": {
+            "baby": {
+                "idle": "/static/generated/asset-1/baby-idle.png",
+                "happy": "/static/generated/asset-1/baby-happy.png",
+                "hungry": "/static/generated/asset-1/baby-hungry.png",
+                "sad": "/static/generated/asset-1/baby-sad.png",
             },
-            "spriteSheetUrl": "/static/generated/asset-1/sprite-sheet.png",
+            "teen": {
+                "idle": "/static/generated/asset-1/teen-idle.png",
+                "happy": "/static/generated/asset-1/teen-happy.png",
+                "hungry": "/static/generated/asset-1/teen-hungry.png",
+                "sad": "/static/generated/asset-1/teen-sad.png",
+            },
+            "adult": {
+                "idle": "/static/generated/asset-1/adult-idle.png",
+                "happy": "/static/generated/asset-1/adult-happy.png",
+                "hungry": "/static/generated/asset-1/adult-hungry.png",
+                "sad": "/static/generated/asset-1/adult-sad.png",
+            },
         },
+        "spriteSheetUrl": "/static/generated/asset-1/sprite-sheet.png",
+        "videoUrl": "/static/generated/asset-1/teen-idle.mp4",
+    }
+    monkeypatch.setattr(
+        "app.routers.tma.generate_pet_image_asset_set",
+        lambda description, **kwargs: SimpleNamespace(asset_set_id="asset-1"),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.generate_pet_video_for_image_asset_set",
+        lambda _image_set: SimpleNamespace(name="teen-idle.mp4"),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.build_pet_asset_set_response",
+        lambda _image_set, _video_path: generated_response,
     )
     with rate_limiter._lock:
         rate_limiter._events.clear()

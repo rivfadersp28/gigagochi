@@ -47,23 +47,34 @@
   `seeked`, or seeking without resuming, can stall in Telegram WebView when
   mobile preload is deferred.
 - Pet creation waits for an OpenRouter video job after image composition and
-  returns `assetSet.videoUrl`. The frontend generation polling timeout must stay
-  at least as long as `OPENROUTER_VIDEO_TIMEOUT_SECONDS`, otherwise the UI can
-  report timeout while the backend is still waiting for Seedance.
+  returns `assetSet.videoUrl`; video failure fails the pet job. Keep image and
+  video work in separate executors: video polling may consume the full
+  `OPENROUTER_VIDEO_TIMEOUT_SECONDS` and must not occupy an image worker. The
+  frontend generation timeout must cover queue wait, both image calls and the
+  video timeout, otherwise the UI can fail while the backend is still running.
 - Do not mutate character template fields during chat. Evolving per-pet
   character facts belong in `extensions.lite_overlay`; evolving story entities
   belong in `extensions.story_library_overlay`.
 - Do not add per-feature source toggles outside `speech_runtime.contextSources`.
   Chat, idle, proactive, push, and `/story` must use the same matrix:
   `disabled` / `auto` / `always`.
-- Not every cell in the admin "Копилки" matrix has a runtime path. Do not add
-  editable cells for `chatHistory` on Idle/Pro/Push or `recentReplies` on
-  Chat/Pro/Push unless the backend actually starts consuming those sources on
-  those surfaces.
+- Not every cell in the admin "Копилки" matrix has a runtime path. `chatHistory`
+  is active for Chat, Idle and Story; `recentReplies` is active for Idle and
+  Story. Keep unsupported admin cells aligned with actual backend consumption.
 - Visible reply `contextRouting` is only useful when at least one
   router-controlled source is `auto`. If all visible sources are forced
   `disabled`/`always`, skip the router call instead of spending an extra LLM
   request that cannot change inclusion.
+- Do not restore prompt-side anti-repeat for normal chat. Recent pet replies must
+  remain assistant messages in the causal dialogue; treating their nouns and
+  syntax as forbidden wording makes follow-ups incoherent. Ambient anti-repeat
+  should guard only against near-verbatim repetition.
+- A dashboard ambient/proactive hook is durable only when the user answers it:
+  append the hook before the user message and send both as normal history. Do
+  not reintroduce regex gating for whether the user's text counts as a reply.
+- Full AI prompt content must not be logged or returned by default. Use
+  `includeDebug=true` for an authenticated client debug payload and
+  `AI_PROMPT_LOG_FULL=true` only in an explicit local diagnostic session.
 - In `ContextPlan`, `routing=None` means no router was available and selected
   direct builders may use their legacy `auto_default` sources. An empty
   `ContextRoutingDecision` means the router ran or was intentionally skipped and
@@ -85,6 +96,8 @@
   is only for durable consequences that remain true after the episode. Store
   the episode itself in `recentStoryEvents` / `extensions.recent_story_events`
   and pass it to `/story` only as `ANTI_REPEAT`.
+- Do not canonize a new ability/title/profession from one generated chat reply.
+  The lite-fact extractor must validate such facts against the character capsule.
 - Do not make the background-story aftermath analyzer choose stats again.
   `statImpacts[]` comes from the story generation payload and backend caps it;
   aftermath only extracts durable lite facts plus compact recent-event data.
@@ -95,9 +108,14 @@
   Do not silently fall back to sending the raw generated story to the image
   model if `background_story_image_scene` returns an empty scene; let image
   generation fail so Telegram uses the existing text-only fallback.
-- Direct OpenAI `/story` image generation should not rely on sprite reference
-  images being consumed by the provider. Keep enough compact pet identity and
-  visual detail in the final image prompt.
+- Direct OpenAI reference-image generation must use `images.edit`; `images.generate`
+  does not consume the sprite reference. `/story` has no textual identity
+  fallback: if the current asset reference is unavailable, preserve text-only
+  delivery instead of asking the model to invent the pet design.
+- Do not put the full sprite `VISUAL_STYLE_FRAME` into story illustrations: its
+  studio/white-background presentation conflicts with narrative environments.
+  Copy `VISUAL_CHARACTER_STYLE` exactly and keep only the compact scene plus
+  reference-preservation rules around it.
 - `/api/admin/speech` is intentionally local-dev only. It should stay disabled
   in production by requiring `ALLOW_DEV_TMA_AUTH=true` plus a local client host.
 - Speech/dataset saves validate JSON or JSONL, create backups under
@@ -194,3 +212,9 @@
   absolutely positioned `<img>` SVG. Percentage height on that replaced element
   can stay at the intrinsic SVG height while animated text grows; use the SVG
   as a `background-size: 100% 100%` container background for stretchable bubbles.
+- Dashboard keyboard geometry must follow the actual `visualViewport` bottom and
+  move the composer with `transform`. Do not restore eager keyboard timers,
+  assumed keyboard heights, or `bottom` transitions: they desynchronize from the
+  native keyboard and make the composer jump. Keep the dashboard root on
+  `overflow: clip`; `overflow: hidden` is still programmatically scrollable, so
+  focus can change its `scrollTop` and shift the whole fixed scene.

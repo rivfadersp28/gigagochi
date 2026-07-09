@@ -17,12 +17,10 @@
   the surface, runtime source modes, router decision, final included source ids,
   router queries, and debug payload. Visible replies and `/story` both build this
   plan before prompt assembly.
-- Before visible chat/proactive/ambient generation, `lite_generator.py` calls a
-  `contextRouting` LLM gate configured in `backend/data/speech_runtime.json`
-  only when at least one router-controlled source is set to `auto`. The gate
-  returns enabled router sources for `worldContext`, `characterProfile`,
-  `userMemory`, `chatHistory`, and `recentReplies`; `ContextPlan` then resolves
-  final inclusion through the shared `contextSources` matrix.
+- Visible context routing is deterministic for already-selected `userMemory`,
+  recent `chatHistory`, and ambient `recentReplies`; these sources no longer
+  spend an extra LLM call. The `contextRouting` LLM gate remains available only
+  for genuinely semantic auto sources such as future world/profile routing.
 - `speech_runtime.contextSources.surfaces` is the unified source policy for
   `chat`, `ambient`, `proactive`, `push`, and `backgroundStory`. Each source is
   `disabled`, `auto`, or `always`. The shared source ids are
@@ -98,10 +96,18 @@
 - `/story` illustrations use `background_story_service.generate_background_story_image_bytes`.
   Before image generation, the service sends the generated story through a chat
   completion named `background_story_image_scene` with an artist-brief prompt
-  that extracts one main visual scene. The final image prompt uses that extracted
-  scene, pet identity, and the style template, then calls the shared
-  `image_service.generate_image_bytes` path so production follows
-  `AI_PROVIDER=openai` / `OPENAI_API_KEY` instead of direct Kandinsky tasks.
+  that extracts one compact visual scene. The final image prompt contains only
+  that scene, exact-reference preservation rules and the same
+  `VISUAL_CHARACTER_STYLE` block used inside pet creation. It requires the
+  current stage/mood asset as an input reference to the shared
+  `image_service.generate_image_bytes` path. Direct OpenAI generation downloads
+  that reference and uses `images.edit`; OpenRouter receives it as
+  `input_references`. Missing references produce the existing text-only story
+  fallback rather than a newly invented character design.
+- Background-story aftermath extraction persists the structured episode in
+  `recentStoryEvents` and durable consequences in `extensions.lite_overlay`.
+  Story stat changes are signed: negative amounts damage state and positive
+  amounts restore it only when recovery is explicit in the story text.
 - Runtime speech regulator text that used to be hardcoded in the reply engine now lives in
   `backend/data/speech_runtime.json` and is read by
   `backend/app/services/pet_reply_engine/speech_runtime.py`. It covers persona
@@ -143,9 +149,11 @@
   storage for legacy pets only. New pet asset generation does not call
   `create_character_bible` and returns no `characterBible`; image prompts use the
   user's raw character description as the visual seed plus the global
-  `VISUAL_STYLE_FRAME` from `backend/app/prompts/style_direction.py`. The current
-  asset style frame is the user-provided quiet melancholic collectible designer
-  art toy prompt copied verbatim. The active visual pipeline first generates a
+  `VISUAL_STYLE_FRAME` from `backend/app/prompts/style_direction.py`.
+  `VISUAL_STYLE_FRAME` combines the reusable quiet melancholic collectible
+  designer-toy `VISUAL_CHARACTER_STYLE` with sprite-only studio/white-background
+  presentation rules. Story illustrations reuse the character-style block but
+  replace the sprite presentation with narrative composition. The active visual pipeline first generates a
   standalone character from `{user_description}` plus `VISUAL_STYLE_FRAME`, then
   sends that character and `backend/static/backgrounds/pet-generation-forest.png`
   to a multi-image edit prompt: `Добавь персонажа с первой картинки на вторую`.
@@ -155,7 +163,10 @@
   `resolution=720p`, `aspect_ratio=9:16`, `duration=4`, `generate_audio=false`,
   and a locked-camera blink-only prompt. The saved public `assetSet.images` point
   to the normalized scene PNG and `assetSet.videoUrl` points to the generated
-  mp4. The dashboard renders the mp4 as the full-height background with the same
+  mp4. Pet jobs remain `running` until that mp4 is saved. Image generation and
+  video polling use separate configurable thread pools (defaults: three image
+  workers and four video workers), so a slow video does not block creation of
+  the next users' PNG assets. The dashboard renders the mp4 as the full-height background with the same
   normalized image as poster/fallback; there is no separate centered pet sprite,
   blink overlay, tap animation, or background removal step on the active path.
   Per-pet story events stay in
@@ -166,30 +177,37 @@
   the prompt model version in `extensions.instance`. The original
   `characterTemplate` can still keep the source data.
 - Normal frontend user chat turns share
-  `frontend/src/lib/localPetChatTurn.ts`. It appends chat history, sends the
-  backend request, builds optional memory recall from selected local user-memory
-  items plus whole dialogue episodes in `frontend/src/lib/localPetMemoryRecall.ts`,
-  marks recalled memory as used, and writes deterministic memory operations after
-  the visible reply. Post-reply LLM user-memory and lite-fact extraction remain
-  disabled on the active frontend path, so chat does not write generated facts
-  into extracted memory or `lite_overlay`.
-- `/api/chat/memory-extract` and `/api/chat/memory-consolidate` are compatibility
-  no-ops. Active memory comes from stored chat messages and recalled dialogue
-  episodes, not extracted user facts or rewritten summaries.
-- Main-screen ambient and proactive replies are transient dialogue hooks, not
-  durable chat history. The next user message receives the visible hook as
-  one-time `LAST_VISIBLE_PET_LINE` context only when the frontend classifies the
-  user text as a direct answer to that hook, not for ordinary new intents such as
-  small talk, “расскажи”, or “повесели”. The hook is not sent as an `assistant`
-  history message. `localStorage` chat history stores only user messages and
-  direct pet replies to user chat turns to avoid self-reinforcing generated
-  monologues. Identity questions skip this visible hook entirely so autonomous
-  ambient or proactive phrasing does not become character canon.
-- Recent ambient replies are prompt-only anti-repeat material. When included,
-  they are marked as already-shown transient wording, not character canon or
-  world facts, and visible replies receive a shared rule not to turn distinctive
-  words from previous replies into permanent traits unless the user continues
-  that topic.
+  `frontend/src/lib/localPetChatTurn.ts`. A visible ambient/proactive hook is
+  appended as a real pet history message when the user answers it, so the next
+  request receives the exact causal turn without regex classification. Chat
+  prompt assembly keeps the latest eight complete messages instead of dropping
+  prior pet replies.
+- After the visible reply, `localPetChatTurn.ts` runs user-memory and character-
+  fact extraction in the background. `/api/chat/memory-extract`,
+  `/api/chat/memory-consolidate`, and `/api/chat/lite-facts` call the existing
+  structured extractors; results update local user memory and
+  `extensions.lite_overlay` without delaying the visible answer. Deterministic
+  extraction still handles explicit names, preferences, boundaries, and
+  `запомни` immediately.
+- Chat has no prompt-side anti-repeat block. Repetition is preserved when it is
+  needed for conversational cohesion. Ambient keeps only a narrow exact-repeat
+  reminder and can read the last four chat messages as optional conversational
+  context; deadline/user-memory blocks remain disabled for ambient.
+- `lite_overlay` is retrieved into chat only when a stored fact has lexical or
+  Russian-stem overlap with the current message, with a maximum of three facts.
+  The whole overlay is never pasted into every prompt.
+- Post-reply extraction rejects a newly invented ability, title, profession, or
+  magical skill unless the fact is supported by the character capsule. A single
+  assistant reply is not sufficient evidence for durable character canon.
+- New pets may start without a generated `characterBible`; frontend overlay and
+  recent-story patch application lazily creates a minimal mutable
+  `characterBible.extensions` container so dialogue/story memory still works.
+- Visible reply prompts no longer inject the global `tone_runtime` setting and
+  no longer duplicate JSON-schema limits/enums in prose. Structured response
+  validation remains enforced by `response_format`.
+- API `debug` payloads are returned only for `includeDebug=true`. Server prompt
+  logs contain hashes, sizes, model and schema metadata by default; full prompt
+  text/stdout requires `AI_PROMPT_LOG_FULL=true`.
 - Lite chat can read character JSON for explicit lore questions, but no longer
   exposes `update_character_json`. Stable mutable facts are saved by the
   separate `/api/chat/lite-facts` post-reply extractor.

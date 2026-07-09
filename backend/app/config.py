@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     chat_rate_limit_per_hour: int = 0
     lite_facts_rate_limit_per_hour: int = 0
     memory_rate_limit_per_hour: int = 0
+    generation_image_workers: int = Field(default=3, ge=1, le=8)
+    generation_video_workers: int = Field(default=4, ge=1, le=8)
     telegram_init_data_max_age_seconds: int = 60 * 60 * 24
     telegram_daily_push_enabled: bool = False
     telegram_daily_push_interval_seconds: int = 300

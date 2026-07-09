@@ -30,6 +30,7 @@ type GeneratePetApiResponse = Omit<GeneratePetResponse, "characterBible"> & {
 type GeneratePetJobResponse = {
   jobId: string;
   status: "queued" | "running" | "succeeded" | "failed";
+  phase: "queued" | "generating_images" | "generating_video" | "completed";
   createdAt: string;
   updatedAt: string;
   result?: GeneratePetApiResponse | null;
@@ -63,7 +64,7 @@ const REQUIRED_STAGES = ["baby", "teen", "adult"] as const satisfies readonly Pe
 const REQUIRED_MOODS = ["idle", "happy", "hungry", "sad"] as const satisfies readonly PetMood[];
 const MAX_ERROR_BODY_CHARS = 900;
 const GENERATION_POLL_INTERVAL_MS = 2000;
-const MAX_GENERATION_POLL_MS = 15 * 60 * 1000;
+const MAX_GENERATION_POLL_MS = 25 * 60 * 1000;
 
 type ApiErrorDetail = {
   error?: unknown;
