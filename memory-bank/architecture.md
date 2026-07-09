@@ -51,6 +51,9 @@
   JSON handling. `apiContracts.ts` validates successful payloads at runtime and
   normalizes nullable wire fields into the frontend domain before `api.ts`
   applies pet-specific request/response mapping.
+- Local speech-admin routes also expose explicit Pydantic response models.
+  `adminSpeechContracts.ts` derives their TypeScript types from OpenAPI and
+  validates manifest/save/publish payloads before admin UI state sees them.
 
 ## Pet Replies
 

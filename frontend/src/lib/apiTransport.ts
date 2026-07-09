@@ -6,6 +6,7 @@ export type ApiErrorDetail = {
   code?: unknown;
   requestId?: unknown;
   retryAfterSeconds?: unknown;
+  errors?: unknown;
 };
 
 export type ApiResponseParser<T> = (payload: unknown) => T;
@@ -85,6 +86,7 @@ function errorMessageFromResponse(
   const code = stringValue(detail.code);
   const message =
     stringValue(detail.message) ??
+    firstErrorMessage(detail.errors) ??
     stringValue((payload as { message?: unknown } | undefined)?.message);
 
   if (code === "rate_limited") {
@@ -99,6 +101,19 @@ function errorMessageFromResponse(
         : "Не получилось выполнить действие. Проверьте данные и попробуйте снова."),
     code,
   };
+}
+
+function firstErrorMessage(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  for (const message of Object.values(value)) {
+    const parsed = stringValue(message);
+    if (parsed) {
+      return parsed;
+    }
+  }
+  return undefined;
 }
 
 export function apiErrorFromDetail(

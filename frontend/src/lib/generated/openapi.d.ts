@@ -247,12 +247,82 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AdminDeployResponse */
+        readonly AdminDeployResponse: {
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Message */
+            readonly message: string;
+        };
+        /** AdminDialogueInfluenceItemResponse */
+        readonly AdminDialogueInfluenceItemResponse: {
+            /** Configpath */
+            readonly configPath: string | null;
+            /** Editable */
+            readonly editable: boolean;
+            /** Fileid */
+            readonly fileId: string | null;
+            /** Id */
+            readonly id: string;
+            /** Label */
+            readonly label: string;
+            /** Role */
+            readonly role?: string | null;
+            /** Source */
+            readonly source: string;
+            /** Summary */
+            readonly summary: string;
+            /** Surfaces */
+            readonly surfaces: readonly string[];
+        };
+        /** AdminDialogueResponse */
+        readonly AdminDialogueResponse: {
+            /** Collections */
+            readonly collections: readonly components["schemas"]["AdminDialogueInfluenceItemResponse"][];
+            /** Modifiers */
+            readonly modifiers: readonly components["schemas"]["AdminDialogueInfluenceItemResponse"][];
+        };
         /** AdminFileUpdate */
         readonly AdminFileUpdate: {
             /** Content */
             readonly content: string;
             /** Id */
             readonly id: string;
+        };
+        /** AdminPublishJobResponse */
+        readonly AdminPublishJobResponse: {
+            /** Commitsha */
+            readonly commitSha: string | null;
+            /** Createdat */
+            readonly createdAt: string;
+            /** Error */
+            readonly error: string | null;
+            /** Errorcode */
+            readonly errorCode: string | null;
+            /** Finishedat */
+            readonly finishedAt: string | null;
+            /** Id */
+            readonly id: string;
+            /** Logs */
+            readonly logs: readonly components["schemas"]["AdminPublishLogResponse"][];
+            /** Savedfiles */
+            readonly savedFiles: readonly components["schemas"]["AdminSavedFileResponse"][];
+            /** Startedat */
+            readonly startedAt: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "pending" | "running" | "succeeded" | "failed";
+        };
+        /** AdminPublishLogResponse */
+        readonly AdminPublishLogResponse: {
+            /** At */
+            readonly at: string;
+            /** Level */
+            readonly level: string;
+            /** Message */
+            readonly message: string;
         };
         /** AdminPublishRequest */
         readonly AdminPublishRequest: {
@@ -265,6 +335,84 @@ export interface components {
         readonly AdminSaveRequest: {
             /** Files */
             readonly files: readonly components["schemas"]["AdminFileUpdate"][];
+        };
+        /** AdminSaveResponse */
+        readonly AdminSaveResponse: {
+            /** Errors */
+            readonly errors: {
+                readonly [key: string]: string;
+            };
+            /** Files */
+            readonly files: readonly components["schemas"]["AdminSavedFileResponse"][];
+            /** Saved */
+            readonly saved: boolean;
+            /** Updatedat */
+            readonly updatedAt: string;
+        };
+        /** AdminSavedFileResponse */
+        readonly AdminSavedFileResponse: {
+            /** Backuppath */
+            readonly backupPath: string | null;
+            /** Id */
+            readonly id: string;
+            /** Path */
+            readonly path: string;
+            /** Sizebytes */
+            readonly sizeBytes: number;
+        };
+        /** AdminSpeechFileResponse */
+        readonly AdminSpeechFileResponse: {
+            /** Content */
+            readonly content: string;
+            /** Description */
+            readonly description: string;
+            /** Exists */
+            readonly exists: boolean;
+            /**
+             * Format
+             * @enum {string}
+             */
+            readonly format: "json" | "jsonl";
+            /** Id */
+            readonly id: string;
+            /** Label */
+            readonly label: string;
+            /** Path */
+            readonly path: string;
+            /** Sizebytes */
+            readonly sizeBytes: number;
+            /** Summary */
+            readonly summary: {
+                readonly [key: string]: unknown;
+            };
+            /** Updatedat */
+            readonly updatedAt: string | null;
+        };
+        /** AdminSpeechManifestResponse */
+        readonly AdminSpeechManifestResponse: {
+            readonly deploy: components["schemas"]["AdminDeployResponse"];
+            readonly dialogue: components["schemas"]["AdminDialogueResponse"];
+            /** Files */
+            readonly files: readonly components["schemas"]["AdminSpeechFileResponse"][];
+            /** Generatedat */
+            readonly generatedAt: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            readonly mode: "local" | "production";
+            readonly sync: components["schemas"]["AdminSyncResponse"];
+        };
+        /** AdminSyncResponse */
+        readonly AdminSyncResponse: {
+            /** Message */
+            readonly message: string;
+            /** Servercommit */
+            readonly serverCommit: string | null;
+            /** Status */
+            readonly status: string;
+            /** Updatedat */
+            readonly updatedAt: string;
         };
         /** GeneratePetAssetResponse */
         readonly GeneratePetAssetResponse: {
@@ -822,9 +970,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": {
-                        readonly [key: string]: unknown;
-                    };
+                    readonly "application/json": components["schemas"]["AdminSpeechManifestResponse"];
                 };
             };
             /** @description Validation Error */
@@ -859,9 +1005,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": {
-                        readonly [key: string]: unknown;
-                    };
+                    readonly "application/json": components["schemas"]["AdminSaveResponse"];
                 };
             };
             /** @description Validation Error */
@@ -894,9 +1038,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": {
-                        readonly [key: string]: unknown;
-                    };
+                    readonly "application/json": components["schemas"]["AdminPublishJobResponse"];
                 };
             };
             /** @description Validation Error */
@@ -927,9 +1069,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": {
-                        readonly [key: string]: unknown;
-                    };
+                    readonly "application/json": components["schemas"]["AdminPublishJobResponse"];
                 };
             };
             /** @description Validation Error */

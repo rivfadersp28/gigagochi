@@ -1,6 +1,124 @@
 {
   "components": {
     "schemas": {
+      "AdminDeployResponse": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "message"
+        ],
+        "title": "AdminDeployResponse",
+        "type": "object"
+      },
+      "AdminDialogueInfluenceItemResponse": {
+        "properties": {
+          "configPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configpath"
+          },
+          "editable": {
+            "title": "Editable",
+            "type": "boolean"
+          },
+          "fileId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fileid"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "surfaces": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Surfaces",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "surfaces",
+          "source",
+          "editable",
+          "fileId",
+          "configPath",
+          "summary"
+        ],
+        "title": "AdminDialogueInfluenceItemResponse",
+        "type": "object"
+      },
+      "AdminDialogueResponse": {
+        "properties": {
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/AdminDialogueInfluenceItemResponse"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "modifiers": {
+            "items": {
+              "$ref": "#/components/schemas/AdminDialogueInfluenceItemResponse"
+            },
+            "title": "Modifiers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "modifiers",
+          "collections"
+        ],
+        "title": "AdminDialogueResponse",
+        "type": "object"
+      },
       "AdminFileUpdate": {
         "properties": {
           "content": {
@@ -19,6 +137,134 @@
           "content"
         ],
         "title": "AdminFileUpdate",
+        "type": "object"
+      },
+      "AdminPublishJobResponse": {
+        "properties": {
+          "commitSha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commitsha"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "errorCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errorcode"
+          },
+          "finishedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finishedat"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "logs": {
+            "items": {
+              "$ref": "#/components/schemas/AdminPublishLogResponse"
+            },
+            "title": "Logs",
+            "type": "array"
+          },
+          "savedFiles": {
+            "items": {
+              "$ref": "#/components/schemas/AdminSavedFileResponse"
+            },
+            "title": "Savedfiles",
+            "type": "array"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "createdAt",
+          "startedAt",
+          "finishedAt",
+          "logs",
+          "error",
+          "errorCode",
+          "savedFiles",
+          "commitSha"
+        ],
+        "title": "AdminPublishJobResponse",
+        "type": "object"
+      },
+      "AdminPublishLogResponse": {
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "level",
+          "message"
+        ],
+        "title": "AdminPublishLogResponse",
         "type": "object"
       },
       "AdminPublishRequest": {
@@ -63,6 +309,222 @@
           "files"
         ],
         "title": "AdminSaveRequest",
+        "type": "object"
+      },
+      "AdminSaveResponse": {
+        "properties": {
+          "errors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "object"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/AdminSavedFileResponse"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "saved": {
+            "title": "Saved",
+            "type": "boolean"
+          },
+          "updatedAt": {
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "saved",
+          "updatedAt",
+          "errors",
+          "files"
+        ],
+        "title": "AdminSaveResponse",
+        "type": "object"
+      },
+      "AdminSavedFileResponse": {
+        "properties": {
+          "backupPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backuppath"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "sizeBytes": {
+            "title": "Sizebytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "backupPath",
+          "sizeBytes"
+        ],
+        "title": "AdminSavedFileResponse",
+        "type": "object"
+      },
+      "AdminSpeechFileResponse": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "format": {
+            "enum": [
+              "json",
+              "jsonl"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "sizeBytes": {
+            "title": "Sizebytes",
+            "type": "integer"
+          },
+          "summary": {
+            "additionalProperties": true,
+            "title": "Summary",
+            "type": "object"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatedat"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "path",
+          "format",
+          "description",
+          "exists",
+          "sizeBytes",
+          "updatedAt",
+          "summary",
+          "content"
+        ],
+        "title": "AdminSpeechFileResponse",
+        "type": "object"
+      },
+      "AdminSpeechManifestResponse": {
+        "properties": {
+          "deploy": {
+            "$ref": "#/components/schemas/AdminDeployResponse"
+          },
+          "dialogue": {
+            "$ref": "#/components/schemas/AdminDialogueResponse"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/AdminSpeechFileResponse"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "generatedAt": {
+            "title": "Generatedat",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "local",
+              "production"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "sync": {
+            "$ref": "#/components/schemas/AdminSyncResponse"
+          }
+        },
+        "required": [
+          "generatedAt",
+          "mode",
+          "files",
+          "dialogue",
+          "sync",
+          "deploy"
+        ],
+        "title": "AdminSpeechManifestResponse",
+        "type": "object"
+      },
+      "AdminSyncResponse": {
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "serverCommit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Servercommit"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updatedAt": {
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "message",
+          "serverCommit",
+          "updatedAt"
+        ],
+        "title": "AdminSyncResponse",
         "type": "object"
       },
       "GeneratePetAssetResponse": {
@@ -1901,9 +2363,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Speech Admin Manifest Api Admin Speech Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AdminSpeechManifestResponse"
                 }
               }
             },
@@ -1958,9 +2418,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Save Speech Admin Api Admin Speech Put",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AdminSaveResponse"
                 }
               }
             },
@@ -2001,9 +2459,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Publish Speech Admin Api Admin Speech Publish Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AdminPublishJobResponse"
                 }
               }
             },
@@ -2045,9 +2501,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Speech Admin Publish Job Api Admin Speech Publish  Job Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AdminPublishJobResponse"
                 }
               }
             },

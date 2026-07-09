@@ -36,6 +36,90 @@ class AdminPublishRequest(BaseModel):
 AdminSource = Literal["local", "production"]
 
 
+class AdminSpeechFileResponse(BaseModel):
+    id: str
+    label: str
+    path: str
+    format: Literal["json", "jsonl"]
+    description: str
+    exists: bool
+    sizeBytes: int
+    updatedAt: str | None
+    summary: dict[str, Any]
+    content: str
+
+
+class AdminDialogueInfluenceItemResponse(BaseModel):
+    id: str
+    label: str
+    role: str | None = None
+    surfaces: list[str]
+    source: str
+    editable: bool
+    fileId: str | None
+    configPath: str | None
+    summary: str
+
+
+class AdminDialogueResponse(BaseModel):
+    modifiers: list[AdminDialogueInfluenceItemResponse]
+    collections: list[AdminDialogueInfluenceItemResponse]
+
+
+class AdminSyncResponse(BaseModel):
+    status: str
+    message: str
+    serverCommit: str | None
+    updatedAt: str
+
+
+class AdminDeployResponse(BaseModel):
+    enabled: bool
+    message: str
+
+
+class AdminSpeechManifestResponse(BaseModel):
+    generatedAt: str
+    mode: AdminSource
+    files: list[AdminSpeechFileResponse]
+    dialogue: AdminDialogueResponse
+    sync: AdminSyncResponse
+    deploy: AdminDeployResponse
+
+
+class AdminSavedFileResponse(BaseModel):
+    id: str
+    path: str
+    backupPath: str | None
+    sizeBytes: int
+
+
+class AdminSaveResponse(BaseModel):
+    saved: bool
+    updatedAt: str
+    errors: dict[str, str]
+    files: list[AdminSavedFileResponse]
+
+
+class AdminPublishLogResponse(BaseModel):
+    at: str
+    level: str
+    message: str
+
+
+class AdminPublishJobResponse(BaseModel):
+    id: str
+    status: Literal["pending", "running", "succeeded", "failed"]
+    createdAt: str
+    startedAt: str | None
+    finishedAt: str | None
+    logs: list[AdminPublishLogResponse]
+    error: str | None
+    errorCode: str | None
+    savedFiles: list[AdminSavedFileResponse]
+    commitSha: str | None
+
+
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
@@ -70,7 +154,7 @@ router = APIRouter(
 )
 
 
-@router.get("/speech")
+@router.get("/speech", response_model=AdminSpeechManifestResponse)
 def speech_admin_manifest(source: AdminSource = "local") -> dict[str, Any]:
     settings = get_settings()
     deploy_enabled = bool(getattr(settings, "admin_publish_enabled", False))
@@ -106,7 +190,7 @@ def speech_admin_manifest(source: AdminSource = "local") -> dict[str, Any]:
         ) from exc
 
 
-@router.put("/speech")
+@router.put("/speech", response_model=AdminSaveResponse)
 def save_speech_admin(payload: AdminSaveRequest, source: AdminSource = "local") -> dict[str, Any]:
     if source == "production":
         raise HTTPException(
@@ -125,7 +209,7 @@ def save_speech_admin(payload: AdminSaveRequest, source: AdminSource = "local") 
     return result
 
 
-@router.post("/speech/publish")
+@router.post("/speech/publish", response_model=AdminPublishJobResponse)
 def publish_speech_admin(payload: AdminPublishRequest) -> dict[str, Any]:
     try:
         return start_admin_publish(
@@ -140,7 +224,7 @@ def publish_speech_admin(payload: AdminPublishRequest) -> dict[str, Any]:
         ) from exc
 
 
-@router.get("/speech/publish/{job_id}")
+@router.get("/speech/publish/{job_id}", response_model=AdminPublishJobResponse)
 def speech_admin_publish_job(job_id: str) -> dict[str, Any]:
     result = get_admin_publish_job(job_id)
     if result is None:
