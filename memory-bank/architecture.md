@@ -96,9 +96,12 @@
 - Global generation profile now lives in `backend/data/tone_runtime.json` and
   is read by `backend/app/services/tone_runtime.py`. The active preset exposes
   `setting`, `toneOfVoice`, conflict/age policies, visual style and per-surface
-  rules. Full `GENERATION_PROFILE` blocks are injected into visible replies,
-  context routing payloads, `WORLD_CONTEXT`, `/story` generation and
-  illustration prompts, travel full-story, storyboard and image prompts.
+  rules. Preset values are intentionally short handles such as `cyberpunk` or
+  `minimal`, not lists of concrete objects or scene examples, because every
+  concrete token in the profile tends to become a visible generation anchor.
+  Full `GENERATION_PROFILE` blocks are injected into visible replies, context
+  routing payloads, `WORLD_CONTEXT`, `/story` generation and illustration
+  prompts, travel full-story, storyboard and image prompts.
   Character-bible generation intentionally receives only a short `SETTING_HINT`
   so the user creature idea stays primary. Factual extractors for user memory,
   lite overlay and story aftermath do not receive the generation profile. Age
