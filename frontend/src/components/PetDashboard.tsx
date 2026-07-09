@@ -72,6 +72,7 @@ type ShowPetReplyOptions = {
 const FIGMA_SCREEN_HEIGHT = 874;
 const FIGMA_KEYBOARD_VISIBLE_HEIGHT = 542;
 const KEYBOARD_EAGER_SYNC_MS = 750;
+const KEYBOARD_DISMISS_SUPPRESS_MS = 900;
 const INITIAL_PET_REPLY_FALLBACK = "…";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 220;
 const DEFAULT_STATUS_NAME = "Челепиздрик";
@@ -178,6 +179,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const isTravelGeneratingRef = useRef(false);
   const conversationFullHeightRef = useRef(0);
   const keyboardSyncUntilRef = useRef(0);
+  const keyboardDismissUntilRef = useRef(0);
   const pet = localPet.pet;
   const applyStoryLibraryPatch = localPet.applyStoryLibraryPatch;
   const applyRecentStoryEventsPatch = localPet.applyRecentStoryEventsPatch;
@@ -251,6 +253,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
   const closeChatMode = useCallback(() => {
     keyboardSyncUntilRef.current = 0;
+    keyboardDismissUntilRef.current = 0;
     setIsChatMode(false);
     setIsKeyboardRaised(false);
     setChatError(null);
@@ -298,6 +301,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       const roundedVisibleHeight = Math.round(visibleHeight);
       const keyboardIsVisible = baseHeight - visibleHeight > 120;
       const shouldHoldKeyboardLayout = performance.now() < keyboardSyncUntilRef.current;
+      const shouldHoldDismissedLayout = performance.now() < keyboardDismissUntilRef.current;
+
+      if (shouldHoldDismissedLayout) {
+        setConversationVisibleHeight(baseHeight);
+        setIsKeyboardRaised(false);
+        return;
+      }
 
       if (keyboardIsVisible) {
         setConversationVisibleHeight(roundedVisibleHeight);
@@ -479,6 +489,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
   function dismissChatKeyboard() {
     keyboardSyncUntilRef.current = 0;
+    keyboardDismissUntilRef.current = performance.now() + KEYBOARD_DISMISS_SUPPRESS_MS;
     setConversationVisibleHeight(
       conversationFullHeightRef.current || window.innerHeight || FIGMA_SCREEN_HEIGHT,
     );
@@ -494,6 +505,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     const fullHeight = window.innerHeight || FIGMA_SCREEN_HEIGHT;
     const shouldSyncKeyboard = shouldEagerlyUseKeyboardLayout();
     conversationFullHeightRef.current = fullHeight;
+    keyboardDismissUntilRef.current = 0;
     keyboardSyncUntilRef.current = shouldSyncKeyboard
       ? performance.now() + KEYBOARD_EAGER_SYNC_MS
       : 0;

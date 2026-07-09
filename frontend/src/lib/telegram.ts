@@ -55,6 +55,8 @@ type TelegramWindow = Window &
     };
   };
 
+let lockedTelegramViewportHeight: number | null = null;
+
 function telegramWindow() {
   if (typeof window === "undefined") {
     return null;
@@ -150,7 +152,10 @@ export function setTelegramViewportCssVars() {
   const root = document.documentElement;
   const viewportHeight = webApp.stableViewportHeight ?? webApp.viewportHeight;
   if (viewportHeight) {
-    root.style.setProperty("--tma-viewport-height", `${viewportHeight}px`);
+    lockedTelegramViewportHeight = webApp.stableViewportHeight
+      ? viewportHeight
+      : Math.max(lockedTelegramViewportHeight ?? 0, viewportHeight);
+    root.style.setProperty("--tma-viewport-height", `${lockedTelegramViewportHeight}px`);
   }
 
   const contentSafeArea = webApp.contentSafeAreaInset;
