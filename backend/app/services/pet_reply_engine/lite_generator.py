@@ -916,6 +916,31 @@ def _character_context_block(
     return "CHARACTER_PROFILE:\n" + _safe_json_context(payload, 3000)
 
 
+def _character_block_for_surface(
+    pet: Any,
+    surface: PhraseSurface,
+    routing: ContextRoutingDecision | ContextPlan | None,
+) -> str | None:
+    include_profile = _source_enabled(
+        surface,
+        "characterProfile",
+        routing,
+        router_source="characterProfile",
+    )
+    include_lite_overlay = _source_enabled(
+        surface,
+        "liteOverlay",
+        routing,
+        router_source="characterProfile",
+    )
+    if not include_profile and not include_lite_overlay:
+        return None
+    return _combine_character_blocks(
+        _character_capsule_block(pet),
+        _character_context_block(pet, surface, routing),
+    )
+
+
 def _record_at(value: Any, key: str) -> dict[str, Any]:
     if not _is_record(value):
         return {}
@@ -966,8 +991,9 @@ def _character_capsule_block(pet: Any) -> str | None:
     lines = [
         "CHARACTER_CAPSULE:",
         (
-            "This is stable character canon for every visible reply. It is stronger than "
-            "world context, chat history, and one-off invented details."
+            "Stable character facts for replies that explicitly need identity, body, "
+            "habits, food, home, lore, or durable character details. Do not repeat "
+            "these facts in every casual reply."
         ),
     ]
     identity_line = _join_labeled_line(
@@ -1083,14 +1109,13 @@ def _extract_hidden_reaction(raw_reply: str) -> tuple[str, str | None, str | Non
     return reply, inner_thought, face_hint
 
 
-def _short_pet_description(pet: Any) -> str:
-    description = _compact_spaces(pet.description)
+def _reply_identity_label(pet: Any) -> str:
     name = _compact_spaces(pet.name or "")
-    return f"{name}, {description}" if name else description
+    return name or speech_template("unnamedPet")
 
 
 def _short_character_description(payload: LocalChatRequest) -> str:
-    return _short_pet_description(payload.pet)
+    return _reply_identity_label(payload.pet)
 
 
 def _state_role_modifier_for_pet(pet: Any, surface: PhraseSurface) -> str | None:
@@ -1243,10 +1268,7 @@ def _phrase_plan_for_chat(
         identity_line=_chat_identity_line(payload, reply_limit),
         persona_contract=surface_prompt("chat"),
         tone_block=tone_prompt_block("visibleReply"),
-        character_block=_combine_character_blocks(
-            _character_capsule_block(payload.pet),
-            _character_context_block(payload.pet, "chat", context_routing),
-        ),
+        character_block=_character_block_for_surface(payload.pet, "chat", context_routing),
         memory_block=(
             _memory_context_block(payload.memoryContext)
             if _source_enabled(
@@ -2435,16 +2457,13 @@ def build_proactive_messages(
         identity_line=_identity_line_for_pet(
             surface="proactive",
             pet=payload.pet,
-            description=_short_pet_description(payload.pet),
+            description=_reply_identity_label(payload.pet),
             reply_limit=MAX_REPLY_CHARS,
         ),
         persona_contract=surface_prompt("proactive", {"reason": reason}),
         tone_block=tone_prompt_block("visibleReply"),
         world_block=context_bundle.prompt_block or None,
-        character_block=_combine_character_blocks(
-            _character_capsule_block(payload.pet),
-            _character_context_block(payload.pet, "proactive", context_plan),
-        ),
+        character_block=_character_block_for_surface(payload.pet, "proactive", context_plan),
         memory_block=memory_block,
     )
     return [
@@ -2489,16 +2508,13 @@ def build_push_messages(
         identity_line=_identity_line_for_pet(
             surface="push",
             pet=payload.pet,
-            description=_short_pet_description(payload.pet),
+            description=_reply_identity_label(payload.pet),
             reply_limit=180,
         ),
         persona_contract=surface_prompt("push", {"reason": _reason_from_payload(payload)}),
         tone_block=tone_prompt_block("visibleReply"),
         world_block=context_bundle.prompt_block or None,
-        character_block=_combine_character_blocks(
-            _character_capsule_block(payload.pet),
-            _character_context_block(payload.pet, "push", context_plan),
-        ),
+        character_block=_character_block_for_surface(payload.pet, "push", context_plan),
         memory_block=memory_block,
     )
     return [
@@ -2690,16 +2706,13 @@ def build_ambient_messages(
         identity_line=_identity_line_for_pet(
             surface="ambient",
             pet=payload.pet,
-            description=_short_pet_description(payload.pet),
+            description=_reply_identity_label(payload.pet),
             reply_limit=reply_limit,
         ),
         persona_contract=surface_prompt("ambient", {"recent_replies": recent_ambient_replies}),
         tone_block=tone_prompt_block("visibleReply"),
         world_block=context_bundle.prompt_block or None,
-        character_block=_combine_character_blocks(
-            _character_capsule_block(payload.pet),
-            _character_context_block(payload.pet, "ambient", context_plan),
-        ),
+        character_block=_character_block_for_surface(payload.pet, "ambient", context_plan),
         memory_block=memory_block,
     )
     return [{"role": "system", "content": plan.system_content()}]

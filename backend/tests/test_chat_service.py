@@ -105,6 +105,8 @@ def _fake_context_routing_response(kwargs: dict) -> str:
         for marker in (
             "что ты ешь",
             "чем пита",
+            "кто ты",
+            "ты кто",
             "где твой дом",
             "любим",
             "характер",
@@ -231,10 +233,12 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     request = completions.calls[1]
     system_message = request["messages"][0]["content"]
     assert system_message.startswith(
-        "Отвечай мне как Громм, гигантский земляной великан. "
+        "Отвечай как Громм. Ты живой персонаж, не ассистент. "
         "Сейчас ты взрослый, сформировавшийся представитель такого существа. "
         "Ответ максимум 300 символов; можно короче, даже одной фразой."
     )
+    assert "гигантский земляной великан" not in system_message
+    assert "CHARACTER_CAPSULE" not in system_message
     assert "вызови update_pet_name" in system_message
     assert "Отвечай владельцу естественно, кратко и своим голосом." in system_message
     assert "Верни только JSON" not in system_message
@@ -420,7 +424,8 @@ def test_lite_prompt_does_not_include_character_voice_control() -> None:
 
     system_message = build_lite_chat_messages(payload)[0]["content"]
 
-    assert "Отвечай мне как Пончик, кремовый котенок-компаньон." in system_message
+    assert "Отвечай как Пончик. Ты живой персонаж, не ассистент." in system_message
+    assert "кремовый котенок-компаньон" not in system_message
     assert "VOICE_CONTROL" not in system_message
     assert "нижний регулятор всех видимых реплик питомца" not in system_message
     assert "говорит коротко и замечает запахи" not in system_message
@@ -468,7 +473,7 @@ def test_lite_prompt_does_not_include_character_seed() -> None:
     assert "Основа мира" not in system_message
 
 
-def test_lite_prompt_always_includes_character_capsule() -> None:
+def test_lite_prompt_includes_character_capsule_only_for_character_profile() -> None:
     system_message = build_lite_chat_messages(
         lite_payload(
             message="ты кто?",
@@ -510,7 +515,12 @@ def test_lite_prompt_always_includes_character_capsule() -> None:
                     },
                 },
             },
-        )
+        ),
+        context_routing=ContextRoutingDecision(
+            surface="chat",
+            enabled_sources=frozenset({"characterProfile"}),
+            queries={"characterProfile": "ты кто"},
+        ),
     )[0]["content"]
 
     assert "CHARACTER_CAPSULE" in system_message
@@ -697,7 +707,7 @@ def test_visible_context_router_is_skipped_without_auto_sources(monkeypatch, tmp
 
     assert response.reply == "Без лишнего контекста."
     assert len(completions.calls) == 1
-    assert completions.calls[0]["messages"][0]["content"].startswith("Отвечай мне как")
+    assert completions.calls[0]["messages"][0]["content"].startswith("Отвечай как")
     assert response.debug is not None
     assert response.debug.contextRoutingDebug is not None
     assert response.debug.contextRoutingDebug["reason"] == "no_auto_context_sources"

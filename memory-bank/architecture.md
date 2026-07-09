@@ -109,9 +109,12 @@
   so proactive/ambient behavior is shaped by visible reply rules, state, memory,
   world context and the idle self-prompt only.
 - Backend chat/proactive/ambient prompts no longer inject `VOICE_CONTROL` from
-  `characterBible.voice` / `dialogue_style`; the identity line and character
-  description are the prompt source of voice. `voice_profile.py` remains in the
-  codebase but is not on the visible-reply path.
+  `characterBible.voice` / `dialogue_style`. The identity line is deliberately
+  short and uses only the display name plus age/state/reply limit; pet
+  description, character capsule and `characterBible` details are included only
+  through `characterProfile` / `liteOverlay` routing so casual replies do not
+  repeat concrete creation details. `voice_profile.py` remains in the codebase
+  but is not on the visible-reply path.
 - Generated pets follow a template -> instance contract in frontend local
   storage. `assetSet.characterTemplate` is the cleaned immutable snapshot from
   generation, while `assetSet.characterBible` is the mutable per-pet instance.

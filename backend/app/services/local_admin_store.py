@@ -245,8 +245,9 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "fileId": None,
                 "configPath": None,
                 "summary": (
-                    "Имя, description и текущая стадия питомца формируют базовое "
-                    "«Отвечай мне как ...»."
+                    "Имя, текущая стадия и параметры формируют короткую базовую "
+                    "identity-строку. Description и characterBible подключаются "
+                    "отдельно через characterProfile/liteOverlay."
                 ),
             },
             {
