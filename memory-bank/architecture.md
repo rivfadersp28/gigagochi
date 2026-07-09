@@ -9,6 +9,10 @@
   building, and failure mapping callbacks. Image and video stages use separate
   bounded executors; the service is created lazily and shut down from the
   FastAPI lifespan.
+- AI/provider exception inspection, public error shaping and failure-file
+  logging live in `backend/app/services/ai_error_service.py`. Routers select the
+  user-facing operation message but do not parse provider payloads or write log
+  files themselves.
 - Chat, proactive and ambient replies are assembled through the same `PhrasePlan`
   structure: identity, persona contract, optional dialogue-memory episodes and
   surface-specific rules.

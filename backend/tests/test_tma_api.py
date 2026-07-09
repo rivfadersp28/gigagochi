@@ -12,7 +12,6 @@ from pydantic import ValidationError
 
 from app.dependencies import get_telegram_user
 from app.main import app
-from app.routers.tma import generation_error_message, provider_error_details
 from app.schemas import (
     GeneratePetAssetResponse,
     GenerateTravelResponse,
@@ -22,6 +21,7 @@ from app.schemas import (
     MemoryConsolidationResponse,
     MemoryExtractionResponse,
 )
+from app.services.ai_error_service import generation_error_message, provider_error_details
 from app.services.rate_limit_service import rate_limiter
 from app.services.telegram_auth_service import TelegramUserContext
 
@@ -467,7 +467,7 @@ def test_generate_pet_job_records_provider_failure(monkeypatch, caplog, tmp_path
         ),
     )
     monkeypatch.setattr(
-        "app.routers.tma.AI_FAILURE_LOG_PATH",
+        "app.services.ai_error_service.AI_FAILURE_LOG_PATH",
         tmp_path / "ai-failures.jsonl",
     )
     caplog.set_level(logging.ERROR, logger="app.routers.tma")
