@@ -4,16 +4,16 @@
     "version": 2,
     "description": "Generation profile: one active setting/tone/visual handle shared by visible replies, world context, stories and image prompts."
   },
-  "activePreset": "cyberpunk",
+  "activePreset": "dark_fairy_tale_folk_fantasy_adventure",
   "presets": {
     "neutral_clean": {
       "label": "Neutral",
       "setting": "neutral",
       "toneOfVoice": "natural"
     },
-    "cyberpunk": {
-      "label": "Cyberpunk",
-      "setting": "cyberpunk",
+    "dark_fairy_tale_folk_fantasy_adventure": {
+      "label": "Dark Fairy Tale, Folk Fantasy, Fantasy Adventure",
+      "setting": "Dark Fairy Tale, Folk Fantasy, Fantasy Adventure",
       "toneOfVoice": "natural"
     },
     "home_pets": {

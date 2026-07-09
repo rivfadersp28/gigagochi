@@ -113,9 +113,8 @@
 - Global generation profile now lives in `backend/data/tone_runtime.json` and
   is read by `backend/app/services/tone_runtime.py`. The active preset exposes
   only `label`, `setting` and `toneOfVoice`; model-facing prompt blocks print
-  only `setting` and `tone`. Preset values are intentionally short handles such
-  as `cyberpunk`, not lists of concrete objects or scene examples, because every
-  concrete token in the profile tends to become a visible generation anchor.
+  only `setting` and `tone`. The current active setting is a multi-genre handle:
+  `Dark Fairy Tale, Folk Fantasy, Fantasy Adventure`.
   `GENERATION_PROFILE` blocks are injected into visible replies,
   `WORLD_CONTEXT`, `/story` generation and illustration prompts, travel
   full-story, storyboard and image prompts.
@@ -143,9 +142,12 @@
 - Generated pets follow a template -> instance contract in frontend local
   storage for legacy pets only. New pet asset generation does not call
   `create_character_bible` and returns no `characterBible`; image prompts use the
-  user's raw character description as the visual seed. Per-pet story events stay
-  in `characterBible.extensions.recent_story_events` for old pets when present,
-  but chat canon should come from history/memory rather than `lite_overlay`.
+  user's raw character description as the visual seed plus the global
+  `VISUAL_STYLE_FRAME` from `backend/app/prompts/style_direction.py`. The current
+  asset style frame is the user-provided independent blind-box vinyl designer toy
+  prompt copied verbatim. Per-pet story events stay in
+  `characterBible.extensions.recent_story_events` for old pets when present, but
+  chat canon should come from history/memory rather than `lite_overlay`.
 - Frontend character instance normalization strips prompt-scaffolding fields
   (`voice`, `dialogue_style`, `lore.voice`) from `characterBible` and records
   the prompt model version in `extensions.instance`. The original

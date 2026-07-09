@@ -69,58 +69,5 @@ Global style direction for all pet replies and birth messages.
 """.strip()
 
 VISUAL_STYLE_FRAME = """
-Create a cute stylized 3D mascot character for a virtual pet companion experience.
-
-Every character should look like an original mascot that could become the face of an
-entire game.
-
-Design the character around one bold, memorable visual idea rather than a generic
-animal or ordinary species. The design should be driven by one clever visual concept:
-"What if this everyday object, natural element, emotion, abstract shape, plant,
-mineral, food, weather element, or familiar item became a lovable creature?"
-
-The character should feel playful, quirky, and slightly unexpected. Favor originality
-over cuteness, personality over detail, and memorable silhouettes over realistic
-anatomy.
-
-Prioritize iconic silhouette over anatomy. The character should be easily recognizable
-even as a solid black shape.
-
-Use one dominant body shape, such as a sphere, cube, drop, crystal, bean, star, cloud,
-flower, mushroom, or other simple form, plus one distinctive signature feature that
-makes the character memorable.
-
-Keep the design intentionally simple:
-- large clean shapes
-- very few details
-- oversized head or body
-- tiny limbs
-- minimal facial features
-- large areas of uninterrupted color
-
-Limit the color palette to 2-4 harmonious colors with one optional accent color.
-
-The character should look like a collectible vinyl toy or premium game mascot rather
-than a realistic creature.
-
-The overall visual style should resemble a polished, timeless, premium stylized console
-game aesthetic: distinctive, colorful, iconic, and collectible.
-
-The rendering should be clean stylized 3D with smooth geometry, rounded forms, matte
-materials, subtle gradients, soft ambient lighting, and minimal texture detail. Avoid
-realism.
-
-Lighting and gradients must affect only the character itself. Never add glowing halos,
-colored backgrounds, atmospheric effects, environmental lighting, or background
-gradients.
-
-Maintain a consistent visual language across every generation so every character feels
-like it belongs to the same original game universe.
-
-Avoid generic fantasy creatures, generic mammals, realistic anatomy, excessive
-accessories, busy silhouettes, noisy details, clothing-heavy designs, photorealism,
-or overdesigned concepts. Use only harmless decorative props when essential to the
-silhouette.
-
-Do not imitate or reference any existing character, franchise, studio, brand, or game.
+Create a premium collectible designer toy in the style of an independent blind-box vinyl art figure. Reimagine the requested subject into a charming, emotionally expressive collectible character while preserving its recognizable identity. The result does not have to be human. It may become a whimsical creature, an anthropomorphic animal, a living object, a tiny spirit, or a melancholic childlike character—whichever interpretation best captures the essence of the prompt. Always prioritize originality, emotional appeal, and a memorable silhouette over literal realism. The design language is quiet, nostalgic, whimsical, and subtly surreal. Every character should feel like it has its own inner world and untold story. The mood emphasizes innocence, curiosity, loneliness, kindness, quiet determination, and gentle melancholy rather than exaggerated cuteness or comedy. Use simplified collectible toy proportions with a large rounded head, compact body, tiny limbs, oversized feet or paws, and a bold, instantly recognizable silhouette. Whether the character is human, animal, object, or fantasy creature, it should retain soft rounded forms and toy-like proportions suitable for a collectible vinyl figure. Faces should remain minimalistic and emotionally restrained. Use sleepy half-closed eyes, side glances, tiny pouty lips or a small muzzle, a subtle rounded nose, soft blushing cheeks, light freckles when appropriate, and a calm, thoughtful, slightly grumpy expression. Avoid exaggerated smiles, wide-open mouths, or energetic cartoon expressions. Rather than literally reproducing the prompt, reinterpret it into the language of designer toys. The requested subject may inspire wearable costumes, oversized hats, symbolic accessories, stylized anatomy, or entirely original creature designs. A rat may become a tiny melancholic rat with oversized ears, stitched clothing, and a backpack, or a child wearing a handmade rat hood. A tree may become a living forest spirit or a child wrapped in bark and leaves. A rock may become a small stone creature with moss growing on its head. A cloud may become a floating fluffy spirit. The result should always feel like an original collectible character instead of a realistic depiction. Materials should resemble high-quality matte vinyl, smooth resin, sculpted clay, hand-painted figurines, brushed fabric, knitted wool, felt, cardboard, paper, stitched canvas, polished wood, ceramic details, soft rubber, and other handcrafted materials. Surfaces should include subtle imperfections such as gentle paint wear, tiny scratches, stitched seams, fabric fibers, paper texture, sculpting marks, and softly rounded edges. Avoid glossy plastic and photorealistic rendering. Use a restrained palette built around warm cream, peach skin, dusty olive, sage green, terracotta, muted mustard, cocoa brown, faded denim, warm gray, pale turquoise, dusty coral, charcoal, off-white, and occasional desaturated red or antique gold accents. Colors should feel soft, harmonious, earthy, and slightly faded rather than vibrant or saturated. Lighting should resemble premium studio product photography with large diffused softboxes, soft ambient bounce light, delicate contact shadows, gentle ambient occlusion, smooth gradients, and subtle depth. Avoid dramatic cinematic lighting, hard shadows, strong rim lights, or high contrast. Compose the image as a clean collectible product shot. Show a centered full-body character standing or sitting naturally against a seamless warm white or very light gray studio background with generous negative space. Keep the composition minimal, uncluttered, and immediately readable even at thumbnail size. Include one memorable handcrafted storytelling element that gives the character personality without overwhelming the design. This may be an oversized knitted hat, stitched hood, cardboard crown, paper house, tiny backpack, old clock, lantern, balloon companion, toy dinosaur, handmade sign, cracked umbrella, miniature pet, worn scarf, or another symbolic object inspired by the prompt. Every accessory should feel handmade, imperfect, poetic, and emotionally meaningful. The final image should look like a premium collectible art toy from an independent designer brand: handcrafted, emotionally expressive, minimalist, whimsical, softly surreal, highly recognizable, instantly lovable, and visually iconic. The artistic identity should remain consistent regardless of the prompt, whether the subject is a rat, bird, mushroom, cloud, rock, tree, teacup, robot, monster, or any other simple concept.
 """.strip()
