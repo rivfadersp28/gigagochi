@@ -43,8 +43,9 @@
   recompose it abruptly around 0.1 seconds. Dashboard playback intentionally
   skips that preroll and loops manually from the same offset; native `loop`
   makes the startup stretch recur on every loop. Keep the muted `autoPlay`
-  attribute: gating initial `play()` on `seeked` can stall in Telegram WebView
-  when mobile preload is deferred.
+  attribute and call `play()` immediately after the initial seek: gating play on
+  `seeked`, or seeking without resuming, can stall in Telegram WebView when
+  mobile preload is deferred.
 - Pet creation waits for an OpenRouter video job after image composition and
   returns `assetSet.videoUrl`. The frontend generation polling timeout must stay
   at least as long as `OPENROUTER_VIDEO_TIMEOUT_SECONDS`, otherwise the UI can

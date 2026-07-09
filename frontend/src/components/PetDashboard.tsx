@@ -785,7 +785,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               muted
               playsInline
               preload="auto"
-              onLoadedMetadata={(event) => seekSceneVideoToStart(event.currentTarget)}
+              onLoadedMetadata={(event) => restartSceneVideo(event.currentTarget)}
               onEnded={(event) => restartSceneVideo(event.currentTarget)}
             />
           ) : null}
