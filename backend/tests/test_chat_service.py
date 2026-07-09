@@ -621,6 +621,58 @@ def test_lite_prompt_keeps_visible_hook_out_of_message_history() -> None:
     assert "Я случайно сказал про неон." not in history_contents
 
 
+def test_chat_history_for_fresh_turn_omits_old_pet_word_anchors() -> None:
+    messages = build_lite_chat_messages(
+        lite_payload(
+            message="расскажи что-нибудь",
+            history=[
+                {"role": "user", "text": "я крыса"},
+                {"role": "pet", "text": "Я бегаю по неону и собираю крошки."},
+                {"role": "user", "text": "а что ты ешь?"},
+                {"role": "pet", "text": "Опять неон, крошки, вывески и панцирь."},
+            ],
+        )
+    )
+
+    prompt_text = json.dumps(messages, ensure_ascii=False)
+
+    assert "я крыса" in prompt_text
+    assert "а что ты ешь?" in prompt_text
+    assert "Я бегаю по неону" not in prompt_text
+    assert "Опять неон" not in prompt_text
+    assert "крошки" not in prompt_text
+    assert messages[-1]["content"] == "расскажи что-нибудь"
+
+
+def test_chat_history_for_explicit_continuation_keeps_only_near_tail() -> None:
+    messages = build_lite_chat_messages(
+        lite_payload(
+            message="шуршать?",
+            history=[
+                {"role": "user", "text": "я крыса"},
+                {"role": "pet", "text": "Я бегаю по неону и слушаю вывески."},
+                {"role": "user", "text": "расскажи что-нибудь"},
+                {"role": "pet", "text": "В мокром неоне лежит панцирь."},
+                {"role": "user", "text": "ты грубый"},
+                {"role": "pet", "text": "Я не буду так общаться."},
+                {"role": "user", "text": "извини"},
+                {"role": "pet", "text": "Давай просто шуршать вместе."},
+            ],
+        )
+    )
+
+    prompt_text = json.dumps(messages, ensure_ascii=False)
+
+    assert "ты грубый" in prompt_text
+    assert "Я не буду так общаться." in prompt_text
+    assert "извини" in prompt_text
+    assert "Давай просто шуршать вместе." in prompt_text
+    assert "Я бегаю по неону" not in prompt_text
+    assert "В мокром неоне" not in prompt_text
+    assert "панцирь" not in prompt_text
+    assert messages[-1]["content"] == "шуршать?"
+
+
 def test_context_sources_policy_disables_chat_sources(monkeypatch, tmp_path) -> None:
     runtime_path = tmp_path / "speech_runtime.json"
     runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))

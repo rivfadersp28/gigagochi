@@ -105,6 +105,8 @@ FACE_HINTS = ("happy", "excited", "curious", "content", "grumpy", "sleepy")
 MAX_MEMORY_CONTEXT_ITEMS = 5
 MAX_RECENT_AMBIENT_REPLIES = 5
 MAX_RECENT_EVENTS_CONTEXT_ITEMS = 3
+MAX_FRESH_HISTORY_USER_MESSAGES = 4
+MAX_CONTINUATION_HISTORY_MESSAGES = 4
 
 PhraseSurface = Literal["chat", "proactive", "ambient", "push"]
 
@@ -151,6 +153,26 @@ TECHNICAL_WORLD_TEXT_PATTERN = re.compile(
     r")",
     re.IGNORECASE,
 )
+
+CHAT_HISTORY_CONTINUATION_RE = re.compile(
+    r"("
+    r"\b(это|этот|эта|эти|там|так|тогда|тоже|ещ[её]|почему|зачем|как именно)\b|"
+    r"\b(что значит|что это значит|про что|о чем|о ч[её]м|ты говорил|ты сказала|"
+    r"ты сказал|повтори|продолжай|продолжи|извини|прости)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+CHAT_HISTORY_FRESH_START_RE = re.compile(
+    r"^\s*("
+    r"привет|хай|ку|как дела|как ты|ты как|расскажи|скажи|придумай|"
+    r"повесели|развесели|что нового|чем займ[её]мся"
+    r")\b",
+    re.IGNORECASE,
+)
+
+CHAT_HISTORY_LEADING_FILLER_RE = re.compile(r"^\s*(а|ну|слушай|короче)[,\s]+", re.IGNORECASE)
+CHAT_HISTORY_FOLLOWUP_START_RE = re.compile(r"^\s*(а|ну|и)\b", re.IGNORECASE)
 
 PET_STATE_TOOLS: list[dict[str, Any]] = [
     {
@@ -1291,13 +1313,39 @@ def _lite_tools_for_routing(
     return tools
 
 
+def _is_explicit_chat_continuation(message: str) -> bool:
+    text = _compact_spaces(message).casefold()
+    if not text:
+        return False
+    fresh_intent_text = CHAT_HISTORY_LEADING_FILLER_RE.sub("", text)
+    if CHAT_HISTORY_FRESH_START_RE.search(fresh_intent_text):
+        return False
+    if CHAT_HISTORY_CONTINUATION_RE.search(text):
+        return True
+    if text.endswith("?") and CHAT_HISTORY_FOLLOWUP_START_RE.search(text):
+        return True
+    words = re.findall(r"[\wёЁ]+", text, flags=re.UNICODE)
+    return text.endswith("?") and 0 < len(words) <= 3
+
+
+def _history_items_for_prompt(payload: LocalChatRequest) -> list[Any]:
+    recent_history = payload.history[-12:]
+    if _is_explicit_chat_continuation(payload.message):
+        return recent_history[-MAX_CONTINUATION_HISTORY_MESSAGES:]
+    return [
+        item
+        for item in recent_history
+        if item.role == "user"
+    ][-MAX_FRESH_HISTORY_USER_MESSAGES:]
+
+
 def _history_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     return [
         {
             "role": "assistant" if item.role == "pet" else "user",
             "content": item.text,
         }
-        for item in payload.history[-12:]
+        for item in _history_items_for_prompt(payload)
     ]
 
 
