@@ -30,6 +30,9 @@
 - Dashboard browser effects are isolated from `PetDashboard.tsx`:
   `useConversationKeyboardOffset` owns Visual Viewport keyboard positioning and
   `usePetPushSnapshotSync` owns throttled server snapshot reconciliation.
+- Speech admin orchestration stays in `SpeechAdmin.tsx` (load, validate, save,
+  deploy and polling); JSON path manipulation and the runtime/tone/template/raw
+  editors live in `SpeechAdminEditors.tsx`.
 
 ## API Contracts
 
