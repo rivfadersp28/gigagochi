@@ -2,13 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-import time
-import uuid
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Lock
 from typing import Annotated, Any
 
 import httpx
@@ -19,7 +14,6 @@ from app.config import get_settings
 from app.dependencies import get_telegram_user
 from app.errors import public_error
 from app.schemas import (
-    GeneratePetAssetResponse,
     GeneratePetJobResponse,
     GeneratePetRequest,
     GenerateTravelRequest,
@@ -39,8 +33,11 @@ from app.schemas import (
     MemoryExtractionResponse,
 )
 from app.services.chat_service import chat_with_local_pet
+from app.services.generation_job_service import (
+    GenerationJobNotFoundError,
+    GenerationJobService,
+)
 from app.services.image_service import (
-    PetAssetImageSet,
     build_pet_asset_set_response,
     generate_pet_image_asset_set,
     generate_pet_video_for_image_asset_set,
@@ -67,34 +64,12 @@ from app.services.travel_service import generate_travel
 router = APIRouter(prefix="/api", tags=["telegram-mini-app"])
 TelegramUser = Annotated[TelegramUserContext, Depends(get_telegram_user)]
 MAX_PROVIDER_ERROR_CHARS = 1200
-GENERATION_JOB_TTL = timedelta(hours=1)
 AI_FAILURE_LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "ai-failures.jsonl"
 logger = logging.getLogger(__name__)
-generation_settings = get_settings()
-generation_image_executor = ThreadPoolExecutor(
-    max_workers=generation_settings.generation_image_workers,
-    thread_name_prefix="pet-image",
-)
-generation_video_executor = ThreadPoolExecutor(
-    max_workers=generation_settings.generation_video_workers,
-    thread_name_prefix="pet-video",
-)
 DEFAULT_GENERATION_RATE_LIMIT_PER_DAY = 0
 DEFAULT_CHAT_RATE_LIMIT_PER_HOUR = 0
 DEFAULT_LITE_FACTS_RATE_LIMIT_PER_HOUR = 0
 DEFAULT_MEMORY_RATE_LIMIT_PER_HOUR = 0
-
-
-@dataclass
-class GenerationJobRecord:
-    owner_id: int
-    username: str | None
-    first_name: str | None
-    response: GeneratePetJobResponse
-
-
-generation_jobs: dict[str, GenerationJobRecord] = {}
-generation_jobs_lock = Lock()
 
 
 def check_rate_limit(bucket: str, user: TelegramUserContext) -> None:
@@ -351,42 +326,11 @@ def ai_failure_http_exception(
     )
 
 
-def cleanup_generation_jobs(now: datetime | None = None) -> None:
-    cutoff = (now or _now_utc()) - GENERATION_JOB_TTL
-    with generation_jobs_lock:
-        expired_job_ids = [
-            job_id
-            for job_id, record in generation_jobs.items()
-            if record.response.updatedAt < cutoff
-        ]
-        for job_id in expired_job_ids:
-            generation_jobs.pop(job_id, None)
-
-
-def update_generation_job(
+def _build_generation_failure(
     job_id: str,
-    *,
-    status_value: str,
-    phase: str | None = None,
-    result: GeneratePetAssetResponse | None = None,
-    error: dict[str, object] | None = None,
-) -> None:
-    with generation_jobs_lock:
-        record = generation_jobs.get(job_id)
-        if record is None:
-            return
-        updates: dict[str, object] = {
-            "status": status_value,
-            "updatedAt": _now_utc(),
-            "result": result,
-            "error": error,
-        }
-        if phase is not None:
-            updates["phase"] = phase
-        record.response = record.response.model_copy(update=updates)
-
-
-def fail_generation_job(job_id: str, exc: Exception, *, phase: str) -> None:
+    phase: str,
+    exc: Exception,
+) -> dict[str, object]:
     code = generation_error_code(exc)
     detail = error_detail(
         "generation_failed",
@@ -402,133 +346,52 @@ def fail_generation_job(job_id: str, exc: Exception, *, phase: str) -> None:
         code,
         type(exc).__name__,
     )
-    update_generation_job(job_id, status_value="failed", phase=phase, error=detail)
+    return detail
 
 
-def run_generation_video_job(job_id: str, image_set: PetAssetImageSet) -> None:
-    started_at = time.monotonic()
-    logger.info(
-        "pet_generation_stage_started jobId=%s phase=generating_video assetSetId=%s",
-        job_id,
-        image_set.asset_set_id,
-    )
-    prompt_log_token = set_prompt_log_context(
-        {
-            "jobId": job_id,
-            "endpoint": "/api/generate-pet",
-        }
-    )
-    try:
-        video_path = generate_pet_video_for_image_asset_set(image_set)
-        result = GeneratePetAssetResponse.model_validate(
-            build_pet_asset_set_response(image_set, video_path)
+generation_job_service: GenerationJobService | None = None
+
+
+def _generation_job_service() -> GenerationJobService:
+    global generation_job_service
+    if generation_job_service is None:
+        settings = get_settings()
+        generation_job_service = GenerationJobService(
+            image_workers=getattr(settings, "generation_image_workers", 3),
+            video_workers=getattr(settings, "generation_video_workers", 4),
+            generate_images=lambda description: generate_pet_image_asset_set(description),
+            generate_video=lambda image_set: generate_pet_video_for_image_asset_set(image_set),
+            build_response=lambda image_set, video_path: build_pet_asset_set_response(
+                image_set,
+                video_path,
+            ),
+            build_failure=_build_generation_failure,
         )
-    except Exception as exc:
-        fail_generation_job(job_id, exc, phase="generating_video")
-        return
-    finally:
-        reset_prompt_log_context(prompt_log_token)
-
-    logger.info(
-        "pet_generation_stage_completed jobId=%s phase=generating_video "
-        "durationSeconds=%.3f assetSetId=%s",
-        job_id,
-        time.monotonic() - started_at,
-        image_set.asset_set_id,
-    )
-    update_generation_job(
-        job_id,
-        status_value="succeeded",
-        phase="completed",
-        result=result,
-    )
-
-
-def run_generation_image_job(job_id: str, description: str) -> None:
-    started_at = time.monotonic()
-    update_generation_job(
-        job_id,
-        status_value="running",
-        phase="generating_images",
-    )
-    logger.info("pet_generation_stage_started jobId=%s phase=generating_images", job_id)
-    prompt_log_token = set_prompt_log_context(
-        {
-            "jobId": job_id,
-            "endpoint": "/api/generate-pet",
-        }
-    )
-    try:
-        image_set = generate_pet_image_asset_set(description)
-    except Exception as exc:
-        fail_generation_job(job_id, exc, phase="generating_images")
-        return
-    finally:
-        reset_prompt_log_context(prompt_log_token)
-
-    logger.info(
-        "pet_generation_stage_completed jobId=%s phase=generating_images "
-        "durationSeconds=%.3f assetSetId=%s",
-        job_id,
-        time.monotonic() - started_at,
-        image_set.asset_set_id,
-    )
-    update_generation_job(
-        job_id,
-        status_value="running",
-        phase="generating_video",
-    )
-    try:
-        generation_video_executor.submit(run_generation_video_job, job_id, image_set)
-    except Exception as exc:
-        fail_generation_job(job_id, exc, phase="generating_video")
+    return generation_job_service
 
 
 def submit_generation_job(description: str, user: TelegramUserContext) -> GeneratePetJobResponse:
-    cleanup_generation_jobs()
-    now = _now_utc()
-    job_id = str(uuid.uuid4())
-    response = GeneratePetJobResponse(
-        jobId=job_id,
-        status="queued",
-        phase="queued",
-        createdAt=now,
-        updatedAt=now,
-    )
-    with generation_jobs_lock:
-        generation_jobs[job_id] = GenerationJobRecord(
-            owner_id=user.telegram_id,
-            username=user.username,
-            first_name=user.first_name,
-            response=response,
-        )
-    logger.info(
-        "pet_generation_queued jobId=%s ownerId=%s username=%s firstName=%s "
-        "imageWorkers=%s videoWorkers=%s",
-        job_id,
-        user.telegram_id,
-        user.username,
-        user.first_name,
-        generation_settings.generation_image_workers,
-        generation_settings.generation_video_workers,
-    )
-    generation_image_executor.submit(run_generation_image_job, job_id, description)
-    return response
+    return _generation_job_service().submit(description, user)
 
 
 def get_generation_job(job_id: str, user: TelegramUserContext) -> GeneratePetJobResponse:
-    cleanup_generation_jobs()
-    with generation_jobs_lock:
-        record = generation_jobs.get(job_id)
-        if record is None or record.owner_id != user.telegram_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "code": "GENERATION_JOB_NOT_FOUND",
-                    "message": "Задача генерации не найдена. Запустите генерацию заново.",
-                },
-            )
-        return record.response
+    try:
+        return _generation_job_service().get(job_id, user.telegram_id)
+    except GenerationJobNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "GENERATION_JOB_NOT_FOUND",
+                "message": "Задача генерации не найдена. Запустите генерацию заново.",
+            },
+        ) from None
+
+
+def shutdown_generation_jobs() -> None:
+    global generation_job_service
+    if generation_job_service is not None:
+        generation_job_service.shutdown()
+        generation_job_service = None
 
 
 @router.post(

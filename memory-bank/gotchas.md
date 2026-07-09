@@ -52,6 +52,10 @@
   `OPENROUTER_VIDEO_TIMEOUT_SECONDS` and must not occupy an image worker. The
   frontend generation timeout must cover queue wait, both image calls and the
   video timeout, otherwise the UI can fail while the backend is still running.
+- Do not recreate generation executors or the in-memory job registry in the
+  TMA router. `GenerationJobService` owns them and FastAPI lifespan shutdown
+  must call `tma.shutdown_generation_jobs()` so queued futures are cancelled
+  during process exit.
 - Do not mutate character template fields during chat. Evolving per-pet
   character facts belong in `extensions.lite_overlay`; evolving story entities
   belong in `extensions.story_library_overlay`.

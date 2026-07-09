@@ -3,6 +3,12 @@
 ## Pet Replies
 
 - Backend phrase generation lives in `backend/app/services/pet_reply_engine/lite_generator.py`.
+- Async pet creation jobs live in
+  `backend/app/services/generation_job_service.py`. The TMA router owns only
+  HTTP/auth adaptation and injects image generation, video generation, response
+  building, and failure mapping callbacks. Image and video stages use separate
+  bounded executors; the service is created lazily and shut down from the
+  FastAPI lifespan.
 - Chat, proactive and ambient replies are assembled through the same `PhrasePlan`
   structure: identity, persona contract, optional dialogue-memory episodes and
   surface-specific rules.

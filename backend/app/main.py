@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -24,10 +25,12 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        if push_task:
-            push_task.cancel()
-        if story_task:
-            story_task.cancel()
+        scheduler_tasks = [task for task in (push_task, story_task) if task is not None]
+        for task in scheduler_tasks:
+            task.cancel()
+        if scheduler_tasks:
+            await asyncio.gather(*scheduler_tasks, return_exceptions=True)
+        tma.shutdown_generation_jobs()
 
 
 app = FastAPI(title="AI Tamagotchi API", lifespan=lifespan)
