@@ -110,10 +110,16 @@ def tone_context_payload(surface: str) -> dict[str, str]:
 
 def tone_prompt_block(surface: str) -> str:
     preset = active_tone_preset()
+    setting = _profile_setting(preset)
+    tone = _profile_tone_of_voice(preset)
+    if surface == "visibleReply":
+        return f"Общий стиль: {setting}. Манера речи: {tone}."
+    if surface == "worldContext":
+        return f"Окраска мира: {setting}. Тон: {tone}."
     return "\n".join([
         "GENERATION_PROFILE:",
-        f"- setting: {_profile_setting(preset)}",
-        f"- tone: {_profile_tone_of_voice(preset)}",
+        f"- setting: {setting}",
+        f"- tone: {tone}",
     ])
 
 

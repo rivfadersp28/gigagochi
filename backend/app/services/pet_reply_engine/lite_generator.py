@@ -511,10 +511,10 @@ def _memory_context_block(memory_context: LocalPetMemoryContext | None) -> str |
         for message in episode.messages:
             text = _clean_optional_text(message.text, 500)
             if text:
-                role = "pet" if message.role == "pet" else "user"
+                role = "персонаж" if message.role == "pet" else "владелец"
                 episode_lines.append(f"{role}: {text}")
         if episode_lines:
-            lines.append(f"DIALOGUE_MEMORY episode {episode_index}:")
+            lines.append(f"Память диалога {episode_index}:")
             lines.extend(episode_lines)
 
     if not lines:
@@ -530,8 +530,8 @@ def _visible_context_block(payload: LocalChatRequest) -> str | None:
     if not last_pet_line:
         return None
     return (
-        "LAST_VISIBLE_PET_LINE:\n"
-        f"pet: {last_pet_line}\n"
+        "Последняя видимая реплика персонажа:\n"
+        f"{last_pet_line}\n"
         "Это только ближайший видимый контекст для текущего ответа."
     )
 
@@ -549,10 +549,10 @@ def _recent_ambient_replies_block(replies: list[str]) -> str | None:
     if not lines:
         return None
     return (
-        "RECENT_AMBIENT_REPLIES_ALREADY_SHOWN (anti-repeat only, not character canon):\n"
+        "Недавние короткие реплики, уже показанные владельцу; это только защита от повтора:\n"
         + "\n".join(lines)
-        + "\nDo not reuse their distinctive words, objects, metaphors or scenery "
-        "unless the user explicitly continues that topic."
+        + "\nНе повторяй их заметные слова, предметы, метафоры или сцену, "
+        "если владелец явно не продолжает эту тему."
     )
 
 
@@ -921,16 +921,16 @@ def _format_recent_events_block(events: list[dict[str, Any]]) -> str | None:
     if not events:
         return None
     lines = [
-        "RECENT_EVENTS",
-        "These are canonical recent events for this pet. Do not contradict them. "
-        "If RECENT_EVENTS conflicts with WORLD_CONTEXT or generic lore, RECENT_EVENTS wins.",
+        "Недавние события персонажа:",
+        "Это устойчивый контекст. Не противоречь ему; если общий лор спорит с ним, "
+        "опирайся на недавнее событие.",
     ]
     for index, event in enumerate(events, start=1):
         title = _text_value(event.get("title")) or f"Событие {index}"
         summary = _text_value(event.get("summary")) or _text_value(event.get("compactText"))
         lines.append(f"{index}. {title}")
         if summary:
-            lines.append(f"Summary: {summary}")
+            lines.append(f"Кратко: {summary}")
         raw_canonical_facts = event.get("canonicalFacts")
         canonical_facts = [
             _text_value(item)
@@ -938,7 +938,7 @@ def _format_recent_events_block(events: list[dict[str, Any]]) -> str | None:
             if _text_value(item)
         ][:5]
         if canonical_facts:
-            lines.append("Canonical facts:")
+            lines.append("Факты:")
             lines.extend(f"- {fact}" for fact in canonical_facts)
         status_changes = event.get("statusChanges")
         if isinstance(status_changes, list):
@@ -953,7 +953,7 @@ def _format_recent_events_block(events: list[dict[str, Any]]) -> str | None:
                     owner_suffix = f" ({owner})" if owner else ""
                     status_lines.append(f"- {entity}: {state}{owner_suffix}")
             if status_lines:
-                lines.append("Status changes:")
+                lines.append("Изменения:")
                 lines.extend(status_lines)
     return "\n".join(lines)
 
@@ -1008,20 +1008,6 @@ def _character_block_for_surface(
     surface: PhraseSurface,
     routing: ContextRoutingDecision | ContextPlan | None,
 ) -> str | None:
-    include_profile = _source_enabled(
-        surface,
-        "characterProfile",
-        routing,
-        router_source="characterProfile",
-    )
-    include_lite_overlay = _source_enabled(
-        surface,
-        "liteOverlay",
-        routing,
-        router_source="characterProfile",
-    )
-    if not include_profile and not include_lite_overlay:
-        return None
     return _combine_character_blocks(
         _character_capsule_block(pet),
         _character_context_block(pet, surface, routing),
@@ -1076,15 +1062,14 @@ def _character_capsule_block(pet: Any) -> str | None:
     description = _clean_optional_text(getattr(pet, "description", None), 180)
 
     lines = [
-        "CHARACTER_CAPSULE:",
+        "Персонаж:",
         (
-            "Stable character facts for replies that explicitly need identity, body, "
-            "habits, food, home, lore, or durable character details. Do not repeat "
-            "these facts in every casual reply."
+            "Короткая опора для голоса, привычек и ответов о себе. Не пересказывай "
+            "все подряд; бери только то, что помогает текущей реплике."
         ),
     ]
     identity_line = _join_labeled_line(
-        "Who I am",
+        "Кто я",
         ", ".join(part for part in (name, species or description) if part),
         role,
         one_liner,
@@ -1094,11 +1079,11 @@ def _character_capsule_block(pet: Any) -> str | None:
         lines.append(identity_line)
 
     for label, keys in (
-        ("Description", ("description", "core_reading")),
-        ("Character trait", ("character_trait", "central_trait")),
-        ("Appetite", ("appetite", "safe_adaptation", "pet_safe_adaptation")),
-        ("Conflict", ("conflict", "inner_conflict")),
-        ("Story engine", ("story_engine", "daily_life_hook", "daily_care_hook")),
+        ("Описание", ("description", "core_reading")),
+        ("Характер", ("character_trait", "central_trait")),
+        ("Еда и желания", ("appetite", "safe_adaptation", "pet_safe_adaptation")),
+        ("Внутреннее напряжение", ("conflict", "inner_conflict")),
+        ("Что со мной обычно происходит", ("story_engine", "daily_life_hook", "daily_care_hook")),
     ):
         value = next((genesis.get(key) for key in keys if genesis.get(key)), None)
         line = _join_labeled_line(label, value, limit=300)
@@ -1107,15 +1092,15 @@ def _character_capsule_block(pet: Any) -> str | None:
 
     likes = _text_list(genesis.get("likes"), limit=6, item_limit=140)
     if likes:
-        lines.append("Likes: " + "; ".join(likes))
+        lines.append("Люблю: " + "; ".join(likes))
     does = _text_list(genesis.get("does"), limit=6, item_limit=160)
     if does:
-        lines.append("Does: " + "; ".join(does))
+        lines.append("Обычно делаю: " + "; ".join(does))
 
     for label, key in (
-        ('When asked "who are you"', "how_to_answer_who_are_you"),
-        ('When asked "what do you eat"', "how_to_answer_what_do_you_eat"),
-        ('When asked "where do you live"', "how_to_answer_where_do_you_live"),
+        ("Если спрашивают, кто я", "how_to_answer_who_are_you"),
+        ("Если спрашивают, что я ем", "how_to_answer_what_do_you_eat"),
+        ("Если спрашивают, где я живу", "how_to_answer_where_do_you_live"),
     ):
         line = _join_labeled_line(label, roleplay_contract.get(key), limit=260)
         if line:
@@ -1123,7 +1108,7 @@ def _character_capsule_block(pet: Any) -> str | None:
 
     voice_rules = _text_list(roleplay_contract.get("voice_rules"), limit=5, item_limit=160)
     if voice_rules:
-        lines.append("Voice contract: " + "; ".join(voice_rules))
+        lines.append("Манера речи: " + "; ".join(voice_rules))
 
     return "\n".join(lines) if len(lines) > 3 else None
 

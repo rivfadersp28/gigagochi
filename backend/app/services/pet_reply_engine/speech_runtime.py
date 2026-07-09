@@ -337,10 +337,14 @@ def dialogue_state_modifier(
 
     if include_hunger and (mood == "hungry" or (hunger is not None and hunger <= hunger_low_max)):
         return modifier("hungry")
-    if include_mood and mood == "happy":
-        if include_energy and energy is not None and energy <= energy_low_max:
-            return modifier("happyLowEnergy")
-        return modifier("happy")
+    if (
+        include_mood
+        and mood == "happy"
+        and include_energy
+        and energy is not None
+        and energy <= energy_low_max
+    ):
+        return modifier("happyLowEnergy")
     if include_mood and mood == "sad":
         return modifier("sad")
     if include_energy and energy is not None and energy <= energy_low_max:

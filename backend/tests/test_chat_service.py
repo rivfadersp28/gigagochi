@@ -231,14 +231,14 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     request = completions.calls[1]
     system_message = request["messages"][0]["content"]
     assert system_message.startswith(
-        "Отвечай как Громм. Ты живой персонаж, не ассистент. "
+        "Ты Громм. Говори от первого лица, живо и коротко. "
         "Сейчас ты взрослый, сформировавшийся представитель такого существа. "
-        "Ответ максимум 300 символов; можно короче, даже одной фразой."
+        "До 300 символов."
     )
     assert "гигантский земляной великан" not in system_message
-    assert "CHARACTER_CAPSULE" not in system_message
-    assert "вызови update_pet_name" in system_message
-    assert "Отвечай владельцу естественно и кратко от первого лица." in system_message
+    assert "Персонаж:" not in system_message
+    assert "используй update_pet_name" in system_message
+    assert "Ответь владельцу на последнее сообщение как этот персонаж." in system_message
     assert "Верни только JSON" not in system_message
     assert "response_format" not in request
     assert [tool["function"]["name"] for tool in request["tools"]] == ["update_pet_name"]
@@ -259,11 +259,13 @@ def test_chat_prompt_includes_matching_recent_events_before_world_context() -> N
     )
 
     system_message = messages[0]["content"]
-    assert "RECENT_EVENTS" in system_message
+    assert "Недавние события персонажа" in system_message
     assert "Громм не смог вернуть колокольчик" in system_message
     assert "колокольчик: lost" in system_message
-    if "WORLD_CONTEXT" in system_message:
-        assert system_message.index("RECENT_EVENTS") < system_message.index("WORLD_CONTEXT")
+    if "Детали мира для этой реплики" in system_message:
+        assert system_message.index("Недавние события персонажа") < system_message.index(
+            "Детали мира для этой реплики"
+        )
 
 
 def test_chat_recent_events_keeps_newer_matching_event_first() -> None:
@@ -309,7 +311,7 @@ def test_lite_prompt_includes_age_role_hint() -> None:
     adult = payload.model_copy(update={"pet": payload.pet.model_copy(update={"stage": "adult"})})
     baby_system_message = build_lite_chat_messages(baby)[0]["content"]
 
-    assert baby_system_message.startswith("Отвечай как маленький Громм.")
+    assert baby_system_message.startswith("Ты маленький Громм.")
     assert "Сейчас ты недавно родившийся субъект такого существа." not in baby_system_message
     assert "Сейчас ты подросток такого существа." in build_lite_chat_messages(teen)[0]["content"]
     assert (
@@ -321,9 +323,8 @@ def test_lite_prompt_includes_age_role_hint() -> None:
 def test_lite_prompt_uses_request_reply_limit() -> None:
     system_message = build_lite_chat_messages(lite_payload(replyMaxChars=40))[0]["content"]
 
-    assert "Ответ максимум 40 символов" in system_message
-    assert "сгенерируй законченную реплику сразу в этом лимите" in system_message.lower()
-    assert "не сокращай ее многоточием" in system_message
+    assert "До 40 символов" in system_message
+    assert "не сокращай ее многоточием" not in system_message
 
 
 def test_lite_prompt_includes_state_modifier() -> None:
@@ -340,10 +341,9 @@ def test_lite_prompt_includes_state_modifier() -> None:
         }
     )
 
-    assert (
-        "Ты сейчас радостный, здоровый, полный сил."
-        in build_lite_chat_messages(happy)[0]["content"]
-    )
+    assert "Ты сейчас радостный, здоровый, полный сил." not in build_lite_chat_messages(happy)[0][
+        "content"
+    ]
     assert "Ты сейчас голодный." in build_lite_chat_messages(hungry)[0]["content"]
 
 
@@ -421,7 +421,7 @@ def test_lite_prompt_does_not_include_character_voice_control() -> None:
 
     system_message = build_lite_chat_messages(payload)[0]["content"]
 
-    assert "Отвечай как маленький Пончик. Ты живой персонаж, не ассистент." in system_message
+    assert "Ты маленький Пончик. Говори от первого лица, живо и коротко." in system_message
     assert "кремовый котенок-компаньон" not in system_message
     assert "VOICE_CONTROL" not in system_message
     assert "нижний регулятор всех видимых реплик питомца" not in system_message
@@ -520,12 +520,12 @@ def test_lite_prompt_ignores_character_profile_even_if_router_enables_it() -> No
         ),
     )[0]["content"]
 
-    assert "CHARACTER_CAPSULE" not in system_message
+    assert "Персонаж:" in system_message
     assert "CHARACTER_PROFILE" not in system_message
-    assert "гурман-коллекционер" not in system_message
-    assert "густая похлебка" not in system_message
-    assert "Character trait" not in system_message
-    assert "Does" not in system_message
+    assert "гурман-коллекционер" in system_message
+    assert "Густую похлебку" in system_message
+    assert "Характер" in system_message
+    assert "Обычно делаю" in system_message
     assert "Safe adaptation" not in system_message
     assert "Never add or say" not in system_message
     assert "Pet-safe adaptation" not in system_message
@@ -565,8 +565,8 @@ def test_chat_small_talk_suppresses_character_profile_even_if_router_enables_it(
         ),
     )[0]["content"]
 
-    assert "Отвечай как Пипс. Ты живой персонаж, не ассистент." in system_message
-    assert "CHARACTER_CAPSULE" not in system_message
+    assert "Ты Пипс. Говори от первого лица, живо и коротко." in system_message
+    assert "Персонаж:" not in system_message
     assert "CHARACTER_PROFILE" not in system_message
     assert "мокрыми ушами" not in system_message
     assert "нюхать батарейки" not in system_message
@@ -575,7 +575,7 @@ def test_chat_small_talk_suppresses_character_profile_even_if_router_enables_it(
 
 def test_lite_prompt_includes_dialogue_memory_episodes_only_when_present() -> None:
     empty_system_message = build_lite_chat_messages(lite_payload())[0]["content"]
-    assert "DIALOGUE_MEMORY" not in empty_system_message
+    assert "Память диалога" not in empty_system_message
 
     payload = lite_payload(
         memoryContext={
@@ -592,10 +592,10 @@ def test_lite_prompt_includes_dialogue_memory_episodes_only_when_present() -> No
     )
     system_message = build_lite_chat_messages(payload)[0]["content"]
 
-    assert "DIALOGUE_MEMORY episode 1" in system_message
-    assert "user: Меня зовут Сергей." in system_message
-    assert "pet: Запомнил, Сергей." in system_message
-    assert "Используй это только если уместно." in system_message
+    assert "Память диалога 1" in system_message
+    assert "владелец: Меня зовут Сергей." in system_message
+    assert "персонаж: Запомнил, Сергей." in system_message
+    assert "Опирайся на память только когда она реально помогает ответу." in system_message
 
 
 def test_lite_prompt_keeps_visible_hook_out_of_message_history() -> None:
@@ -613,10 +613,10 @@ def test_lite_prompt_keeps_visible_hook_out_of_message_history() -> None:
     system_message = messages[0]["content"]
     history_contents = [message["content"] for message in messages[1:]]
 
-    assert "LAST_VISIBLE_PET_LINE" in system_message
-    assert "pet: Я случайно сказал про неон." in system_message
+    assert "Последняя видимая реплика персонажа" in system_message
+    assert "Я случайно сказал про неон." in system_message
     assert "ближайший видимый контекст" in system_message
-    assert "Не превращай отдельные слова" in system_message
+    assert "Прошлые образы — только ближайший контекст" in system_message
     assert "Я случайно сказал про неон." not in history_contents
 
 
@@ -819,7 +819,7 @@ def test_visible_context_router_is_skipped_without_auto_sources(monkeypatch, tmp
 
     assert response.reply == "Без лишнего контекста."
     assert len(completions.calls) == 1
-    assert completions.calls[0]["messages"][0]["content"].startswith("Отвечай как")
+    assert completions.calls[0]["messages"][0]["content"].startswith("Ты Громм.")
     assert response.debug is not None
     assert response.debug.contextRoutingDebug is not None
     assert response.debug.contextRoutingDebug["reason"] == "no_auto_context_sources"
@@ -895,7 +895,7 @@ def test_lite_clamps_reply_to_300_chars() -> None:
     response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
 
     assert len(response.reply) <= 300
-    assert response.reply.endswith("…")
+    assert not response.reply.endswith("…")
 
 
 def test_lite_strips_hidden_thought_and_face_lines() -> None:
@@ -921,9 +921,8 @@ def test_lite_prompt_does_not_include_baby_dataset_phrases() -> None:
     baby_system_message = build_lite_chat_messages(baby)[0]["content"]
     teen_system_message = build_lite_chat_messages(teen)[0]["content"]
 
-    assert "GENERATION_PROFILE" in baby_system_message
-    assert "- setting: cyberpunk" in baby_system_message
-    assert "- tone: natural" in baby_system_message
+    assert "Общий стиль: cyberpunk. Манера речи: natural." in baby_system_message
+    assert "GENERATION_PROFILE" not in baby_system_message
     assert "Dark fantasy" not in baby_system_message
     assert "age policy" not in baby_system_message
     assert "conflict policy" not in baby_system_message
@@ -986,7 +985,7 @@ def test_proactive_prompt_does_not_include_character_voice_control() -> None:
     assert "говорит через маленькие бытовые детали" not in system_message
     assert "нос подсказывает" not in system_message
     assert (
-        "Напиши короткую самостоятельную реплику по поводу: пользователь обещал вернуться вечером"
+        "Напиши владельцу первым одну короткую живую реплику. Повод: пользователь обещал вернуться вечером"
         in system_message
     )
     assert "Ты сам решил написать пользователю первым" not in system_message
@@ -1145,9 +1144,8 @@ def test_ambient_prompt_uses_idle_field_without_forced_world_context(
     assert "Спроси меня что-нибудь" not in system_message
     assert "пять минут" not in system_message
     assert "Привет, я Листик. Я просто рядом." in system_message
-    assert "anti-repeat only" in system_message
-    assert "not character canon" in system_message
-    assert "distinctive words" in system_message
+    assert "это только защита от повтора" in system_message
+    assert "Не повторяй их заметные слова" in system_message
     assert "Есть ли в твоем мире монстры?" not in system_message
     assert "Я нашел крошечный ключ от Врат Забвения." not in system_message
     assert "ask_school_or_work_role" not in system_message
@@ -1155,7 +1153,7 @@ def test_ambient_prompt_uses_idle_field_without_forced_world_context(
     assert "Пользователь готовится к экзамену." not in system_message
     assert "Пользователь любит короткие ответы." not in system_message
     assert "VOICE_CONTROL" not in system_message
-    assert "WORLD_CONTEXT: ниже" not in system_message
+    assert "Детали мира для этой реплики" not in system_message
     assert "лист шепчет" not in system_message
     assert "Idle-фраза должна давать владельцу вход в диалог" not in system_message
     assert "заинтересоваться его миром" not in system_message
@@ -1186,8 +1184,8 @@ def test_ambient_identity_falls_back_to_pet_description_when_name_is_missing() -
 
     system_message = build_ambient_messages(payload)[0]["content"]
 
-    assert "Отвечай как маленькая крыса." in system_message
-    assert "Отвечай как без имени." not in system_message
+    assert "Ты маленькая крыса." in system_message
+    assert "Ты без имени." not in system_message
 
 
 def test_ambient_prompt_skips_world_context_when_story_library_disabled() -> None:
@@ -1228,7 +1226,7 @@ def test_ambient_prompt_skips_world_context_when_story_library_disabled() -> Non
         ),
     )[0]["content"]
 
-    assert "WORLD_CONTEXT: ниже" not in system_message
+    assert "Детали мира для этой реплики" not in system_message
     assert "Есть ли в твоем мире монстры?" not in system_message
     assert "У меня есть крошечный ключ от Врат Забвения." not in system_message
     assert "ржавый ключ от Врат Забвения" not in system_message
@@ -1863,6 +1861,6 @@ def test_proactive_reply_is_clamped() -> None:
     )
 
     assert len(response.reply) <= 300
-    assert response.reply.endswith("…")
+    assert not response.reply.endswith("…")
     assert response.debug is not None
     assert response.debug.memoryDebug["selectedMemoryIds"] == ["m1"]

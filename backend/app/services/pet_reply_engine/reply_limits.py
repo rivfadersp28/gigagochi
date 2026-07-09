@@ -19,4 +19,4 @@ def clamp_reply_text(text: str, limit: int = MAX_REPLY_CHARS) -> str:
     if space_break >= max(80, limit // 2):
         head = head[:space_break].rstrip()
 
-    return f"{re.sub(r'[,.!?;:]+$', '', head).rstrip()}…"
+    return re.sub(r"[,.!?;:]+$", "", head).rstrip()
