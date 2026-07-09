@@ -230,6 +230,8 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert response.reply == "Я стою и слушаю. Говори."
     assert response.debug is not None
     assert len(completions.calls) == 2
+    routing_payload = completions.calls[0]["messages"][1]["content"]
+    assert "гигантский земляной великан" not in routing_payload
     request = completions.calls[1]
     system_message = request["messages"][0]["content"]
     assert system_message.startswith(

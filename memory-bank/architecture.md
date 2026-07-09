@@ -116,8 +116,11 @@
   repeat concrete creation details. Chat also applies a deterministic
   `ContextPlan` guard for generic small talk such as "как дела?": it suppresses
   `characterProfile` and `liteOverlay` even if the LLM router enabled them, while
-  explicit identity/body/habit/home questions still allow those sources.
-  `voice_profile.py` remains in the codebase but is not on the visible-reply path.
+  explicit identity/body/habit/home questions still allow those sources. The
+  context router receives only minimal pet state (`name`, `stage`, `mood`), not
+  raw `pet.description`; description is reserved for explicit character/world
+  context paths. `voice_profile.py` remains in the codebase but is not on the
+  visible-reply path.
 - Generated pets follow a template -> instance contract in frontend local
   storage. `assetSet.characterTemplate` is the cleaned immutable snapshot from
   generation, while `assetSet.characterBible` is the mutable per-pet instance.

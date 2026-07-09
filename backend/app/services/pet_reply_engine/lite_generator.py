@@ -1420,7 +1420,6 @@ def _lite_overlay_from(payload: LocalChatRequest) -> dict[str, Any]:
 def _lite_pet_context_payload(payload: LocalChatRequest) -> dict[str, Any]:
     return {
         "name": payload.pet.name,
-        "description": payload.pet.description,
         "stage": payload.pet.stage,
         "mood": payload.pet.mood,
     }
