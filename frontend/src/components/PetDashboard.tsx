@@ -80,6 +80,7 @@ const PUSH_SNAPSHOT_SYNC_MIN_INTERVAL_MS = 10 * 60_000;
 const ACTION_ICON_CACHE_VERSION = "20260709-figma-117-1029-3";
 const VIDEO_FILTER_CACHE_VERSION = "20260709-video-filter-normal-2";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
+const SCENE_VIDEO_START_OFFSET_SECONDS = 0.1;
 const mainSceneBackgroundSrc = `/figma/main-screen-bg.png?v=${MAIN_SCENE_BACKGROUND_CACHE_VERSION}`;
 const videoFilterSrc = `/figma/video-filter-normal.png?v=${VIDEO_FILTER_CACHE_VERSION}`;
 const actionIconSrc = {
@@ -94,6 +95,18 @@ const statusIconSrc = {
 } as const;
 const speechBubbleSrc = `/figma/speech-bubble-new.svg?v=${ACTION_ICON_CACHE_VERSION}`;
 const conversationSendIconSrc = `/figma/conversation-send-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`;
+
+function restartSceneVideo(video: HTMLVideoElement) {
+  const startTime = Math.min(
+    SCENE_VIDEO_START_OFFSET_SECONDS,
+    Math.max(0, video.duration - 0.05),
+  );
+  if (Math.abs(video.currentTime - startTime) > 0.01) {
+    video.currentTime = startTime;
+    return;
+  }
+  void video.play().catch(() => undefined);
+}
 
 const feedFoodAssets = [
   {
@@ -755,11 +768,14 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               src={sceneVideoSrc}
               poster={sceneBackgroundSrc}
               className="main-scene-background"
-              autoPlay
-              loop
               muted
               playsInline
               preload="auto"
+              onLoadedMetadata={(event) => restartSceneVideo(event.currentTarget)}
+              onSeeked={(event) => {
+                void event.currentTarget.play().catch(() => undefined);
+              }}
+              onEnded={(event) => restartSceneVideo(event.currentTarget)}
             />
           ) : null}
           <img

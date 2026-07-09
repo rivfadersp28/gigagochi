@@ -39,6 +39,10 @@
   PNG. Do not send the raw composed `1024x1536` image directly to Seedance or
   use it as the dashboard poster; the aspect mismatch can reintroduce initial
   reframe/jitter.
+- Seedance can preserve its input image for the first two frames and then
+  recompose it abruptly around 0.1 seconds. Dashboard playback intentionally
+  skips that preroll and loops manually from the same offset; native `autoPlay`
+  / `loop` makes the startup stretch recur on every loop.
 - Pet creation waits for an OpenRouter video job after image composition and
   returns `assetSet.videoUrl`. The frontend generation polling timeout must stay
   at least as long as `OPENROUTER_VIDEO_TIMEOUT_SECONDS`, otherwise the UI can
