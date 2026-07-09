@@ -330,6 +330,19 @@ def test_chat_recent_events_keeps_newer_matching_event_first() -> None:
     assert system_message.index("Колокольчик найден") < system_message.index("Украденный звон")
 
 
+def test_chat_recent_events_matches_russian_word_forms() -> None:
+    system_message = build_lite_chat_messages(
+        lite_payload(
+            message="Что стало с колокольчиком?",
+            pet=pet_with_recent_story_event(),
+        ),
+        context_routing=ContextRoutingDecision(surface="chat"),
+    )[0]["content"]
+
+    assert "Недавние события персонажа" in system_message
+    assert "Громм не смог вернуть колокольчик" in system_message
+
+
 def test_lite_prompt_includes_age_role_hint() -> None:
     payload = lite_payload()
     baby = payload.model_copy(update={"pet": payload.pet.model_copy(update={"stage": "baby"})})

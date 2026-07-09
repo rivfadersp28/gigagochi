@@ -996,18 +996,50 @@ def _reference_url_from_entry(reference: dict[str, Any]) -> str:
     return _clean_setting_string(reference.get("url"))
 
 
-def _kandinsky_reference_image_b64(image_url: str) -> str:
+def _reference_image_bytes(image_url: str) -> bytes:
     if image_url.startswith("data:image/"):
         header, separator, payload = image_url.partition(",")
         if not separator or not payload:
-            return ""
+            return b""
         if ";base64" in header:
-            return payload.replace("\n", "").replace("\r", "").strip()
-        return base64.b64encode(payload.encode("utf-8")).decode("utf-8")
+            return base64.b64decode(
+                payload.replace("\n", "").replace("\r", "").strip()
+            )
+        return payload.encode("utf-8")
 
     response = httpx.get(image_url, timeout=30)
     response.raise_for_status()
-    return base64.b64encode(response.content).decode("utf-8")
+    return response.content
+
+
+def _openai_reference_image_files(
+    input_references: list[dict[str, Any]] | None,
+) -> list[BytesIO]:
+    image_files: list[BytesIO] = []
+    for index, reference in enumerate(input_references or []):
+        image_url = _reference_url_from_entry(reference)
+        if not image_url:
+            continue
+        image_bytes = _reference_image_bytes(image_url)
+        if not image_bytes:
+            continue
+        with Image.open(BytesIO(image_bytes)) as source:
+            normalized = source.convert("RGBA")
+            image_file = BytesIO()
+            normalized.save(image_file, format="PNG")
+        image_file.name = f"reference-{index + 1}.png"
+        image_file.seek(0)
+        image_files.append(image_file)
+        if len(image_files) == 4:
+            break
+    return image_files
+
+
+def _kandinsky_reference_image_b64(image_url: str) -> str:
+    image_bytes = _reference_image_bytes(image_url)
+    if not image_bytes:
+        return ""
+    return base64.b64encode(image_bytes).decode("utf-8")
 
 
 def _kandinsky_reference_images(
@@ -1266,6 +1298,24 @@ def generate_image_bytes(
         )
 
     client = get_openai_client()
+    reference_files = _openai_reference_image_files(input_references)
+    if reference_files:
+        kwargs = build_image_edit_kwargs(settings, prompt, size=size)
+        log_image_generation_prompt(
+            label,
+            {**kwargs, "input_references": input_references or []},
+        )
+        image_input: BytesIO | list[BytesIO]
+        image_input = reference_files[0] if len(reference_files) == 1 else reference_files
+        try:
+            response = client.images.edit(**kwargs, image=image_input)
+        finally:
+            for image_file in reference_files:
+                image_file.close()
+        response_payload = response.model_dump() if hasattr(response, "model_dump") else {}
+        log_image_generation_response(label, kwargs, response_payload)
+        return _image_result_bytes(response.data[0])
+
     kwargs = build_image_generate_kwargs(settings, prompt, size=size)
     log_image_generation_prompt(label, kwargs)
     response = client.images.generate(**kwargs)

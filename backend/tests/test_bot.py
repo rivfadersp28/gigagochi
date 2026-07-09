@@ -46,7 +46,7 @@ def test_story_command_sends_generated_image_as_photo(monkeypatch) -> None:
                     "amount": 25,
                     "reason": "Олег поцарапал лапу.",
                 },
-                "statsDelta": {"energy": 25, "hunger": 0, "happiness": 0},
+                "statsDelta": {"energy": -25, "hunger": 0, "happiness": 0},
             },
             "storyImage": {"bytes": b"png", "mimeType": "image/png"},
         },
@@ -165,7 +165,7 @@ def test_story_caption_preserves_stat_debug_tail() -> None:
                 "amount": 25,
                 "reason": "Питомец потерял еду.",
             },
-            "statsDelta": {"energy": 0, "hunger": 25, "happiness": 0},
+            "statsDelta": {"energy": 0, "hunger": -25, "happiness": 0},
         }
     )
 
@@ -173,4 +173,20 @@ def test_story_caption_preserves_stat_debug_tail() -> None:
     assert caption.endswith(
         "Влияние на параметры:\n"
         "голод: минус 25"
+    )
+
+
+def test_story_caption_shows_recovery_as_plus() -> None:
+    caption = format_story_caption(
+        {
+            "title": "Теплый привал",
+            "storyText": "Питомец отдохнул и восстановил силы.",
+            "statsDelta": {"energy": 18, "hunger": 0, "happiness": 7},
+        }
+    )
+
+    assert caption.endswith(
+        "Влияние на параметры:\n"
+        "здоровье: плюс 18\n"
+        "настроение: плюс 7"
     )

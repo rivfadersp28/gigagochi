@@ -230,10 +230,11 @@ def _event_stat_impacts(value: Any, *, legacy: Any = None) -> list[dict[str, Any
             continue
         if amount == 0:
             continue
+        magnitude = max(1, min(STORY_STAT_MAX_SINGLE_DAMAGE, round(abs(amount))))
         result.append(
             {
                 "stat": stat,
-                "amount": -max(1, min(STORY_STAT_MAX_SINGLE_DAMAGE, round(abs(amount)))),
+                "amount": magnitude if amount > 0 else -magnitude,
                 "reason": _compact_event_text(item.get("reason"), limit=280),
             }
         )
@@ -383,21 +384,30 @@ def _normalize_story_stat_impacts(value: Any) -> list[dict[str, Any]]:
 
     result: list[dict[str, Any]] = []
     seen_stats: set[str] = set()
-    total_damage = 0
+    total_change = 0
     for item in candidates:
         stat = item.get("stat")
         if stat not in STAT_KEYS or stat in seen_stats:
             continue
-        damage = _story_stat_damage(item.get("amount"))
-        if damage <= 0:
+        try:
+            raw_amount = float(item.get("amount"))
+        except (TypeError, ValueError):
             continue
-        remaining_total = STORY_STAT_MAX_TOTAL_DAMAGE - total_damage
+        magnitude = _story_stat_damage(raw_amount)
+        if magnitude <= 0:
+            continue
+        remaining_total = STORY_STAT_MAX_TOTAL_DAMAGE - total_change
         if remaining_total <= 0:
             break
-        applied_damage = min(damage, remaining_total)
-        result.append({"stat": stat, "damage": applied_damage})
+        applied_magnitude = min(magnitude, remaining_total)
+        result.append(
+            {
+                "stat": stat,
+                "amount": applied_magnitude if raw_amount > 0 else -applied_magnitude,
+            }
+        )
         seen_stats.add(stat)
-        total_damage += applied_damage
+        total_change += applied_magnitude
         if len(result) >= STORY_STAT_MAX_ITEMS:
             break
     return result
@@ -557,13 +567,14 @@ def register_push_snapshot(
             record[key] = existing.get(key)
         if same_pet:
             record["recentStoryEvents"] = _record_recent_story_events(existing)
+            _merge_record_lite_overlay_patch(record, _record_lite_overlay_patch(existing))
     _save_record(record)
     return LocalPetPushSnapshotResponse(
         registered=True,
         telegramId=user.telegram_id,
         updatedAt=now_iso,
         statsPatch=stats_patch,
-        liteOverlayPatch=None,
+        liteOverlayPatch=_record_lite_overlay_patch(record),
         recentStoryEventsPatch=_recent_story_events_patch(record),
     )
 
@@ -882,9 +893,9 @@ def _apply_story_stat_impact(
     for impact in raw_impacts:
         stat = impact["stat"]
         previous_value = current_stats[stat]
-        current_stats[stat] = _clamp_stat(current_stats[stat] - impact["damage"])
-        delta = max(0, previous_value - current_stats[stat])
-        if delta <= 0:
+        current_stats[stat] = _clamp_stat(current_stats[stat] + impact["amount"])
+        delta = current_stats[stat] - previous_value
+        if delta == 0:
             continue
         stats_delta[stat] += delta
         changed_keys.append(stat)
@@ -982,6 +993,7 @@ def generate_story_for_telegram_user(
             last_story=last_story,
         ),
     }
+    _merge_record_lite_overlay_patch(next_record, result.lite_overlay_patch)
     if stat_ticks is not None:
         next_record["lastStatsTickAt"] = _legacy_stats_tick(stat_ticks)
         next_record["lastStatTickAt"] = _stat_tick_iso_map(stat_ticks)
@@ -1009,7 +1021,7 @@ def generate_story_for_telegram_user(
         "storyImage": story_image,
         "storyImageError": story_image_error,
         "storyLibraryPatch": None,
-        "liteOverlayPatch": None,
+        "liteOverlayPatch": _record_lite_overlay_patch(next_record),
         "recentStoryEvent": recent_story_event,
         "statsPatch": stats_patch,
         "statImpacts": stat_impacts,

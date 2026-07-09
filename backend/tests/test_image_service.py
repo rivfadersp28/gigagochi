@@ -32,6 +32,7 @@ from app.services.image_service import (
     generation_error_code,
     normalize_pet_scene_video_frame_bytes,
 )
+from app.services.tone_runtime import tone_context_payload
 
 
 def image_contains_color(image: Image.Image, color: tuple[int, int, int, int]) -> bool:
@@ -275,6 +276,76 @@ def test_generate_image_bytes_passes_openrouter_input_references(monkeypatch) ->
 
     assert result == b"openrouter-image"
     assert captured["json"]["input_references"] == references
+
+
+def test_generate_image_bytes_uses_openai_edit_for_input_reference(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    reference_bytes = png_bytes(Image.new("RGBA", (32, 32), (20, 140, 70, 255)))
+
+    class FakeDownloadResponse:
+        content = reference_bytes
+
+        def raise_for_status(self):
+            return None
+
+    class FakeImages:
+        def generate(self, **_kwargs):
+            raise AssertionError("reference generation must use images.edit")
+
+        def edit(self, **kwargs):
+            captured.update(kwargs)
+            image = kwargs["image"]
+            captured["reference_name"] = image.name
+            captured["reference_bytes"] = image.read()
+            return SimpleNamespace(
+                data=[
+                    SimpleNamespace(
+                        b64_json=base64.b64encode(b"openai-reference-image").decode()
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            ai_provider="openai",
+            openai_image_model="gpt-image-2",
+            openai_image_size="1536x1152",
+            openai_image_quality="medium",
+            openai_image_output_format="png",
+            openai_image_timeout_seconds=180,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.get_openai_client",
+        lambda: SimpleNamespace(images=FakeImages()),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.httpx.get",
+        lambda url, **_kwargs: (
+            FakeDownloadResponse()
+            if url == "https://cdn.example.test/assets/baby-happy.png"
+            else (_ for _ in ()).throw(AssertionError(f"unexpected GET {url}"))
+        ),
+    )
+
+    result = generate_image_bytes(
+        "story prompt",
+        input_references=[
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "https://cdn.example.test/assets/baby-happy.png"
+                },
+            }
+        ],
+    )
+
+    assert result == b"openai-reference-image"
+    assert captured["model"] == "gpt-image-2"
+    assert captured["prompt"] == "story prompt"
+    assert captured["reference_name"] == "reference-1.png"
+    assert captured["reference_bytes"] == reference_bytes
 
 
 def test_generate_openrouter_image_bytes_uses_openrouter_with_openai_provider(
@@ -974,7 +1045,8 @@ def test_character_bible_prompt_omits_curated_generation_context() -> None:
     assert "TONE_PROFILE" not in prompt
     assert "GENERATION_PROFILE" not in prompt
     assert "SETTING_HINT" in prompt
-    assert "setting: cyberpunk" in prompt
+    character_profile = tone_context_payload("characterBible")
+    assert f'setting: {character_profile["setting"]}' in prompt
     assert "tone: natural" in prompt
     assert "Dark fantasy" not in prompt
     assert "WORLD_DESCRIPTION_ANCHORS" not in prompt

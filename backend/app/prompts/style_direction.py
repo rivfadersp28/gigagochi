@@ -68,6 +68,60 @@ Global style direction for all pet replies and birth messages.
   roleplay narration, and assistant-like explanations.
 """.strip()
 
-VISUAL_STYLE_FRAME = """
-Create a collectible designer art toy that reimagines the requested subject as a quiet, melancholic childlike character while preserving only its core recognizable identity. Even the simplest prompt (such as "rat", "frog", "lamp", "tree", "cloud", or any everyday object or creature) should become an original poetic character rather than a literal depiction. Always introduce unexpected handcrafted wearable elements, improvised accessories, symbolic props, whimsical costumes, protective gear, stitched fabrics, handmade masks, oversized hats, cardboard constructions, wooden toys, ropes, umbrellas, buckets, paper objects, mechanical gadgets, vintage household items, patched clothing, or surreal everyday artifacts that feel naturally integrated into the character's personality. The accessories should never feel random—they should hint at an untold story, forgotten memories, a strange profession, a personal ritual, or a quiet adventure. Every design should communicate a silent narrative without relying on action or background. The character should feel emotionally reserved, lonely, thoughtful, stubborn, curious, slightly awkward, and deeply human regardless of whether it is an animal, creature, object, plant, spirit, or abstract concept. Use soft stylized collectible proportions with a large rounded head, compact body, tiny limbs, oversized sleeves or clothing, small hands and feet, and a bold instantly recognizable silhouette. Favor asymmetry, layered clothing, unusual headwear, and one memorable visual gimmick that immediately defines the character. The face should remain extremely minimal, featuring sleepy half-closed eyes looking sideways or downward, a tiny nose, a small neutral or slightly disappointed mouth, faint freckles, soft blush, and subtle imperfections. Avoid exaggerated expressions, smiles, anime eyes, exaggerated cuteness, or comedic cartoon faces. Materials should feel tactile, premium, and handcrafted, combining matte vinyl, painted resin, weathered wood, stitched fabric, cardboard, ceramic, brushed metal, worn plastic, paper, rope, rubber, felt, and soft textiles with delicate scratches, chipped paint, dust, wrinkles, fabric seams, subtle wear, faded prints, and visible handmade imperfections. Colors should feel nostalgic and gently muted rather than dull, featuring warm creams, rich earthy browns, terracotta reds, mossy greens, golden mustard, soft teal, powder blue, lavender, charcoal gray, muted coral, dusty pinks, and other tasteful earth tones. Increase overall color richness and saturation slightly while maintaining a soft, refined palette. Allow fabrics, accessories, costumes, and signature props to use subtly richer colors, while skin tones and facial features remain soft and understated. Preserve the quiet melancholic mood by avoiding neon colors, harsh contrast, glossy toy-like palettes, or overly vivid cartoon saturation. Lighting should be soft studio lighting with gentle ambient illumination, diffuse reflections, smooth shadows, and clean premium product photography quality. The character should occupy most of the frame, centered, viewed from a slightly low or eye-level angle, isolated on a pure white seamless background with absolutely no environment, floor texture, scenery, decorations, text, logos, watermark, packaging, or additional objects except the character and its personal accessories. The overall aesthetic should feel like a premium independent collectible designer art toy that combines emotional storytelling, subtle surrealism, handcrafted imperfections, nostalgic warmth, and sophisticated visual design, making even the simplest subject feel unique, memorable, and quietly magical.
+VISUAL_CHARACTER_STYLE = """
+Create a collectible designer art toy that reimagines the requested subject as a quiet,
+melancholic childlike character while preserving only its core recognizable identity. Even the
+simplest prompt (such as "rat", "frog", "lamp", "tree", "cloud", or any everyday object or
+creature) should become an original poetic character rather than a literal depiction.
+
+Always introduce unexpected handcrafted wearable elements, improvised accessories, symbolic
+props, whimsical costumes, protective gear, stitched fabrics, handmade masks, oversized hats,
+cardboard constructions, wooden toys, ropes, umbrellas, buckets, paper objects, mechanical
+gadgets, vintage household items, patched clothing, or surreal everyday artifacts that feel
+naturally integrated into the character's personality. The accessories should never feel
+random—they should hint at an untold story, forgotten memories, a strange profession, a personal
+ritual, or a quiet adventure. Every design should communicate a silent narrative.
+
+The character should feel emotionally reserved, lonely, thoughtful, stubborn, curious, slightly
+awkward, and deeply human regardless of whether it is an animal, creature, object, plant, spirit,
+or abstract concept. Use soft stylized collectible proportions with a large rounded head, compact
+body, tiny limbs, oversized sleeves or clothing, small hands and feet, and a bold instantly
+recognizable silhouette. Favor asymmetry, layered clothing, unusual headwear, and one memorable
+visual gimmick that immediately defines the character.
+
+The face should remain extremely minimal, featuring sleepy half-closed eyes looking sideways or
+downward, a tiny nose, a small neutral or slightly disappointed mouth, faint freckles, soft blush,
+and subtle imperfections. Avoid exaggerated expressions, smiles, anime eyes, exaggerated cuteness,
+or comedic cartoon faces.
+
+Materials should feel tactile, premium, and handcrafted, combining matte vinyl, painted resin,
+weathered wood, stitched fabric, cardboard, ceramic, brushed metal, worn plastic, paper, rope,
+rubber, felt, and soft textiles with delicate scratches, chipped paint, dust, wrinkles, fabric
+seams, subtle wear, faded prints, and visible handmade imperfections.
+
+Colors should feel nostalgic and gently muted rather than dull, featuring warm creams, rich earthy
+browns, terracotta reds, mossy greens, golden mustard, soft teal, powder blue, lavender, charcoal
+gray, muted coral, dusty pinks, and other tasteful earth tones. Increase overall color richness and
+saturation slightly while maintaining a soft, refined palette. Allow fabrics, accessories,
+costumes, and signature props to use subtly richer colors, while skin tones and facial features
+remain soft and understated. Preserve the quiet melancholic mood by avoiding neon colors, harsh
+contrast, glossy toy-like palettes, or overly vivid cartoon saturation.
+
+The overall aesthetic should feel like a premium independent collectible designer art toy that
+combines emotional storytelling, subtle surrealism, handcrafted imperfections, nostalgic warmth,
+and sophisticated visual design, making even the simplest subject feel unique, memorable, and
+quietly magical.
 """.strip()
+
+VISUAL_SPRITE_PRESENTATION = """
+Lighting should be soft studio lighting with gentle ambient illumination, diffuse reflections,
+smooth shadows, and clean premium product photography quality. The character should occupy most
+of the frame, centered, viewed from a slightly low or eye-level angle, isolated on a pure white
+seamless background with absolutely no environment, floor texture, scenery, decorations, text,
+logos, watermark, packaging, or additional objects except the character and its personal
+accessories.
+""".strip()
+
+VISUAL_STYLE_FRAME = (
+    f"{VISUAL_CHARACTER_STYLE}\n\nSPRITE_PRESENTATION:\n{VISUAL_SPRITE_PRESENTATION}"
+)

@@ -180,6 +180,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const isSendingChatRef = useRef(false);
   const isTravelGeneratingRef = useRef(false);
   const pet = localPet.pet;
+  const applyLiteOverlayPatch = localPet.applyLiteOverlayPatch;
   const applyStoryLibraryPatch = localPet.applyStoryLibraryPatch;
   const applyRecentStoryEventsPatch = localPet.applyRecentStoryEventsPatch;
   const applyStatsPatch = localPet.applyStatsPatch;
@@ -375,11 +376,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     })
       .then((response) => {
         applyStatsPatch(response.statsPatch ?? undefined);
+        applyLiteOverlayPatch(response.liteOverlayPatch ?? undefined);
         applyStoryLibraryPatch(response.storyLibraryPatch ?? undefined);
         applyRecentStoryEventsPatch(response.recentStoryEventsPatch ?? undefined);
       })
       .catch(() => undefined);
   }, [
+    applyLiteOverlayPatch,
     applyRecentStoryEventsPatch,
     applyStatsPatch,
     applyStoryLibraryPatch,

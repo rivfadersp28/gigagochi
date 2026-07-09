@@ -1055,12 +1055,74 @@ RECENT_EVENT_STOPWORDS = {
     "сейчас",
     "после",
 }
+RECENT_EVENT_RUSSIAN_ENDINGS = (
+    "иями",
+    "ями",
+    "ами",
+    "ого",
+    "ему",
+    "ому",
+    "ыми",
+    "ими",
+    "иях",
+    "ах",
+    "ях",
+    "ов",
+    "ев",
+    "ей",
+    "ом",
+    "ем",
+    "ам",
+    "ям",
+    "ую",
+    "юю",
+    "ая",
+    "яя",
+    "ое",
+    "ее",
+    "ок",
+    "ек",
+    "ы",
+    "и",
+    "а",
+    "я",
+    "у",
+    "ю",
+    "е",
+    "о",
+)
+
+
+def _recent_event_stem(token: str) -> str:
+    normalized = token.replace("ё", "е")
+    if not re.fullmatch(r"[а-я]+", normalized) or len(normalized) < 5:
+        return normalized
+    for ending in RECENT_EVENT_RUSSIAN_ENDINGS:
+        if normalized.endswith(ending) and len(normalized) - len(ending) >= 4:
+            return normalized[: -len(ending)]
+    return normalized
 
 
 def _recent_event_tokens(value: Any) -> set[str]:
     text = _compact_spaces(str(value or "")).casefold()
     tokens = re.findall(r"[0-9a-zа-яё]{3,}", text, flags=re.IGNORECASE)
-    return {token for token in tokens if token not in RECENT_EVENT_STOPWORDS}
+    return {
+        _recent_event_stem(token)
+        for token in tokens
+        if token not in RECENT_EVENT_STOPWORDS
+    }
+
+
+def _recent_event_token_overlap(query_tokens: set[str], event_tokens: set[str]) -> int:
+    overlap = len(query_tokens & event_tokens)
+    if overlap:
+        return overlap
+    for query_token in query_tokens:
+        for event_token in event_tokens:
+            shorter, longer = sorted((query_token, event_token), key=len)
+            if len(shorter) >= 5 and longer.startswith(shorter):
+                return 1
+    return 0
 
 
 def _recent_story_events_from_pet(pet: Any) -> list[dict[str, Any]]:
@@ -1128,7 +1190,7 @@ def _select_recent_events_for_text(
         event_tokens = set().union(
             *(_recent_event_tokens(part) for part in _recent_event_text_parts(event))
         )
-        overlap = len(text_tokens & event_tokens)
+        overlap = _recent_event_token_overlap(text_tokens, event_tokens)
         if overlap <= 0 and not has_recent_intent:
             continue
         reason = "token_overlap"

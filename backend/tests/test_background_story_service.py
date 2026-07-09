@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
 from app.services import background_story_service
 
@@ -72,6 +74,11 @@ def _pet() -> LocalPetChatContext:
                     },
                 },
             },
+            "assetImages": {
+                "baby": {
+                    "happy": "https://example.com/oleg-baby-happy.png",
+                },
+            },
         }
     )
 
@@ -133,20 +140,32 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
     assert background_story_service.BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION in scene_prompt
     assert "Олег заметил, что древний дуб отвечает шепотом листа" in scene_prompt
     assert calls[0]["label"] == "background_story/image"
-    assert calls[0]["input_references"] == []
+    assert calls[0]["input_references"] == [
+        {
+            "type": "image_url",
+            "image_url": {"url": "https://example.com/oleg-baby-happy.png"},
+        }
+    ]
     prompt = str(calls[0]["prompt"])
-    assert "След под кроной" in prompt
     assert "лист на его лице светится" in prompt
     assert "древний дуб отвечает шепотом листа" not in prompt
-    assert "чел с листом вместо лица" in prompt
-    assert "GENERATION_PROFILE" in prompt
-    assert "- setting: cyberpunk" in prompt
-    assert "- tone: natural" in prompt
-    assert "Dark fantasy" not in prompt
-    assert "Цельная детальная иллюстрация" in prompt
-    assert "активный generation profile" in prompt.lower()
-    assert "Не превращай питомца в человека" in prompt
-    assert "тон: позитивный" in prompt
+    assert "След под кроной" not in prompt
+    assert "чел с листом вместо лица" not in prompt
+    assert "GENERATION_PROFILE" not in prompt
+    assert "Тип события" not in prompt
+    assert "Теги:" not in prompt
+    assert "Дизайн персонажа" not in prompt
+    assert "Стадия:" not in prompt
+    assert "Опорный дизайн" not in prompt
+    assert "Tone style" not in prompt
+    assert "Базовая визуальная рамка" not in prompt
+    normalized_shared_style = " ".join(
+        background_story_service.VISUAL_CHARACTER_STYLE.split()
+    )
+    assert normalized_shared_style in prompt
+    assert "collectible designer art toy" in prompt
+    assert "pure white seamless background" not in prompt
+    assert "приложенной референсной картинки" in prompt
     assert len(prompt) <= background_story_service.BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS
     assert "Листики выпускают запахи-сигналы опасности" not in prompt
     assert story.prompt_debug[0]["label"] == "background_story/image_scene"
@@ -214,8 +233,28 @@ def test_background_story_image_passes_current_sprite_reference_to_image_helper(
     ]
     prompt = str(calls[0]["prompt"])
     assert "Олег стоит под древним дубом" in prompt
-    assert "чел с листом вместо лица" in prompt
+    assert "чел с листом вместо лица" not in prompt
     assert len(prompt) <= background_story_service.BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS
+
+
+def test_background_story_image_requires_character_reference() -> None:
+    pet = _pet().model_copy(update={"assetImages": None})
+    story = background_story_service.BackgroundStoryResult(
+        title="След под кроной",
+        summary="Олег нашел теплый знак.",
+        story_text="Олег нашел теплый знак под древним дубом.",
+        event_type="discovery",
+        valence="positive",
+        tags=("дуб",),
+        rag_text="Олег нашел знак.",
+        story_library_patch=None,
+        lite_overlay_patch=None,
+        recent_story_event=None,
+        prompt_debug=[],
+    )
+
+    with pytest.raises(RuntimeError, match="BACKGROUND_STORY_IMAGE_REFERENCE_MISSING"):
+        background_story_service.generate_background_story_image_bytes(pet=pet, story=story)
 
 
 def test_generate_background_story_stores_recent_event_without_lite_patch(monkeypatch) -> None:
@@ -297,7 +336,37 @@ def test_generate_background_story_stores_recent_event_without_lite_patch(monkey
     assert '"голод"' in prompt
     assert '"здоровье"' in prompt
     assert "Листики выпускают запахи-сигналы опасности." not in prompt
-    assert len(completions.calls) == 2
+    assert len(completions.calls) == 3
+    assert _call_by_schema(completions, "background_story_aftermath_extraction")
+
+
+def test_background_story_accepts_explicit_recovery_stat_change() -> None:
+    result = background_story_service._normalize_story_payload(
+        {
+            "title": "Теплый привал",
+            "summary": "Олег отдохнул у теплого камня и восстановил силы.",
+            "storyText": "Олег выспался у теплого камня, подлечился и снова набрал сил.",
+            "eventType": "recovery",
+            "valence": "positive",
+            "tags": ["отдых"],
+            "statImpacts": [
+                {
+                    "stat": "energy",
+                    "amount": 18,
+                    "reason": "Отдых восстановил силы Олега.",
+                }
+            ],
+            "ragText": "Олег восстановил силы у теплого камня.",
+        }
+    )
+
+    assert result.stat_impacts == (
+        {
+            "stat": "energy",
+            "amount": 18,
+            "reason": "Отдых восстановил силы Олега.",
+        },
+    )
 
 
 def test_background_story_profile_toggle_controls_description() -> None:
@@ -490,11 +559,14 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     )
 
     assert result.title == "Световая капля"
-    assert len(completions.calls) == 2
+    assert len(completions.calls) == 3
     assert completions.calls[0]["response_format"]["json_schema"]["name"] == (
         "background_story_context_routing"
     )
     assert completions.calls[1]["response_format"]["json_schema"]["name"] == "background_story"
+    assert completions.calls[2]["response_format"]["json_schema"]["name"] == (
+        "background_story_aftermath_extraction"
+    )
     prompt = _call_by_schema(completions, "background_story")["messages"][1]["content"]
     assert captured_story_queries == ["лор мира"]
     assert "Кристаллическая капля" in prompt
@@ -608,7 +680,9 @@ def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) ->
     assert "исход: поднялся сам" not in prompt
 
 
-def test_background_story_aftermath_ignores_ephemeral_events(monkeypatch) -> None:
+def test_background_story_aftermath_keeps_episode_but_ignores_ephemeral_lite_fact(
+    monkeypatch,
+) -> None:
     story_content = json.dumps(
         {
             "title": "Меловая тень",
@@ -674,7 +748,96 @@ def test_background_story_aftermath_ignores_ephemeral_events(monkeypatch) -> Non
     assert result.story_library_patch is None
     assert result.lite_overlay_patch is None
     assert result.recent_story_event is not None
-    assert result.recent_story_event["summary"] == "На Олега напала меловая тень."
+    assert result.recent_story_event["summary"] == (
+        "На Олега напала меловая тень и исчезла."
+    )
+    assert result.recent_story_event["participants"] == ["меловая тень", "Олег"]
+    assert result.recent_story_event["canonicalFacts"] == ["на Олега напала меловая тень"]
+
+
+def test_background_story_aftermath_persists_acquired_item_and_relationship(
+    monkeypatch,
+) -> None:
+    story_content = json.dumps(
+        {
+            "title": "Искра фонарщика",
+            "summary": "Олег помог фонарщику и получил теплую искру.",
+            "storyText": (
+                "Олег освободил фонарщика из веток. Фонарщик подарил ему теплую искру, "
+                "которую Олег сохранил у себя."
+            ),
+            "eventType": "meeting",
+            "valence": "positive",
+            "tags": ["фонарщик", "искра"],
+            "statImpacts": [],
+            "ragText": "Олег встретил фонарщика и получил теплую искру.",
+        },
+        ensure_ascii=False,
+    )
+    aftermath_content = json.dumps(
+        {
+            "facts": [
+                {
+                    "sphere": "world",
+                    "kind": "world_fact",
+                    "text": "У Олега есть теплая искра — подарок фонарщика.",
+                    "pathHint": "lite_overlay.spheres.world",
+                    "source": "background_story_aftermath",
+                    "confidence": 0.95,
+                },
+                {
+                    "sphere": "relationship",
+                    "kind": "relationship_fact",
+                    "text": "Олег знаком с фонарщиком, которому помог выбраться из веток.",
+                    "pathHint": "lite_overlay.spheres.relationship",
+                    "source": "background_story_aftermath",
+                    "confidence": 0.9,
+                },
+            ],
+            "recentEvent": {
+                "summary": "Олег помог фонарщику и получил теплую искру.",
+                "eventType": "meeting",
+                "participants": ["Олег", "фонарщик"],
+                "actions": ["Олег освободил фонарщика"],
+                "objects": ["теплая искра"],
+                "location": "колючие ветки",
+                "outcome": "Теплая искра осталась у Олега.",
+                "compactText": "Олег спас фонарщика и сохранил подаренную теплую искру.",
+                "canonicalFacts": ["фонарщик подарил Олегу теплую искру"],
+                "statusChanges": [
+                    {"entity": "теплая искра", "state": "owned", "owner": "Олег"}
+                ],
+            },
+        },
+        ensure_ascii=False,
+    )
+    completions = FakeBackgroundStoryCompletions([story_content, aftermath_content])
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    monkeypatch.setattr(
+        background_story_service,
+        "get_settings",
+        lambda: SimpleNamespace(openai_chat_timeout_seconds=10, openai_chat_reasoning_effort=None),
+    )
+    monkeypatch.setattr(
+        background_story_service,
+        "context_source_mode",
+        lambda surface, source: "disabled",
+    )
+
+    result = background_story_service.generate_background_story(
+        pet=_pet(),
+        client=client,
+        model="test-model",
+        timeout=10,
+    )
+
+    assert result.lite_overlay_patch is not None
+    assert len(result.lite_overlay_patch["facts"]) == 2
+    assert result.recent_story_event is not None
+    assert result.recent_story_event["objects"] == ["теплая искра"]
+    assert result.recent_story_event["statusChanges"] == [
+        {"entity": "теплая искра", "state": "owned", "owner": "Олег"}
+    ]
 
 
 def test_background_story_uses_snapshot_history_when_story_toggles_allow(

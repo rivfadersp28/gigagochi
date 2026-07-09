@@ -305,9 +305,9 @@ function normalizeStatImpactItem(value: unknown): Record<string, unknown> | null
   const stat = normalizeText(value.stat, 40);
   const amount =
     typeof value.amount === "number" && Number.isFinite(value.amount)
-      ? Math.max(-25, Math.min(-1, value.amount < 0 ? value.amount : -value.amount))
+      ? Math.max(-25, Math.min(25, value.amount))
       : null;
-  if (!STAT_KEYS.includes(stat as PetStatKey) || amount === null) {
+  if (!STAT_KEYS.includes(stat as PetStatKey) || amount === null || amount === 0) {
     return null;
   }
   return {

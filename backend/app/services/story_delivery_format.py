@@ -18,7 +18,7 @@ def _number(value: Any) -> float | None:
 
 
 def _format_amount(value: Any) -> str:
-    amount = max(0.0, _number(value) or 0.0)
+    amount = abs(_number(value) or 0.0)
     if amount.is_integer():
         return str(int(amount))
     return f"{amount:.1f}".rstrip("0").rstrip(".")
@@ -31,7 +31,7 @@ def _stats_delta(story: dict[str, Any]) -> dict[str, float]:
         for key in delta:
             value = _number(raw_delta.get(key))
             if value is not None:
-                delta[key] = max(0.0, value)
+                delta[key] = value
         return delta
 
     stat_impacts = story.get("statImpacts")
@@ -42,7 +42,7 @@ def _stats_delta(story: dict[str, Any]) -> dict[str, float]:
             stat = item.get("stat")
             if stat not in delta:
                 continue
-            delta[stat] += max(0.0, abs(_number(item.get("amount")) or 0.0))
+            delta[stat] += _number(item.get("amount")) or 0.0
         return delta
 
     stat_impact = story.get("statImpact")
@@ -51,7 +51,10 @@ def _stats_delta(story: dict[str, Any]) -> dict[str, float]:
     stat = stat_impact.get("stat")
     if stat not in delta:
         return delta
-    delta[stat] = max(0.0, abs(_number(stat_impact.get("amount")) or 0.0))
+    amount = _number(stat_impact.get("amount")) or 0.0
+    if stat_impact.get("isNegativeOutcome") is True:
+        amount = -abs(amount)
+    delta[stat] = amount
     return delta
 
 
@@ -65,11 +68,13 @@ def _story_stat_debug_block(story: dict[str, Any]) -> str:
         return ""
     delta = _stats_delta(story)
     lines = ["Влияние на параметры:"]
-    changed = [
-        f"{label}: минус {_format_amount(delta[key])}"
-        for key, label in STAT_DEBUG_LABELS
-        if delta[key] > 0
-    ]
+    changed = []
+    for key, label in STAT_DEBUG_LABELS:
+        amount = delta[key]
+        if amount == 0:
+            continue
+        direction = "плюс" if amount > 0 else "минус"
+        changed.append(f"{label}: {direction} {_format_amount(amount)}")
     lines.extend(changed or ["без изменений"])
     return "\n".join(lines)
 

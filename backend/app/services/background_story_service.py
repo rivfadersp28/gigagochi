@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.config import get_settings
+from app.prompts.style_direction import VISUAL_CHARACTER_STYLE
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
 from app.services.image_service import generate_image_bytes
 from app.services.lite_overlay import (
@@ -47,7 +48,7 @@ from app.services.pet_reply_engine.speech_runtime import (
 )
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
 from app.services.story_library import search_story_library
-from app.services.tone_runtime import tone_context_payload, tone_prompt_block, tone_visual_style
+from app.services.tone_runtime import tone_context_payload, tone_prompt_block
 
 logger = logging.getLogger(__name__)
 
@@ -76,21 +77,23 @@ STORY_STAT_NEGATIVE_EVIDENCE_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
-BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS = 4200
-BACKGROUND_STORY_IMAGE_SCENE_STORY_MAX_CHARS = 2400
-BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS = 900
-BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION = (
-    "выдели из этого текста основную сцену, которая иллюстрирует сюжет лучше "
-    "всего сюжет должен быть четким как тз для художника"
+STORY_STAT_POSITIVE_EVIDENCE_RE = re.compile(
+    r"\b("
+    r"восстанов\w*|исцел\w*|зажил\w*|подлеч\w*|отдохн\w*|выспал\w*|"
+    r"подкреп\w*|поел\w*|наел\w*|утолил\w*|ободрил\w*|обрадовал\w*|"
+    r"повеселел\w*|набрал\w*\s+сил\w*|вернул\w*\s+сил\w*"
+    r")\b",
+    re.IGNORECASE,
 )
-BACKGROUND_STORY_IMAGE_STYLE = """
-Цельная детальная иллюстрация для истории питомца. Чистый контур, читаемый
-центральный момент, выразительный свет, рисованные материалы, мягкие тени,
-понятный фон с несколькими значимыми деталями. Активный generation profile
-задает сеттинг, жанровую окраску, свет и тип объектов; базовая рамка отвечает
-только за цельность кадра и читаемость персонажа.
-""".strip()
+LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS = 5600
+BACKGROUND_STORY_IMAGE_SCENE_STORY_MAX_CHARS = 2400
+BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS = 700
+BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION = (
+    "Выдели один самый иллюстративный момент истории. Верни компактное визуальное описание "
+    "одного кадра: действие, окружение и важные предметы. Не пересказывай всю историю, "
+    "не добавляй название, жанр, теги, мораль или сведения, которых нет в сюжете."
+)
 BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -122,7 +125,7 @@ BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
                     "amount": {
                         "type": "number",
                         "minimum": -STORY_STAT_MAX_SINGLE_DAMAGE,
-                        "maximum": -1,
+                        "maximum": STORY_STAT_MAX_SINGLE_DAMAGE,
                     },
                     "reason": {"type": "string", "maxLength": 280},
                 },
@@ -391,23 +394,6 @@ def _select_record(value: Any, keys: tuple[str, ...], *, limit: int = 800) -> di
     return result
 
 
-def _stage_label(stage: str) -> str:
-    return {
-        "baby": "малыш",
-        "teen": "подросток",
-        "adult": "взрослый",
-    }.get(stage, stage)
-
-
-def _mood_label(mood: str) -> str:
-    return {
-        "idle": "спокойный",
-        "happy": "радостный",
-        "hungry": "голодный",
-        "sad": "грустный",
-    }.get(mood, mood)
-
-
 def _valence_label(valence: str) -> str:
     return {
         "positive": "позитивный",
@@ -415,72 +401,6 @@ def _valence_label(valence: str) -> str:
         "neutral": "нейтральный",
         "mixed": "смешанный",
     }.get(valence, valence)
-
-
-def _visual_phrase(value: Any, *, limit: int = 220) -> str:
-    if isinstance(value, list):
-        return ", ".join(_string_list(value, limit=5))[:limit].rstrip()
-    if isinstance(value, dict):
-        return _truncate_text(
-            "; ".join(
-                f"{_text_value(key, limit=40)}: {_text_value(item, limit=120)}"
-                for key, item in value.items()
-                if _text_value(item, limit=120)
-            ),
-            limit,
-        )
-    return _text_value(value, limit=limit)
-
-
-def _background_story_image_identity(pet: LocalPetChatContext) -> str:
-    bible = pet.characterBible if _is_record(pet.characterBible) else {}
-    identity = _select_record(
-        bible.get("identity"),
-        ("name", "nickname", "one_liner", "role", "species"),
-    )
-    visual = _select_record(
-        bible.get("visual"),
-        ("anchors", "colors", "features", "growth_forms", "materials", "proportions"),
-    )
-    legacy_visual = {
-        key: bible.get(key)
-        for key in (
-            "species",
-            "signature",
-            "main_colors",
-            "signature_features",
-            "materials",
-            "proportions",
-        )
-        if bible.get(key) not in (None, "", [], {})
-    }
-    name = _text_value(pet.name) or _text_value(identity.get("name")) or "безымянный питомец"
-    visual_source = visual or legacy_visual
-    details = [
-        _visual_phrase(identity.get("species"), limit=120),
-        _visual_phrase(identity.get("one_liner"), limit=140),
-        _visual_phrase(visual_source.get("anchors"), limit=160),
-        _visual_phrase(visual_source.get("colors"), limit=120),
-        _visual_phrase(visual_source.get("features"), limit=180),
-        _visual_phrase(visual_source.get("materials"), limit=120),
-        _visual_phrase(visual_source.get("proportions"), limit=160),
-    ]
-    unique_details: list[str] = []
-    seen: set[str] = set()
-    for detail in details:
-        normalized = _compact_spaces(detail).casefold()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        unique_details.append(detail)
-    return _truncate_text(
-        (
-            f"{name}: {_text_value(pet.description, limit=120)}. "
-            f"Стадия: {_stage_label(pet.stage)}, настроение: {_mood_label(pet.mood)}. "
-            f"Опорный дизайн: {'; '.join(unique_details)}."
-        ),
-        360,
-    )
 
 
 def _current_asset_image_url(pet: LocalPetChatContext) -> str:
@@ -607,32 +527,19 @@ def extract_background_story_image_scene(
 
 def build_background_story_image_prompt(
     *,
-    pet: LocalPetChatContext,
-    story: BackgroundStoryResult,
     scene: str,
 ) -> str:
-    tags = ", ".join(story.tags)
     prompt = f"""
-Создай одну цельную законченную иллюстрацию к истории питомца для отправки в Телеграм.
-Покажи центральный момент ясно в одном кадре.
+СЦЕНА:
+{_truncate_text(scene, BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS)}
 
-История: «{_truncate_text(story.title, 90)}».
-Сцена для иллюстрации: {_truncate_text(scene, BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS)}
-Тип события: {_truncate_text(story.event_type, 60)}; тон: {_valence_label(story.valence)}.
-Теги: {_truncate_text(tags or "нет", 120)}.
+Используй персонажа с приложенной референсной картинки без редизайна: точно сохрани его
+силуэт, лицо, пропорции, цвета, материалы, одежду, аксессуары и отличительные детали.
+Помести этого же персонажа в описанную сцену. Один цельный кадр, без текста, подписей,
+логотипов, водяных знаков, коллажа и интерфейса.
 
-Дизайн персонажа: {_background_story_image_identity(pet)}
-
-Tone style:
-{tone_visual_style()}
-
-Базовая визуальная рамка: {BACKGROUND_STORY_IMAGE_STYLE}
-
-Правила: один законченный кадр, не раскадровка, не коллаж, не интерфейс.
-Питомец хорошо виден как главный герой. Не превращай питомца в человека, если он
-не гуманоидный. Аниме-пропорции только для гуманоидов фона. Сцена, свет и поза
-не ломают дизайн персонажа. Без текста, подписей, речевых пузырей, водяных
-знаков, логотипов, крови, боевой атрибутики, хоррора, взрослых тем и чужих персонажей.
+VISUAL_CHARACTER_STYLE:
+{VISUAL_CHARACTER_STYLE}
 """.strip()
     return _truncate_text(prompt, BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS)
 
@@ -642,11 +549,14 @@ def generate_background_story_image_bytes(
     pet: LocalPetChatContext,
     story: BackgroundStoryResult,
 ) -> bytes:
+    input_references = _asset_input_references_for_background_story(pet)
+    if not input_references:
+        raise RuntimeError("BACKGROUND_STORY_IMAGE_REFERENCE_MISSING")
     scene = extract_background_story_image_scene(story, prompt_debug=story.prompt_debug)
     return generate_image_bytes(
-        build_background_story_image_prompt(pet=pet, story=story, scene=scene),
+        build_background_story_image_prompt(scene=scene),
         label="background_story/image",
-        input_references=_asset_input_references_for_background_story(pet),
+        input_references=input_references,
     )
 
 
@@ -1187,32 +1097,34 @@ def _normalize_story_stat_impacts(
     legacy: Any = None,
     valence: str,
 ) -> tuple[dict[str, Any], ...]:
-    if valence not in {"negative", "mixed"}:
-        return ()
-
     result: list[dict[str, Any]] = []
     seen_stats: set[str] = set()
-    total_damage = 0
+    total_change = 0
     for raw in _iter_raw_story_stat_impacts(value, legacy=legacy):
         stat = _text_value(raw.get("stat"), limit=40)
         if stat not in STORY_STAT_KEYS or stat in seen_stats:
             continue
-        damage = _story_stat_damage(raw.get("amount"))
-        if damage <= 0:
+        try:
+            raw_amount = float(raw.get("amount"))
+        except (TypeError, ValueError):
             continue
-        remaining_total = STORY_STAT_MAX_TOTAL_DAMAGE - total_damage
+        magnitude = _story_stat_damage(raw_amount)
+        if magnitude <= 0:
+            continue
+        remaining_total = STORY_STAT_MAX_TOTAL_DAMAGE - total_change
         if remaining_total <= 0:
             break
-        applied_damage = min(damage, remaining_total)
+        applied_magnitude = min(magnitude, remaining_total)
+        applied_amount = applied_magnitude if raw_amount > 0 else -applied_magnitude
         result.append(
             {
                 "stat": stat,
-                "amount": -applied_damage,
+                "amount": applied_amount,
                 "reason": _text_value(raw.get("reason"), limit=280),
             }
         )
         seen_stats.add(stat)
-        total_damage += applied_damage
+        total_change += applied_magnitude
         if len(result) >= STORY_STAT_MAX_ITEMS:
             break
     return tuple(result)
@@ -1231,16 +1143,29 @@ def _validate_story_stat_impacts_against_text(
     if not stat_impacts:
         return stat_impacts, validation
     combined_text = f"{summary}\n{story_text}"
-    if STORY_STAT_NO_LOSS_RE.search(combined_text) and not STORY_STAT_NEGATIVE_EVIDENCE_RE.search(
-        combined_text
-    ):
+    negative_allowed = not (
+        STORY_STAT_NO_LOSS_RE.search(combined_text)
+        and not STORY_STAT_NEGATIVE_EVIDENCE_RE.search(combined_text)
+    )
+    positive_allowed = bool(STORY_STAT_POSITIVE_EVIDENCE_RE.search(combined_text))
+    filtered = tuple(
+        impact
+        for impact in stat_impacts
+        if (impact.get("amount", 0) < 0 and negative_allowed)
+        or (impact.get("amount", 0) > 0 and positive_allowed)
+    )
+    if len(filtered) != len(stat_impacts):
+        reasons: list[str] = []
+        if not negative_allowed and any(item.get("amount", 0) < 0 for item in stat_impacts):
+            reasons.append("explicit_no_loss_text_without_negative_evidence")
+        if not positive_allowed and any(item.get("amount", 0) > 0 for item in stat_impacts):
+            reasons.append("positive_change_without_recovery_evidence")
         validation = {
             "dropped": True,
-            "reason": "explicit_no_loss_text_without_negative_evidence",
+            "reason": ",".join(reasons),
         }
         logger.debug("background_story_stat_impacts_dropped: %s", validation["reason"])
-        return (), validation
-    return stat_impacts, validation
+    return filtered, validation
 
 
 def _normalize_story_payload(payload: dict[str, Any]) -> BackgroundStoryResult:
@@ -1590,7 +1515,6 @@ def generate_background_story(
     content = completion.choices[0].message.content or "{}"
     raw_story_payload = _json_record_from_text(content)
     result = _normalize_story_payload(raw_story_payload)
-    recent_story_event = _normalize_recent_story_event(None, story=result)
     prompt_debug.append(
         {
             "event": "background_story_stat_impacts",
@@ -1601,6 +1525,25 @@ def generate_background_story(
             "valence": result.valence,
         }
     )
+    try:
+        lite_overlay_patch, recent_story_event = _extract_background_story_aftermath_patch(
+            pet=pet,
+            story=result,
+            client=openai_client,
+            model=model,
+            timeout=timeout,
+            prompt_debug=prompt_debug,
+        )
+    except Exception as exc:
+        logger.exception("background_story_aftermath_extraction failed")
+        lite_overlay_patch = None
+        recent_story_event = _normalize_recent_story_event(None, story=result)
+        prompt_debug.append(
+            {
+                "event": "background_story_aftermath_fallback",
+                "error": exc.__class__.__name__,
+            }
+        )
     return BackgroundStoryResult(
         title=result.title,
         summary=result.summary,
@@ -1610,7 +1553,7 @@ def generate_background_story(
         tags=result.tags,
         rag_text=result.rag_text,
         story_library_patch=result.story_library_patch,
-        lite_overlay_patch=None,
+        lite_overlay_patch=lite_overlay_patch,
         recent_story_event=recent_story_event,
         prompt_debug=prompt_debug,
         stat_impacts=result.stat_impacts,

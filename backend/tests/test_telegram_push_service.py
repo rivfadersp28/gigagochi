@@ -335,11 +335,11 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     )
 
     assert result["storyLibraryPatch"] is None
-    assert result["liteOverlayPatch"] is None
+    assert result["liteOverlayPatch"] is not None
     assert result["storyImage"] == {"bytes": b"story-png", "mimeType": "image/png"}
     assert result["storyImageError"] is None
     assert result["statsPatch"]["stats"] == {"energy": 45, "happiness": 50}
-    assert result["story"]["statsDelta"] == {"hunger": 0, "happiness": 20, "energy": 15}
+    assert result["story"]["statsDelta"] == {"hunger": 0, "happiness": -20, "energy": -15}
     assert set(result["statsPatch"]["lastStatTickAt"]) == {"energy", "happiness"}
     assert result["story"]["statImpacts"] == [
         {
@@ -362,15 +362,16 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     assert events[0]["statImpacts"][1]["stat"] == "happiness"
     assert store["records"][str(TEST_TELEGRAM_ID)]["lastStory"]["statsDelta"] == {
         "hunger": 0,
-        "happiness": 20,
-        "energy": 15,
+        "happiness": -20,
+        "energy": -15,
     }
     assert result["recentStoryEvent"]["eventType"] == "attack"
 
     response = telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
 
     assert response.storyLibraryPatch is None
-    assert response.liteOverlayPatch is None
+    assert response.liteOverlayPatch is not None
+    assert response.liteOverlayPatch["facts"][0]["source"] == "background_story_aftermath"
     assert response.recentStoryEventsPatch is not None
     assert response.recentStoryEventsPatch["events"][0]["eventType"] == "attack"
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
@@ -378,6 +379,38 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
         store["records"][str(TEST_TELEGRAM_ID)]["recentStoryEvents"][0]["summary"]
         == "На Громма напала меловая тень у каменного порога."
     )
+
+
+def test_background_story_can_restore_stats() -> None:
+    now = datetime(2026, 7, 7, 12, 0, tzinfo=UTC)
+    record = {
+        "updatedAt": now.isoformat().replace("+00:00", "Z"),
+        "lastStatsTickAt": now.isoformat().replace("+00:00", "Z"),
+        "lastStatTickAt": {
+            key: now.isoformat().replace("+00:00", "Z")
+            for key in ("hunger", "happiness", "energy")
+        },
+        "pet": {
+            "description": "земляной великан",
+            "stage": "adult",
+            "mood": "idle",
+            "stats": {"hunger": 80, "happiness": 70, "energy": 50},
+        },
+    }
+
+    pet, stats_patch, _ticks, stats_delta = telegram_push_service._apply_story_stat_impact(
+        record,
+        [
+            {"stat": "energy", "amount": 20, "reason": "Громм отдохнул."},
+            {"stat": "happiness", "amount": 10, "reason": "Громм обрадовался."},
+        ],
+        now=now,
+    )
+
+    assert pet["stats"]["energy"] == 70
+    assert pet["stats"]["happiness"] == 80
+    assert stats_patch["stats"] == {"energy": 70, "happiness": 80}
+    assert stats_delta == {"hunger": 0, "happiness": 10, "energy": 20}
 
 
 def test_recent_story_events_fallback_uses_last_story_for_anti_repeat() -> None:
