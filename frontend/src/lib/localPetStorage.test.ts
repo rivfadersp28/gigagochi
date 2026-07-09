@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyOfflineProgress, applyStatsPatch } from "./localPetStorage";
+import { applyOfflineProgress, applyStatsPatch } from "./localPetStats";
 import type { LocalPetState } from "./types";
 
 function petState(): LocalPetState {
@@ -28,7 +28,7 @@ function petState(): LocalPetState {
   };
 }
 
-describe("localPetStorage", () => {
+describe("localPetStats", () => {
   it("decays each stat from its own tick and advances the life stage", () => {
     const progressed = applyOfflineProgress(
       petState(),

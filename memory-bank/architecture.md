@@ -23,6 +23,10 @@
 - Frontend checks include ESLint, TypeScript and Vitest. Initial component and
   domain tests cover the destructive confirmation contract plus local pet stat
   decay and partial server stat patches.
+- Pet stat rules are isolated in `frontend/src/lib/localPetStats.ts`: clamping,
+  independent ticks, offline decay, stage/mood derivation, server patches and
+  interaction updates. `localPetStorage.ts` re-exports the public functions for
+  compatibility but owns only persistence/migration and non-stat overlays.
 
 ## Pet Replies
 
