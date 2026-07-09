@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import httpx
 
 from app import bot
-from app.services import telegram_push_service
+from app.services import telegram_client, telegram_push_service
 from app.services.story_delivery_format import TELEGRAM_PHOTO_CAPTION_LIMIT, format_story_caption
 
 TEST_TELEGRAM_ID = 62943754
@@ -73,7 +73,7 @@ def test_story_command_sends_generated_image_as_photo(monkeypatch) -> None:
 def test_send_photo_uses_detected_jpeg_mime(monkeypatch) -> None:
     captured: dict[str, object] = {}
     monkeypatch.setattr(
-        bot,
+        telegram_client,
         "get_settings",
         lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
     )
@@ -84,7 +84,7 @@ def test_send_photo_uses_detected_jpeg_mime(monkeypatch) -> None:
             captured.update(kwargs)
             return SimpleNamespace(is_success=True)
 
-    bot.send_photo(
+    telegram_client.send_photo(
         FakeClient(),
         123,
         b"\xff\xd8\xff\xe0jpeg-bytes",
@@ -97,6 +97,24 @@ def test_send_photo_uses_detected_jpeg_mime(monkeypatch) -> None:
         b"\xff\xd8\xff\xe0jpeg-bytes",
         "image/jpeg",
     )
+
+
+def test_story_command_can_be_submitted_without_blocking_polling(monkeypatch) -> None:
+    submitted: list[tuple[int, dict]] = []
+    monkeypatch.setattr(
+        bot,
+        "get_settings",
+        lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
+    )
+
+    bot.handle_update(
+        httpx.Client(),
+        _story_update(),
+        submit_story=lambda chat_id, keyboard: submitted.append((chat_id, keyboard)),
+    )
+
+    assert submitted[0][0] == TEST_TELEGRAM_ID
+    assert submitted[0][1]["inline_keyboard"][0][0]["web_app"]["url"] == ("https://example.com/app")
 
 
 def test_story_command_falls_back_to_message_without_image(monkeypatch) -> None:

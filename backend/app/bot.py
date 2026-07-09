@@ -1,118 +1,27 @@
 from __future__ import annotations
 
-import json
 import logging
 import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import httpx
 
 from app.config import get_settings
 from app.services.story_delivery_format import (
-    TELEGRAM_PHOTO_CAPTION_LIMIT,
     format_story_caption,
     format_story_message,
 )
+from app.services.telegram_client import (
+    TelegramAPIError,
+    mini_app_keyboard,
+    send_message,
+    send_photo,
+    telegram_api_url,
+)
 
 logger = logging.getLogger(__name__)
-
-
-class TelegramAPIError(RuntimeError):
-    def __init__(self, method: str, response: httpx.Response) -> None:
-        self.method = method
-        self.status_code = response.status_code
-        self.description = _telegram_error_description(response)
-        super().__init__(f"Telegram {method} failed: HTTP {self.status_code}: {self.description}")
-
-
-def _telegram_error_description(response: httpx.Response) -> str:
-    try:
-        payload = response.json()
-    except ValueError:
-        return response.text[:500] or response.reason_phrase
-    if isinstance(payload, dict):
-        description = payload.get("description")
-        if isinstance(description, str) and description.strip():
-            return description.strip()
-    return response.reason_phrase
-
-
-def telegram_api_url(method: str, bot_token: str) -> str:
-    return f"https://api.telegram.org/bot{bot_token}/{method}"
-
-
-def mini_app_keyboard(webapp_url: str) -> dict[str, Any]:
-    return {
-        "inline_keyboard": [
-            [
-                {
-                    "text": "Открыть питомца",
-                    "web_app": {"url": webapp_url},
-                }
-            ]
-        ]
-    }
-
-
-def send_message(
-    client: httpx.Client,
-    chat_id: int,
-    text: str,
-    reply_markup: dict[str, Any],
-) -> None:
-    settings = get_settings()
-    if not settings.bot_token:
-        raise RuntimeError("BOT_TOKEN is not configured")
-
-    method = "sendMessage"
-    response = client.post(
-        telegram_api_url(method, settings.bot_token),
-        json={
-            "chat_id": chat_id,
-            "text": text,
-            "reply_markup": reply_markup,
-        },
-        timeout=20,
-    )
-    if not response.is_success:
-        raise TelegramAPIError(method, response)
-
-
-def send_photo(
-    client: httpx.Client,
-    chat_id: int,
-    photo: bytes,
-    caption: str,
-    reply_markup: dict[str, Any],
-) -> None:
-    settings = get_settings()
-    if not settings.bot_token:
-        raise RuntimeError("BOT_TOKEN is not configured")
-
-    filename, mime_type = _photo_file_info(photo)
-    method = "sendPhoto"
-    response = client.post(
-        telegram_api_url(method, settings.bot_token),
-        data={
-            "chat_id": str(chat_id),
-            "caption": caption[:TELEGRAM_PHOTO_CAPTION_LIMIT].rstrip(),
-            "reply_markup": json.dumps(reply_markup, ensure_ascii=False),
-        },
-        files={"photo": (filename, photo, mime_type)},
-        timeout=30,
-    )
-    if not response.is_success:
-        raise TelegramAPIError(method, response)
-
-
-def _photo_file_info(photo: bytes) -> tuple[str, str]:
-    if photo.startswith(b"\xff\xd8\xff"):
-        return "story.jpg", "image/jpeg"
-    if photo.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "story.png", "image/png"
-    if photo.startswith(b"RIFF") and photo[8:12] == b"WEBP":
-        return "story.webp", "image/webp"
-    return "story.bin", "application/octet-stream"
 
 
 def _message_command(text: str) -> str:
@@ -120,7 +29,64 @@ def _message_command(text: str) -> str:
     return first.split("@", 1)[0].lower()
 
 
-def handle_update(client: httpx.Client, update: dict[str, Any]) -> None:
+def _send_story_response(
+    client: httpx.Client,
+    chat_id: int,
+    keyboard: dict[str, Any],
+) -> None:
+    from app.services.openai_service import MissingOpenAIAPIKey
+    from app.services.telegram_push_service import (
+        TelegramPushError,
+        generate_story_for_telegram_user,
+    )
+
+    try:
+        result = generate_story_for_telegram_user(telegram_id=chat_id, include_debug=False)
+    except TelegramPushError as exc:
+        send_message(client, chat_id, exc.message, keyboard)
+        return
+    except MissingOpenAIAPIKey:
+        send_message(client, chat_id, "На сервере не настроен AI API key.", keyboard)
+        return
+    except Exception:
+        logger.exception("Telegram /story generation failed")
+        send_message(
+            client,
+            chat_id,
+            "Не удалось сгенерировать историю. Попробуй позже.",
+            keyboard,
+        )
+        return
+
+    story = result.get("story") if isinstance(result.get("story"), dict) else {}
+    story_image = result.get("storyImage") if isinstance(result.get("storyImage"), dict) else {}
+    image_bytes = story_image.get("bytes") if isinstance(story_image, dict) else None
+    if isinstance(image_bytes, bytes) and image_bytes:
+        try:
+            send_photo(
+                client,
+                chat_id,
+                image_bytes,
+                format_story_caption(story),
+                keyboard,
+            )
+            return
+        except (TelegramAPIError, httpx.HTTPError):
+            logger.exception("Telegram /story sendPhoto failed; falling back to sendMessage")
+    send_message(client, chat_id, format_story_message(story), keyboard)
+
+
+def _story_worker(chat_id: int, keyboard: dict[str, Any]) -> None:
+    with httpx.Client() as client:
+        _send_story_response(client, chat_id, keyboard)
+
+
+def handle_update(
+    client: httpx.Client,
+    update: dict[str, Any],
+    *,
+    submit_story: Callable[[int, dict[str, Any]], None] | None = None,
+) -> None:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
     sender = message.get("from") or {}
@@ -143,51 +109,10 @@ def handle_update(client: httpx.Client, update: dict[str, Any]) -> None:
         return
 
     if command == "/story":
-        from app.services.openai_service import MissingOpenAIAPIKey
-        from app.services.telegram_push_service import (
-            TelegramPushError,
-            generate_story_for_telegram_user,
-        )
-
-        try:
-            result = generate_story_for_telegram_user(telegram_id=chat_id, include_debug=False)
-        except TelegramPushError as exc:
-            send_message(client, chat_id, exc.message, keyboard)
-            return
-        except MissingOpenAIAPIKey:
-            send_message(
-                client,
-                chat_id,
-                "На сервере не настроен AI API key.",
-                keyboard,
-            )
-            return
-        except Exception:
-            logger.exception("Telegram /story generation failed")
-            send_message(
-                client,
-                chat_id,
-                "Не удалось сгенерировать историю. Попробуй позже.",
-                keyboard,
-            )
-            return
-
-        story = result.get("story") if isinstance(result.get("story"), dict) else {}
-        story_image = result.get("storyImage") if isinstance(result.get("storyImage"), dict) else {}
-        image_bytes = story_image.get("bytes") if isinstance(story_image, dict) else None
-        if isinstance(image_bytes, bytes) and image_bytes:
-            try:
-                send_photo(
-                    client,
-                    chat_id,
-                    image_bytes,
-                    format_story_caption(story),
-                    keyboard,
-                )
-                return
-            except (TelegramAPIError, httpx.HTTPError):
-                logger.exception("Telegram /story sendPhoto failed; falling back to sendMessage")
-        send_message(client, chat_id, format_story_message(story), keyboard)
+        if submit_story is not None:
+            submit_story(chat_id, keyboard)
+        else:
+            _send_story_response(client, chat_id, keyboard)
         return
 
     if command in {"/start", "/app"}:
@@ -213,7 +138,17 @@ def run_bot() -> None:
         raise RuntimeError("WEBAPP_URL is not configured")
 
     offset: int | None = None
-    with httpx.Client() as client:
+    with (
+        httpx.Client() as client,
+        ThreadPoolExecutor(
+            max_workers=settings.bot_story_workers,
+            thread_name_prefix="telegram-story",
+        ) as story_executor,
+    ):
+
+        def submit_story(chat_id: int, keyboard: dict[str, Any]) -> None:
+            story_executor.submit(_story_worker, chat_id, keyboard)
+
         while True:
             try:
                 response = client.get(
@@ -227,7 +162,7 @@ def run_bot() -> None:
                     update_id = update.get("update_id")
                     if isinstance(update_id, int):
                         offset = update_id + 1
-                    handle_update(client, update)
+                    handle_update(client, update, submit_story=submit_story)
             except Exception:
                 logger.exception("Telegram bot polling failed")
                 time.sleep(5)

@@ -67,6 +67,16 @@
   debug stat footer built from the actual applied `statsDelta` (`здоровье`,
   `голод`, `настроение`) and shows only changed stats or `без изменений`. Server
   stat changes sync back through `/api/push/snapshot` partial `statsPatch`.
+- Telegram Bot API transport is isolated in
+  `backend/app/services/telegram_client.py`; neither push orchestration nor the
+  polling loop owns HTTP request formatting. Runtime `/story` work is submitted
+  by `app.bot` to a bounded worker pool so long AI/image generation does not
+  block `getUpdates` polling.
+- The MVP push registry remains JSON-backed, but all reads and mutations go
+  through `backend/app/services/telegram_push_store.py`. It uses an advisory
+  file lock shared by backend and bot processes, unique temporary files plus
+  `os.replace`, and transactional record updaters. Invalid JSON fails loudly
+  instead of being treated as an empty registry.
   `/story` also preserves the `contextRouting.worldContext.query` when selecting
   global stories for the background-story dossier.
 - Chat has a lightweight deterministic `recentEvents` source for

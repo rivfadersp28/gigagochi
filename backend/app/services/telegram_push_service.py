@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Lock
 from typing import Any
 
 import httpx
 
-from app.bot import TelegramAPIError, mini_app_keyboard, send_message, send_photo
 from app.config import get_settings
 from app.schemas import (
     LocalChatHistoryItem,
@@ -19,6 +17,7 @@ from app.schemas import (
     LocalPetMemoryContext,
     LocalPetPushSnapshotRequest,
     LocalPetPushSnapshotResponse,
+    LocalPetStatsPatch,
     LocalPushRequest,
 )
 from app.services.background_story_service import (
@@ -32,6 +31,13 @@ from app.services.story_delivery_format import (
     format_story_message,
 )
 from app.services.telegram_auth_service import TelegramUserContext
+from app.services.telegram_client import (
+    TelegramAPIError,
+    mini_app_keyboard,
+    send_message,
+    send_photo,
+)
+from app.services.telegram_push_store import JsonTelegramPushStore
 
 STORE_VERSION = 1
 STAT_KEYS = ("hunger", "happiness", "energy")
@@ -45,7 +51,6 @@ STORY_STAT_MAX_SINGLE_DAMAGE = 25
 STORY_STAT_MAX_TOTAL_DAMAGE = 35
 
 logger = logging.getLogger(__name__)
-_store_lock = Lock()
 
 
 class TelegramPushError(RuntimeError):
@@ -88,46 +93,30 @@ def _store_path() -> Path:
     return path
 
 
-def _empty_store() -> dict[str, Any]:
-    return {"version": STORE_VERSION, "records": {}}
-
-
-def _read_store_unlocked() -> dict[str, Any]:
-    path = _store_path()
-    if not path.exists():
-        return _empty_store()
-    try:
-        parsed = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return _empty_store()
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("records"), dict):
-        return _empty_store()
-    parsed["version"] = STORE_VERSION
-    return parsed
-
-
-def _write_store_unlocked(store: dict[str, Any]) -> None:
-    path = _store_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
-    tmp_path.write_text(
-        json.dumps(store, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    tmp_path.replace(path)
+def _push_store() -> JsonTelegramPushStore:
+    return JsonTelegramPushStore(_store_path(), version=STORE_VERSION)
 
 
 def _read_store() -> dict[str, Any]:
-    with _store_lock:
-        return _read_store_unlocked()
+    return _push_store().read()
 
 
 def _save_record(record: dict[str, Any]) -> None:
-    with _store_lock:
-        store = _read_store_unlocked()
-        records = store.setdefault("records", {})
-        records[str(record["telegramId"])] = record
-        _write_store_unlocked(store)
+    _push_store().replace_record(record)
+
+
+def _update_record(
+    telegram_id: int,
+    updater: Callable[[dict[str, Any] | None], dict[str, Any]],
+) -> dict[str, Any]:
+    return _push_store().update_record(telegram_id, updater)
+
+
+def _telegram_id_from_record(record: dict[str, Any]) -> int:
+    telegram_id = record.get("telegramId")
+    if not isinstance(telegram_id, int):
+        raise TelegramPushError("PUSH_TELEGRAM_ID_MISSING", "Telegram ID в push record не найден.")
+    return telegram_id
 
 
 def _record_lite_overlay_patch(record: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -519,7 +508,7 @@ def register_push_snapshot(
     now = _now()
     now_iso = _iso(now)
     fallback_stat_tick = payload.lastStatsTickAt or payload.updatedAt or now_iso
-    record = {
+    incoming_record = {
         "telegramId": user.telegram_id,
         "chatId": user.telegram_id,
         "username": user.username,
@@ -539,33 +528,39 @@ def register_push_snapshot(
         "timezone": payload.timezone,
         "registeredAt": now_iso,
     }
-    existing = _read_store().get("records", {}).get(str(user.telegram_id))
-    same_pet = isinstance(existing, dict) and existing.get("petId") == payload.petId
-    stats_patch = _merge_snapshot_stats(record, existing, now=now) if same_pet else None
-    if isinstance(existing, dict):
-        for key in (
-            "lastPushAt",
-            "lastPushAttemptAt",
-            "lastDebugPushAt",
-            "lastPushReply",
-            "lastPushError",
-            "lastPushErrorCode",
-            "lastPushErrorAt",
-            "chatStartedAt",
-            "lastChatSeenAt",
-            "chatReachable",
-            "lastStoryAt",
-            "lastStoryAttemptAt",
-            "lastStory",
-            "lastStoryError",
-            "lastStoryErrorCode",
-            "lastStoryErrorAt",
-        ):
-            record[key] = existing.get(key)
-        if same_pet:
-            record["recentStoryEvents"] = _record_recent_story_events(existing)
-            _merge_record_lite_overlay_patch(record, _record_lite_overlay_patch(existing))
-    _save_record(record)
+    stats_patch: LocalPetStatsPatch | None = None
+
+    def merge_snapshot(existing: dict[str, Any] | None) -> dict[str, Any]:
+        nonlocal stats_patch
+        record = deepcopy(incoming_record)
+        same_pet = isinstance(existing, dict) and existing.get("petId") == payload.petId
+        stats_patch = _merge_snapshot_stats(record, existing, now=now) if same_pet else None
+        if isinstance(existing, dict):
+            for key in (
+                "lastPushAt",
+                "lastPushAttemptAt",
+                "lastDebugPushAt",
+                "lastPushReply",
+                "lastPushError",
+                "lastPushErrorCode",
+                "lastPushErrorAt",
+                "chatStartedAt",
+                "lastChatSeenAt",
+                "chatReachable",
+                "lastStoryAt",
+                "lastStoryAttemptAt",
+                "lastStory",
+                "lastStoryError",
+                "lastStoryErrorCode",
+                "lastStoryErrorAt",
+            ):
+                record[key] = existing.get(key)
+            if same_pet:
+                record["recentStoryEvents"] = _record_recent_story_events(existing)
+                _merge_record_lite_overlay_patch(record, _record_lite_overlay_patch(existing))
+        return record
+
+    record = _update_record(user.telegram_id, merge_snapshot)
     return LocalPetPushSnapshotResponse(
         registered=True,
         telegramId=user.telegram_id,
@@ -584,27 +579,28 @@ def mark_chat_started(
     language_code: str | None = None,
 ) -> dict[str, Any]:
     now_iso = _iso()
-    existing = _read_store().get("records", {}).get(str(chat_id))
-    record = existing.copy() if isinstance(existing, dict) else {}
-    record.update(
-        {
-            "telegramId": record.get("telegramId") or chat_id,
-            "chatId": chat_id,
-            "chatReachable": True,
-            "chatStartedAt": record.get("chatStartedAt") or now_iso,
-            "lastChatSeenAt": now_iso,
-        }
-    )
-    if username:
-        record["username"] = username
-    if first_name:
-        record["firstName"] = first_name
-    if language_code:
-        record["languageCode"] = language_code
-    if not record.get("registeredAt"):
-        record["registeredAt"] = now_iso
-    _save_record(record)
-    return record
+
+    def mark_started(existing: dict[str, Any] | None) -> dict[str, Any]:
+        record = existing.copy() if isinstance(existing, dict) else {}
+        record.update(
+            {
+                "chatId": chat_id,
+                "chatReachable": True,
+                "chatStartedAt": record.get("chatStartedAt") or now_iso,
+                "lastChatSeenAt": now_iso,
+            }
+        )
+        if username:
+            record["username"] = username
+        if first_name:
+            record["firstName"] = first_name
+        if language_code:
+            record["languageCode"] = language_code
+        if not record.get("registeredAt"):
+            record["registeredAt"] = now_iso
+        return record
+
+    return _update_record(chat_id, mark_started)
 
 
 def _has_snapshot(record: dict[str, Any]) -> bool:
@@ -762,11 +758,9 @@ def _send_push_record(
     now = _now()
     now_iso = _iso(now)
     stat_ticks = _all_stat_ticks(now)
-    next_record = {
-        **record,
-        "pet": payload.pet.model_dump(mode="json"),
-        "lastStatsTickAt": _legacy_stats_tick(stat_ticks),
-        "lastStatTickAt": _stat_tick_iso_map(stat_ticks),
+    expected_pet_id = record.get("petId")
+    expected_snapshot_updated_at = record.get("updatedAt")
+    delivery_patch = {
         "lastPushReply": response.reply,
         "lastPushError": None,
         "lastPushErrorCode": None,
@@ -775,10 +769,27 @@ def _send_push_record(
         "chatReachable": True,
     }
     if manual:
-        next_record["lastDebugPushAt"] = now_iso
+        delivery_patch["lastDebugPushAt"] = now_iso
     else:
-        next_record["lastPushAt"] = now_iso
-    _save_record(next_record)
+        delivery_patch["lastPushAt"] = now_iso
+
+    def save_delivery(current: dict[str, Any] | None) -> dict[str, Any]:
+        next_record = current.copy() if isinstance(current, dict) else record.copy()
+        next_record.update(delivery_patch)
+        if (
+            next_record.get("petId") == expected_pet_id
+            and next_record.get("updatedAt") == expected_snapshot_updated_at
+        ):
+            next_record.update(
+                {
+                    "pet": payload.pet.model_dump(mode="json"),
+                    "lastStatsTickAt": _legacy_stats_tick(stat_ticks),
+                    "lastStatTickAt": _stat_tick_iso_map(stat_ticks),
+                }
+            )
+        return next_record
+
+    _update_record(_telegram_id_from_record(record), save_delivery)
     return {
         "sent": True,
         "manual": manual,
@@ -814,17 +825,22 @@ def _save_push_failure(record: dict[str, Any], exc: Exception) -> None:
     else:
         error_code = "PUSH_SEND_FAILED"
         message = str(exc)
-    failed = {
-        **record,
+    failure_patch = {
         "lastPushError": message,
         "lastPushErrorCode": error_code,
         "lastPushErrorAt": now_iso,
         "lastPushAttemptAt": now_iso,
     }
     if error_code == "TELEGRAM_CHAT_NOT_FOUND":
-        failed["chatReachable"] = False
-        failed["chatUnreachableAt"] = now_iso
-    _save_record(failed)
+        failure_patch["chatReachable"] = False
+        failure_patch["chatUnreachableAt"] = now_iso
+
+    def save_failure(current: dict[str, Any] | None) -> dict[str, Any]:
+        failed = current.copy() if isinstance(current, dict) else record.copy()
+        failed.update(failure_patch)
+        return failed
+
+    _update_record(_telegram_id_from_record(record), save_failure)
 
 
 def _save_story_failure(record: dict[str, Any], exc: Exception) -> None:
@@ -835,17 +851,22 @@ def _save_story_failure(record: dict[str, Any], exc: Exception) -> None:
     else:
         error_code = "STORY_GENERATION_FAILED"
         message = str(exc)
-    failed = {
-        **record,
+    failure_patch = {
         "lastStoryError": message,
         "lastStoryErrorCode": error_code,
         "lastStoryErrorAt": now_iso,
         "lastStoryAttemptAt": now_iso,
     }
     if error_code == "TELEGRAM_CHAT_NOT_FOUND":
-        failed["chatReachable"] = False
-        failed["chatUnreachableAt"] = now_iso
-    _save_record(failed)
+        failure_patch["chatReachable"] = False
+        failure_patch["chatUnreachableAt"] = now_iso
+
+    def save_failure(current: dict[str, Any] | None) -> dict[str, Any]:
+        failed = current.copy() if isinstance(current, dict) else record.copy()
+        failed.update(failure_patch)
+        return failed
+
+    _update_record(_telegram_id_from_record(record), save_failure)
 
 
 def send_manual_push(
@@ -951,11 +972,6 @@ def generate_story_for_telegram_user(
                 "title": recent_story_event.get("title"),
             }
         )
-    next_pet, stats_patch, stat_ticks, stats_delta = _apply_story_stat_impact(
-        record,
-        stat_impacts,
-        now=now,
-    )
     last_story = {
         "title": result.title,
         "summary": result.summary,
@@ -968,29 +984,47 @@ def generate_story_for_telegram_user(
         "statImpact": stat_impact,
         "statValidation": getattr(result, "stat_validation", None),
     }
-    if stats_delta is not None:
-        last_story["statsDelta"] = stats_delta
+    stats_patch: LocalPetStatsPatch | None = None
+    stats_delta: dict[str, int] | None = None
 
-    next_record = {
-        **record,
-        "pet": next_pet,
-        "lastStoryAt": now_iso,
-        "lastStoryAttemptAt": now_iso,
-        "lastStoryError": None,
-        "lastStoryErrorCode": None,
-        "lastStoryErrorAt": None,
-        "lastStory": last_story,
-        "recentStoryEvents": _append_recent_story_event(
-            record,
-            recent_story_event,
-            last_story=last_story,
-        ),
-    }
-    _merge_record_lite_overlay_patch(next_record, result.lite_overlay_patch)
-    if stat_ticks is not None:
-        next_record["lastStatsTickAt"] = _legacy_stats_tick(stat_ticks)
-        next_record["lastStatTickAt"] = _stat_tick_iso_map(stat_ticks)
-    _save_record(next_record)
+    def save_story(current: dict[str, Any] | None) -> dict[str, Any]:
+        nonlocal stats_delta, stats_patch
+        source_record = current.copy() if isinstance(current, dict) else record.copy()
+        if source_record.get("petId") != record.get("petId"):
+            raise TelegramPushError(
+                "PUSH_PET_CHANGED",
+                "Питомец изменился во время генерации истории. Повтори запрос.",
+            )
+        next_pet, stats_patch, stat_ticks, stats_delta = _apply_story_stat_impact(
+            source_record,
+            stat_impacts,
+            now=now,
+        )
+        persisted_story = deepcopy(last_story)
+        if stats_delta is not None:
+            persisted_story["statsDelta"] = stats_delta
+        next_record = {
+            **source_record,
+            "pet": next_pet,
+            "lastStoryAt": now_iso,
+            "lastStoryAttemptAt": now_iso,
+            "lastStoryError": None,
+            "lastStoryErrorCode": None,
+            "lastStoryErrorAt": None,
+            "lastStory": persisted_story,
+            "recentStoryEvents": _append_recent_story_event(
+                source_record,
+                recent_story_event,
+                last_story=persisted_story,
+            ),
+        }
+        _merge_record_lite_overlay_patch(next_record, result.lite_overlay_patch)
+        if stat_ticks is not None:
+            next_record["lastStatsTickAt"] = _legacy_stats_tick(stat_ticks)
+            next_record["lastStatTickAt"] = _stat_tick_iso_map(stat_ticks)
+        return next_record
+
+    next_record = _update_record(_telegram_id_from_record(record), save_story)
     story_image: dict[str, Any] | None = None
     story_image_error: str | None = None
     try:
