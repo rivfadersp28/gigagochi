@@ -27,6 +27,9 @@
   independent ticks, offline decay, stage/mood derivation, server patches and
   interaction updates. `localPetStorage.ts` re-exports the public functions for
   compatibility but owns only persistence/migration and non-stat overlays.
+- Dashboard browser effects are isolated from `PetDashboard.tsx`:
+  `useConversationKeyboardOffset` owns Visual Viewport keyboard positioning and
+  `usePetPushSnapshotSync` owns throttled server snapshot reconciliation.
 
 ## Pet Replies
 

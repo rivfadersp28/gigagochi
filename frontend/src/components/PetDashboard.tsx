@@ -13,11 +13,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ApiError,
-  canUseTmaApi,
   generateLocalAmbientMessage,
   generatePetTravel,
   generateLocalProactiveMessage,
-  registerPetPushSnapshot,
 } from "@/lib/api";
 import {
   createLocalId,
@@ -49,6 +47,8 @@ import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import { DraggableFoodToken, type FoodAsset } from "./pet-dashboard/DraggableFoodToken";
 import { PetCharacterMessage, type PetReplyMessage } from "./pet-dashboard/PetCharacterMessage";
 import { TravelStoryOverlay } from "./pet-dashboard/TravelStoryOverlay";
+import { useConversationKeyboardOffset } from "./pet-dashboard/useConversationKeyboardOffset";
+import { usePetPushSnapshotSync } from "./pet-dashboard/usePetPushSnapshotSync";
 import {
   generatedSceneVideoUrl,
   generatedSpriteUrl,
@@ -93,13 +93,9 @@ const confirmationCopy: Record<
   },
 };
 
-const FIGMA_SCREEN_HEIGHT = 874;
-const CONVERSATION_INPUT_REST_BOTTOM = 57;
-const CONVERSATION_KEYBOARD_GAP = 17;
 const INITIAL_PET_REPLY_FALLBACK = "…";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 220;
 const DEFAULT_STATUS_NAME = "Челепиздрик";
-const PUSH_SNAPSHOT_SYNC_MIN_INTERVAL_MS = 10 * 60_000;
 const ACTION_ICON_CACHE_VERSION = "20260709-figma-117-1029-3";
 const VIDEO_FILTER_CACHE_VERSION = "20260709-video-filter-normal-2";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
@@ -178,7 +174,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [confirmationAction, setConfirmationAction] = useState<ConfirmationAction | null>(null);
   const [isChatMode, setIsChatMode] = useState(false);
   const [isFeedMode, setIsFeedMode] = useState(false);
-  const [conversationInputOffsetY, setConversationInputOffsetY] = useState(0);
   const [chatInput, setChatInput] = useState("");
   const [chatError, setChatError] = useState<string | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
@@ -192,11 +187,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const proactiveAttemptedRef = useRef(false);
   const ambientRequestIdRef = useRef(0);
   const ambientReplyHistoryRef = useRef<string[]>([]);
-  const pushSnapshotSyncRef = useRef<{
-    petId: string;
-    syncedAt: number;
-    updatedAt: string;
-  } | null>(null);
   const petReplyMessageRef = useRef<PetReplyMessage | null>(null);
   const activeDialogueHookRef = useRef<string | null>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
@@ -205,10 +195,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const isSendingChatRef = useRef(false);
   const isTravelGeneratingRef = useRef(false);
   const pet = localPet.pet;
-  const applyLiteOverlayPatch = localPet.applyLiteOverlayPatch;
-  const applyStoryLibraryPatch = localPet.applyStoryLibraryPatch;
-  const applyRecentStoryEventsPatch = localPet.applyRecentStoryEventsPatch;
-  const applyStatsPatch = localPet.applyStatsPatch;
+  const conversationInputOffsetY = useConversationKeyboardOffset(isChatMode, sceneRef);
+  usePetPushSnapshotSync({
+    status: localPet.status,
+    pet,
+    petId,
+    recentAmbientRepliesRef: ambientReplyHistoryRef,
+    applyStatsPatch: localPet.applyStatsPatch,
+    applyLiteOverlayPatch: localPet.applyLiteOverlayPatch,
+    applyStoryLibraryPatch: localPet.applyStoryLibraryPatch,
+    applyRecentStoryEventsPatch: localPet.applyRecentStoryEventsPatch,
+  });
   useEffect(() => {
     ambientReplyHistoryRef.current = [];
   }, [petId]);
@@ -280,7 +277,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
   const closeChatMode = useCallback(() => {
     setIsChatMode(false);
-    setConversationInputOffsetY(0);
     setChatError(null);
     setConversationReplyMessageId(null);
     requestAmbientReply();
@@ -311,61 +307,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [petReplyMessage]);
 
   useEffect(() => {
-    if (!isChatMode) {
-      return;
-    }
-
-    let animationFrameId: number | null = null;
-
-    function updateKeyboardOffset() {
-      animationFrameId = null;
-      const sceneHeight =
-        sceneRef.current?.clientHeight || window.innerHeight || FIGMA_SCREEN_HEIGHT;
-      const visualViewport = window.visualViewport;
-      const visibleBottom = visualViewport
-        ? visualViewport.offsetTop + visualViewport.height
-        : window.innerHeight;
-      const nextOffset = Math.min(
-        0,
-        Math.round(
-          visibleBottom -
-            sceneHeight +
-            CONVERSATION_INPUT_REST_BOTTOM -
-            CONVERSATION_KEYBOARD_GAP,
-        ),
-      );
-
-      setConversationInputOffsetY((currentOffset) =>
-        currentOffset === nextOffset ? currentOffset : nextOffset,
-      );
-    }
-
-    function scheduleKeyboardOffsetUpdate() {
-      if (animationFrameId === null) {
-        animationFrameId = window.requestAnimationFrame(updateKeyboardOffset);
-      }
-    }
-
-    scheduleKeyboardOffsetUpdate();
-    window.addEventListener("resize", scheduleKeyboardOffsetUpdate, { passive: true });
-    window.visualViewport?.addEventListener("resize", scheduleKeyboardOffsetUpdate, {
-      passive: true,
-    });
-    window.visualViewport?.addEventListener("scroll", scheduleKeyboardOffsetUpdate, {
-      passive: true,
-    });
-
-    return () => {
-      if (animationFrameId !== null) {
-        window.cancelAnimationFrame(animationFrameId);
-      }
-      window.removeEventListener("resize", scheduleKeyboardOffsetUpdate);
-      window.visualViewport?.removeEventListener("resize", scheduleKeyboardOffsetUpdate);
-      window.visualViewport?.removeEventListener("scroll", scheduleKeyboardOffsetUpdate);
-    };
-  }, [isChatMode]);
-
-  useEffect(() => {
     if (localPet.status === "loading") {
       return;
     }
@@ -373,48 +314,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       router.replace("/");
     }
   }, [localPet.status, pet, petId, router]);
-
-  useEffect(() => {
-    if (localPet.status !== "ready" || !pet || pet.petId !== petId || !canUseTmaApi()) {
-      return;
-    }
-
-    const now = Date.now();
-    const lastSync = pushSnapshotSyncRef.current;
-    if (
-      lastSync?.petId === pet.petId &&
-      lastSync.updatedAt === pet.updatedAt &&
-      now - lastSync.syncedAt < PUSH_SNAPSHOT_SYNC_MIN_INTERVAL_MS
-    ) {
-      return;
-    }
-
-    pushSnapshotSyncRef.current = {
-      petId: pet.petId,
-      syncedAt: now,
-      updatedAt: pet.updatedAt,
-    };
-
-    void registerPetPushSnapshot(pet, undefined, {
-      history: readLocalChatHistory().messages,
-      recentAmbientReplies: ambientReplyHistoryRef.current,
-    })
-      .then((response) => {
-        applyStatsPatch(response.statsPatch ?? undefined);
-        applyLiteOverlayPatch(response.liteOverlayPatch ?? undefined);
-        applyStoryLibraryPatch(response.storyLibraryPatch ?? undefined);
-        applyRecentStoryEventsPatch(response.recentStoryEventsPatch ?? undefined);
-      })
-      .catch(() => undefined);
-  }, [
-    applyLiteOverlayPatch,
-    applyRecentStoryEventsPatch,
-    applyStatsPatch,
-    applyStoryLibraryPatch,
-    localPet.status,
-    pet,
-    petId,
-  ]);
 
   function handleFeed() {
     if (!pet) {
@@ -521,7 +420,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     setConversationReplyMessageId(null);
 
     flushSync(() => {
-      setConversationInputOffsetY(0);
       setIsChatMode(true);
     });
     focusChatInput();
