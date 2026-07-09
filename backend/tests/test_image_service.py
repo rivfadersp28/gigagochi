@@ -640,6 +640,59 @@ def test_generate_openrouter_video_bytes_uses_fixed_aspect_ratio(
     )
 
 
+def test_generate_openrouter_video_bytes_retries_server_error(monkeypatch, tmp_path) -> None:
+    source_path = tmp_path / "teen-idle.png"
+    source_path.write_bytes(png_bytes(Image.new("RGB", (720, 1280), (20, 140, 70))))
+    post_statuses = [500, 200]
+    retry_delays: list[float] = []
+
+    class FakeResponse:
+        content = b""
+
+        def __init__(self, status_code: int, payload: dict[str, object]) -> None:
+            self.status_code = status_code
+            self.payload = payload
+
+        def json(self):
+            return self.payload
+
+    def fake_post(*_args, **_kwargs):
+        status_code = post_statuses.pop(0)
+        payload = {"id": "video-job-1"} if status_code == 200 else {"error": "temporary"}
+        return FakeResponse(status_code, payload)
+
+    def fake_get(url, **_kwargs):
+        if url.endswith("/content"):
+            response = FakeResponse(200, {})
+            response.content = b"video-bytes"
+            return response
+        return FakeResponse(200, {"status": "completed"})
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            openrouter_api_key="sk-or-test",
+            openrouter_base_url="https://openrouter.ai/api/v1",
+            openrouter_video_model="bytedance/seedance-2.0",
+            openrouter_video_timeout_seconds=10,
+            openrouter_video_poll_interval_seconds=1,
+            openrouter_site_url=None,
+            openrouter_app_title="Test Tamagotchi",
+            backend_public_url=None,
+            webapp_url=None,
+        ),
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+    monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
+
+    result = generate_openrouter_video_bytes(source_path, label="pet_creation/scene_video")
+
+    assert result == b"video-bytes"
+    assert post_statuses == []
+    assert retry_delays == [1.0]
+
+
 def test_align_sprite_to_reference_canvas_matches_reference_bbox(tmp_path) -> None:
     reference = Image.new("RGBA", (100, 100), (255, 255, 255, 0))
     reference_draw = ImageDraw.Draw(reference)
@@ -815,6 +868,43 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
     ]
     assert video_path is not None
     assert video_path.name == "teen-idle.mp4"
+
+
+def test_generate_individual_sprite_paths_continues_without_video(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "app.services.image_service.generated_dir_for",
+        lambda asset_id: tmp_path / str(asset_id),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.build_pet_single_sprite_prompt",
+        lambda *_args, **_kwargs: "single:teen:idle",
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.generate_image_bytes",
+        lambda _prompt: png_bytes(Image.new("RGBA", (100, 100), (20, 140, 70, 255))),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.generate_pet_scene_image_bytes",
+        lambda _source_path: png_bytes(Image.new("RGBA", (100, 100), (40, 90, 190, 255))),
+    )
+
+    def fail_video(_source_path):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(
+        "app.services.image_service.generate_pet_scene_video_bytes",
+        fail_video,
+    )
+
+    output_paths, video_path = generate_individual_sprite_paths(
+        uuid.uuid4(),
+        "электрический дракон",
+        {},
+    )
+
+    assert sorted(path.name for path, _prompt in output_paths.values()) == ["teen-idle.png"]
+    assert video_path is None
+    assert not list(tmp_path.rglob("*.mp4"))
 
 
 def test_create_character_bible_uses_character_timeout(monkeypatch) -> None:

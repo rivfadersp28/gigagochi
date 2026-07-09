@@ -71,6 +71,8 @@ class KandinskyTaskError(RuntimeError):
 
 KANDINSKY_HTTP_MAX_ATTEMPTS = 2
 KANDINSKY_HTTP_RETRY_SECONDS = (3.0,)
+OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS = 3
+OPENROUTER_VIDEO_HTTP_RETRY_SECONDS = (1.0, 3.0)
 PLANT_DESCRIPTION_PATTERN = re.compile(
     r"(?:лист|растен|цвет|гриб|мох|сад|теплиц|оранжер|росток|кактус|трава|дерев)",
     re.IGNORECASE,
@@ -1365,6 +1367,58 @@ def _openrouter_video_error(response: httpx.Response) -> RuntimeError:
     )
 
 
+def _submit_openrouter_video_job(
+    settings: Any,
+    payload: dict[str, Any],
+    *,
+    label: str,
+) -> httpx.Response:
+    for attempt_index in range(OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS):
+        try:
+            response = httpx.post(
+                get_openrouter_video_url(settings),
+                headers=_openrouter_video_headers(settings),
+                json=payload,
+                timeout=60,
+            )
+        except httpx.TransportError as exc:
+            is_last_attempt = attempt_index == OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS - 1
+            if is_last_attempt:
+                raise
+            retry_delay = OPENROUTER_VIDEO_HTTP_RETRY_SECONDS[attempt_index]
+            logger.warning(
+                "openrouter_video_submit retry label=%s attempt=%s maxAttempts=%s "
+                "retryDelaySeconds=%s errorType=%s error=%s",
+                label,
+                attempt_index + 1,
+                OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS,
+                retry_delay,
+                type(exc).__name__,
+                str(exc),
+            )
+            time.sleep(retry_delay)
+            continue
+
+        is_last_attempt = attempt_index == OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS - 1
+        is_retryable = response.status_code == 429 or response.status_code >= 500
+        if response.status_code < 400 or is_last_attempt or not is_retryable:
+            return response
+
+        retry_delay = OPENROUTER_VIDEO_HTTP_RETRY_SECONDS[attempt_index]
+        logger.warning(
+            "openrouter_video_submit retry label=%s attempt=%s maxAttempts=%s "
+            "retryDelaySeconds=%s error=%s",
+            label,
+            attempt_index + 1,
+            OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS,
+            retry_delay,
+            _openrouter_video_error(response),
+        )
+        time.sleep(retry_delay)
+
+    raise RuntimeError("unreachable OpenRouter video retry state")
+
+
 def _poll_openrouter_video_job(
     settings: Any,
     job_id: str,
@@ -1473,12 +1527,7 @@ def generate_openrouter_video_bytes(
     }
     logger.info("OpenRouter video generation prompt label=%s payload=%s", label, log_payload)
 
-    response = httpx.post(
-        get_openrouter_video_url(settings),
-        headers=_openrouter_video_headers(settings),
-        json=payload,
-        timeout=60,
-    )
+    response = _submit_openrouter_video_job(settings, payload, label=label)
     if response.status_code >= 400:
         raise _openrouter_video_error(response)
     submit_payload = response.json()
@@ -1632,8 +1681,19 @@ def generate_individual_sprite_paths(
         path.write_bytes(normalize_pet_scene_video_frame_bytes(scene_bytes))
         output_paths[(stage, state)] = (path, PET_SCENE_COMPOSITION_PROMPT)
         if stage == FAST_GENERATION_STAGE and state == "idle":
-            video_path = output_dir / f"{stage}-{state}.mp4"
-            video_path.write_bytes(generate_pet_scene_video_bytes(path))
+            try:
+                video_bytes = generate_pet_scene_video_bytes(path)
+            except Exception:
+                logger.exception(
+                    "Pet scene video generation failed; continuing without video "
+                    "assetId=%s stage=%s state=%s",
+                    asset_id,
+                    stage,
+                    state,
+                )
+            else:
+                video_path = output_dir / f"{stage}-{state}.mp4"
+                video_path.write_bytes(video_bytes)
 
     return output_paths, video_path
 
