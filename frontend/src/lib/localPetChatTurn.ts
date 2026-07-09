@@ -1,23 +1,15 @@
-import {
-  extractLocalUserMemory,
-  sendLocalChatMessage,
-} from "./api";
+import { sendLocalChatMessage } from "./api";
 import {
   appendLocalChatMessages,
   createLocalId,
-  latestChatMessages,
+  readLocalChatHistory,
 } from "./localPetStorage";
 import {
-  applyMemoryOperations,
-  markMemoryContextUsed,
-  readLocalPetMemory,
-  shouldRunDailyConsolidation,
-  writeLocalPetMemory,
-} from "./localPetMemoryStorage";
-import { buildMemoryContextForMessage } from "./localPetMemoryRecall";
+  buildMemoryContextForMessage,
+  isIdentityDialogueQuestion,
+} from "./localPetMemoryRecall";
 import {
   recordMemoryContextDebug,
-  recordMemoryOperationsDebug,
   recordReplyPromptDebug,
 } from "./debugPanelStorage";
 import { logBrowserPromptDebug } from "./promptDebug";
@@ -42,7 +34,6 @@ type RunLocalPetChatTurnOptions = {
   history?: LocalChatMessage[];
   logLabel: string;
   onHistoryChange?: (messages: LocalChatMessage[]) => void;
-  onMemoryConsolidationNeeded?: () => void;
 };
 
 export async function runLocalPetChatTurn({
@@ -54,7 +45,6 @@ export async function runLocalPetChatTurn({
   history,
   logLabel,
   onHistoryChange,
-  onMemoryConsolidationNeeded,
 }: RunLocalPetChatTurnOptions): Promise<LocalPetChatTurnResult> {
   const now = new Date().toISOString();
   const userMessage: LocalChatMessage = {
@@ -63,13 +53,13 @@ export async function runLocalPetChatTurn({
     text: message,
     createdAt: now,
   };
-  const historyBeforeMessage = history ?? latestChatMessages(12);
-  const historyForPrompt = dialogueHookMessage
-    ? [...historyBeforeMessage, dialogueHookMessage].slice(-12)
-    : historyBeforeMessage;
-  const memoryBeforeMessage = readLocalPetMemory(pet.petId);
+  const fullHistoryBeforeMessage = history ?? readLocalChatHistory().messages;
+  const historyBeforeMessage = fullHistoryBeforeMessage.slice(-12);
+  const visibleContext = dialogueHookMessage && !isIdentityDialogueQuestion(message)
+    ? { lastPetLine: dialogueHookMessage.text }
+    : undefined;
   const memoryContext = buildMemoryContextForMessage(
-    memoryBeforeMessage,
+    fullHistoryBeforeMessage,
     message,
     new Date(now),
   );
@@ -78,15 +68,17 @@ export async function runLocalPetChatTurn({
     console.log(`[memory-debug] ${logLabel} recall context`, memoryContext);
   }
   recordMemoryContextDebug(memoryContext);
-  const optimisticHistory = appendLocalChatMessages(
-    dialogueHookMessage ? [dialogueHookMessage, userMessage] : [userMessage],
-  );
-  onHistoryChange?.(optimisticHistory.messages);
+  const optimisticHistory = appendLocalChatMessages([userMessage]);
+  const optimisticMessages = dialogueHookMessage
+    ? [...optimisticHistory.messages.slice(0, -1), dialogueHookMessage, userMessage]
+    : optimisticHistory.messages;
+  onHistoryChange?.(optimisticMessages);
 
-  const response = await sendLocalChatMessage(message, pet, historyForPrompt, {
+  const response = await sendLocalChatMessage(message, pet, historyBeforeMessage, {
     includeDebug: includePromptDebug,
     memoryContext,
     replyMaxChars,
+    visibleContext,
   });
   logBrowserPromptDebug(`${logLabel} reply`, response);
   recordReplyPromptDebug(response);
@@ -98,38 +90,10 @@ export async function runLocalPetChatTurn({
     createdAt: new Date().toISOString(),
   };
   const nextHistory = appendLocalChatMessages([assistantMessage]);
-  onHistoryChange?.(nextHistory.messages);
-
-  const selectedMemoryIds = memoryContext.relevantMemories.map((item) => item.id);
-  if (selectedMemoryIds.length) {
-    writeLocalPetMemory(markMemoryContextUsed(readLocalPetMemory(pet.petId), selectedMemoryIds));
-  }
-
-  void extractLocalUserMemory(
-    message,
-    response.reply,
-    pet,
-    historyForPrompt,
-    memoryBeforeMessage,
-    {
-      includeDebug: includePromptDebug,
-      memoryContext,
-    },
-  )
-    .then((extraction) => {
-      logBrowserPromptDebug(`${logLabel} memory extraction`, extraction);
-      recordMemoryOperationsDebug(extraction.operations);
-      const latestMemory = readLocalPetMemory(pet.petId);
-      const nextMemory = applyMemoryOperations(latestMemory, extraction.operations, [
-        userMessage.id,
-        assistantMessage.id,
-      ]);
-      writeLocalPetMemory(nextMemory);
-      if (shouldRunDailyConsolidation(nextMemory)) {
-        onMemoryConsolidationNeeded?.();
-      }
-    })
-    .catch(() => undefined);
+  const nextMessages = dialogueHookMessage
+    ? [...nextHistory.messages.slice(0, -2), dialogueHookMessage, userMessage, assistantMessage]
+    : nextHistory.messages;
+  onHistoryChange?.(nextMessages);
 
   return {
     response,

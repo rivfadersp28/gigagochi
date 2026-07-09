@@ -155,13 +155,14 @@ def test_adventure_story_prompt_receives_plot_brief_as_hidden_scaffold() -> None
     user_content = messages[1]["content"]
 
     assert "GENERATION_PROFILE" in system_content
-    assert "Cyberpunk" in system_content
+    assert "- setting: cyberpunk" in system_content
+    assert "- tone: natural" in system_content
     assert "Dark fantasy" not in system_content
     assert "PLOT_TEMPLATE_BRIEF_JSON:" in user_content
-    assert "STORY_CONSTRUCTOR_BRICKS_JSON:" in user_content
+    assert "STORY_CONSTRUCTOR_BRICKS_JSON:" not in user_content
     assert "useful_object_test" in user_content
     assert "hidden structural scaffold" in user_content
-    assert "low-level palette" in user_content
+    assert "low-level palette" not in user_content
     assert "not a filled template" in user_content
     assert "7 beat functions in order" in user_content
     assert brief.selectedSlots["key_item"] in user_content
@@ -197,7 +198,8 @@ def test_storyboard_prompt_maps_panels_to_plot_brief_beats() -> None:
     user_content = messages[1]["content"]
 
     assert "GENERATION_PROFILE" in system_content
-    assert "Cyberpunk" in system_content
+    assert "- setting: cyberpunk" in system_content
+    assert "- tone: natural" in system_content
     assert "Dark fantasy" not in system_content
     assert "PLOT_TEMPLATE_BRIEF_JSON:" in user_content
     assert "great_discovery_changes_home" in user_content
@@ -221,7 +223,7 @@ def test_travel_image_prompt_includes_character_asset_references() -> None:
     assert "face placement, colors" in prompt
     assert "ASPECT RATIO:" in prompt
     assert "OUTPUT SIZE:" in prompt
-    assert "Premium character-focused cyberpunk illustration" in prompt
+    assert "- setting: cyberpunk" in prompt
     assert "single finished premium illustration" in prompt
     assert "640x1072" in prompt
     assert "Simple character description:" in prompt

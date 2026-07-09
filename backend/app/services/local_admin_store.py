@@ -229,11 +229,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "source": "tone_runtime",
                 "editable": True,
                 "fileId": "tone_runtime",
-                "configPath": "activePreset / presets / setting / toneOfVoice / visualStyle",
+                "configPath": "activePreset / presets / setting / toneOfVoice",
                 "summary": (
-                    "Единый active preset для сеттинга, тона, конфликтов, путешествий, "
-                    "фоновых историй и image prompts. Возрастная baby-речь остается "
-                    "отдельным слоем."
+                    "Единый active preset для сеттинга и тона. Возрастная baby-речь "
+                    "остается отдельным слоем."
                 ),
             },
             {

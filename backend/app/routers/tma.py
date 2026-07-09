@@ -41,8 +41,6 @@ from app.services.chat_service import chat_with_local_pet
 from app.services.image_service import generate_pet_asset_set, generation_error_code
 from app.services.openai_service import MissingOpenAIAPIKey
 from app.services.pet_reply_engine.lite_generator import (
-    consolidate_user_memory,
-    extract_user_memory_operations,
     generate_ambient_pet_message,
     generate_proactive_pet_message,
 )
@@ -580,24 +578,7 @@ def extract_memory(
     user: TelegramUser,
 ) -> MemoryExtractionResponse:
     check_rate_limit("memory", user)
-    try:
-        return extract_user_memory_operations(payload)
-    except MissingOpenAIAPIKey:
-        raise public_error(
-            "MISSING_OPENAI_API_KEY",
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        ) from None
-    except HTTPException:
-        raise
-    except Exception as exc:
-        code = chat_error_code(exc)
-        raise ai_failure_http_exception(
-            "/api/chat/memory-extract",
-            "memory_extraction_failed",
-            code,
-            chat_error_message(code),
-            exc,
-        ) from exc
+    return MemoryExtractionResponse()
 
 
 @router.post(
@@ -610,24 +591,7 @@ def consolidate_memory(
     user: TelegramUser,
 ) -> MemoryConsolidationResponse:
     check_rate_limit("memory", user)
-    try:
-        return consolidate_user_memory(payload)
-    except MissingOpenAIAPIKey:
-        raise public_error(
-            "MISSING_OPENAI_API_KEY",
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        ) from None
-    except HTTPException:
-        raise
-    except Exception as exc:
-        code = chat_error_code(exc)
-        raise ai_failure_http_exception(
-            "/api/chat/memory-consolidate",
-            "memory_consolidation_failed",
-            code,
-            chat_error_message(code),
-            exc,
-        ) from exc
+    return MemoryConsolidationResponse()
 
 
 @router.post(

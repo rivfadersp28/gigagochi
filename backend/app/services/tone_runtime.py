@@ -11,20 +11,6 @@ REQUIRED_PRESET_STRING_KEYS = (
     "label",
     "setting",
     "toneOfVoice",
-    "conflictPolicy",
-    "agePolicy",
-    "visualStyle",
-    "avoid",
-)
-SURFACE_KEYS = (
-    "visibleReply",
-    "contextRouting",
-    "worldContext",
-    "characterBible",
-    "backgroundStory",
-    "travelStory",
-    "storyboard",
-    "imagePrompt",
 )
 
 
@@ -77,11 +63,6 @@ def validate_tone_runtime_config(config: Any) -> None:
     _active_preset, preset = _active_preset_from_config(config)
     for key in REQUIRED_PRESET_STRING_KEYS:
         _required_string(preset, (key,))
-    surfaces = _read_path(preset, ("surfaces",))
-    if not _is_record(surfaces):
-        raise ValueError("active preset surfaces must be a JSON object")
-    for key in SURFACE_KEYS:
-        _required_string(preset, ("surfaces", key))
 
 
 @lru_cache(maxsize=1)
@@ -109,14 +90,6 @@ def active_tone_preset() -> dict[str, Any]:
     return json.loads(json.dumps(preset))
 
 
-def _surface_rule(preset: dict[str, Any], surface: str) -> str:
-    surfaces = preset.get("surfaces")
-    if not _is_record(surfaces):
-        return ""
-    value = surfaces.get(surface)
-    return value.strip() if isinstance(value, str) else ""
-
-
 def _profile_setting(preset: dict[str, Any]) -> str:
     return _required_string(preset, ("setting",))
 
@@ -130,44 +103,24 @@ def tone_context_payload(surface: str) -> dict[str, str]:
     setting = _profile_setting(preset)
     tone_of_voice = _profile_tone_of_voice(preset)
     return {
-        "preset": active_tone_id(),
-        "label": _required_string(preset, ("label",)),
         "setting": setting,
         "toneOfVoice": tone_of_voice,
-        "voice": tone_of_voice,
-        "worldMood": setting,
-        "conflictPolicy": _required_string(preset, ("conflictPolicy",)),
-        "agePolicy": _required_string(preset, ("agePolicy",)),
-        "avoid": _required_string(preset, ("avoid",)),
-        "surfaceRule": _surface_rule(preset, surface),
     }
 
 
 def tone_prompt_block(surface: str) -> str:
     preset = active_tone_preset()
-    surface_rule = _surface_rule(preset, surface)
-    lines = [
+    return "\n".join([
         "GENERATION_PROFILE:",
-        f"- preset: {active_tone_id()} ({_required_string(preset, ('label',))})",
         f"- setting: {_profile_setting(preset)}",
-        f"- tone of voice: {_profile_tone_of_voice(preset)}",
-        f"- conflict policy: {_required_string(preset, ('conflictPolicy',))}",
-        f"- age policy: {_required_string(preset, ('agePolicy',))}",
-        f"- avoid: {_required_string(preset, ('avoid',))}",
-    ]
-    if surface_rule:
-        lines.append(f"- surface rule: {surface_rule}")
-    return "\n".join(lines)
+        f"- tone: {_profile_tone_of_voice(preset)}",
+    ])
 
 
 def tone_visual_style(surface: str = "imagePrompt") -> str:
     preset = active_tone_preset()
-    surface_rule = _surface_rule(preset, surface)
-    parts = [
-        f"GENERATION_PROFILE: {active_tone_id()} ({_required_string(preset, ('label',))})",
-        f"Setting: {_profile_setting(preset)}",
-        f"Tone of voice: {_profile_tone_of_voice(preset)}",
-        _required_string(preset, ("visualStyle",)),
-        surface_rule,
-    ]
-    return "\n".join(part for part in parts if part)
+    return "\n".join([
+        "GENERATION_PROFILE:",
+        f"- setting: {_profile_setting(preset)}",
+        f"- tone: {_profile_tone_of_voice(preset)}",
+    ])

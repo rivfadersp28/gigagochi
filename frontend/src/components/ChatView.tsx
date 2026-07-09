@@ -7,26 +7,21 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ApiError,
-  consolidateLocalUserMemory,
   generateLocalProactiveMessage,
 } from "@/lib/api";
 import {
-  appendLocalChatMessages,
   createLocalId,
   readLocalChatHistory,
   readLocalPetSettings,
 } from "@/lib/localPetStorage";
 import {
-  applyMemoryConsolidationOperations,
   readLocalPetMemory,
   recordProactiveDelivery,
-  shouldRunDailyConsolidation,
   writeLocalPetMemory,
 } from "@/lib/localPetMemoryStorage";
 import { buildDailyProactiveMemoryContext } from "@/lib/localPetMemoryRecall";
 import { runLocalPetChatTurn } from "@/lib/localPetChatTurn";
 import {
-  recordMemoryConsolidationDebug,
   recordMemoryContextDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
@@ -51,6 +46,7 @@ export function ChatView({ petId }: ChatViewProps) {
   const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const proactiveAttemptedRef = useRef(false);
+  const proactiveDialogueHookRef = useRef<LocalChatMessage | null>(null);
   const pet = localPet.pet;
 
   const goBack = useCallback(() => {
@@ -79,28 +75,6 @@ export function ChatView({ petId }: ChatViewProps) {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, isSending]);
 
-  const runMemoryConsolidationIfNeeded = useCallback(
-    async (includePromptDebug: boolean) => {
-      if (!pet) {
-        return;
-      }
-      const memory = readLocalPetMemory(pet.petId);
-      if (!shouldRunDailyConsolidation(memory)) {
-        return;
-      }
-      const consolidation = await consolidateLocalUserMemory(memory, {
-        includeDebug: includePromptDebug,
-      });
-      logBrowserPromptDebug("memory consolidation", consolidation);
-      recordMemoryConsolidationDebug(consolidation.operations);
-      const latestMemory = readLocalPetMemory(pet.petId);
-      writeLocalPetMemory(
-        applyMemoryConsolidationOperations(latestMemory, consolidation.operations),
-      );
-    },
-    [pet],
-  );
-
   useEffect(() => {
     if (localPet.status === "loading" || !pet || pet.petId !== petId) {
       return;
@@ -111,8 +85,6 @@ export function ChatView({ petId }: ChatViewProps) {
     proactiveAttemptedRef.current = true;
 
     const settings = readLocalPetSettings();
-    void runMemoryConsolidationIfNeeded(settings.includePromptDebug).catch(() => undefined);
-
     const memory = readLocalPetMemory(pet.petId);
     const history = readLocalChatHistory().messages;
     const memoryContext = buildDailyProactiveMemoryContext(pet, memory, history);
@@ -135,7 +107,8 @@ export function ChatView({ petId }: ChatViewProps) {
           text: response.reply,
           createdAt: new Date().toISOString(),
         };
-        setMessages(appendLocalChatMessages([proactiveMessage]).messages);
+        proactiveDialogueHookRef.current = proactiveMessage;
+        setMessages([...readLocalChatHistory().messages, proactiveMessage]);
         const latestMemory = readLocalPetMemory(pet.petId);
         writeLocalPetMemory(
           recordProactiveDelivery(
@@ -150,7 +123,7 @@ export function ChatView({ petId }: ChatViewProps) {
         );
       })
       .catch(() => undefined);
-  }, [localPet, pet, petId, runMemoryConsolidationIfNeeded]);
+  }, [localPet, pet, petId]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -166,6 +139,8 @@ export function ChatView({ petId }: ChatViewProps) {
     setInput("");
     setError(null);
     setIsSending(true);
+    const dialogueHookMessage = proactiveDialogueHookRef.current;
+    proactiveDialogueHookRef.current = null;
 
     try {
       const settings = readLocalPetSettings();
@@ -173,13 +148,9 @@ export function ChatView({ petId }: ChatViewProps) {
         pet,
         message,
         includePromptDebug: settings.includePromptDebug,
+        dialogueHookMessage,
         logLabel: "chat",
         onHistoryChange: setMessages,
-        onMemoryConsolidationNeeded: () => {
-          void runMemoryConsolidationIfNeeded(settings.includePromptDebug).catch(
-            () => undefined,
-          );
-        },
       });
       localPet.applyMoodHint(
         response.moodHint,

@@ -716,20 +716,19 @@ def _global_story_briefs(
 def _memory_brief(memory_context: LocalPetMemoryContext | None) -> dict[str, Any] | None:
     if not memory_context:
         return None
-    memories = [
-        {
-            "kind": item.kind,
-            "text": _text_value(item.text, limit=260),
-            "dueAt": item.dueAt,
-        }
-        for item in memory_context.relevantMemories[:5]
-        if _text_value(item.text, limit=260)
-    ]
-    result = {
-        "summary": _text_value(memory_context.summary, limit=600),
-        "userProfile": _text_value(memory_context.userProfile, limit=600),
-        "relevantMemories": memories,
-    }
+    episodes: list[dict[str, Any]] = []
+    for episode in memory_context.episodes[:3]:
+        messages = [
+            {
+                "role": message.role,
+                "text": _text_value(message.text, limit=500),
+            }
+            for message in episode.messages
+            if _text_value(message.text, limit=500)
+        ]
+        if messages:
+            episodes.append({"id": episode.id, "messages": messages})
+    result = {"episodes": episodes}
     return {key: value for key, value in result.items() if value not in ("", [], None)}
 
 

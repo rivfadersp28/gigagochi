@@ -14,14 +14,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   canUseTmaApi,
-  consolidateLocalUserMemory,
   generateLocalAmbientMessage,
   generatePetTravel,
   generateLocalProactiveMessage,
   registerPetPushSnapshot,
 } from "@/lib/api";
 import {
-  appendLocalChatMessages,
   createLocalId,
   readLocalChatHistory,
   readLocalPetSettings,
@@ -29,16 +27,13 @@ import {
 } from "@/lib/localPetStorage";
 import { buildDailyProactiveMemoryContext } from "@/lib/localPetMemoryRecall";
 import {
-  applyMemoryConsolidationOperations,
   readLocalPetMemory,
   recordProactiveDelivery,
-  shouldRunDailyConsolidation,
   writeLocalPetMemory,
 } from "@/lib/localPetMemoryStorage";
 import { primePetSpeechAudio } from "@/lib/petSpeechAudio";
 import { playPetTapSound, primePetTapSound } from "@/lib/petTapAudio";
 import {
-  recordMemoryConsolidationDebug,
   recordMemoryContextDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
@@ -122,12 +117,6 @@ const INITIAL_PET_REPLY_FALLBACK = "…";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 220;
 const DEFAULT_STATUS_NAME = "Челепиздрик";
 const PUSH_SNAPSHOT_SYNC_MIN_INTERVAL_MS = 10 * 60_000;
-const AMBIENT_MEMORY_KINDS = new Set<string>([
-  "preference",
-  "relationship",
-  "routine",
-  "boundary",
-]);
 const SPEECH_BUBBLE_MIN_WIDTH = 190;
 const SPEECH_BUBBLE_MIN_HEIGHT = 86;
 const SPEECH_BUBBLE_RADIUS = 43;
@@ -197,33 +186,6 @@ const speechBubbleGlassStyle = {
   backdropFilter: "blur(20px)",
   WebkitBackdropFilter: "blur(20px)",
 } satisfies CSSProperties;
-
-function buildPushSnapshotMemoryContext(petId: string) {
-  const memory = readLocalPetMemory(petId);
-  const now = Date.now();
-  const relevantMemories = memory.memories
-    .filter((item) => !item.expiresAt || Date.parse(item.expiresAt) >= now)
-    .sort((left, right) => {
-      const importanceDelta = right.importance - left.importance;
-      if (importanceDelta !== 0) {
-        return importanceDelta;
-      }
-      return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
-    })
-    .slice(0, 5)
-    .map((item) => ({
-      id: item.id,
-      kind: item.kind,
-      text: item.text,
-      dueAt: item.dueAt,
-    }));
-
-  return {
-    summary: memory.summary,
-    userProfile: memory.userProfile,
-    relevantMemories,
-  };
-}
 
 function buildSpeechBubbleClipPath({ width, height }: SpeechBubbleSize) {
   const w = Math.max(SPEECH_BUBBLE_MIN_WIDTH, width);
@@ -363,24 +325,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
     const requestId = ambientRequestIdRef.current + 1;
     ambientRequestIdRef.current = requestId;
-    const memory = readLocalPetMemory(pet.petId);
-    const ambientMemories = memory.memories
-      .filter((item) => AMBIENT_MEMORY_KINDS.has(item.kind) && !item.dueAt)
-      .slice(0, 3);
-    const memoryContext = {
-      userProfile: memory.userProfile,
-      relevantMemories: ambientMemories.map((item) => ({
-        id: item.id,
-        kind: item.kind,
-        text: item.text,
-        dueAt: item.dueAt,
-      })),
-    };
     const history = readLocalChatHistory().messages;
 
     void generateLocalAmbientMessage(pet, {
       includeDebug: includePromptDebug,
-      memoryContext,
       history,
       recentAmbientReplies: ambientReplyHistoryRef.current,
       replyMaxChars: 160,
@@ -592,7 +540,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       updatedAt: pet.updatedAt,
     };
 
-    void registerPetPushSnapshot(pet, buildPushSnapshotMemoryContext(pet.petId), {
+    void registerPetPushSnapshot(pet, undefined, {
       history: readLocalChatHistory().messages,
       recentAmbientReplies: ambientReplyHistoryRef.current,
     })
@@ -783,19 +731,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         replyMaxChars: DASHBOARD_CHAT_REPLY_MAX_CHARS,
         dialogueHookMessage,
         logLabel: "dashboard quick chat",
-        onMemoryConsolidationNeeded: () => {
-          const memory = readLocalPetMemory(pet.petId);
-          void consolidateLocalUserMemory(memory, { includeDebug: includePromptDebug })
-            .then((consolidation) => {
-              logBrowserPromptDebug("dashboard memory consolidation", consolidation);
-              recordMemoryConsolidationDebug(consolidation.operations);
-              const latestMemory = readLocalPetMemory(pet.petId);
-              writeLocalPetMemory(
-                applyMemoryConsolidationOperations(latestMemory, consolidation.operations),
-              );
-            })
-            .catch(() => undefined);
-        },
       });
       showPetReplyMessage(response.reply, true, { showInConversation: true });
       localPet.applyMoodHint(
@@ -873,19 +808,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     proactiveAttemptedRef.current = true;
 
     const memory = readLocalPetMemory(pet.petId);
-    if (shouldRunDailyConsolidation(memory)) {
-      void consolidateLocalUserMemory(memory, { includeDebug: includePromptDebug })
-        .then((consolidation) => {
-          logBrowserPromptDebug("dashboard memory consolidation", consolidation);
-          recordMemoryConsolidationDebug(consolidation.operations);
-          const latestMemory = readLocalPetMemory(pet.petId);
-          writeLocalPetMemory(
-            applyMemoryConsolidationOperations(latestMemory, consolidation.operations),
-          );
-        })
-        .catch(() => undefined);
-    }
-
     const history = readLocalChatHistory().messages;
     const proactiveMemoryContext = buildDailyProactiveMemoryContext(pet, memory, history);
     if (proactiveMemoryContext) {
@@ -902,14 +824,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           }
           logBrowserPromptDebug("dashboard proactive chat", response);
           recordReplyPromptDebug(response);
-          appendLocalChatMessages([
-            {
-              id: createLocalId("message"),
-              role: "pet",
-              text: response.reply,
-              createdAt: new Date().toISOString(),
-            },
-          ]);
           const latestMemory = readLocalPetMemory(pet.petId);
           writeLocalPetMemory(
             recordProactiveDelivery(

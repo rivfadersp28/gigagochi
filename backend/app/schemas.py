@@ -92,6 +92,10 @@ class LocalChatHistoryItem(BaseModel):
     text: str = Field(min_length=1, max_length=8000)
 
 
+class LocalVisibleContext(BaseModel):
+    lastPetLine: str = Field(min_length=1, max_length=800)
+
+
 class LocalPetMemoryContextItem(BaseModel):
     id: str = Field(min_length=1, max_length=120)
     kind: UserMemoryKind
@@ -99,8 +103,20 @@ class LocalPetMemoryContextItem(BaseModel):
     dueAt: str | None = Field(default=None, max_length=80)
 
 
+class LocalChatEpisodeMessage(BaseModel):
+    role: Literal["user", "pet"]
+    text: str = Field(min_length=1, max_length=8000)
+    createdAt: str | None = Field(default=None, max_length=80)
+
+
+class LocalChatMemoryEpisode(BaseModel):
+    id: str = Field(min_length=1, max_length=160)
+    messages: list[LocalChatEpisodeMessage] = Field(default_factory=list, max_length=8)
+
+
 class LocalPetProactiveCandidate(BaseModel):
     memoryIds: list[str] = Field(default_factory=list, max_length=5)
+    episodeIds: list[str] = Field(default_factory=list, max_length=5)
     reason: str = Field(min_length=1, max_length=280)
 
 
@@ -108,6 +124,7 @@ class LocalPetMemoryContext(BaseModel):
     summary: str | None = Field(default=None, max_length=1000)
     userProfile: str | None = Field(default=None, max_length=1000)
     relevantMemories: list[LocalPetMemoryContextItem] = Field(default_factory=list, max_length=5)
+    episodes: list[LocalChatMemoryEpisode] = Field(default_factory=list, max_length=3)
     proactiveCandidate: LocalPetProactiveCandidate | None = None
 
 
@@ -115,6 +132,7 @@ class LocalChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=1000)
     pet: LocalPetChatContext
     history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
+    visibleContext: LocalVisibleContext | None = None
     memoryContext: LocalPetMemoryContext | None = None
     replyMaxChars: int | None = Field(default=None, ge=1, le=300)
     includeDebug: bool = False

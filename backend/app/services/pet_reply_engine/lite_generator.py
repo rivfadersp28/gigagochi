@@ -104,7 +104,6 @@ FACE_HINTS = ("happy", "excited", "curious", "content", "grumpy", "sleepy")
 MAX_MEMORY_CONTEXT_ITEMS = 5
 MAX_RECENT_AMBIENT_REPLIES = 5
 MAX_RECENT_EVENTS_CONTEXT_ITEMS = 3
-AMBIENT_MEMORY_KINDS = {"preference", "relationship", "routine", "boundary"}
 
 PhraseSurface = Literal["chat", "proactive", "ambient", "push"]
 
@@ -498,44 +497,38 @@ def _memory_context_block(memory_context: LocalPetMemoryContext | None) -> str |
         return None
 
     lines: list[str] = []
-    user_profile = _clean_optional_text(memory_context.userProfile, 500)
-    summary = _clean_optional_text(memory_context.summary, 500)
-    if user_profile:
-        lines.append(speech_template("memoryProfileLine", {"user_profile": user_profile}))
-    if summary:
-        lines.append(speech_template("memorySummaryLine", {"summary": summary}))
-
-    memory_lines = []
-    for memory in memory_context.relevantMemories[:MAX_MEMORY_CONTEXT_ITEMS]:
-        text = _clean_optional_text(memory.text, 240)
-        if text:
-            memory_lines.append(f"- {text}")
-    if memory_lines:
-        lines.append(speech_template("memoryItemsHeader"))
-        lines.extend(memory_lines)
+    for episode_index, episode in enumerate(memory_context.episodes[:MAX_MEMORY_CONTEXT_ITEMS], 1):
+        episode_lines: list[str] = []
+        for message in episode.messages:
+            text = _clean_optional_text(message.text, 500)
+            if text:
+                role = "pet" if message.role == "pet" else "user"
+                episode_lines.append(f"{role}: {text}")
+        if episode_lines:
+            lines.append(f"DIALOGUE_MEMORY episode {episode_index}:")
+            lines.extend(episode_lines)
 
     if not lines:
         return None
     return "\n".join(lines) + f"\n{memory_usage_rule()}"
 
 
-def _ambient_memory_context_block(memory_context: LocalPetMemoryContext | None) -> str | None:
-    if not memory_context:
+def _visible_context_block(payload: LocalChatRequest) -> str | None:
+    visible_context = payload.visibleContext
+    if not visible_context:
         return None
-
-    soft_memories = [
-        memory
-        for memory in memory_context.relevantMemories
-        if memory.kind in AMBIENT_MEMORY_KINDS and not memory.dueAt
-    ]
-    soft_context = memory_context.model_copy(
-        update={
-            "summary": None,
-            "relevantMemories": soft_memories,
-            "proactiveCandidate": None,
-        }
+    last_pet_line = _clean_optional_text(visible_context.lastPetLine, 500)
+    if not last_pet_line:
+        return None
+    return (
+        "LAST_VISIBLE_PET_LINE:\n"
+        f"pet: {last_pet_line}\n"
+        "Это только ближайший видимый контекст для текущего ответа."
     )
-    return _memory_context_block(soft_context)
+
+
+def _ambient_memory_context_block(memory_context: LocalPetMemoryContext | None) -> str | None:
+    return _memory_context_block(memory_context)
 
 
 def _recent_ambient_replies_text(replies: list[str]) -> str:
@@ -616,19 +609,27 @@ def _context_routing_user_payload(
         "surfacePrompt": surface_prompt_text,
         "toneProfile": tone_context_payload("contextRouting"),
         "userMessage": getattr(payload, "message", ""),
+        "lastVisiblePetLine": (
+            payload.visibleContext.lastPetLine
+            if isinstance(payload, LocalChatRequest) and payload.visibleContext
+            else None
+        ),
         "proactiveReason": proactive_reason,
         "pet": _lite_pet_context_payload(payload),
         "sources": context_routing_sources(),
         "memoryBrief": {
-            "summary": getattr(memory_context, "summary", None) if memory_context else None,
-            "userProfile": getattr(memory_context, "userProfile", None) if memory_context else None,
-            "relevantMemories": [
+            "episodes": [
                 {
-                    "kind": item.kind,
-                    "text": item.text,
-                    "dueAt": item.dueAt,
+                    "id": episode.id,
+                    "messages": [
+                        {
+                            "role": message.role,
+                            "text": message.text,
+                        }
+                        for message in episode.messages
+                    ],
                 }
-                for item in (memory_context.relevantMemories if memory_context else [])
+                for episode in (memory_context.episodes if memory_context else [])
             ],
         },
         "recentReplies": getattr(payload, "recentAmbientReplies", []),
@@ -656,10 +657,10 @@ def _surface_prompt_for_payload(surface: PhraseSurface, payload: Any) -> str:
 def _visible_context_plan_auto_defaults(surface: PhraseSurface) -> frozenset[str]:
     if surface == "chat":
         return frozenset({"userMemory", "chatHistory"})
-    if surface in ("proactive", "push"):
+    if surface == "proactive":
         return frozenset({"userMemory"})
     if surface == "ambient":
-        return frozenset({"userMemory", "recentReplies"})
+        return frozenset({"recentReplies"})
     return frozenset()
 
 
@@ -1339,6 +1340,7 @@ def _phrase_plan_for_chat(
         persona_contract=surface_prompt("chat"),
         tone_block=tone_prompt_block("visibleReply"),
         character_block=_character_block_for_surface(payload.pet, "chat", context_routing),
+        dialogue_block=_visible_context_block(payload),
         memory_block=(
             _memory_context_block(payload.memoryContext)
             if _source_enabled(

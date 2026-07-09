@@ -115,12 +115,8 @@ def _fake_context_routing_response(kwargs: dict) -> str:
     )
     has_memory = False
     if isinstance(memory_brief, dict):
-        memories = memory_brief.get("relevantMemories")
-        has_memory = bool(
-            memory_brief.get("summary")
-            or memory_brief.get("userProfile")
-            or (isinstance(memories, list) and memories)
-        )
+        episodes = memory_brief.get("episodes")
+        has_memory = isinstance(episodes, list) and bool(episodes)
     recent_replies_enabled = surface == "ambient" and isinstance(recent_replies, list) and bool(
         recent_replies
     )
@@ -242,7 +238,7 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert "гигантский земляной великан" not in system_message
     assert "CHARACTER_CAPSULE" not in system_message
     assert "вызови update_pet_name" in system_message
-    assert "Отвечай владельцу естественно, кратко и своим голосом." in system_message
+    assert "Отвечай владельцу естественно и кратко от первого лица." in system_message
     assert "Верни только JSON" not in system_message
     assert "response_format" not in request
     assert [tool["function"]["name"] for tool in request["tools"]] == ["update_pet_name"]
@@ -578,28 +574,50 @@ def test_chat_small_talk_suppresses_character_profile_even_if_router_enables_it(
     assert "прислушивается к вывескам" not in system_message
 
 
-def test_lite_prompt_includes_memory_context_only_when_present() -> None:
+def test_lite_prompt_includes_dialogue_memory_episodes_only_when_present() -> None:
     empty_system_message = build_lite_chat_messages(lite_payload())[0]["content"]
-    assert "Ты помнишь о пользователе" not in empty_system_message
+    assert "DIALOGUE_MEMORY" not in empty_system_message
 
     payload = lite_payload(
         memoryContext={
-            "summary": "Пользователь любит короткие диалоги.",
-            "relevantMemories": [
+            "episodes": [
                 {
-                    "id": "m1",
-                    "kind": "deadline",
-                    "text": "У пользователя сегодня экзамен по математике.",
-                    "dueAt": "2026-07-07T09:00:00+03:00",
+                    "id": "episode-1",
+                    "messages": [
+                        {"role": "user", "text": "Меня зовут Сергей."},
+                        {"role": "pet", "text": "Запомнил, Сергей."},
+                    ],
                 }
             ],
         }
     )
     system_message = build_lite_chat_messages(payload)[0]["content"]
 
-    assert "Ты помнишь о пользователе" in system_message
-    assert "У пользователя сегодня экзамен по математике." in system_message
+    assert "DIALOGUE_MEMORY episode 1" in system_message
+    assert "user: Меня зовут Сергей." in system_message
+    assert "pet: Запомнил, Сергей." in system_message
     assert "Используй это только если уместно." in system_message
+
+
+def test_lite_prompt_keeps_visible_hook_out_of_message_history() -> None:
+    messages = build_lite_chat_messages(
+        lite_payload(
+            message="что это значит?",
+            history=[
+                {"role": "user", "text": "привет"},
+                {"role": "pet", "text": "Привет."},
+            ],
+            visibleContext={"lastPetLine": "Я случайно сказал про неон."},
+        )
+    )
+
+    system_message = messages[0]["content"]
+    history_contents = [message["content"] for message in messages[1:]]
+
+    assert "LAST_VISIBLE_PET_LINE" in system_message
+    assert "pet: Я случайно сказал про неон." in system_message
+    assert "ближайший видимый контекст" in system_message
+    assert "Я случайно сказал про неон." not in history_contents
 
 
 def test_context_sources_policy_disables_chat_sources(monkeypatch, tmp_path) -> None:
@@ -852,16 +870,18 @@ def test_lite_prompt_uses_baby_dataset_phrases_only_for_baby() -> None:
     teen_system_message = build_lite_chat_messages(teen)[0]["content"]
 
     assert "GENERATION_PROFILE" in baby_system_message
-    assert "Cyberpunk" in baby_system_message
+    assert "- setting: cyberpunk" in baby_system_message
+    assert "- tone: natural" in baby_system_message
     assert "Dark fantasy" not in baby_system_message
-    assert "Age changes speech complexity and impulsiveness only" in baby_system_message
+    assert "age policy" not in baby_system_message
+    assert "conflict policy" not in baby_system_message
     assert "Примеры детской манеры из датасета" in baby_system_message
     assert "Приветик! Ты пришёл!" in baby_system_message
     assert "Примеры детской манеры из датасета" not in teen_system_message
     assert "Приветик! Ты пришёл!" not in teen_system_message
 
 
-def test_lite_prompt_includes_preselected_world_context_for_story_query() -> None:
+def test_lite_prompt_skips_preselected_world_context_when_story_library_disabled() -> None:
     system_message = build_lite_chat_messages(
         lite_payload(message="есть ли в твоем мире препятствия?"),
         context_routing=ContextRoutingDecision(
@@ -871,8 +891,8 @@ def test_lite_prompt_includes_preselected_world_context_for_story_query() -> Non
         ),
     )[0]["content"]
 
-    assert "WORLD_CONTEXT" in system_message
-    assert "Препятствия и риски" in system_message
+    assert "WORLD_CONTEXT" not in system_message
+    assert "Препятствия и риски" not in system_message
     assert "STORY_LIBRARY" not in system_message
     assert "search_story_library" not in system_message
 
@@ -912,7 +932,10 @@ def test_proactive_prompt_does_not_include_character_voice_control() -> None:
     assert "VOICE_CONTROL" not in system_message
     assert "говорит через маленькие бытовые детали" not in system_message
     assert "нос подсказывает" not in system_message
-    assert "Повод: пользователь обещал вернуться вечером" in system_message
+    assert (
+        "Напиши короткую самостоятельную реплику по поводу: пользователь обещал вернуться вечером"
+        in system_message
+    )
     assert "Ты сам решил написать пользователю первым" not in system_message
     assert "Напиши одну живую реплику" not in system_message
     assert "автоматическое сообщение" not in system_message
@@ -983,7 +1006,7 @@ def test_proactive_prompt_uses_preselected_world_context_when_needed() -> None:
         ),
     )[0]["content"]
 
-    assert "WORLD_CONTEXT" in system_message
+    assert "WORLD_CONTEXT" not in system_message
     assert "STORY_LIBRARY" not in system_message
 
 
@@ -1075,7 +1098,7 @@ def test_ambient_prompt_uses_idle_field_without_forced_world_context(
     assert "ask_school_or_work_role" not in system_message
     assert "У пользователя завтра экзамен." not in system_message
     assert "Пользователь готовится к экзамену." not in system_message
-    assert "Пользователь любит короткие ответы." in system_message
+    assert "Пользователь любит короткие ответы." not in system_message
     assert "VOICE_CONTROL" not in system_message
     assert "WORLD_CONTEXT: ниже" not in system_message
     assert "лист шепчет" not in system_message
@@ -1086,7 +1109,7 @@ def test_ambient_prompt_uses_idle_field_without_forced_world_context(
     assert "выбранному диалоговому ходу" not in system_message
 
 
-def test_ambient_prompt_uses_world_context_when_router_enables_it() -> None:
+def test_ambient_prompt_skips_world_context_when_story_library_disabled() -> None:
     payload = LocalAmbientRequest.model_validate(
         {
             "pet": {
@@ -1124,7 +1147,7 @@ def test_ambient_prompt_uses_world_context_when_router_enables_it() -> None:
         ),
     )[0]["content"]
 
-    assert "WORLD_CONTEXT: ниже" in system_message
+    assert "WORLD_CONTEXT: ниже" not in system_message
     assert "Есть ли в твоем мире монстры?" not in system_message
     assert "У меня есть крошечный ключ от Врат Забвения." not in system_message
     assert "ржавый ключ от Врат Забвения" not in system_message
@@ -1172,16 +1195,8 @@ def test_ambient_generation_returns_story_context_debug() -> None:
     assert "worldContext" not in response.debug.contextRoutingDebug["enabledSources"]
 
 
-def test_lite_tools_read_character_json_without_direct_mutation() -> None:
-    read_call = SimpleNamespace(
-        id="call_read",
-        function=SimpleNamespace(
-            name="read_character_json",
-            arguments=json.dumps({"sections": ["characterBible", "liteOverlay"]}),
-        ),
-    )
+def test_lite_tools_do_not_expose_character_json() -> None:
     client, completions = fake_lite_client(
-        SimpleNamespace(content="", tool_calls=[read_call]),
         SimpleNamespace(content="Я ем мокрую глину после дождя.", tool_calls=None),
     )
 
@@ -1193,20 +1208,17 @@ def test_lite_tools_read_character_json_without_direct_mutation() -> None:
     )
 
     assert response.reply == "Я ем мокрую глину после дождя."
-    assert len(completions.calls) == 3
+    assert len(completions.calls) == 2
     assert "tools" in completions.calls[1]
     assert response.debug is not None
     assert [tool["function"]["name"] for tool in completions.calls[1]["tools"]] == [
         "update_pet_name",
-        "read_character_json",
     ]
-    assert [call["name"] for call in response.debug.liteToolCalls] == ["read_character_json"]
-    read_result = response.debug.liteToolCalls[0]["result"]
-    assert read_result["characterBible"]["lore"]["home"]["story"] == "каменная балка"
+    assert response.debug.liteToolCalls == []
     assert response.debug.liteOverlayPatch is None
 
 
-def test_lite_story_library_context_is_preselected_without_story_tools() -> None:
+def test_lite_story_library_context_is_disabled_without_story_tools() -> None:
     client, completions = fake_lite_client(
         SimpleNamespace(content="Да, но они чаще странные, чем злые.", tool_calls=None),
     )
@@ -1222,13 +1234,13 @@ def test_lite_story_library_context_is_preselected_without_story_tools() -> None
     assert response.reply == "Да, но они чаще странные, чем злые."
     request = completions.calls[1]
     system_message = request["messages"][0]["content"]
-    assert "WORLD_CONTEXT" in system_message
+    assert "WORLD_CONTEXT" not in system_message
     assert "search_story_library" not in [tool["function"]["name"] for tool in request["tools"]]
     assert response.debug is not None
     assert response.debug.storyLibraryPatch is None
     assert response.debug.storyLibraryDebug is not None
     assert response.debug.storyLibraryDebug["mode"] == "chat"
-    assert response.debug.storyLibraryDebug["injectedSpheres"]
+    assert response.debug.storyLibraryDebug["injectedSpheres"] == []
 
 
 def test_lite_character_profile_is_not_injected_for_legacy_bible() -> None:
@@ -1388,29 +1400,9 @@ def test_lite_tool_updates_pet_name() -> None:
     }
 
 
-def test_lite_world_tool_bootstraps_missing_world_from_chatgpt() -> None:
-    read_call = SimpleNamespace(
-        id="call_read",
-        function=SimpleNamespace(
-            name="read_character_json",
-            arguments=json.dumps({"sections": ["characterBible", "liteOverlay"]}),
-        ),
-    )
+def test_lite_world_tool_bootstrap_is_disabled() -> None:
     client, completions = fake_lite_client(
-        SimpleNamespace(content="", tool_calls=[read_call]),
-        SimpleNamespace(
-            content=json.dumps(
-                {
-                    "worldText": (
-                        "Громм живет на старом горном уступе, где теплые камни "
-                        "держат дневное солнце даже ночью."
-                    )
-                },
-                ensure_ascii=False,
-            ),
-            tool_calls=None,
-        ),
-        SimpleNamespace(content="Я живу среди тёплых камней и горного ветра.", tool_calls=None),
+        SimpleNamespace(content="Я сам решу, где мой дом.", tool_calls=None),
     )
 
     response = generate_lite_pet_reply(
@@ -1449,27 +1441,16 @@ def test_lite_world_tool_bootstraps_missing_world_from_chatgpt() -> None:
         timeout=10,
     )
 
-    assert response.reply == "Я живу среди тёплых камней и горного ветра."
+    assert response.reply == "Я сам решу, где мой дом."
     assert response.debug is not None
-    read_result = response.debug.liteToolCalls[0]["result"]
-    assert "Home/habitat details must be inferred" not in json.dumps(
-        read_result,
-        ensure_ascii=False,
-    )
-    assert read_result["worldInfo"]["createdByChatGPT"] is True
-    assert response.debug.liteOverlayPatch is not None
-    world_facts = response.debug.liteOverlayPatch["spheres"]["world"]["facts"]
-    assert world_facts[0]["sphere"] == "world"
-    assert world_facts[0]["source"] == "chatgpt_world_seed"
+    assert response.debug.liteToolCalls == []
+    assert response.debug.liteOverlayPatch is None
     assert [item["label"] for item in response.debug.promptDebug] == [
         "pet_reply/context_routing",
         "pet_reply/lite round 1",
-        "pet_reply/lite_world_seed",
-        "pet_reply/lite round 2",
     ]
-    tool_response = completions.calls[3]["messages"][-1]["content"]
-    assert "Home/habitat details must be inferred" not in tool_response
-    assert "chatgpt_world_seed" in tool_response
+    request = completions.calls[1]
+    assert [tool["function"]["name"] for tool in request["tools"]] == ["update_pet_name"]
 
 
 def test_lite_fact_extraction_groups_facts_by_sphere() -> None:

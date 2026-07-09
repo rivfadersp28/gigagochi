@@ -9,78 +9,22 @@
     "neutral_clean": {
       "label": "Neutral",
       "setting": "neutral",
-      "toneOfVoice": "natural",
-      "conflictPolicy": "character-led",
-      "agePolicy": "age only",
-      "visualStyle": "clean",
-      "avoid": "assistant voice",
-      "surfaces": {
-        "visibleReply": "minimal",
-        "contextRouting": "necessary only",
-        "worldContext": "facts only",
-        "characterBible": "user idea",
-        "backgroundStory": "character event",
-        "travelStory": "character adventure",
-        "storyboard": "clear panels",
-        "imagePrompt": "clear character"
-      }
+      "toneOfVoice": "natural"
     },
     "cyberpunk": {
       "label": "Cyberpunk",
       "setting": "cyberpunk",
-      "toneOfVoice": "natural",
-      "conflictPolicy": "character-led",
-      "agePolicy": "age only",
-      "visualStyle": "cyberpunk",
-      "avoid": "assistant voice",
-      "surfaces": {
-        "visibleReply": "minimal",
-        "contextRouting": "necessary only",
-        "worldContext": "facts only",
-        "characterBible": "user idea",
-        "backgroundStory": "character event",
-        "travelStory": "character adventure",
-        "storyboard": "clear panels",
-        "imagePrompt": "clear character"
-      }
+      "toneOfVoice": "natural"
     },
     "home_pets": {
       "label": "Home pets",
       "setting": "home pets",
-      "toneOfVoice": "natural",
-      "conflictPolicy": "character-led",
-      "agePolicy": "age only",
-      "visualStyle": "home pets",
-      "avoid": "assistant voice",
-      "surfaces": {
-        "visibleReply": "minimal",
-        "contextRouting": "necessary only",
-        "worldContext": "facts only",
-        "characterBible": "user idea",
-        "backgroundStory": "character event",
-        "travelStory": "character adventure",
-        "storyboard": "clear panels",
-        "imagePrompt": "clear character"
-      }
+      "toneOfVoice": "natural"
     },
     "ghost_mystery": {
       "label": "Ghost mystery",
       "setting": "ghost mystery",
-      "toneOfVoice": "natural",
-      "conflictPolicy": "character-led",
-      "agePolicy": "age only",
-      "visualStyle": "ghost mystery",
-      "avoid": "assistant voice",
-      "surfaces": {
-        "visibleReply": "minimal",
-        "contextRouting": "necessary only",
-        "worldContext": "facts only",
-        "characterBible": "user idea",
-        "backgroundStory": "character event",
-        "travelStory": "character adventure",
-        "storyboard": "clear panels",
-        "imagePrompt": "clear character"
-      }
+      "toneOfVoice": "natural"
     }
   }
 }

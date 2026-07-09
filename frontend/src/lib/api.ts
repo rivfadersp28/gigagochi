@@ -44,6 +44,9 @@ type LocalChatOptions = {
   includeDebug?: boolean;
   memoryContext?: LocalPetMemoryContext;
   replyMaxChars?: number;
+  visibleContext?: {
+    lastPetLine: string;
+  };
 };
 
 type PushSnapshotResponse = {
@@ -487,6 +490,7 @@ export async function sendLocalChatMessage(
       includeDebug: options.includeDebug ?? false,
       memoryContext: options.memoryContext,
       replyMaxChars: options.replyMaxChars,
+      visibleContext: options.visibleContext,
       pet: {
         name: pet.name,
         description: pet.description,

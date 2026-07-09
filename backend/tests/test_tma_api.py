@@ -19,8 +19,6 @@ from app.schemas import (
     LocalChatResponse,
     LocalPetPushSnapshotResponse,
     LocalProactiveResponse,
-    MemoryConsolidationResponse,
-    MemoryExtractionResponse,
 )
 from app.services.rate_limit_service import rate_limiter
 from app.services.telegram_auth_service import TelegramUserContext
@@ -531,28 +529,12 @@ def test_extract_lite_facts_is_noop(monkeypatch) -> None:
     app.dependency_overrides.clear()
 
 
-def test_memory_extract_endpoint_returns_operations(monkeypatch) -> None:
+def test_memory_extract_endpoint_is_noop(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
     )
 
-    def fake_extract(_payload):
-        return MemoryExtractionResponse(
-            operations=[
-                {
-                    "type": "remember_user_fact",
-                    "kind": "deadline",
-                    "text": "У пользователя завтра экзамен.",
-                    "normalizedKey": "exam",
-                    "confidence": 0.9,
-                    "importance": 0.9,
-                    "dueAt": "2026-07-07T09:00:00+03:00",
-                }
-            ]
-        )
-
-    monkeypatch.setattr("app.routers.tma.extract_user_memory_operations", fake_extract)
     client = tma_client()
 
     response = client.post(
@@ -576,30 +558,17 @@ def test_memory_extract_endpoint_returns_operations(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["operations"][0]["type"] == "remember_user_fact"
-    assert payload["operations"][0]["kind"] == "deadline"
+    assert response.json() == {"operations": []}
 
     app.dependency_overrides.clear()
 
 
-def test_memory_consolidate_endpoint_returns_operations(monkeypatch) -> None:
+def test_memory_consolidate_endpoint_is_noop(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
     )
 
-    def fake_consolidate(_payload):
-        return MemoryConsolidationResponse(
-            operations=[
-                {
-                    "type": "rewrite_summary",
-                    "content": "Пользователь готовится к экзамену.",
-                }
-            ]
-        )
-
-    monkeypatch.setattr("app.routers.tma.consolidate_user_memory", fake_consolidate)
     client = tma_client()
 
     response = client.post(
@@ -613,7 +582,7 @@ def test_memory_consolidate_endpoint_returns_operations(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["operations"][0]["type"] == "rewrite_summary"
+    assert response.json() == {"operations": []}
 
     app.dependency_overrides.clear()
 

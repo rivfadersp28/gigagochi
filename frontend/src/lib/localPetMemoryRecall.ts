@@ -1,13 +1,15 @@
 import type {
+  LocalChatMemoryEpisode,
   LocalPetMemoryContext,
   LocalPetMemoryStateV1,
-  LocalPetUserMemory,
 } from "./localPetMemoryTypes";
 import type { LocalChatMessage, LocalPetState } from "./types";
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
-const MAX_RECALL_MEMORIES = 5;
+const RECENT_DIRECT_HISTORY_MESSAGES = 12;
+const MAX_RECALL_EPISODES = 3;
+const EPISODE_CONTEXT_RADIUS = 2;
 const STOP_WORDS = new Set([
   "меня",
   "мне",
@@ -26,12 +28,26 @@ const STOP_WORDS = new Set([
   "твоя",
   "про",
   "для",
+  "или",
+  "еще",
+  "ещё",
   "the",
   "and",
   "you",
   "your",
   "with",
 ]);
+const IDENTITY_DIALOGUE_RE = new RegExp(
+  [
+    "кто\\s+ты",
+    "ты\\s+кто",
+    "что\\s+ты\\s+такое",
+    "расскажи\\s+о\\s+себе",
+    "как\\s+тебя\\s+зовут",
+    "как\\s+звать",
+  ].join("|"),
+  "iu",
+);
 
 function localDateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
@@ -43,22 +59,6 @@ function sameLocalDay(left: Date, right: Date) {
   return localDateKey(left) === localDateKey(right);
 }
 
-function tomorrowLocalDay(now: Date) {
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-}
-
-function isExpired(memory: LocalPetUserMemory, now: Date) {
-  return Boolean(memory.expiresAt && Date.parse(memory.expiresAt) < now.getTime());
-}
-
-function dueDate(memory: LocalPetUserMemory) {
-  if (!memory.dueAt) {
-    return null;
-  }
-  const date = new Date(memory.dueAt);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
 function tokenize(text: string) {
   return new Set(
     text
@@ -68,78 +68,103 @@ function tokenize(text: string) {
   );
 }
 
-function keywordOverlapScore(memory: LocalPetUserMemory, queryTokens: Set<string>) {
+export function isIdentityDialogueQuestion(text: string) {
+  const compact = text.trim().replace(/\s+/g, " ");
+  return compact.length <= 160 && IDENTITY_DIALOGUE_RE.test(compact);
+}
+
+function messageTime(message: LocalChatMessage) {
+  const timestamp = Date.parse(message.createdAt);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function tokenOverlapScore(text: string, queryTokens: Set<string>) {
   if (!queryTokens.size) {
     return 0;
   }
-  const memoryTokens = tokenize(`${memory.text} ${memory.tags.join(" ")}`);
+  const tokens = tokenize(text);
   let score = 0;
   queryTokens.forEach((token) => {
-    if (memoryTokens.has(token)) {
+    if (tokens.has(token)) {
       score += 1;
     }
   });
   return score;
 }
 
-function recallScore(memory: LocalPetUserMemory, message: string, now: Date) {
-  if (isExpired(memory, now)) {
-    return -Infinity;
-  }
-  let score = memory.importance * 25 + memory.confidence * 10;
-  const due = dueDate(memory);
-  if (due) {
-    if (sameLocalDay(due, now)) {
-      score += 100;
-    } else {
-      const diff = due.getTime() - now.getTime();
-      if (diff >= 0 && diff <= DAY_MS) {
-        score += 90;
-      } else if (diff > 0 && diff <= DAY_MS * 3) {
-        score += 35;
+function mergeWindows(
+  windows: { start: number; end: number; score: number; latestAt: number }[],
+) {
+  return windows
+    .sort((left, right) => left.start - right.start || left.end - right.end)
+    .reduce<{ start: number; end: number; score: number; latestAt: number }[]>((result, item) => {
+      const previous = result[result.length - 1];
+      if (!previous || item.start > previous.end + 1) {
+        result.push(item);
+        return result;
       }
-    }
-  }
-  score += keywordOverlapScore(memory, tokenize(message)) * 30;
-  const lastMentionedAt = memory.lastMentionedAt ? Date.parse(memory.lastMentionedAt) : 0;
-  const staleDays = lastMentionedAt ? (now.getTime() - lastMentionedAt) / DAY_MS : 30;
-  if (memory.importance >= 0.75 && staleDays >= 3) {
-    score += 20;
-  }
-  return score;
+      previous.end = Math.max(previous.end, item.end);
+      previous.score = Math.max(previous.score, item.score);
+      previous.latestAt = Math.max(previous.latestAt, item.latestAt);
+      return result;
+    }, []);
 }
 
-function contextFromMemories(
-  memory: LocalPetMemoryStateV1,
-  relevantMemories: LocalPetUserMemory[],
-  proactiveCandidate?: LocalPetMemoryContext["proactiveCandidate"],
-): LocalPetMemoryContext {
+function episodeId(history: LocalChatMessage[], start: number, end: number) {
+  const first = history[start];
+  const last = history[end - 1];
+  return `episode:${first?.id ?? start}:${last?.id ?? end}`;
+}
+
+function episodeFromWindow(
+  history: LocalChatMessage[],
+  window: { start: number; end: number },
+): LocalChatMemoryEpisode {
   return {
-    summary: memory.summary,
-    userProfile: memory.userProfile,
-    relevantMemories: relevantMemories.slice(0, MAX_RECALL_MEMORIES).map((item) => ({
-      id: item.id,
-      kind: item.kind,
-      text: item.text,
-      dueAt: item.dueAt,
+    id: episodeId(history, window.start, window.end),
+    messages: history.slice(window.start, window.end).map((message) => ({
+      role: message.role,
+      text: message.text,
+      createdAt: message.createdAt,
     })),
-    proactiveCandidate,
   };
 }
 
 export function buildMemoryContextForMessage(
-  memory: LocalPetMemoryStateV1,
+  history: LocalChatMessage[],
   message: string,
   now = new Date(),
 ): LocalPetMemoryContext {
-  const relevantMemories = memory.memories
-    .map((item) => ({ item, score: recallScore(item, message, now) }))
-    .filter(({ score }) => score > 0)
-    .sort((left, right) => right.score - left.score)
-    .map(({ item }) => item)
-    .slice(0, MAX_RECALL_MEMORIES);
+  const queryTokens = tokenize(message);
+  if (!queryTokens.size || history.length <= RECENT_DIRECT_HISTORY_MESSAGES) {
+    return { relevantMemories: [] };
+  }
 
-  return contextFromMemories(memory, relevantMemories);
+  const searchableCount = Math.max(0, history.length - RECENT_DIRECT_HISTORY_MESSAGES);
+  const windows = history.slice(0, searchableCount).flatMap((historyMessage, index) => {
+    const overlap = tokenOverlapScore(historyMessage.text, queryTokens);
+    if (overlap <= 0) {
+      return [];
+    }
+    const ageDays = Math.max(0, (now.getTime() - messageTime(historyMessage)) / DAY_MS);
+    const recencyBoost = Math.max(0, 4 - ageDays) * 0.1;
+    return [{
+      start: Math.max(0, index - EPISODE_CONTEXT_RADIUS),
+      end: Math.min(history.length, index + EPISODE_CONTEXT_RADIUS + 1),
+      score: overlap + recencyBoost,
+      latestAt: messageTime(historyMessage),
+    }];
+  });
+
+  const selectedWindows = mergeWindows(windows)
+    .sort((left, right) => right.score - left.score || right.latestAt - left.latestAt)
+    .slice(0, MAX_RECALL_EPISODES)
+    .sort((left, right) => left.start - right.start);
+
+  return {
+    relevantMemories: [],
+    episodes: selectedWindows.map((window) => episodeFromWindow(history, window)),
+  };
 }
 
 function hasLocalProactiveToday(memory: LocalPetMemoryStateV1, now: Date) {
@@ -161,39 +186,6 @@ function hasRecentPetMessage(history: LocalChatMessage[], now: Date) {
   });
 }
 
-function proactiveScore(memory: LocalPetUserMemory, now: Date) {
-  if (isExpired(memory, now)) {
-    return -Infinity;
-  }
-  const due = dueDate(memory);
-  if (due && sameLocalDay(due, now)) {
-    return 1000 + memory.importance * 100;
-  }
-  if (due && sameLocalDay(due, tomorrowLocalDay(now))) {
-    return 800 + memory.importance * 100;
-  }
-  const lastMentionedAt = memory.lastMentionedAt ? Date.parse(memory.lastMentionedAt) : 0;
-  const staleDays = lastMentionedAt ? (now.getTime() - lastMentionedAt) / DAY_MS : 30;
-  if (memory.importance >= 0.75 && staleDays >= 3) {
-    return 500 + memory.importance * 100;
-  }
-  if (memory.kind === "preference" || memory.kind === "relationship") {
-    return 250 + memory.importance * 100;
-  }
-  return -Infinity;
-}
-
-function proactiveReason(memory: LocalPetUserMemory, now: Date) {
-  const due = dueDate(memory);
-  if (due && sameLocalDay(due, now)) {
-    return `у пользователя сегодня важное событие: ${memory.text}`;
-  }
-  if (due && sameLocalDay(due, tomorrowLocalDay(now))) {
-    return `у пользователя завтра важное событие: ${memory.text}`;
-  }
-  return memory.text;
-}
-
 export function buildDailyProactiveMemoryContext(
   pet: LocalPetState,
   memory: LocalPetMemoryStateV1,
@@ -206,17 +198,33 @@ export function buildDailyProactiveMemoryContext(
   if (hasRecentPetMessage(history, now)) {
     return null;
   }
-  const selected = memory.memories
-    .map((item) => ({ item, score: proactiveScore(item, now) }))
-    .filter(({ score }) => score > 0)
-    .sort((left, right) => right.score - left.score)
-    .map(({ item }) => item)
-    .slice(0, 3);
-  if (!selected.length) {
+
+  let lastUserIndex = -1;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index]?.role === "user") {
+      lastUserIndex = index;
+      break;
+    }
+  }
+  if (lastUserIndex < 0) {
     return null;
   }
-  return contextFromMemories(memory, selected, {
-    memoryIds: selected.map((item) => item.id),
-    reason: proactiveReason(selected[0], now).slice(0, 280),
-  });
+  const lastUserText = history[lastUserIndex]?.text.trim();
+  if (lastUserText && isIdentityDialogueQuestion(lastUserText)) {
+    return null;
+  }
+
+  const start = Math.max(0, lastUserIndex - EPISODE_CONTEXT_RADIUS);
+  const end = Math.min(history.length, lastUserIndex + EPISODE_CONTEXT_RADIUS + 1);
+  const episode = episodeFromWindow(history, { start, end });
+
+  return {
+    relevantMemories: [],
+    episodes: [episode],
+    proactiveCandidate: {
+      memoryIds: [],
+      episodeIds: [episode.id],
+      reason: lastUserText ? `продолжить недавний разговор: ${lastUserText.slice(0, 180)}` : "продолжить недавний разговор",
+    },
+  };
 }

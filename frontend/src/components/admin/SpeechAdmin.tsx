@@ -140,17 +140,6 @@ const CHARACTER_BIBLE_LEGACY_DEFAULTS = [
   { id: "provenanceLicenseNotes", label: "provenance license_notes" },
 ] as const;
 
-const TONE_SURFACE_FIELDS = [
-  { id: "visibleReply", label: "Visible replies" },
-  { id: "contextRouting", label: "Context routing" },
-  { id: "worldContext", label: "World context" },
-  { id: "characterBible", label: "Character bible" },
-  { id: "backgroundStory", label: "Background story" },
-  { id: "travelStory", label: "Travel story" },
-  { id: "storyboard", label: "Storyboard" },
-  { id: "imagePrompt", label: "Image prompt" },
-] as const;
-
 const AUXILIARY_FILE_IDS = [
   "story_library",
   "age_speech_examples",
@@ -878,41 +867,6 @@ function ToneRuntimeEditor({
             rows={4}
             onChange={(value) => updatePresetPath(["toneOfVoice"], value)}
           />
-          <RuntimeField
-            label="Conflict policy"
-            value={stringAt(config, ["presets", activePreset, "conflictPolicy"])}
-            rows={4}
-            onChange={(value) => updatePresetPath(["conflictPolicy"], value)}
-          />
-          <RuntimeField
-            label="Age policy"
-            value={stringAt(config, ["presets", activePreset, "agePolicy"])}
-            rows={4}
-            onChange={(value) => updatePresetPath(["agePolicy"], value)}
-          />
-          <RuntimeField
-            label="Visual style"
-            value={stringAt(config, ["presets", activePreset, "visualStyle"])}
-            rows={5}
-            onChange={(value) => updatePresetPath(["visualStyle"], value)}
-          />
-          <RuntimeField
-            label="Avoid"
-            value={stringAt(config, ["presets", activePreset, "avoid"])}
-            rows={4}
-            onChange={(value) => updatePresetPath(["avoid"], value)}
-          />
-          <div className="grid gap-4 lg:grid-cols-2">
-            {TONE_SURFACE_FIELDS.map((field) => (
-              <RuntimeField
-                key={field.id}
-                label={field.label}
-                value={stringAt(config, ["presets", activePreset, "surfaces", field.id])}
-                rows={4}
-                onChange={(value) => updatePresetPath(["surfaces", field.id], value)}
-              />
-            ))}
-          </div>
         </>
       )}
     </Section>

@@ -211,10 +211,8 @@ USER_CHARACTER_DESCRIPTION:
 SETTING_HINT:
 Use this only as a light lens for habitat, objects, voice and story hooks.
 Do not replace USER_CHARACTER_DESCRIPTION with the setting.
-- preset: {setting["preset"]} ({setting["label"]})
 - setting: {setting["setting"]}
-- tone of voice: {setting["toneOfVoice"]}
-- surface: {setting["surfaceRule"]}
+- tone: {setting["toneOfVoice"]}
 
 GENERATION_RULE:
 {template["generationRule"]}

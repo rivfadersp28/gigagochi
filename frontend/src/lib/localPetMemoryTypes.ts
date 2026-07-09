@@ -52,6 +52,15 @@ export type LocalPetProactiveLogItem = {
   deliveredVia: "local_open" | "telegram_push";
 };
 
+export type LocalChatMemoryEpisode = {
+  id: string;
+  messages: {
+    role: "user" | "pet";
+    text: string;
+    createdAt?: string;
+  }[];
+};
+
 export type LocalPetMemoryStateV1 = {
   version: 1;
   petId: string;
@@ -118,8 +127,10 @@ export type LocalPetMemoryContext = {
     text: string;
     dueAt?: string;
   }[];
+  episodes?: LocalChatMemoryEpisode[];
   proactiveCandidate?: {
     memoryIds: string[];
+    episodeIds?: string[];
     reason: string;
   };
 };

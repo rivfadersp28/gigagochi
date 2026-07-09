@@ -766,8 +766,8 @@ def test_character_bible_prompt_omits_curated_generation_context() -> None:
     assert "TONE_PROFILE" not in prompt
     assert "GENERATION_PROFILE" not in prompt
     assert "SETTING_HINT" in prompt
-    assert "Cyberpunk" in prompt
-    assert "Near-future street-level cyberpunk" in prompt
+    assert "setting: cyberpunk" in prompt
+    assert "tone: natural" in prompt
     assert "Dark fantasy" not in prompt
     assert "WORLD_DESCRIPTION_ANCHORS" not in prompt
     assert "source_text_do_not_copy" not in prompt

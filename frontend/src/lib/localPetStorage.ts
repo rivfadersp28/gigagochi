@@ -19,7 +19,7 @@ export const PET_STATE_STORAGE_KEY = "tamagochi:v1:pet-state";
 export const CHAT_HISTORY_STORAGE_KEY = "tamagochi:v1:chat-history";
 export const SETTINGS_STORAGE_KEY = "tamagochi:v1:settings";
 
-const MAX_CHAT_MESSAGES = 50;
+const MAX_CHAT_MESSAGES = 300;
 const MAX_CHAT_MESSAGE_TEXT = 8000;
 const MAX_STORY_LIBRARY_BRICKS = 80;
 const MAX_RECENT_STORY_EVENTS = 10;
@@ -828,28 +828,43 @@ function normalizeChatHistory(value: unknown): LocalChatHistoryV1 {
     return { version: 1, messages: [] };
   }
 
+  const messages = value.messages
+    .filter(isRecord)
+    .map((message): LocalChatMessage | null => {
+      if (
+        typeof message.id !== "string" ||
+        (message.role !== "user" && message.role !== "pet") ||
+        typeof message.text !== "string"
+      ) {
+        return null;
+      }
+
+      return {
+        id: message.id,
+        role: message.role,
+        text: message.text.slice(0, MAX_CHAT_MESSAGE_TEXT),
+        createdAt: isIsoDate(message.createdAt) ? message.createdAt : new Date().toISOString(),
+      };
+    })
+    .filter((message): message is LocalChatMessage => Boolean(message));
+
+  const durableMessages: LocalChatMessage[] = [];
+  let canAcceptPetReply = false;
+  messages.forEach((message) => {
+    if (message.role === "user") {
+      durableMessages.push(message);
+      canAcceptPetReply = true;
+      return;
+    }
+    if (canAcceptPetReply) {
+      durableMessages.push(message);
+      canAcceptPetReply = false;
+    }
+  });
+
   return {
     version: 1,
-    messages: value.messages
-      .filter(isRecord)
-      .map((message): LocalChatMessage | null => {
-        if (
-          typeof message.id !== "string" ||
-          (message.role !== "user" && message.role !== "pet") ||
-          typeof message.text !== "string"
-        ) {
-          return null;
-        }
-
-        return {
-          id: message.id,
-          role: message.role,
-          text: message.text.slice(0, MAX_CHAT_MESSAGE_TEXT),
-          createdAt: isIsoDate(message.createdAt) ? message.createdAt : new Date().toISOString(),
-        };
-      })
-      .filter((message): message is LocalChatMessage => Boolean(message))
-      .slice(-MAX_CHAT_MESSAGES),
+    messages: durableMessages.slice(-MAX_CHAT_MESSAGES),
   };
 }
 

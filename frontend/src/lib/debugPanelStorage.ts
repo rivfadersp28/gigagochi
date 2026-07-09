@@ -273,6 +273,12 @@ export function recordMemoryContextDebug(
   memoryContext.relevantMemories.forEach((item) => {
     lines.push(`- [${item.kind}] ${item.text}${item.dueAt ? ` (${item.dueAt})` : ""}`);
   });
+  memoryContext.episodes?.forEach((episode, index) => {
+    lines.push(`Эпизод ${index + 1}:`);
+    episode.messages.forEach((message) => {
+      lines.push(`${message.role}: ${message.text}`);
+    });
+  });
   if (memoryContext.proactiveCandidate?.reason) {
     lines.push(`Проактивный повод: ${memoryContext.proactiveCandidate.reason}`);
   }

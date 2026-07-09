@@ -140,7 +140,8 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
     assert "древний дуб отвечает шепотом листа" not in prompt
     assert "чел с листом вместо лица" in prompt
     assert "GENERATION_PROFILE" in prompt
-    assert "Cyberpunk" in prompt
+    assert "- setting: cyberpunk" in prompt
+    assert "- tone: natural" in prompt
     assert "Dark fantasy" not in prompt
     assert "Цельная детальная иллюстрация" in prompt
     assert "активный generation profile" in prompt.lower()
@@ -217,7 +218,7 @@ def test_background_story_image_passes_current_sprite_reference_to_image_helper(
     assert len(prompt) <= background_story_service.BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS
 
 
-def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) -> None:
+def test_generate_background_story_stores_recent_event_without_lite_patch(monkeypatch) -> None:
     routing_content = json.dumps(
         {
             "sources": {
@@ -255,37 +256,7 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
         },
         ensure_ascii=False,
     )
-    aftermath_content = json.dumps(
-        {
-            "facts": [
-                {
-                    "sphere": "world",
-                    "kind": "world_fact",
-                    "text": (
-                        "У лесной миски Олега водятся стеклянные улитки, "
-                        "которые охотятся за запахами-сигналами листа."
-                    ),
-                    "pathHint": "lite_overlay.spheres.world",
-                    "source": "background_story_aftermath",
-                    "confidence": 0.91,
-                }
-            ],
-            "recentEvent": {
-                "summary": "Стеклянные улитки поползли к листу Олега у лесной миски.",
-                "eventType": "attack",
-                "participants": ["стеклянные улитки", "Олег"],
-                "actions": ["нападение"],
-                "objects": ["лист"],
-                "location": "лесная миска",
-                "outcome": "Олег пережил налет.",
-                "compactText": "Стеклянные улитки атаковали лист Олега у лесной миски.",
-                "canonicalFacts": ["стеклянные улитки атаковали лист Олега"],
-                "statusChanges": [],
-            },
-        },
-        ensure_ascii=False,
-    )
-    completions = FakeBackgroundStoryCompletions([routing_content, content, aftermath_content])
+    completions = FakeBackgroundStoryCompletions([routing_content, content])
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     monkeypatch.setattr(
         background_story_service,
@@ -305,7 +276,7 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
     assert result.title == "Налет стеклянных улиток"
     assert result.event_type == "attack"
     assert result.story_library_patch is None
-    assert result.lite_overlay_patch is not None
+    assert result.lite_overlay_patch is None
     assert result.recent_story_event is not None
     assert result.stat_impact == {
         "stat": "energy",
@@ -314,16 +285,8 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
     }
     assert list(result.stat_impacts) == [result.stat_impact]
     assert result.recent_story_event["summary"] == (
-        "Стеклянные улитки поползли к листу Олега у лесной миски."
+        "На Олега напали стеклянные улитки у лесной миски."
     )
-    assert result.recent_story_event["canonicalFacts"] == [
-        "стеклянные улитки атаковали лист Олега"
-    ]
-    assert result.recent_story_event["participants"] == ["стеклянные улитки", "Олег"]
-    fact = result.lite_overlay_patch["facts"][0]
-    assert fact["sphere"] == "world"
-    assert fact["source"] == "background_story_aftermath"
-    assert "стеклянные улитки" in fact["text"]
     request = _call_by_schema(completions, "background_story")
     assert request["response_format"]["json_schema"]["name"] == "background_story"
     prompt = request["messages"][1]["content"]
@@ -333,14 +296,8 @@ def test_generate_background_story_extracts_aftermath_lite_patch(monkeypatch) ->
     assert '"stats"' not in prompt
     assert '"голод"' in prompt
     assert '"здоровье"' in prompt
-    assert "Листики выпускают запахи-сигналы опасности." in prompt
-    aftermath_request = _call_by_schema(
-        completions,
-        "background_story_aftermath_extraction",
-    )
-    aftermath_prompt = aftermath_request["messages"][1]["content"]
-    assert "Сгенерированная история JSON" in aftermath_prompt
-    assert "Налет стеклянных улиток" in aftermath_prompt
+    assert "Листики выпускают запахи-сигналы опасности." not in prompt
+    assert len(completions.calls) == 2
 
 
 def test_background_story_profile_toggle_controls_description() -> None:
@@ -531,14 +488,11 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     )
 
     assert result.title == "Световая капля"
-    assert len(completions.calls) == 3
+    assert len(completions.calls) == 2
     assert completions.calls[0]["response_format"]["json_schema"]["name"] == (
         "background_story_context_routing"
     )
     assert completions.calls[1]["response_format"]["json_schema"]["name"] == "background_story"
-    assert completions.calls[2]["response_format"]["json_schema"]["name"] == (
-        "background_story_aftermath_extraction"
-    )
     prompt = _call_by_schema(completions, "background_story")["messages"][1]["content"]
     assert captured_story_queries == ["лор мира"]
     assert "Кристаллическая капля" in prompt
@@ -718,7 +672,7 @@ def test_background_story_aftermath_ignores_ephemeral_events(monkeypatch) -> Non
     assert result.story_library_patch is None
     assert result.lite_overlay_patch is None
     assert result.recent_story_event is not None
-    assert result.recent_story_event["summary"] == "На Олега напала меловая тень и исчезла."
+    assert result.recent_story_event["summary"] == "На Олега напала меловая тень."
 
 
 def test_background_story_uses_snapshot_history_when_story_toggles_allow(

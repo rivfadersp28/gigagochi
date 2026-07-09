@@ -40,7 +40,6 @@ from app.services.prompt_debug import (
     log_chat_completion_response,
     write_prompt_log_line,
 )
-from app.services.story_constructor import build_story_constructor_context
 from app.services.tone_runtime import tone_prompt_block, tone_visual_style
 
 ADVENTURE_SCENE_COUNT = 7
@@ -775,9 +774,6 @@ SELECTED_STORY_FRAMEWORK_JSON:
 PLOT_TEMPLATE_BRIEF_JSON:
 {_compact_json(_plot_brief_context(plot_brief), max_chars=8500)}
 
-STORY_CONSTRUCTOR_BRICKS_JSON:
-{_compact_json(build_story_constructor_context(), max_chars=3800)}
-
 Required output:
 - adventureTitle
 - coreIdea
@@ -793,12 +789,9 @@ Story requirements:
   problem focused from beginning to end.
 - Use PLOT_TEMPLATE_BRIEF_JSON as a hidden structural scaffold. Follow its
   7 beat functions in order, but do not copy its sentences literally.
-- Use STORY_CONSTRUCTOR_BRICKS_JSON as a low-level palette for concrete objects,
-  places, neighbors, creatures and strange non-brutal obstacles. Pick only details that become
-  causally useful in the story. Never mention the constructor or dataset.
-- Invent fresh concrete locations, sensory details, actions, causes and turns
-  inside the scaffold. The output must feel like an original authored adventure,
-  not a filled template.
+- Let the character and active generation profile define locations, actions,
+  causes and turns inside the scaffold. The output must feel like an original
+  authored adventure, not a filled template.
 - Every fullStory paragraph must serve one or more plot-brief beats. Do not
   add a second central premise, unrelated side quest, or random one-scene lore.
 - Make the story specific enough that the next storyboard stage can create
