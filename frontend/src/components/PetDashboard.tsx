@@ -743,33 +743,32 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           <div className="conversation-appbar__blur" aria-hidden="true" />
         </div>
 
-        <img
-          src={sceneBackgroundSrc}
-          alt=""
-          aria-hidden="true"
-          className="main-scene-background"
-          draggable={false}
-        />
-        {sceneVideoSrc ? (
-          <video
-            src={sceneVideoSrc}
-            poster={sceneBackgroundSrc}
-            aria-hidden="true"
+        <div className="main-scene-media" aria-hidden="true">
+          <img
+            src={sceneBackgroundSrc}
+            alt=""
             className="main-scene-background"
-            autoPlay
-            loop
-            muted
-            playsInline
-            preload="auto"
+            draggable={false}
           />
-        ) : null}
-        <img
-          src={videoFilterSrc}
-          alt=""
-          className="main-scene-filter-image"
-          aria-hidden="true"
-          draggable={false}
-        />
+          {sceneVideoSrc ? (
+            <video
+              src={sceneVideoSrc}
+              poster={sceneBackgroundSrc}
+              className="main-scene-background"
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="auto"
+            />
+          ) : null}
+          <img
+            src={videoFilterSrc}
+            alt=""
+            className="main-scene-filter-image"
+            draggable={false}
+          />
+        </div>
 
         <div ref={feedDropTargetRef} className="feed-drop-target" aria-hidden="true" />
 

@@ -21,7 +21,7 @@
   --danger: #9f2d2d;
   --danger-bg: rgba(159, 45, 45, 0.16);
   --danger-line: rgba(159, 45, 45, 0.22);
-  --main-scene-bg: #f5f3f2;
+  --main-scene-bg: #000000;
   --main-scene-ink: #ffffff;
   --main-scene-ink-soft: rgba(52, 37, 61, 0.72);
   --main-scene-ink-muted: rgba(255, 255, 255, 0.62);
@@ -270,6 +270,21 @@ body {
   background: var(--main-scene-bg);
   color: var(--main-scene-ink);
   font-family: var(--font-sans);
+}
+
+.main-scene-media {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transform: translate3d(0, 0, 0);
+  transition: transform 500ms ease-out;
+  user-select: none;
+}
+
+.main-mobile-scene--keyboard .main-scene-media {
+  transform: translate3d(0, -150px, 0);
 }
 
 .main-scene-background {
