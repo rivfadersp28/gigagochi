@@ -31,6 +31,17 @@
   `useConversationKeyboardOffset` owns Visual Viewport keyboard positioning and
   `usePetPushSnapshotSync` owns throttled server snapshot reconciliation.
 
+## API Contracts
+
+- FastAPI's Pydantic schemas are the source of truth for shared HTTP contracts.
+  `backend/scripts/export_openapi.py` exports `frontend/openapi.json`, and
+  `openapi-typescript` generates `frontend/src/lib/generated/openapi.d.ts`.
+  Backend and frontend checks fail when either generated artifact is stale.
+- `frontend/src/lib/apiTransport.ts` owns fetch, safe public errors and malformed
+  JSON handling. `apiContracts.ts` validates successful payloads at runtime and
+  normalizes nullable wire fields into the frontend domain before `api.ts`
+  applies pet-specific request/response mapping.
+
 ## Pet Replies
 
 - Chat, proactive and ambient replies are assembled through the same `PhrasePlan`

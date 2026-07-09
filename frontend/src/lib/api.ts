@@ -6,7 +6,6 @@ import type {
   LocalChatMessage,
   LocalChatResponse,
   LocalPetState,
-  PetStatsPatch,
   PetMood,
   PetStage,
 } from "./types";
@@ -18,28 +17,29 @@ import type {
 } from "./localPetMemoryTypes";
 import { buildExistingMemoryBrief } from "./localPetMemoryStorage";
 import { getTelegramInitData } from "./telegram";
+import {
+  parseGeneratePetJobResponse,
+  parseGenerateTravelResponse,
+  parseLiteFactExtractionResponse,
+  parseLocalChatResponse,
+  parseMemoryConsolidationResponse,
+  parseMemoryExtractionResponse,
+  parsePushSnapshotResponse,
+  type GeneratePetApiResponse,
+  type GeneratePetJobResponse,
+  type PushSnapshotResponse,
+} from "./apiContracts";
+import {
+  API_URL,
+  ApiError,
+  apiErrorFromDetail,
+  request,
+} from "./apiTransport";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+export { API_URL, ApiError } from "./apiTransport";
+
 const ENABLE_TMA_DEV_FALLBACK = process.env.NEXT_PUBLIC_ENABLE_TMA_DEV_FALLBACK === "true";
 const MAX_CHAT_INPUT_LENGTH = 1000;
-
-type GeneratePetApiResponse = Omit<GeneratePetResponse, "characterBible"> & {
-  characterBible?: Record<string, unknown> | null;
-};
-
-type GeneratePetJobResponse = {
-  jobId: string;
-  status: "queued" | "running" | "succeeded" | "failed";
-  phase: "queued" | "generating_images" | "generating_video" | "completed";
-  createdAt: string;
-  updatedAt: string;
-  result?: GeneratePetApiResponse | null;
-  error?: ApiErrorDetail | null;
-};
-
-type RequestOptions = Omit<RequestInit, "body"> & {
-  body?: unknown;
-};
 
 type LocalChatOptions = {
   includeDebug?: boolean;
@@ -50,121 +50,10 @@ type LocalChatOptions = {
   };
 };
 
-type PushSnapshotResponse = {
-  registered: boolean;
-  telegramId: number;
-  updatedAt: string;
-  statsPatch?: PetStatsPatch | null;
-  storyLibraryPatch?: Record<string, unknown> | null;
-  liteOverlayPatch?: Record<string, unknown> | null;
-  recentStoryEventsPatch?: Record<string, unknown> | null;
-};
-
 const REQUIRED_STAGES = ["baby", "teen", "adult"] as const satisfies readonly PetStage[];
 const REQUIRED_MOODS = ["idle", "happy", "hungry", "sad"] as const satisfies readonly PetMood[];
 const GENERATION_POLL_INTERVAL_MS = 2000;
 const MAX_GENERATION_POLL_MS = 25 * 60 * 1000;
-
-type ApiErrorDetail = {
-  error?: unknown;
-  message?: unknown;
-  code?: unknown;
-  requestId?: unknown;
-  retryAfterSeconds?: unknown;
-};
-
-export class ApiError extends Error {
-  code?: string;
-  status?: number;
-
-  constructor(message: string, code?: string, status?: number) {
-    super(message);
-    this.name = "ApiError";
-    this.code = code;
-    this.status = status;
-  }
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function numericValue(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function formatRetryAfter(seconds: number | undefined): string | undefined {
-  if (seconds === undefined || seconds <= 0) {
-    return undefined;
-  }
-
-  const minutes = Math.max(1, Math.ceil(seconds / 60));
-  if (minutes < 60) {
-    return `${minutes} мин`;
-  }
-
-  const hours = Math.ceil(minutes / 60);
-  if (hours < 24) {
-    return `${hours} ч`;
-  }
-
-  return `${Math.ceil(hours / 24)} дн`;
-}
-
-function rateLimitMessage(detail: ApiErrorDetail, fallbackMessage?: string): string {
-  const base = fallbackMessage ?? "Слишком много запросов.";
-  const retryAfter = formatRetryAfter(numericValue(detail.retryAfterSeconds));
-  return retryAfter ? `${base} Попробуйте через ${retryAfter}.` : base;
-}
-
-function errorDetail(payload: unknown): ApiErrorDetail {
-  if (!payload || typeof payload !== "object") {
-    return {};
-  }
-  const record = payload as Record<string, unknown>;
-  const detail = record.detail;
-  if (detail && typeof detail === "object") {
-    return detail as ApiErrorDetail;
-  }
-  return record as ApiErrorDetail;
-}
-
-function errorMessageFromResponse(
-  response: Response,
-  payload: unknown,
-): { message: string; code?: string } {
-  const detail = errorDetail(payload);
-  const statusLine = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`;
-  const code = stringValue(detail.code);
-  const message = stringValue(detail.message) ?? stringValue((payload as { message?: unknown })?.message);
-
-  if (code === "rate_limited") {
-    return { message: rateLimitMessage(detail, message), code };
-  }
-
-  return {
-    message:
-      message ??
-      (response.status >= 500
-        ? "Сервис временно недоступен. Попробуйте позже."
-        : `Не получилось выполнить действие (${statusLine}). Попробуйте снова.`),
-    code,
-  };
-}
-
-function errorMessageFromDetail(detail: ApiErrorDetail): { message: string; code?: string } {
-  const code = stringValue(detail.code);
-  const message = stringValue(detail.message);
-
-  if (code === "rate_limited") {
-    return { message: rateLimitMessage(detail, message), code };
-  }
-
-  return {
-    message: message ?? "Не получилось создать питомца. Попробуйте снова.",
-    code,
-  };
-}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -182,41 +71,6 @@ function petStatsForApi(stats: LocalPetState["stats"]) {
     happiness: statForApi(stats.happiness),
     energy: statForApi(stats.energy),
   };
-}
-
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const url = `${API_URL}${path}`;
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    });
-  } catch {
-    throw new ApiError(
-      "Не удалось связаться с сервисом. Проверьте подключение и попробуйте снова.",
-      "NETWORK_ERROR",
-    );
-  }
-
-  if (!response.ok) {
-    let rawBody = "";
-    let payload: unknown;
-    try {
-      rawBody = await response.text();
-      payload = rawBody ? JSON.parse(rawBody) : undefined;
-    } catch {
-      payload = undefined;
-    }
-    const { message, code } = errorMessageFromResponse(response, payload);
-    throw new ApiError(message, code, response.status);
-  }
-
-  return response.json() as Promise<T>;
 }
 
 function tmaAuthHeaders(): HeadersInit {
@@ -342,16 +196,20 @@ function completeGeneratedImages(response: GeneratePetApiResponse): GeneratePetR
 }
 
 export async function generatePetAssets(description: string): Promise<GeneratePetResponse> {
-  const job = await request<GeneratePetJobResponse>("/api/generate-pet", {
-    method: "POST",
-    headers: tmaAuthHeaders(),
-    body: {
-      description,
-      style: "cute mobile game pet",
-      stages: ["baby", "teen", "adult"],
-      moods: ["idle", "happy", "hungry", "sad"],
+  const job = await request(
+    "/api/generate-pet",
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      body: {
+        description,
+        style: "cute mobile game pet",
+        stages: ["baby", "teen", "adult"],
+        moods: ["idle", "happy", "hungry", "sad"],
+      },
     },
-  });
+    parseGeneratePetJobResponse,
+  );
   const response = await waitForGeneratedPet(job);
 
   return {
@@ -368,22 +226,26 @@ export async function generatePetTravel(
   pet: LocalPetState,
   options: { includeDebug?: boolean } = {},
 ): Promise<GenerateTravelResponse> {
-  const response = await request<GenerateTravelResponse>("/api/travel", {
-    method: "POST",
-    headers: tmaAuthHeaders(),
-    body: {
-      includeDebug: options.includeDebug ?? false,
-      pet: {
-        name: pet.name,
-        description: pet.description,
-        characterBible: pet.assetSet?.characterBible,
-        assetImages: publicAssetImagesForApi(pet.assetSet?.images),
-        stage: pet.stage,
-        mood: pet.mood,
-        stats: petStatsForApi(pet.stats),
+  const response = await request(
+    "/api/travel",
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      body: {
+        includeDebug: options.includeDebug ?? false,
+        pet: {
+          name: pet.name,
+          description: pet.description,
+          characterBible: pet.assetSet?.characterBible,
+          assetImages: publicAssetImagesForApi(pet.assetSet?.images),
+          stage: pet.stage,
+          mood: pet.mood,
+          stats: petStatsForApi(pet.stats),
+        },
       },
     },
-  });
+    parseGenerateTravelResponse,
+  );
 
   return {
     ...response,
@@ -402,7 +264,7 @@ async function waitForGeneratedPet(initialJob: GeneratePetJobResponse): Promise<
     if (job.status === "succeeded") {
       if (!job.result) {
         throw new ApiError(
-          `Генерация завершилась без результата.\nEndpoint: /api/generate-pet/jobs/${job.jobId}\nStatus: succeeded`,
+          "Генерация завершилась без результата. Попробуйте снова.",
           "GENERATION_RESULT_MISSING",
         );
       }
@@ -410,23 +272,24 @@ async function waitForGeneratedPet(initialJob: GeneratePetJobResponse): Promise<
     }
 
     if (job.status === "failed") {
-      const { message, code } = errorMessageFromDetail(job.error ?? {});
+      const { message, code } = apiErrorFromDetail(job.error ?? {});
       throw new ApiError(message, code);
     }
 
     if (Date.now() > deadline) {
       throw new ApiError(
-        `Генерация заняла слишком много времени.\nEndpoint: /api/generate-pet/jobs/${job.jobId}\nStatus: ${job.status}`,
+        "Генерация заняла слишком много времени. Попробуйте позже.",
         "GENERATION_POLL_TIMEOUT",
       );
     }
 
     await delay(GENERATION_POLL_INTERVAL_MS);
-    job = await request<GeneratePetJobResponse>(
+    job = await request(
       `/api/generate-pet/jobs/${encodeURIComponent(job.jobId)}`,
       {
         headers: tmaAuthHeaders(),
       },
+      parseGeneratePetJobResponse,
     );
   }
 }
@@ -437,7 +300,7 @@ export async function sendLocalChatMessage(
   history: LocalChatMessage[],
   options: LocalChatOptions = {},
 ): Promise<LocalChatResponse> {
-  return request<LocalChatResponse>("/api/chat", {
+  return request("/api/chat", {
     method: "POST",
     headers: tmaAuthHeaders(),
     body: {
@@ -459,7 +322,7 @@ export async function sendLocalChatMessage(
         text: item.text,
       })),
     },
-  });
+  }, parseLocalChatResponse);
 }
 
 export async function extractLocalUserMemory(
@@ -470,7 +333,7 @@ export async function extractLocalUserMemory(
   memory: LocalPetMemoryStateV1,
   options: { includeDebug?: boolean; memoryContext?: LocalPetMemoryContext } = {},
 ): Promise<MemoryExtractionResponse> {
-  return request<MemoryExtractionResponse>("/api/chat/memory-extract", {
+  return request("/api/chat/memory-extract", {
     method: "POST",
     headers: tmaAuthHeaders(),
     body: {
@@ -494,14 +357,14 @@ export async function extractLocalUserMemory(
         text: item.text,
       })),
     },
-  });
+  }, parseMemoryExtractionResponse);
 }
 
 export async function consolidateLocalUserMemory(
   memory: LocalPetMemoryStateV1,
   options: { includeDebug?: boolean } = {},
 ): Promise<MemoryConsolidationResponse> {
-  return request<MemoryConsolidationResponse>("/api/chat/memory-consolidate", {
+  return request("/api/chat/memory-consolidate", {
     method: "POST",
     headers: tmaAuthHeaders(),
     body: {
@@ -513,7 +376,7 @@ export async function consolidateLocalUserMemory(
       timezone: browserTimezone(),
       includeDebug: options.includeDebug ?? false,
     },
-  });
+  }, parseMemoryConsolidationResponse);
 }
 
 export async function generateLocalProactiveMessage(
@@ -521,7 +384,7 @@ export async function generateLocalProactiveMessage(
   memoryContext: LocalPetMemoryContext,
   options: { includeDebug?: boolean } = {},
 ): Promise<LocalChatResponse> {
-  return request<LocalChatResponse>("/api/chat/proactive", {
+  return request("/api/chat/proactive", {
     method: "POST",
     headers: tmaAuthHeaders(),
     body: {
@@ -538,7 +401,7 @@ export async function generateLocalProactiveMessage(
         stats: petStatsForApi(pet.stats),
       },
     },
-  });
+  }, parseLocalChatResponse);
 }
 
 export async function registerPetPushSnapshot(
@@ -549,7 +412,7 @@ export async function registerPetPushSnapshot(
     recentAmbientReplies?: string[];
   } = {},
 ): Promise<PushSnapshotResponse> {
-  return request<PushSnapshotResponse>(
+  return request(
     "/api/push/snapshot",
     {
       method: "POST",
@@ -578,6 +441,7 @@ export async function registerPetPushSnapshot(
         },
       },
     },
+    parsePushSnapshotResponse,
   );
 }
 
@@ -591,7 +455,7 @@ export async function generateLocalAmbientMessage(
     replyMaxChars?: number;
   } = {},
 ): Promise<LocalChatResponse> {
-  return request<LocalChatResponse>("/api/chat/ambient", {
+  return request("/api/chat/ambient", {
     method: "POST",
     headers: tmaAuthHeaders(),
     body: {
@@ -614,7 +478,7 @@ export async function generateLocalAmbientMessage(
         text: item.text,
       })),
     },
-  });
+  }, parseLocalChatResponse);
 }
 
 export async function extractLocalLiteFacts(
@@ -624,7 +488,7 @@ export async function extractLocalLiteFacts(
   history: LocalChatMessage[],
   options: { includeDebug?: boolean } = {},
 ): Promise<LiteFactExtractionResponse> {
-  return request<LiteFactExtractionResponse>("/api/chat/lite-facts", {
+  return request("/api/chat/lite-facts", {
     method: "POST",
     headers: tmaAuthHeaders(),
     body: {
@@ -644,7 +508,7 @@ export async function extractLocalLiteFacts(
         text: item.text,
       })),
     },
-  });
+  }, parseLiteFactExtractionResponse);
 }
 
 export function resolveImageUrl(imageUrl: string | null): string | null {

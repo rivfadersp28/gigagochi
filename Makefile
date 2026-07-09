@@ -3,9 +3,10 @@
 check: backend-check frontend-check
 
 backend-check:
-	cd backend && .venv/bin/ruff check app tests
-	cd backend && .venv/bin/ruff format app tests --check
+	cd backend && .venv/bin/ruff check app tests scripts
+	cd backend && .venv/bin/ruff format app tests scripts --check
 	cd backend && .venv/bin/pytest -q
+	cd backend && .venv/bin/python scripts/export_openapi.py ../frontend/openapi.json --check
 
 frontend-check:
 	cd frontend && npm run check

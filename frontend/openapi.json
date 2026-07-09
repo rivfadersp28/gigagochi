@@ -1,0 +1,2507 @@
+{
+  "components": {
+    "schemas": {
+      "AdminFileUpdate": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "content"
+        ],
+        "title": "AdminFileUpdate",
+        "type": "object"
+      },
+      "AdminPublishRequest": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/AdminFileUpdate"
+            },
+            "maxItems": 16,
+            "title": "Files",
+            "type": "array"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "maxLength": 180,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          }
+        },
+        "title": "AdminPublishRequest",
+        "type": "object"
+      },
+      "AdminSaveRequest": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/AdminFileUpdate"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "AdminSaveRequest",
+        "type": "object"
+      },
+      "GeneratePetAssetResponse": {
+        "properties": {
+          "assetSetId": {
+            "title": "Assetsetid",
+            "type": "string"
+          },
+          "blinkImageUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blinkimageurl"
+          },
+          "characterBible": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Characterbible"
+          },
+          "generatedAt": {
+            "format": "date-time",
+            "title": "Generatedat",
+            "type": "string"
+          },
+          "images": {
+            "$ref": "#/components/schemas/GeneratedPetImages"
+          },
+          "spriteSheetUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spritesheeturl"
+          },
+          "videoUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Videourl"
+          }
+        },
+        "required": [
+          "assetSetId",
+          "generatedAt",
+          "images"
+        ],
+        "title": "GeneratePetAssetResponse",
+        "type": "object"
+      },
+      "GeneratePetJobResponse": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "jobId": {
+            "title": "Jobid",
+            "type": "string"
+          },
+          "phase": {
+            "default": "queued",
+            "enum": [
+              "queued",
+              "generating_images",
+              "generating_video",
+              "completed"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeneratePetAssetResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "jobId",
+          "status",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "GeneratePetJobResponse",
+        "type": "object"
+      },
+      "GeneratePetRequest": {
+        "properties": {
+          "description": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "moods": {
+            "items": {
+              "enum": [
+                "idle",
+                "happy",
+                "sad",
+                "hungry"
+              ],
+              "type": "string"
+            },
+            "title": "Moods",
+            "type": "array"
+          },
+          "stages": {
+            "items": {
+              "enum": [
+                "baby",
+                "teen",
+                "adult"
+              ],
+              "type": "string"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "style": {
+            "default": "cute mobile game pet",
+            "title": "Style",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "title": "GeneratePetRequest",
+        "type": "object"
+      },
+      "GenerateTravelRequest": {
+        "properties": {
+          "includeDebug": {
+            "default": false,
+            "title": "Includedebug",
+            "type": "boolean"
+          },
+          "pet": {
+            "$ref": "#/components/schemas/LocalPetChatContext"
+          }
+        },
+        "required": [
+          "pet"
+        ],
+        "title": "GenerateTravelRequest",
+        "type": "object"
+      },
+      "GenerateTravelResponse": {
+        "properties": {
+          "debug": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalChatDebug"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "generatedAt": {
+            "format": "date-time",
+            "title": "Generatedat",
+            "type": "string"
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/TravelSceneImage"
+            },
+            "maxItems": 7,
+            "title": "Images",
+            "type": "array"
+          },
+          "story": {
+            "$ref": "#/components/schemas/TravelStory"
+          },
+          "travelId": {
+            "title": "Travelid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "travelId",
+          "generatedAt",
+          "story"
+        ],
+        "title": "GenerateTravelResponse",
+        "type": "object"
+      },
+      "GeneratedPetImages": {
+        "properties": {
+          "adult": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "idle",
+                "happy",
+                "sad",
+                "hungry"
+              ]
+            },
+            "title": "Adult",
+            "type": "object"
+          },
+          "baby": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "idle",
+                "happy",
+                "sad",
+                "hungry"
+              ]
+            },
+            "title": "Baby",
+            "type": "object"
+          },
+          "teen": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "idle",
+                "happy",
+                "sad",
+                "hungry"
+              ]
+            },
+            "title": "Teen",
+            "type": "object"
+          }
+        },
+        "required": [
+          "baby",
+          "teen",
+          "adult"
+        ],
+        "title": "GeneratedPetImages",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LiteFactExtractionRequest": {
+        "properties": {
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/LocalChatHistoryItem"
+            },
+            "maxItems": 12,
+            "title": "History",
+            "type": "array"
+          },
+          "includeDebug": {
+            "default": false,
+            "title": "Includedebug",
+            "type": "boolean"
+          },
+          "message": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "pet": {
+            "$ref": "#/components/schemas/LocalPetChatContext"
+          },
+          "reply": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Reply",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "reply",
+          "pet"
+        ],
+        "title": "LiteFactExtractionRequest",
+        "type": "object"
+      },
+      "LiteFactExtractionResponse": {
+        "properties": {
+          "debug": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalChatDebug"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "liteOverlayPatch": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liteoverlaypatch"
+          }
+        },
+        "title": "LiteFactExtractionResponse",
+        "type": "object"
+      },
+      "LocalAmbientRequest": {
+        "properties": {
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/LocalChatHistoryItem"
+            },
+            "maxItems": 12,
+            "title": "History",
+            "type": "array"
+          },
+          "includeDebug": {
+            "default": false,
+            "title": "Includedebug",
+            "type": "boolean"
+          },
+          "memoryContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalPetMemoryContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nowIso": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nowiso"
+          },
+          "pet": {
+            "$ref": "#/components/schemas/LocalPetChatContext"
+          },
+          "recentAmbientReplies": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 6,
+            "title": "Recentambientreplies",
+            "type": "array"
+          },
+          "replyMaxChars": {
+            "anyOf": [
+              {
+                "maximum": 260.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replymaxchars"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          }
+        },
+        "required": [
+          "pet"
+        ],
+        "title": "LocalAmbientRequest",
+        "type": "object"
+      },
+      "LocalChatDebug": {
+        "properties": {
+          "contextRoutingDebug": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contextroutingdebug"
+          },
+          "liteOverlayPatch": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liteoverlaypatch"
+          },
+          "liteToolCalls": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Litetoolcalls",
+            "type": "array"
+          },
+          "memoryDebug": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memorydebug"
+          },
+          "promptDebug": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Promptdebug",
+            "type": "array"
+          },
+          "storyLibraryDebug": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storylibrarydebug"
+          },
+          "storyLibraryPatch": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storylibrarypatch"
+          },
+          "structuredReplyDebug": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structuredreplydebug"
+          },
+          "usedFallback": {
+            "default": false,
+            "title": "Usedfallback",
+            "type": "boolean"
+          },
+          "validationFlags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Validationflags",
+            "type": "array"
+          }
+        },
+        "title": "LocalChatDebug",
+        "type": "object"
+      },
+      "LocalChatEpisodeMessage": {
+        "properties": {
+          "createdAt": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "pet"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "text"
+        ],
+        "title": "LocalChatEpisodeMessage",
+        "type": "object"
+      },
+      "LocalChatHistoryItem": {
+        "properties": {
+          "role": {
+            "enum": [
+              "user",
+              "pet"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "text"
+        ],
+        "title": "LocalChatHistoryItem",
+        "type": "object"
+      },
+      "LocalChatMemoryEpisode": {
+        "properties": {
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/LocalChatEpisodeMessage"
+            },
+            "maxItems": 8,
+            "title": "Messages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "LocalChatMemoryEpisode",
+        "type": "object"
+      },
+      "LocalChatRequest": {
+        "properties": {
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/LocalChatHistoryItem"
+            },
+            "maxItems": 12,
+            "title": "History",
+            "type": "array"
+          },
+          "includeDebug": {
+            "default": false,
+            "title": "Includedebug",
+            "type": "boolean"
+          },
+          "memoryContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalPetMemoryContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "pet": {
+            "$ref": "#/components/schemas/LocalPetChatContext"
+          },
+          "replyMaxChars": {
+            "anyOf": [
+              {
+                "maximum": 300.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replymaxchars"
+          },
+          "visibleContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalVisibleContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "message",
+          "pet"
+        ],
+        "title": "LocalChatRequest",
+        "type": "object"
+      },
+      "LocalChatResponse": {
+        "properties": {
+          "debug": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalChatDebug"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "faceHint": {
+            "anyOf": [
+              {
+                "enum": [
+                  "happy",
+                  "excited",
+                  "curious",
+                  "content",
+                  "grumpy",
+                  "sleepy"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Facehint"
+          },
+          "innerThought": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Innerthought"
+          },
+          "moodHint": {
+            "anyOf": [
+              {
+                "enum": [
+                  "idle",
+                  "happy",
+                  "sad",
+                  "hungry"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moodhint"
+          },
+          "petPatch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalPetPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reply": {
+            "title": "Reply",
+            "type": "string"
+          },
+          "storyLibraryPatch": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storylibrarypatch"
+          }
+        },
+        "required": [
+          "reply"
+        ],
+        "title": "LocalChatResponse",
+        "type": "object"
+      },
+      "LocalPetChatContext": {
+        "properties": {
+          "assetImages": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "enum": [
+                      "idle",
+                      "happy",
+                      "sad",
+                      "hungry"
+                    ]
+                  },
+                  "type": "object"
+                },
+                "propertyNames": {
+                  "enum": [
+                    "baby",
+                    "teen",
+                    "adult"
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assetimages"
+          },
+          "characterBible": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Characterbible"
+          },
+          "description": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "mood": {
+            "enum": [
+              "idle",
+              "happy",
+              "sad",
+              "hungry"
+            ],
+            "title": "Mood",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "stage": {
+            "enum": [
+              "baby",
+              "teen",
+              "adult"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/LocalPetStats"
+          }
+        },
+        "required": [
+          "description",
+          "stage",
+          "mood",
+          "stats"
+        ],
+        "title": "LocalPetChatContext",
+        "type": "object"
+      },
+      "LocalPetMemoryContext": {
+        "properties": {
+          "episodes": {
+            "items": {
+              "$ref": "#/components/schemas/LocalChatMemoryEpisode"
+            },
+            "maxItems": 3,
+            "title": "Episodes",
+            "type": "array"
+          },
+          "proactiveCandidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalPetProactiveCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "relevantMemories": {
+            "items": {
+              "$ref": "#/components/schemas/LocalPetMemoryContextItem"
+            },
+            "maxItems": 5,
+            "title": "Relevantmemories",
+            "type": "array"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "userProfile": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Userprofile"
+          }
+        },
+        "title": "LocalPetMemoryContext",
+        "type": "object"
+      },
+      "LocalPetMemoryContextItem": {
+        "properties": {
+          "dueAt": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dueat"
+          },
+          "id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "user_fact",
+              "preference",
+              "event",
+              "deadline",
+              "relationship",
+              "routine",
+              "goal",
+              "promise",
+              "emotion",
+              "boundary"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "text"
+        ],
+        "title": "LocalPetMemoryContextItem",
+        "type": "object"
+      },
+      "LocalPetPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "LocalPetPatch",
+        "type": "object"
+      },
+      "LocalPetProactiveCandidate": {
+        "properties": {
+          "episodeIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Episodeids",
+            "type": "array"
+          },
+          "memoryIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Memoryids",
+            "type": "array"
+          },
+          "reason": {
+            "maxLength": 280,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "LocalPetProactiveCandidate",
+        "type": "object"
+      },
+      "LocalPetPushSnapshotRequest": {
+        "properties": {
+          "createdAt": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/LocalChatHistoryItem"
+            },
+            "maxItems": 12,
+            "title": "History",
+            "type": "array"
+          },
+          "lastStatTickAt": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "enum": [
+                    "hunger",
+                    "happiness",
+                    "energy"
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Laststattickat"
+          },
+          "lastStatsTickAt": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Laststatstickat"
+          },
+          "memoryContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalPetMemoryContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pet": {
+            "$ref": "#/components/schemas/LocalPetChatContext"
+          },
+          "petId": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Petid",
+            "type": "string"
+          },
+          "recentAmbientReplies": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 6,
+            "title": "Recentambientreplies",
+            "type": "array"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updatedat"
+          }
+        },
+        "required": [
+          "petId",
+          "pet"
+        ],
+        "title": "LocalPetPushSnapshotRequest",
+        "type": "object"
+      },
+      "LocalPetPushSnapshotResponse": {
+        "properties": {
+          "liteOverlayPatch": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liteoverlaypatch"
+          },
+          "recentStoryEventsPatch": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recentstoryeventspatch"
+          },
+          "registered": {
+            "title": "Registered",
+            "type": "boolean"
+          },
+          "statsPatch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalPetStatsPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "storyLibraryPatch": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storylibrarypatch"
+          },
+          "telegramId": {
+            "title": "Telegramid",
+            "type": "integer"
+          },
+          "updatedAt": {
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "registered",
+          "telegramId",
+          "updatedAt"
+        ],
+        "title": "LocalPetPushSnapshotResponse",
+        "type": "object"
+      },
+      "LocalPetStats": {
+        "properties": {
+          "energy": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Energy",
+            "type": "integer"
+          },
+          "happiness": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Happiness",
+            "type": "integer"
+          },
+          "hunger": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Hunger",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "hunger",
+          "happiness",
+          "energy"
+        ],
+        "title": "LocalPetStats",
+        "type": "object"
+      },
+      "LocalPetStatsPatch": {
+        "properties": {
+          "lastStatTickAt": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "enum": [
+                    "hunger",
+                    "happiness",
+                    "energy"
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Laststattickat"
+          },
+          "lastStatsTickAt": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Laststatstickat"
+          },
+          "stats": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "enum": [
+                "hunger",
+                "happiness",
+                "energy"
+              ]
+            },
+            "title": "Stats",
+            "type": "object"
+          }
+        },
+        "title": "LocalPetStatsPatch",
+        "type": "object"
+      },
+      "LocalProactiveRequest": {
+        "properties": {
+          "includeDebug": {
+            "default": false,
+            "title": "Includedebug",
+            "type": "boolean"
+          },
+          "memoryContext": {
+            "$ref": "#/components/schemas/LocalPetMemoryContext"
+          },
+          "nowIso": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nowiso"
+          },
+          "pet": {
+            "$ref": "#/components/schemas/LocalPetChatContext"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          }
+        },
+        "required": [
+          "pet",
+          "memoryContext"
+        ],
+        "title": "LocalProactiveRequest",
+        "type": "object"
+      },
+      "LocalProactiveResponse": {
+        "properties": {
+          "debug": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalChatDebug"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "faceHint": {
+            "anyOf": [
+              {
+                "enum": [
+                  "happy",
+                  "excited",
+                  "curious",
+                  "content",
+                  "grumpy",
+                  "sleepy"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Facehint"
+          },
+          "innerThought": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Innerthought"
+          },
+          "moodHint": {
+            "anyOf": [
+              {
+                "enum": [
+                  "idle",
+                  "happy",
+                  "sad",
+                  "hungry"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moodhint"
+          },
+          "reply": {
+            "title": "Reply",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reply"
+        ],
+        "title": "LocalProactiveResponse",
+        "type": "object"
+      },
+      "LocalVisibleContext": {
+        "properties": {
+          "lastPetLine": {
+            "maxLength": 800,
+            "minLength": 1,
+            "title": "Lastpetline",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lastPetLine"
+        ],
+        "title": "LocalVisibleContext",
+        "type": "object"
+      },
+      "MemoryConsolidationRequest": {
+        "properties": {
+          "existingMemories": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 80,
+            "title": "Existingmemories",
+            "type": "array"
+          },
+          "includeDebug": {
+            "default": false,
+            "title": "Includedebug",
+            "type": "boolean"
+          },
+          "nowIso": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nowiso"
+          },
+          "pendingLearnings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 100,
+            "title": "Pendinglearnings",
+            "type": "array"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "userProfile": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Userprofile"
+          }
+        },
+        "title": "MemoryConsolidationRequest",
+        "type": "object"
+      },
+      "MemoryConsolidationResponse": {
+        "properties": {
+          "debug": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalChatDebug"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 120,
+            "title": "Operations",
+            "type": "array"
+          }
+        },
+        "title": "MemoryConsolidationResponse",
+        "type": "object"
+      },
+      "MemoryExtractionRequest": {
+        "properties": {
+          "existingMemoryBrief": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existingmemorybrief"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/LocalChatHistoryItem"
+            },
+            "maxItems": 12,
+            "title": "History",
+            "type": "array"
+          },
+          "includeDebug": {
+            "default": false,
+            "title": "Includedebug",
+            "type": "boolean"
+          },
+          "memoryContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalPetMemoryContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "nowIso": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nowiso"
+          },
+          "pet": {
+            "$ref": "#/components/schemas/LocalPetChatContext"
+          },
+          "reply": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Reply",
+            "type": "string"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          }
+        },
+        "required": [
+          "message",
+          "reply",
+          "pet"
+        ],
+        "title": "MemoryExtractionRequest",
+        "type": "object"
+      },
+      "MemoryExtractionResponse": {
+        "properties": {
+          "debug": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalChatDebug"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 12,
+            "title": "Operations",
+            "type": "array"
+          }
+        },
+        "title": "MemoryExtractionResponse",
+        "type": "object"
+      },
+      "TravelSceneImage": {
+        "properties": {
+          "imageUrl": {
+            "minLength": 1,
+            "title": "Imageurl",
+            "type": "string"
+          },
+          "sceneIndex": {
+            "maximum": 7.0,
+            "minimum": 1.0,
+            "title": "Sceneindex",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sceneIndex",
+          "imageUrl"
+        ],
+        "title": "TravelSceneImage",
+        "type": "object"
+      },
+      "TravelStory": {
+        "properties": {
+          "scenes": {
+            "items": {
+              "$ref": "#/components/schemas/TravelStoryScene"
+            },
+            "maxItems": 7,
+            "minItems": 7,
+            "title": "Scenes",
+            "type": "array"
+          },
+          "summary": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "summary",
+          "scenes"
+        ],
+        "title": "TravelStory",
+        "type": "object"
+      },
+      "TravelStoryScene": {
+        "properties": {
+          "arc": {
+            "enum": [
+              "beginning",
+              "exploration",
+              "discovery",
+              "reward",
+              "final"
+            ],
+            "title": "Arc",
+            "type": "string"
+          },
+          "index": {
+            "maximum": 7.0,
+            "minimum": 1.0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 260,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 70,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "visualBrief": {
+            "maxLength": 1800,
+            "minLength": 1,
+            "title": "Visualbrief",
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "arc",
+          "title",
+          "text",
+          "visualBrief"
+        ],
+        "title": "TravelStoryScene",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "AI Tamagotchi API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/admin/speech": {
+      "get": {
+        "operationId": "speech_admin_manifest_api_admin_speech_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "default": "local",
+              "enum": [
+                "local",
+                "production"
+              ],
+              "title": "Source",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Speech Admin Manifest Api Admin Speech Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Speech Admin Manifest",
+        "tags": [
+          "local-admin"
+        ]
+      },
+      "put": {
+        "operationId": "save_speech_admin_api_admin_speech_put",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "default": "local",
+              "enum": [
+                "local",
+                "production"
+              ],
+              "title": "Source",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminSaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Save Speech Admin Api Admin Speech Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Speech Admin",
+        "tags": [
+          "local-admin"
+        ]
+      }
+    },
+    "/api/admin/speech/publish": {
+      "post": {
+        "operationId": "publish_speech_admin_api_admin_speech_publish_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminPublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Publish Speech Admin Api Admin Speech Publish Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Speech Admin",
+        "tags": [
+          "local-admin"
+        ]
+      }
+    },
+    "/api/admin/speech/publish/{job_id}": {
+      "get": {
+        "operationId": "speech_admin_publish_job_api_admin_speech_publish__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Speech Admin Publish Job Api Admin Speech Publish  Job Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Speech Admin Publish Job",
+        "tags": [
+          "local-admin"
+        ]
+      }
+    },
+    "/api/chat": {
+      "post": {
+        "operationId": "chat_api_chat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalChatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Chat",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/chat/ambient": {
+      "post": {
+        "operationId": "ambient_chat_api_chat_ambient_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalAmbientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalChatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ambient Chat",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/chat/lite-facts": {
+      "post": {
+        "operationId": "extract_lite_facts_api_chat_lite_facts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LiteFactExtractionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiteFactExtractionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Extract Lite Facts",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/chat/memory-consolidate": {
+      "post": {
+        "operationId": "consolidate_memory_api_chat_memory_consolidate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryConsolidationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryConsolidationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Consolidate Memory",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/chat/memory-extract": {
+      "post": {
+        "operationId": "extract_memory_api_chat_memory_extract_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryExtractionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryExtractionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Extract Memory",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/chat/proactive": {
+      "post": {
+        "operationId": "proactive_chat_api_chat_proactive_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalProactiveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalProactiveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Proactive Chat",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/generate-pet": {
+      "post": {
+        "operationId": "generate_pet_api_generate_pet_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratePetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratePetJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Pet",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/generate-pet/jobs/{job_id}": {
+      "get": {
+        "operationId": "generation_job_api_generate_pet_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratePetJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generation Job",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/push/snapshot": {
+      "post": {
+        "operationId": "push_snapshot_api_push_snapshot_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalPetPushSnapshotRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalPetPushSnapshotResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Push Snapshot",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel": {
+      "post": {
+        "operationId": "travel_api_travel_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateTravelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerateTravelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Travel",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Health Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    }
+  }
+}

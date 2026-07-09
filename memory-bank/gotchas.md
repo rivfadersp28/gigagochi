@@ -210,6 +210,9 @@
   `GHSA-qx2v-qp2m-jg93` through Next's bundled PostCSS. npm proposes an
   incompatible downgrade to Next 9.3.3, so do not run `npm audit fix --force`;
   re-check when the pinned Next release updates its bundled dependency.
+- After changing a FastAPI route or Pydantic schema, run the backend OpenAPI
+  exporter and `npm run contracts`. `make check` deliberately fails on stale
+  `frontend/openapi.json` or `src/lib/generated/openapi.d.ts`.
 - User-facing "здоровье" still uses the legacy internal stat key `energy`.
   Keep API/storage compatibility and translate only at prompt/UI boundaries
   unless a deliberate migration is planned.

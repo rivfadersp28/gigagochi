@@ -6,10 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "contracts": "openapi-typescript openapi.json --output src/lib/generated/openapi.d.ts --immutable",
+    "contracts:check": "openapi-typescript openapi.json --output src/lib/generated/openapi.d.ts --immutable --check",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run lint && npm run typecheck && npm run test"
+    "check": "npm run contracts:check && npm run lint && npm run typecheck && npm run test"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.19",
@@ -40,6 +42,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "jsdom": "^29.1.1",
+    "openapi-typescript": "^7.13.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.10"
