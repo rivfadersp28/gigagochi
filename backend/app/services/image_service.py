@@ -1329,7 +1329,7 @@ def generate_single_sprite_image_bytes(prompt: str) -> bytes:
 def generate_individual_sprite_paths(
     asset_id: uuid.UUID,
     description: str,
-    character_bible: dict[str, Any],
+    character_bible: str | dict[str, Any],
 ) -> dict[tuple[str, str], tuple[Path, str]]:
     output_dir = generated_dir_for(asset_id)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1421,8 +1421,7 @@ def generate_pet_asset_set(description: str) -> dict[str, Any]:
     output_dir = generated_dir_for(asset_set_id)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    character_bible = create_character_bible(description)
-    generated_paths = generate_individual_sprite_paths(asset_set_id, description, character_bible)
+    generated_paths = generate_individual_sprite_paths(asset_set_id, description, {})
     version = int(datetime.now(UTC).timestamp())
 
     generated_urls = {
@@ -1440,5 +1439,5 @@ def generate_pet_asset_set(description: str) -> dict[str, Any]:
         "generatedAt": datetime.now(UTC),
         "images": images,
         "spriteSheetUrl": None,
-        "characterBible": character_bible,
+        "characterBible": None,
     }

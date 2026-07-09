@@ -475,7 +475,7 @@ def test_lite_prompt_does_not_include_character_seed() -> None:
     assert "Основа мира" not in system_message
 
 
-def test_lite_prompt_includes_character_capsule_only_for_character_profile() -> None:
+def test_lite_prompt_ignores_character_profile_even_if_router_enables_it() -> None:
     system_message = build_lite_chat_messages(
         lite_payload(
             message="ты кто?",
@@ -525,11 +525,12 @@ def test_lite_prompt_includes_character_capsule_only_for_character_profile() -> 
         ),
     )[0]["content"]
 
-    assert "CHARACTER_CAPSULE" in system_message
-    assert "гурман-коллекционер" in system_message
-    assert "густая похлебка" in system_message
-    assert "Character trait" in system_message
-    assert "Does" in system_message
+    assert "CHARACTER_CAPSULE" not in system_message
+    assert "CHARACTER_PROFILE" not in system_message
+    assert "гурман-коллекционер" not in system_message
+    assert "густая похлебка" not in system_message
+    assert "Character trait" not in system_message
+    assert "Does" not in system_message
     assert "Safe adaptation" not in system_message
     assert "Never add or say" not in system_message
     assert "Pet-safe adaptation" not in system_message
@@ -1230,7 +1231,7 @@ def test_lite_story_library_context_is_preselected_without_story_tools() -> None
     assert response.debug.storyLibraryDebug["injectedSpheres"]
 
 
-def test_lite_character_profile_strips_legacy_story_overlay() -> None:
+def test_lite_character_profile_is_not_injected_for_legacy_bible() -> None:
     client, completions = fake_lite_client(
         SimpleNamespace(content="Я Громм, каменный и спокойный.", tool_calls=None),
     )
@@ -1279,9 +1280,9 @@ def test_lite_character_profile_strips_legacy_story_overlay() -> None:
 
     assert response.reply == "Я Громм, каменный и спокойный."
     system_message = completions.calls[1]["messages"][0]["content"]
-    assert "CHARACTER_PROFILE" in system_message
-    assert "каменный хранитель" in system_message
-    assert "Громм живет на теплом уступе." in system_message
+    assert "CHARACTER_PROFILE" not in system_message
+    assert "каменный хранитель" not in system_message
+    assert "Громм живет на теплом уступе." not in system_message
     assert "story_library_overlay" not in system_message
     assert "Тихий колокольный страж" not in system_message
 

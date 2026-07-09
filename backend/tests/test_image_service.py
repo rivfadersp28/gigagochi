@@ -566,10 +566,10 @@ def test_generate_pet_asset_set_generates_three_separate_teen_skins(monkeypatch,
         "app.services.image_service.generated_dir_for",
         lambda asset_id: tmp_path / str(asset_id),
     )
-    monkeypatch.setattr(
-        "app.services.image_service.create_character_bible",
-        lambda _description: {"species": "дракончик"},
-    )
+    def fail_create_character_bible(_description):
+        raise AssertionError("pet asset generation must not create character bible")
+
+    monkeypatch.setattr("app.services.image_service.create_character_bible", fail_create_character_bible)
 
     def fake_prompt(_description, _character_bible, *, stage, state):
         return f"single:{stage}:{state}"
@@ -610,6 +610,7 @@ def test_generate_pet_asset_set_generates_three_separate_teen_skins(monkeypatch,
     ]
 
     images = result["images"]
+    assert result["characterBible"] is None
     for stage in ("baby", "teen", "adult"):
         assert set(images[stage]) == {"idle", "happy", "hungry", "sad"}
         assert "/teen-idle.png" in images[stage]["idle"]

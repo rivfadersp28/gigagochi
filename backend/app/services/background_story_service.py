@@ -1580,8 +1580,7 @@ def generate_background_story(
     content = completion.choices[0].message.content or "{}"
     raw_story_payload = _json_record_from_text(content)
     result = _normalize_story_payload(raw_story_payload)
-    lite_overlay_patch: dict[str, Any] | None = None
-    recent_story_event: dict[str, Any] | None = None
+    recent_story_event = _normalize_recent_story_event(None, story=result)
     prompt_debug.append(
         {
             "event": "background_story_stat_impacts",
@@ -1592,18 +1591,6 @@ def generate_background_story(
             "valence": result.valence,
         }
     )
-    try:
-        lite_overlay_patch, recent_story_event = _extract_background_story_aftermath_patch(
-            pet=pet,
-            story=result,
-            client=openai_client,
-            model=model,
-            timeout=timeout,
-            prompt_debug=prompt_debug,
-        )
-    except Exception:
-        logger.exception("background_story_after_extraction failed")
-        recent_story_event = _normalize_recent_story_event(None, story=result)
     return BackgroundStoryResult(
         title=result.title,
         summary=result.summary,
@@ -1613,7 +1600,7 @@ def generate_background_story(
         tags=result.tags,
         rag_text=result.rag_text,
         story_library_patch=result.story_library_patch,
-        lite_overlay_patch=lite_overlay_patch,
+        lite_overlay_patch=None,
         recent_story_event=recent_story_event,
         prompt_debug=prompt_debug,
         stat_impacts=result.stat_impacts,

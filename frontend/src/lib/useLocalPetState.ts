@@ -36,7 +36,6 @@ type UseLocalPetStateResult = {
   applyGeneratedAssets: (assetSet: LocalPetAssetSet) => LocalPetState | null;
   applyMoodHint: (
     moodHint?: PetMood,
-    liteOverlayPatch?: Record<string, unknown>,
     storyLibraryPatch?: Record<string, unknown>,
   ) => LocalPetState | null;
   applyLiteOverlayPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
@@ -247,7 +246,6 @@ export function useLocalPetState(): UseLocalPetStateResult {
 
   const applyMoodHint = useCallback((
     moodHint?: PetMood,
-    liteOverlayPatch?: Record<string, unknown>,
     storyLibraryPatch?: Record<string, unknown>,
   ) => {
     const currentPet = readProgressedPet(pet);
@@ -275,12 +273,9 @@ export function useLocalPetState(): UseLocalPetStateResult {
       mood: moodHint ?? calculatePetMood(stats),
       stats,
     };
-    const withLiteOverlay = liteOverlayPatch
-      ? applyStoredLiteOverlayPatch(nextState, liteOverlayPatch)
-      : nextState;
     const withStoryLibrary = storyLibraryPatch
-      ? applyStoredStoryLibraryPatch(withLiteOverlay, storyLibraryPatch)
-      : withLiteOverlay;
+      ? applyStoredStoryLibraryPatch(nextState, storyLibraryPatch)
+      : nextState;
     const nextPet = saveAndReturn(withStoryLibrary);
     setPet(nextPet);
     return nextPet;

@@ -42,7 +42,6 @@ from app.services.image_service import generate_pet_asset_set, generation_error_
 from app.services.openai_service import MissingOpenAIAPIKey
 from app.services.pet_reply_engine.lite_generator import (
     consolidate_user_memory,
-    extract_lite_overlay_patch_from_reply,
     extract_user_memory_operations,
     generate_ambient_pet_message,
     generate_proactive_pet_message,
@@ -568,25 +567,7 @@ def extract_lite_facts(
     user: TelegramUser,
 ) -> LiteFactExtractionResponse:
     check_rate_limit("lite_facts", user)
-    try:
-        patch, debug = extract_lite_overlay_patch_from_reply(payload)
-        return LiteFactExtractionResponse(liteOverlayPatch=patch, debug=debug)
-    except MissingOpenAIAPIKey:
-        raise public_error(
-            "MISSING_OPENAI_API_KEY",
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        ) from None
-    except HTTPException:
-        raise
-    except Exception as exc:
-        code = chat_error_code(exc)
-        raise ai_failure_http_exception(
-            "/api/chat/lite-facts",
-            "lite_fact_extraction_failed",
-            code,
-            chat_error_message(code),
-            exc,
-        ) from exc
+    return LiteFactExtractionResponse()
 
 
 @router.post(

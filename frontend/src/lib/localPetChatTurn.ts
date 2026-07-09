@@ -1,5 +1,4 @@
 import {
-  extractLocalLiteFacts,
   extractLocalUserMemory,
   sendLocalChatMessage,
 } from "./api";
@@ -17,7 +16,6 @@ import {
 } from "./localPetMemoryStorage";
 import { buildMemoryContextForMessage } from "./localPetMemoryRecall";
 import {
-  recordLiteOverlayPatchDebug,
   recordMemoryContextDebug,
   recordMemoryOperationsDebug,
   recordReplyPromptDebug,
@@ -44,7 +42,6 @@ type RunLocalPetChatTurnOptions = {
   history?: LocalChatMessage[];
   logLabel: string;
   onHistoryChange?: (messages: LocalChatMessage[]) => void;
-  onLiteOverlayPatch?: (patch: Record<string, unknown>) => void;
   onMemoryConsolidationNeeded?: () => void;
 };
 
@@ -57,7 +54,6 @@ export async function runLocalPetChatTurn({
   history,
   logLabel,
   onHistoryChange,
-  onLiteOverlayPatch,
   onMemoryConsolidationNeeded,
 }: RunLocalPetChatTurnOptions): Promise<LocalPetChatTurnResult> {
   const now = new Date().toISOString();
@@ -103,24 +99,11 @@ export async function runLocalPetChatTurn({
   };
   const nextHistory = appendLocalChatMessages([assistantMessage]);
   onHistoryChange?.(nextHistory.messages);
-  recordLiteOverlayPatchDebug(response.debug?.liteOverlayPatch);
 
   const selectedMemoryIds = memoryContext.relevantMemories.map((item) => item.id);
   if (selectedMemoryIds.length) {
     writeLocalPetMemory(markMemoryContextUsed(readLocalPetMemory(pet.petId), selectedMemoryIds));
   }
-
-  void extractLocalLiteFacts(message, response.reply, pet, historyForPrompt, {
-    includeDebug: includePromptDebug,
-  })
-    .then((extraction) => {
-      logBrowserPromptDebug(`${logLabel} lite fact extraction`, extraction);
-      if (extraction.liteOverlayPatch) {
-        recordLiteOverlayPatchDebug(extraction.liteOverlayPatch);
-        onLiteOverlayPatch?.(extraction.liteOverlayPatch);
-      }
-    })
-    .catch(() => undefined);
 
   void extractLocalUserMemory(
     message,

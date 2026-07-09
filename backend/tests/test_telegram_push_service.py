@@ -335,7 +335,7 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     )
 
     assert result["storyLibraryPatch"] is None
-    assert result["liteOverlayPatch"] == lite_overlay_patch
+    assert result["liteOverlayPatch"] is None
     assert result["storyImage"] == {"bytes": b"story-png", "mimeType": "image/png"}
     assert result["storyImageError"] is None
     assert result["statsPatch"]["stats"] == {"energy": 45, "happiness": 50}
@@ -356,11 +356,6 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     assert image_calls[0]["pet"].name == "Громм"
     assert image_calls[0]["story"].title == "Нападение меловой тени"
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
-    overlay = store["records"][str(TEST_TELEGRAM_ID)]["pet"]["characterBible"][
-        "extensions"
-    ]["lite_overlay"]
-    assert overlay["facts"][0]["source"] == "background_story_aftermath"
-    assert "меловые следы" in overlay["facts"][0]["text"]
     events = store["records"][str(TEST_TELEGRAM_ID)]["recentStoryEvents"]
     assert events[0]["summary"] == "На Громма напала меловая тень у каменного порога."
     assert events[0]["canonicalFacts"] == ["меловая тень напала на Громма"]
@@ -375,16 +370,10 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     response = telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
 
     assert response.storyLibraryPatch is None
-    assert response.liteOverlayPatch is not None
+    assert response.liteOverlayPatch is None
     assert response.recentStoryEventsPatch is not None
     assert response.recentStoryEventsPatch["events"][0]["eventType"] == "attack"
-    assert response.liteOverlayPatch["facts"][0]["source"] == "background_story_aftermath"
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
-    overlay = store["records"][str(TEST_TELEGRAM_ID)]["pet"]["characterBible"][
-        "extensions"
-    ]["lite_overlay"]
-    assert len(overlay["facts"]) == 1
-    assert overlay["facts"][0]["source"] == "background_story_aftermath"
     assert (
         store["records"][str(TEST_TELEGRAM_ID)]["recentStoryEvents"][0]["summary"]
         == "На Громма напала меловая тень у каменного порога."

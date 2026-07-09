@@ -326,7 +326,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const conversationFullHeightRef = useRef(0);
   const keyboardSyncUntilRef = useRef(0);
   const pet = localPet.pet;
-  const applyLiteOverlayPatch = localPet.applyLiteOverlayPatch;
   const applyStoryLibraryPatch = localPet.applyStoryLibraryPatch;
   const applyRecentStoryEventsPatch = localPet.applyRecentStoryEventsPatch;
   const applyStatsPatch = localPet.applyStatsPatch;
@@ -402,7 +401,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         ].slice(-5);
         localPet.applyMoodHint(
           response.moodHint,
-          response.debug?.liteOverlayPatch,
           response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
         );
       })
@@ -600,13 +598,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     })
       .then((response) => {
         applyStatsPatch(response.statsPatch ?? undefined);
-        applyLiteOverlayPatch(response.liteOverlayPatch ?? undefined);
         applyStoryLibraryPatch(response.storyLibraryPatch ?? undefined);
         applyRecentStoryEventsPatch(response.recentStoryEventsPatch ?? undefined);
       })
       .catch(() => undefined);
   }, [
-    applyLiteOverlayPatch,
     applyRecentStoryEventsPatch,
     applyStatsPatch,
     applyStoryLibraryPatch,
@@ -787,7 +783,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         replyMaxChars: DASHBOARD_CHAT_REPLY_MAX_CHARS,
         dialogueHookMessage,
         logLabel: "dashboard quick chat",
-        onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
         onMemoryConsolidationNeeded: () => {
           const memory = readLocalPetMemory(pet.petId);
           void consolidateLocalUserMemory(memory, { includeDebug: includePromptDebug })
@@ -805,7 +800,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       showPetReplyMessage(response.reply, true, { showInConversation: true });
       localPet.applyMoodHint(
         response.moodHint,
-        response.debug?.liteOverlayPatch,
         response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
       );
       if (response.petPatch?.name) {
@@ -927,7 +921,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           showPetReplyMessage(response.reply, true, { dialogueHook: true });
           localPet.applyMoodHint(
             response.moodHint,
-            response.debug?.liteOverlayPatch,
             response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
           );
         })

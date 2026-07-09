@@ -534,7 +534,6 @@ def register_push_snapshot(
     }
     existing = _read_store().get("records", {}).get(str(user.telegram_id))
     same_pet = isinstance(existing, dict) and existing.get("petId") == payload.petId
-    lite_overlay_patch = _record_lite_overlay_patch(existing) if same_pet else None
     stats_patch = _merge_snapshot_stats(record, existing, now=now) if same_pet else None
     if isinstance(existing, dict):
         for key in (
@@ -558,14 +557,13 @@ def register_push_snapshot(
             record[key] = existing.get(key)
         if same_pet:
             record["recentStoryEvents"] = _record_recent_story_events(existing)
-    _merge_record_lite_overlay_patch(record, lite_overlay_patch)
     _save_record(record)
     return LocalPetPushSnapshotResponse(
         registered=True,
         telegramId=user.telegram_id,
         updatedAt=now_iso,
         statsPatch=stats_patch,
-        liteOverlayPatch=lite_overlay_patch,
+        liteOverlayPatch=None,
         recentStoryEventsPatch=_recent_story_events_patch(record),
     )
 
@@ -987,7 +985,6 @@ def generate_story_for_telegram_user(
     if stat_ticks is not None:
         next_record["lastStatsTickAt"] = _legacy_stats_tick(stat_ticks)
         next_record["lastStatTickAt"] = _stat_tick_iso_map(stat_ticks)
-    _merge_record_lite_overlay_patch(next_record, result.lite_overlay_patch)
     _save_record(next_record)
     story_image: dict[str, Any] | None = None
     story_image_error: str | None = None
@@ -1012,7 +1009,7 @@ def generate_story_for_telegram_user(
         "storyImage": story_image,
         "storyImageError": story_image_error,
         "storyLibraryPatch": None,
-        "liteOverlayPatch": result.lite_overlay_patch,
+        "liteOverlayPatch": None,
         "recentStoryEvent": recent_story_event,
         "statsPatch": stats_patch,
         "statImpacts": stat_impacts,

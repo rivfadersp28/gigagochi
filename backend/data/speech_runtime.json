@@ -38,9 +38,9 @@
   "contextSources": {
     "surfaces": {
       "chat": {
-        "characterProfile": "auto",
+        "characterProfile": "disabled",
         "stateParams": "always",
-        "liteOverlay": "auto",
+        "liteOverlay": "disabled",
         "storyLibrary": "auto",
         "storyOverlay": "disabled",
         "recentEvents": "auto",
@@ -49,9 +49,9 @@
         "recentReplies": "disabled"
       },
       "ambient": {
-        "characterProfile": "auto",
+        "characterProfile": "disabled",
         "stateParams": "always",
-        "liteOverlay": "auto",
+        "liteOverlay": "disabled",
         "storyLibrary": "auto",
         "storyOverlay": "disabled",
         "recentEvents": "disabled",
@@ -60,9 +60,9 @@
         "recentReplies": "auto"
       },
       "proactive": {
-        "characterProfile": "auto",
+        "characterProfile": "disabled",
         "stateParams": "always",
-        "liteOverlay": "auto",
+        "liteOverlay": "disabled",
         "storyLibrary": "auto",
         "storyOverlay": "disabled",
         "recentEvents": "disabled",
@@ -71,9 +71,9 @@
         "recentReplies": "disabled"
       },
       "push": {
-        "characterProfile": "auto",
+        "characterProfile": "disabled",
         "stateParams": "always",
-        "liteOverlay": "auto",
+        "liteOverlay": "disabled",
         "storyLibrary": "auto",
         "storyOverlay": "disabled",
         "recentEvents": "disabled",
@@ -82,9 +82,9 @@
         "recentReplies": "disabled"
       },
       "backgroundStory": {
-        "characterProfile": "auto",
+        "characterProfile": "disabled",
         "stateParams": "always",
-        "liteOverlay": "auto",
+        "liteOverlay": "disabled",
         "storyLibrary": "auto",
         "storyOverlay": "disabled",
         "recentEvents": "disabled",

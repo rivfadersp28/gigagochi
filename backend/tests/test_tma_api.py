@@ -497,44 +497,12 @@ def test_generate_pet_job_records_provider_failure(monkeypatch, caplog, tmp_path
     app.dependency_overrides.clear()
 
 
-def test_extract_lite_facts_returns_overlay_patch(monkeypatch) -> None:
+def test_extract_lite_facts_is_noop(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
     )
 
-    def fake_extract(_payload):
-        return (
-            {
-                "facts": [
-                    {
-                        "sphere": "world",
-                        "kind": "world_fact",
-                        "text": "Мир Громма состоит из базальтовых гор.",
-                        "pathHint": "lite_overlay.spheres.world",
-                        "source": "lite_post_reply_extractor",
-                        "createdAt": "2026-07-05T00:00:00Z",
-                    }
-                ],
-                "spheres": {
-                    "world": {
-                        "facts": [
-                            {
-                                "sphere": "world",
-                                "kind": "world_fact",
-                                "text": "Мир Громма состоит из базальтовых гор.",
-                                "pathHint": "lite_overlay.spheres.world",
-                                "source": "lite_post_reply_extractor",
-                                "createdAt": "2026-07-05T00:00:00Z",
-                            }
-                        ]
-                    }
-                },
-            },
-            None,
-        )
-
-    monkeypatch.setattr("app.routers.tma.extract_lite_overlay_patch_from_reply", fake_extract)
     client = tma_client()
 
     response = client.post(
@@ -558,9 +526,7 @@ def test_extract_lite_facts_returns_overlay_patch(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["liteOverlayPatch"]["facts"][0]["sphere"] == "world"
-    assert payload["liteOverlayPatch"]["spheres"]["world"]["facts"][0]["kind"] == "world_fact"
+    assert response.json() == {}
 
     app.dependency_overrides.clear()
 

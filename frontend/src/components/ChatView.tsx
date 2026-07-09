@@ -146,7 +146,6 @@ export function ChatView({ petId }: ChatViewProps) {
         );
         localPet.applyMoodHint(
           response.moodHint,
-          response.debug?.liteOverlayPatch,
           response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
         );
       })
@@ -176,7 +175,6 @@ export function ChatView({ petId }: ChatViewProps) {
         includePromptDebug: settings.includePromptDebug,
         logLabel: "chat",
         onHistoryChange: setMessages,
-        onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
         onMemoryConsolidationNeeded: () => {
           void runMemoryConsolidationIfNeeded(settings.includePromptDebug).catch(
             () => undefined,
@@ -185,7 +183,6 @@ export function ChatView({ petId }: ChatViewProps) {
       });
       localPet.applyMoodHint(
         response.moodHint,
-        response.debug?.liteOverlayPatch,
         response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
       );
       if (response.petPatch?.name) {

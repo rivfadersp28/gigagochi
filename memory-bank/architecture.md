@@ -111,33 +111,29 @@
   inside the phrase plan. The old configurable `surfaceRules` layer was removed
   so proactive/ambient behavior is shaped by visible reply rules, state, memory,
   world context and the idle self-prompt only.
-- Backend chat/proactive/ambient prompts no longer inject `VOICE_CONTROL` from
-  `characterBible.voice` / `dialogue_style`. The identity line is deliberately
-  short and uses only the display name plus age/state/reply limit; pet
-  description, character capsule and `characterBible` details are included only
-  through `characterProfile` / `liteOverlay` routing so casual replies do not
-  repeat concrete creation details. Chat also applies a deterministic
-  `ContextPlan` guard for generic small talk such as "как дела?": it suppresses
-  `characterProfile` and `liteOverlay` even if the LLM router enabled them, while
-  explicit identity/body/habit/home questions still allow those sources. The
-  context router receives only minimal pet state (`name`, `stage`, `mood`), not
-  raw `pet.description`; description is reserved for explicit character/world
-  context paths. `voice_profile.py` remains in the codebase but is not on the
-  visible-reply path.
+- Backend chat/proactive/ambient prompts no longer use generated
+  `characterBible`/`liteOverlay` as speech canon. The identity line is
+  deliberately short and uses only the display name plus age/state/reply limit;
+  durable personality details should emerge from recent chat history and user
+  memory, not from pre-generated favorite phrases, conflicts, appetites or voice
+  rules. The context router receives only minimal pet state (`name`, `stage`,
+  `mood`), not raw `pet.description`; `voice_profile.py` remains in the codebase
+  but is not on the visible-reply path.
 - Generated pets follow a template -> instance contract in frontend local
-  storage. `assetSet.characterTemplate` is the cleaned immutable snapshot from
-  generation, while `assetSet.characterBible` is the mutable per-pet instance.
-  Mutable facts stay in `characterBible.extensions.lite_overlay`; per-pet story
-  bricks stay in `characterBible.extensions.story_library_overlay`.
+  storage for legacy pets only. New pet asset generation does not call
+  `create_character_bible` and returns no `characterBible`; image prompts use the
+  user's raw character description as the visual seed. Per-pet story events stay
+  in `characterBible.extensions.recent_story_events` for old pets when present,
+  but chat canon should come from history/memory rather than `lite_overlay`.
 - Frontend character instance normalization strips prompt-scaffolding fields
   (`voice`, `dialogue_style`, `lore.voice`) from `characterBible` and records
   the prompt model version in `extensions.instance`. The original
   `characterTemplate` can still keep the source data.
 - Normal frontend user chat turns share
   `frontend/src/lib/localPetChatTurn.ts`. It appends chat history, sends the
-  backend request, marks recalled memory as used, and runs post-reply lite-fact
-  plus user-memory extraction. UI components apply returned mood/name/overlay
-  patches.
+  backend request, marks recalled memory as used, and runs user-memory
+  extraction. Post-reply lite-fact extraction is disabled so chat does not write
+  generated character canon into `lite_overlay`.
 - Lite chat can read character JSON for explicit lore questions, but no longer
   exposes `update_character_json`. Stable mutable facts are saved by the
   separate `/api/chat/lite-facts` post-reply extractor.
