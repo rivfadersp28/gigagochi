@@ -20,7 +20,6 @@ type FoodDragState = {
 
 type FeedFoodTokenStyle = CSSProperties & {
   "--feed-food-rotation": string;
-  "--feed-food-size": string;
 };
 
 type DraggableFoodTokenProps = {
@@ -103,7 +102,6 @@ export function DraggableFoodToken({
 
   const tokenStyle: FeedFoodTokenStyle = {
     "--feed-food-rotation": `${food.rotation}deg`,
-    "--feed-food-size": dragState.isDragging ? "92px" : "78px",
     transform: `translate3d(${dragState.x}px, ${dragState.y}px, 0) rotate(var(--feed-food-rotation))`,
   };
 

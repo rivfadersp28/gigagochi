@@ -206,6 +206,10 @@
   `./.next/dev/types/routes.d.ts` to `./.next/types/routes.d.ts`. Treat it as a
   generated build side effect and revert it unless the Next config/source setup
   intentionally changes.
+- `npm audit` currently reports the moderate PostCSS advisory
+  `GHSA-qx2v-qp2m-jg93` through Next's bundled PostCSS. npm proposes an
+  incompatible downgrade to Next 9.3.3, so do not run `npm audit fix --force`;
+  re-check when the pinned Next release updates its bundled dependency.
 - User-facing "здоровье" still uses the legacy internal stat key `energy`.
   Keep API/storage compatibility and translate only at prompt/UI boundaries
   unless a deliberate migration is planned.

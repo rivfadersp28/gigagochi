@@ -1,5 +1,6 @@
 "use client";
 
+import * as Dialog from "@radix-ui/react-dialog";
 import { Bug, Database, FlaskConical, MessageSquareText, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -204,20 +205,13 @@ export function DebugPanel({
     function handleChange() {
       setEvents([...readDebugPanelEvents()].reverse());
     }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && isOpen) {
-        onClose();
-      }
-    }
     window.addEventListener(DEBUG_PANEL_EVENTS_CHANGED, handleChange);
     window.addEventListener("storage", handleChange);
-    window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener(DEBUG_PANEL_EVENTS_CHANGED, handleChange);
       window.removeEventListener("storage", handleChange);
-      window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen, onClose]);
+  }, []);
 
   const memory = readLocalPetMemory(pet.petId);
   const promptEvents = events.filter((event) => event.kind === "prompt");
@@ -233,33 +227,27 @@ export function DebugPanel({
   ] satisfies { id: DebugTab; label: string; icon: typeof Bug }[];
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/[0.16]" role="presentation">
-      <button
-        type="button"
-        aria-label="Закрыть debug-панель"
-        className="absolute inset-0 cursor-default"
-        onClick={onClose}
-      />
-
-      <aside
-        id="debug-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="debug-panel-title"
-        className="absolute bottom-[max(14px,var(--tma-safe-bottom))] right-[max(12px,var(--tma-safe-right))] top-[max(72px,calc(var(--tma-safe-top)+64px))] flex w-[min(520px,calc(100vw-24px))] flex-col overflow-hidden rounded-[8px] border border-black/10 bg-white text-black shadow-[0_18px_46px_rgba(0,0,0,0.16)]"
-      >
+    <Dialog.Root open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/[0.16]" />
+        <Dialog.Content asChild>
+          <aside
+            id="debug-panel"
+            className="fixed bottom-[max(14px,var(--tma-safe-bottom))] right-[max(12px,var(--tma-safe-right))] top-[max(72px,calc(var(--tma-safe-top)+64px))] z-50 flex w-[min(520px,calc(100vw-24px))] flex-col overflow-hidden rounded-lg border border-black/10 bg-white text-black shadow-xl outline-none"
+          >
         <header className="border-b border-black/10 px-4 py-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h2
-                id="debug-panel-title"
-                className="break-words text-[18px] font-semibold leading-[22px] text-black"
-              >
-                Debug
-              </h2>
-              <p className="mt-1 text-[12px] leading-[16px] text-black/45">
-                Prompts, память и данные персонажа
-              </p>
+              <Dialog.Title asChild>
+                <h2 className="text-balance break-words text-[18px] font-semibold leading-[22px] text-black">
+                  Debug
+                </h2>
+              </Dialog.Title>
+              <Dialog.Description asChild>
+                <p className="mt-1 text-pretty text-[12px] leading-[16px] text-black/45">
+                  Prompts, память и данные персонажа
+                </p>
+              </Dialog.Description>
             </div>
             <div className="flex shrink-0 items-center gap-1">
               {onResetPet ? (
@@ -280,14 +268,15 @@ export function DebugPanel({
               >
                 <Trash2 className="size-4" aria-hidden="true" />
               </button>
-              <button
-                type="button"
-                aria-label="Закрыть"
-                onClick={onClose}
-                className="grid size-8 place-items-center rounded-full text-black/45 transition-colors hover:bg-black/[0.04] hover:text-black/70 focus:outline-none focus:ring-2 focus:ring-black/10"
-              >
-                <X className="size-4" aria-hidden="true" />
-              </button>
+              <Dialog.Close asChild>
+                <button
+                  type="button"
+                  aria-label="Закрыть"
+                  className="grid size-8 place-items-center rounded-full text-black/45 transition-colors hover:bg-black/[0.04] hover:text-black/70 focus:outline-none focus:ring-2 focus:ring-black/10"
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </button>
+              </Dialog.Close>
             </div>
           </div>
 
@@ -346,7 +335,9 @@ export function DebugPanel({
           {activeTab === "prompts" ? <PromptList events={promptEvents} /> : null}
           {activeTab === "character" ? <CharacterInfo pet={pet} memory={memory} /> : null}
         </div>
-      </aside>
-    </div>
+          </aside>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

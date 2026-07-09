@@ -45,6 +45,7 @@ import type { GenerateTravelResponse } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 
 import { DebugPanel } from "./DebugPanel";
+import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import { DraggableFoodToken, type FoodAsset } from "./pet-dashboard/DraggableFoodToken";
 import { PetCharacterMessage, type PetReplyMessage } from "./pet-dashboard/PetCharacterMessage";
 import { TravelStoryOverlay } from "./pet-dashboard/TravelStoryOverlay";
@@ -67,6 +68,29 @@ type ShowPetReplyOptions = {
   showInConversation?: boolean;
   dialogueHook?: boolean;
   voiceMode?: PetVoiceMode;
+};
+
+type ConfirmationAction = "resetPet" | "resetStats" | "openTestPet";
+
+const confirmationCopy: Record<
+  ConfirmationAction,
+  { title: string; description: string; confirmLabel: string }
+> = {
+  resetPet: {
+    title: "Создать нового питомца?",
+    description: "Текущий питомец, история и локальный прогресс будут удалены.",
+    confirmLabel: "Удалить и создать",
+  },
+  resetStats: {
+    title: "Сбросить параметры?",
+    description: "Голод, настроение и здоровье станут равны нулю.",
+    confirmLabel: "Сбросить",
+  },
+  openTestPet: {
+    title: "Открыть тестового питомца?",
+    description: "Текущий питомец и история будут заменены тестовыми данными.",
+    confirmLabel: "Заменить",
+  },
 };
 
 const FIGMA_SCREEN_HEIGHT = 874;
@@ -151,6 +175,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const localPet = useLocalPetState();
   const [isFeeding, setIsFeeding] = useState(false);
   const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
+  const [confirmationAction, setConfirmationAction] = useState<ConfirmationAction | null>(null);
   const [isChatMode, setIsChatMode] = useState(false);
   const [isFeedMode, setIsFeedMode] = useState(false);
   const [conversationInputOffsetY, setConversationInputOffsetY] = useState(0);
@@ -579,35 +604,32 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }
 
   function handleResetPet() {
-    const confirmed = window.confirm("Сбросить персонажа и создать нового? Локальный прогресс будет удален.");
-    if (!confirmed) {
-      return;
-    }
-    setIsDebugPanelOpen(false);
-    localPet.reset();
-    router.push("/");
+    setConfirmationAction("resetPet");
   }
 
   function handleResetPetStats() {
-    const confirmed = window.confirm("Сбросить параметры персонажа в 0?");
-    if (!confirmed) {
-      return;
-    }
-
-    localPet.resetStats();
-    hapticNotification("warning");
+    setConfirmationAction("resetStats");
   }
 
   function handleOpenTestPet() {
-    const confirmed = window.confirm("Открыть тестового персонажа? Текущий локальный персонаж и история будут заменены.");
-    if (!confirmed) {
-      return;
-    }
+    setConfirmationAction("openTestPet");
+  }
 
-    const testPet = localPet.create(TEST_PET_DESCRIPTION, TEST_PET_ASSET_SET);
-    setIsDebugPanelOpen(false);
-    hapticNotification("success");
-    router.replace(`/pet/${testPet.petId}`);
+  function confirmDashboardAction() {
+    if (confirmationAction === "resetPet") {
+      setIsDebugPanelOpen(false);
+      localPet.reset();
+      router.push("/");
+    } else if (confirmationAction === "resetStats") {
+      localPet.resetStats();
+      hapticNotification("warning");
+    } else if (confirmationAction === "openTestPet") {
+      const testPet = localPet.create(TEST_PET_DESCRIPTION, TEST_PET_ASSET_SET);
+      setIsDebugPanelOpen(false);
+      hapticNotification("success");
+      router.replace(`/pet/${testPet.petId}`);
+    }
+    setConfirmationAction(null);
   }
 
   useEffect(() => {
@@ -962,6 +984,14 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       </div>
       {travelResult ? (
         <TravelStoryOverlay result={travelResult} onClose={() => setTravelResult(null)} />
+      ) : null}
+      {confirmationAction ? (
+        <ConfirmActionDialog
+          open
+          {...confirmationCopy[confirmationAction]}
+          onOpenChange={(open) => !open && setConfirmationAction(null)}
+          onConfirm={confirmDashboardAction}
+        />
       ) : null}
     </main>
   );

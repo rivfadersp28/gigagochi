@@ -1,6 +1,6 @@
 # Architecture
 
-## Pet Replies
+## Backend Jobs and Errors
 
 - Backend phrase generation lives in `backend/app/services/pet_reply_engine/lite_generator.py`.
 - Async pet creation jobs live in
@@ -13,6 +13,19 @@
   logging live in `backend/app/services/ai_error_service.py`. Routers select the
   user-facing operation message but do not parse provider payloads or write log
   files themselves.
+
+## Frontend Interaction Primitives
+
+- Modal focus behavior uses Radix primitives. `DebugPanel` is a controlled
+  Radix Dialog and destructive dashboard actions use `ConfirmActionDialog`
+  backed by Radix AlertDialog; Escape handling, focus trapping and focus return
+  are not implemented by hand.
+- Frontend checks include ESLint, TypeScript and Vitest. Initial component and
+  domain tests cover the destructive confirmation contract plus local pet stat
+  decay and partial server stat patches.
+
+## Pet Replies
+
 - Chat, proactive and ambient replies are assembled through the same `PhrasePlan`
   structure: identity, persona contract, optional dialogue-memory episodes and
   surface-specific rules.
