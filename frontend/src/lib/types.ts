@@ -20,6 +20,7 @@ export type LocalPetAssetSet = {
     teen: Record<PetMood, string>;
     adult: Record<PetMood, string>;
   };
+  videoUrl?: string;
   blinkImageUrl?: string;
   spriteSheetUrl?: string;
 };
@@ -81,6 +82,7 @@ export type GeneratePetResponse = {
   generatedAt: string;
   characterBible?: Record<string, unknown>;
   images: LocalPetAssetSet["images"];
+  videoUrl?: string;
   blinkImageUrl?: string;
   spriteSheetUrl?: string;
 };

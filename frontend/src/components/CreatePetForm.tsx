@@ -26,6 +26,7 @@ export function CreatePetForm() {
   useEffect(() => {
     if (localPet.status === "ready" && localPet.pet) {
       router.replace(`/pet/${localPet.pet.petId}`);
+      return;
     }
   }, [localPet.pet, localPet.status, router]);
 

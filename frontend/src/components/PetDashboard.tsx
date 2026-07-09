@@ -23,7 +23,6 @@ import {
   createLocalId,
   readLocalChatHistory,
   readLocalPetSettings,
-  writeLocalPetSettings,
 } from "@/lib/localPetStorage";
 import { buildDailyProactiveMemoryContext } from "@/lib/localPetMemoryRecall";
 import {
@@ -32,7 +31,6 @@ import {
   writeLocalPetMemory,
 } from "@/lib/localPetMemoryStorage";
 import { primePetSpeechAudio } from "@/lib/petSpeechAudio";
-import { playPetTapSound, primePetTapSound } from "@/lib/petTapAudio";
 import {
   recordMemoryContextDebug,
   recordReplyPromptDebug,
@@ -42,56 +40,27 @@ import { playPetFeedSound, primePetFeedSound } from "@/lib/petFeedAudio";
 import { applyPetVoice, type PetVoiceMode } from "@/lib/petVoice";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
+import { TEST_PET_ASSET_SET, TEST_PET_DESCRIPTION } from "@/lib/testPetFixture";
 import type { GenerateTravelResponse } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 
 import { DebugPanel } from "./DebugPanel";
 import { DraggableFoodToken, type FoodAsset } from "./pet-dashboard/DraggableFoodToken";
-import {
-  IdleAnimationControls,
-  defaultIdleAnimationSettings,
-  type IdleAnimationSettings,
-} from "./pet-dashboard/IdleAnimationControls";
 import { PetCharacterMessage, type PetReplyMessage } from "./pet-dashboard/PetCharacterMessage";
-import { PetTapParticleBurst } from "./pet-dashboard/PetTapParticleBurst";
-import { StatProgressRing } from "./pet-dashboard/StatProgressRing";
 import { TravelStoryOverlay } from "./pet-dashboard/TravelStoryOverlay";
-import { shouldReduceMotion } from "./pet-dashboard/motion";
 import {
-  generatedBlinkSpriteUrl,
+  generatedSceneVideoUrl,
   generatedSpriteUrl,
   stageLabels,
   stateLabels,
-  type PetStage,
-  type PetState,
 } from "./pet-dashboard/petSprite";
 
 type PetDashboardProps = {
   petId: string;
 };
 
-type IdleStretchStyle = CSSProperties & {
-  "--pet-idle-duration": string;
-  "--pet-idle-max-scale": number;
-};
-
-type IdleRotationStyle = CSSProperties & {
-  "--pet-idle-rotation-duration": string;
-  "--pet-idle-max-rotation": string;
-};
-
-type PetTapTargetStyle = CSSProperties & {
-  "--pet-tap-scale-duration": string;
-  "--pet-tap-scale-easing": string;
-};
-
 type ConversationSceneStyle = CSSProperties & {
   "--conversation-visible-height": string;
-};
-
-type SpeechBubbleSize = {
-  width: number;
-  height: number;
 };
 
 type ShowPetReplyOptions = {
@@ -100,16 +69,6 @@ type ShowPetReplyOptions = {
   voiceMode?: PetVoiceMode;
 };
 
-type SelectedSprite = {
-  stage: PetStage;
-  state: PetState;
-};
-
-const IDLE_ANIMATION_BASE_DURATION_SECONDS = 2.4;
-const IDLE_ROTATION_BASE_DURATION_SECONDS = 3.2;
-const PET_TAP_SCALE_DURATION_MS = 500;
-const PET_TAP_SCALE_EASING = "ease-in-out";
-const PET_TAP_TRANSFORM_ORIGIN = "50% 50%";
 const FIGMA_SCREEN_HEIGHT = 874;
 const FIGMA_KEYBOARD_VISIBLE_HEIGHT = 542;
 const KEYBOARD_EAGER_SYNC_MS = 750;
@@ -117,23 +76,22 @@ const INITIAL_PET_REPLY_FALLBACK = "…";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 220;
 const DEFAULT_STATUS_NAME = "Челепиздрик";
 const PUSH_SNAPSHOT_SYNC_MIN_INTERVAL_MS = 10 * 60_000;
-const SPEECH_BUBBLE_MIN_WIDTH = 190;
-const SPEECH_BUBBLE_MIN_HEIGHT = 86;
-const SPEECH_BUBBLE_RADIUS = 43;
-const SPEECH_BUBBLE_TAIL_HEIGHT = 21;
-const SPEECH_BUBBLE_TAIL_HALF_WIDTH = 22;
-const ACTION_ICON_CACHE_VERSION = "20260709-action-colors-1";
+const ACTION_ICON_CACHE_VERSION = "20260709-figma-117-1029-2";
+const VIDEO_FILTER_CACHE_VERSION = "20260709-video-filter-normal-2";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
-const MAIN_PET_IMAGE_CACHE_VERSION = "20260709-main-pet-1";
-const MAIN_PET_SHADOW_CACHE_VERSION = "20260709-main-pet-shadow-1";
 const mainSceneBackgroundSrc = `/figma/main-screen-bg.png?v=${MAIN_SCENE_BACKGROUND_CACHE_VERSION}`;
-const mainPetSrc = `/figma/main-pet.png?v=${MAIN_PET_IMAGE_CACHE_VERSION}`;
-const mainPetShadowSrc = `/figma/main-pet-shadow.svg?v=${MAIN_PET_SHADOW_CACHE_VERSION}`;
+const videoFilterSrc = `/figma/video-filter-normal.png?v=${VIDEO_FILTER_CACHE_VERSION}`;
 const actionIconSrc = {
-  chat: `/figma/action-chat-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
-  feed: `/figma/action-feed-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
-  travel: `/figma/action-travel-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`,
+  chat: `/figma/action-chat-icon-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
+  feed: `/figma/action-feed-icon-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
+  travel: `/figma/action-travel-icon-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
 } as const;
+const statusIconSrc = {
+  hunger: `/figma/status-hunger-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
+  mood: `/figma/status-mood-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
+  energy: `/figma/status-energy-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
+} as const;
+const speechBubbleSrc = `/figma/speech-bubble-new.svg?v=${ACTION_ICON_CACHE_VERSION}`;
 
 const feedFoodAssets = [
   {
@@ -162,35 +120,6 @@ const feedFoodAssets = [
   },
 ] satisfies FoodAsset[];
 
-function buildSpeechBubbleClipPath({ width, height }: SpeechBubbleSize) {
-  const w = Math.max(SPEECH_BUBBLE_MIN_WIDTH, width);
-  const h = Math.max(SPEECH_BUBBLE_MIN_HEIGHT, height);
-  const r = Math.min(SPEECH_BUBBLE_RADIUS, w / 2, h / 2);
-  const cx = w / 2;
-  const tailBottom = h + SPEECH_BUBBLE_TAIL_HEIGHT;
-  const tailShoulder = SPEECH_BUBBLE_TAIL_HALF_WIDTH;
-  const tailNeck = 11;
-  const tailPoint = 4;
-
-  return [
-    `M ${r} 0`,
-    `H ${w - r}`,
-    `C ${w - r / 2} 0 ${w} ${r / 2} ${w} ${r}`,
-    `V ${h - r}`,
-    `C ${w} ${h - r / 2} ${w - r / 2} ${h} ${w - r} ${h}`,
-    `H ${cx + tailShoulder}`,
-    `C ${cx + tailNeck} ${h} ${cx + 8} ${h + 7} ${cx + 5} ${h + 14}`,
-    `C ${cx + tailPoint} ${h + 17} ${cx + 2} ${tailBottom} ${cx} ${tailBottom}`,
-    `C ${cx - 2} ${tailBottom} ${cx - tailPoint} ${h + 17} ${cx - 5} ${h + 14}`,
-    `C ${cx - 8} ${h + 7} ${cx - tailNeck} ${h} ${cx - tailShoulder} ${h}`,
-    `H ${r}`,
-    `C ${r / 2} ${h} 0 ${h - r / 2} 0 ${h - r}`,
-    `V ${r}`,
-    `C 0 ${r / 2} ${r / 2} 0 ${r} 0`,
-    "Z",
-  ].join(" ");
-}
-
 function isPointNearRect(clientX: number, clientY: number, rect: DOMRect, padding: number) {
   return (
     clientX >= rect.left - padding &&
@@ -217,7 +146,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const router = useRouter();
   const localPet = useLocalPetState();
   const [isFeeding, setIsFeeding] = useState(false);
-  const [isIdleControlsOpen, setIsIdleControlsOpen] = useState(false);
   const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
   const [isChatMode, setIsChatMode] = useState(false);
   const [isFeedMode, setIsFeedMode] = useState(false);
@@ -231,18 +159,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [travelError, setTravelError] = useState<string | null>(null);
   const [conversationReplyMessageId, setConversationReplyMessageId] = useState<number | null>(null);
   const [feedSuccessId, setFeedSuccessId] = useState(0);
-  const [petTapParticleBursts, setPetTapParticleBursts] = useState<number[]>([]);
-  const [petTapPulseId, setPetTapPulseId] = useState(0);
-  const [selectedSprite, setSelectedSprite] = useState<SelectedSprite | null>(null);
-  const [idleAnimationSettings, setIdleAnimationSettings] = useState<IdleAnimationSettings>(
-    defaultIdleAnimationSettings,
-  );
-  const [promptSettings, setPromptSettings] = useState(() => readLocalPetSettings());
+  const [includePromptDebug] = useState(() => readLocalPetSettings().includePromptDebug);
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
-  const [speechBubbleSize, setSpeechBubbleSize] = useState<SpeechBubbleSize>({
-    width: SPEECH_BUBBLE_MIN_WIDTH,
-    height: SPEECH_BUBBLE_MIN_HEIGHT,
-  });
   const proactiveAttemptedRef = useRef(false);
   const ambientRequestIdRef = useRef(0);
   const ambientReplyHistoryRef = useRef<string[]>([]);
@@ -253,11 +171,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   } | null>(null);
   const petReplyMessageRef = useRef<PetReplyMessage | null>(null);
   const activeDialogueHookRef = useRef<string | null>(null);
-  const speechBubbleRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
-  const petTapTargetRef = useRef<HTMLButtonElement>(null);
   const feedDropTargetRef = useRef<HTMLDivElement>(null);
-  const petTapParticleBurstIdRef = useRef(0);
   const isSendingChatRef = useRef(false);
   const isTravelGeneratingRef = useRef(false);
   const conversationFullHeightRef = useRef(0);
@@ -266,8 +181,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const applyStoryLibraryPatch = localPet.applyStoryLibraryPatch;
   const applyRecentStoryEventsPatch = localPet.applyRecentStoryEventsPatch;
   const applyStatsPatch = localPet.applyStatsPatch;
-  const includePromptDebug = promptSettings.includePromptDebug;
-
   useEffect(() => {
     ambientReplyHistoryRef.current = [];
   }, [petId]);
@@ -360,74 +273,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
   useTelegramBackButton(handleTelegramBack, isChatMode || isFeedMode);
 
-  const triggerPetTapVisualFeedback = useCallback(() => {
-    if (shouldReduceMotion()) {
-      return;
-    }
-
-    const nextBurstId = petTapParticleBurstIdRef.current + 1;
-    petTapParticleBurstIdRef.current = nextBurstId;
-    setPetTapParticleBursts((currentBursts) => [...currentBursts, nextBurstId]);
-    setPetTapPulseId((currentId) => currentId + 1);
-  }, []);
-
-  const handlePetTap = useCallback(() => {
-    void playPetTapSound();
-    triggerPetTapVisualFeedback();
-  }, [triggerPetTapVisualFeedback]);
-
-  const removePetTapParticleBurst = useCallback((burstId: number) => {
-    setPetTapParticleBursts((currentBursts) =>
-      currentBursts.filter((currentBurstId) => currentBurstId !== burstId),
-    );
-  }, []);
-
   useEffect(() => {
-    primePetTapSound();
     primePetFeedSound();
   }, []);
-
-  useEffect(() => {
-    const node = speechBubbleRef.current;
-    if (!node) {
-      return undefined;
-    }
-
-    const updateSpeechBubbleSize = () => {
-      const rect = node.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) {
-        return;
-      }
-
-      const nextSize = {
-        width: Math.round(rect.width * 2) / 2,
-        height: Math.round(rect.height * 2) / 2,
-      };
-
-      setSpeechBubbleSize((currentSize) => {
-        if (
-          Math.abs(currentSize.width - nextSize.width) < 0.5 &&
-          Math.abs(currentSize.height - nextSize.height) < 0.5
-        ) {
-          return currentSize;
-        }
-
-        return nextSize;
-      });
-    };
-
-    updateSpeechBubbleSize();
-
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", updateSpeechBubbleSize);
-      return () => window.removeEventListener("resize", updateSpeechBubbleSize);
-    }
-
-    const resizeObserver = new ResizeObserver(updateSpeechBubbleSize);
-    resizeObserver.observe(node);
-
-    return () => resizeObserver.disconnect();
-  }, [localPet.status]);
 
   useEffect(() => {
     petReplyMessageRef.current = petReplyMessage;
@@ -539,7 +387,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
 
-    setIsIdleControlsOpen(false);
     setIsDebugPanelOpen(false);
     setTravelError(null);
     setIsFeedMode(true);
@@ -558,7 +405,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     }
 
     setFeedSuccessId((currentId) => currentId + 1);
-    triggerPetTapVisualFeedback();
     void playPetFeedSound();
     hapticNotification("success");
     window.setTimeout(() => setIsFeeding(false), 420);
@@ -593,7 +439,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     setIsTravelGenerating(true);
     setTravelError(null);
     setIsFeedMode(false);
-    setIsIdleControlsOpen(false);
     setIsDebugPanelOpen(false);
     showPetReplyMessage("Собираю путешествие...", false, { voiceMode: "local" });
     const travelStatusTimeoutId = window.setTimeout(() => {
@@ -642,7 +487,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
   function handleOpenChatMode() {
     setIsFeedMode(false);
-    setIsIdleControlsOpen(false);
     setIsDebugPanelOpen(false);
     setChatError(null);
     setConversationReplyMessageId(null);
@@ -761,12 +605,16 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     hapticNotification("warning");
   }
 
-  function handlePromptDebugChange(enabled: boolean) {
-    const nextSettings = {
-      includePromptDebug: enabled,
-    };
-    setPromptSettings(nextSettings);
-    writeLocalPetSettings(nextSettings);
+  function handleOpenTestPet() {
+    const confirmed = window.confirm("Открыть тестового персонажа? Текущий локальный персонаж и история будут заменены.");
+    if (!confirmed) {
+      return;
+    }
+
+    const testPet = localPet.create(TEST_PET_DESCRIPTION, TEST_PET_ASSET_SET);
+    setIsDebugPanelOpen(false);
+    hapticNotification("success");
+    router.replace(`/pet/${testPet.petId}`);
   }
 
   useEffect(() => {
@@ -832,13 +680,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     return null;
   }
 
-  const animationSettings = { ...defaultIdleAnimationSettings, ...idleAnimationSettings };
-  const displayedStage = selectedSprite?.stage ?? pet.stage;
-  const displayedState = selectedSprite?.state ?? pet.mood;
-  const visiblePetImage =
-    generatedSpriteUrl(pet, displayedStage, displayedState) ?? mainPetSrc;
-  const isFigmaFallbackPet = visiblePetImage === mainPetSrc;
-  const visiblePetBlinkImage = isFigmaFallbackPet ? null : generatedBlinkSpriteUrl(pet);
+  const sceneBackgroundSrc = generatedSpriteUrl(pet, pet.stage, pet.mood) ?? mainSceneBackgroundSrc;
+  const sceneVideoSrc = generatedSceneVideoUrl(pet);
   const displayedReply = petReplyMessage ?? {
     id: 0,
     text: INITIAL_PET_REPLY_FALLBACK,
@@ -853,34 +696,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const roundedHungerPercent = Math.round(hungerPercent);
   const roundedMoodPercent = Math.round(moodPercent);
   const roundedHealthPercent = Math.round(healthPercent);
-  const transformOrigin = `${animationSettings.originX}% ${animationSettings.originY}%`;
-  const idleStretchStyle: IdleStretchStyle = {
-    "--pet-idle-duration": `${(
-      IDLE_ANIMATION_BASE_DURATION_SECONDS / animationSettings.speed
-    ).toFixed(2)}s`,
-    "--pet-idle-max-scale": animationSettings.maxScale,
-    transformOrigin,
-  };
-  const idleRotationStyle: IdleRotationStyle = {
-    "--pet-idle-rotation-duration": `${(
-      IDLE_ROTATION_BASE_DURATION_SECONDS / animationSettings.rotationSpeed
-    ).toFixed(2)}s`,
-    "--pet-idle-max-rotation": `${animationSettings.maxRotation}deg`,
-    transformOrigin,
-  };
-  const petTapTargetStyle: PetTapTargetStyle = {
-    "--pet-tap-scale-duration": `${PET_TAP_SCALE_DURATION_MS}ms`,
-    "--pet-tap-scale-easing": PET_TAP_SCALE_EASING,
-    transformOrigin: PET_TAP_TRANSFORM_ORIGIN,
-  };
   const conversationSceneStyle: ConversationSceneStyle = {
     "--conversation-visible-height": `${conversationVisibleHeight}px`,
   };
-  const speechBubbleClipPath = buildSpeechBubbleClipPath(speechBubbleSize);
-  const speechBubbleShapeStyle = {
-    clipPath: `path("${speechBubbleClipPath}")`,
-    WebkitClipPath: `path("${speechBubbleClipPath}")`,
-  } satisfies CSSProperties;
 
   return (
     <main className="main-shell tma-screen relative overflow-hidden">
@@ -913,39 +731,34 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         </div>
 
         <img
-          src={mainSceneBackgroundSrc}
+          src={sceneBackgroundSrc}
           alt=""
           aria-hidden="true"
           className="main-scene-background"
           draggable={false}
         />
-
-        <div className="hidden" aria-hidden="true">
-          <IdleAnimationControls
-            isOpen={isIdleControlsOpen}
-            pet={pet}
-            selectedStage={displayedStage}
-            selectedState={displayedState}
-            settings={animationSettings}
-            includePromptDebug={includePromptDebug}
-            onChange={setIdleAnimationSettings}
-            onChangeIncludePromptDebug={handlePromptDebugChange}
-            onSelectStage={(stage) =>
-              setSelectedSprite((current) => ({
-                stage,
-                state: current?.state ?? pet.mood,
-              }))
-            }
-            onSelectState={(state) =>
-              setSelectedSprite((current) => ({
-                stage: current?.stage ?? pet.stage,
-                state,
-              }))
-            }
-            onResetSprite={() => setSelectedSprite(null)}
-            onToggle={() => setIsIdleControlsOpen((current) => !current)}
+        {sceneVideoSrc ? (
+          <video
+            src={sceneVideoSrc}
+            poster={sceneBackgroundSrc}
+            aria-hidden="true"
+            className="main-scene-background"
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload="auto"
           />
-        </div>
+        ) : null}
+        <img
+          src={videoFilterSrc}
+          alt=""
+          className="main-scene-filter-image"
+          aria-hidden="true"
+          draggable={false}
+        />
+
+        <div ref={feedDropTargetRef} className="feed-drop-target" aria-hidden="true" />
 
         <DebugPanel
           pet={pet}
@@ -953,6 +766,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           onClose={() => setIsDebugPanelOpen(false)}
           onResetPet={handleResetPet}
           onResetPetStats={handleResetPetStats}
+          onOpenTestPet={handleOpenTestPet}
         />
 
         <div className="sr-only" aria-live="polite">
@@ -969,9 +783,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           className="top-status-strip conversation-fade-target"
           aria-label={`Голод ${roundedHungerPercent} из 100, настроение ${roundedMoodPercent} из 100, здоровье ${roundedHealthPercent} из 100`}
         >
-          <StatProgressRing value={hungerPercent} kind="hunger" />
-          <StatProgressRing value={moodPercent} kind="mood" />
-          <StatProgressRing value={healthPercent} kind="energy" />
+          <img src={statusIconSrc.hunger} alt="" aria-hidden="true" draggable={false} />
+          <img src={statusIconSrc.mood} alt="" aria-hidden="true" draggable={false} />
+          <img src={statusIconSrc.energy} alt="" aria-hidden="true" draggable={false} />
         </div>
 
         <div
@@ -981,85 +795,19 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               : "conversation-fade-target"
           }`}
         >
-          <div className="main-speech-bubble" ref={speechBubbleRef}>
-            <span
+          <div className="main-speech-bubble">
+            <img
+              src={speechBubbleSrc}
+              alt=""
               className="main-speech-bubble__shape"
-              style={speechBubbleShapeStyle}
               aria-hidden="true"
+              draggable={false}
             />
             <PetCharacterMessage
               message={displayedReply}
-              textTranslateY={animationSettings.textTranslateY}
-              speechEndTrimMs={animationSettings.speechEndTrimMs}
+              textTranslateY={0}
+              speechEndTrimMs={0}
             />
-          </div>
-        </div>
-
-        <img
-          src={mainPetShadowSrc}
-          alt=""
-          aria-hidden="true"
-          className="main-pet-shadow"
-          draggable={false}
-        />
-
-        <div
-          ref={feedDropTargetRef}
-          className={`main-pet-stage absolute left-0 top-[277px] z-20 h-[372px] w-[402px] ${
-            isFigmaFallbackPet ? "main-pet-stage--figma" : ""
-          }`}
-        >
-          <div className="pet-idle-rotation absolute left-0 top-0 h-[357px] w-[402px]" style={idleRotationStyle}>
-            {petTapParticleBursts.map((burstId) => (
-              <PetTapParticleBurst
-                key={burstId}
-                id={burstId}
-                targetRef={petTapTargetRef}
-                onComplete={removePetTapParticleBurst}
-              />
-            ))}
-            <button
-              key={petTapPulseId}
-              ref={petTapTargetRef}
-              type="button"
-              className={`pet-tap-target absolute left-0 top-[7.76%] h-[101.37%] w-full ${
-                petTapPulseId > 0 ? "pet-tap-target--pulse" : ""
-              }`}
-              style={petTapTargetStyle}
-              onClick={handlePetTap}
-              data-button-press-sound="off"
-              aria-label="Погладить персонажа"
-            >
-              <span
-                className={`main-pet-layer-stack pet-idle-y-animation h-full w-full max-w-none ${
-                  isFigmaFallbackPet ? "main-pet-layer-stack--figma" : ""
-                }`}
-                style={idleStretchStyle}
-              >
-                <img
-                  src={visiblePetImage}
-                  alt=""
-                  aria-hidden="true"
-                  className={`main-pet-image-layer h-full w-full max-w-none object-contain ${
-                    isFigmaFallbackPet ? "main-pet-image--figma" : ""
-                  }`}
-                  width={402}
-                  height={362}
-                  draggable={false}
-                />
-                {visiblePetBlinkImage ? (
-                  <img
-                    src={visiblePetBlinkImage}
-                    alt=""
-                    aria-hidden="true"
-                    className="main-pet-image-layer main-pet-blink-overlay h-full w-full max-w-none object-contain"
-                    width={402}
-                    height={362}
-                    draggable={false}
-                  />
-                ) : null}
-              </span>
-            </button>
           </div>
         </div>
 
@@ -1115,13 +863,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           aria-controls="debug-panel"
           aria-expanded={isDebugPanelOpen}
           aria-label={isDebugPanelOpen ? "Скрыть debug-панель" : "Показать debug-панель"}
-          onClick={() => {
-            setIsIdleControlsOpen(false);
-            setIsDebugPanelOpen(true);
-          }}
+          onClick={() => setIsDebugPanelOpen(true)}
           className="main-debug-button feed-fade-target conversation-fade-target absolute left-[327px] top-[685px] z-40"
         >
-          <Bug className="size-[22px]" aria-hidden="true" />
+          <Bug className="main-debug-button__fallback-icon" aria-hidden="true" />
+          <span className="main-debug-button__symbol" aria-hidden="true">
+            􀌛
+          </span>
         </button>
 
         {isFeedMode ? (

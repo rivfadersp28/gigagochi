@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     openrouter_chat_model: str = "~openai/gpt-latest"
     openrouter_character_model: str | None = None
     openrouter_image_model: str = "bytedance-seed/seedream-4.5"
+    openrouter_video_model: str = "bytedance/seedance-2.0"
+    openrouter_video_timeout_seconds: float = 900
+    openrouter_video_poll_interval_seconds: float = 5
     openrouter_site_url: str | None = None
     openrouter_app_title: str = "AI Tamagotchi Telegram Mini App"
     openai_api_key: str | None = None
@@ -66,7 +69,6 @@ class Settings(BaseSettings):
     openai_character_timeout_seconds: float = 180
     openai_chat_timeout_seconds: float = 90
     openai_image_timeout_seconds: float = 180
-    background_removal_timeout_seconds: float = 180
     openai_max_retries: int = 0
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]

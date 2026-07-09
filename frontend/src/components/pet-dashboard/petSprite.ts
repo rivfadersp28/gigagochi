@@ -1,4 +1,5 @@
 import type { LocalPetState, PetLifeStage, PetMood } from "@/lib/types";
+import { TEST_PET_ASSET_SET } from "@/lib/testPetFixture";
 
 export type PetStage = PetLifeStage;
 export type PetState = PetMood;
@@ -16,23 +17,14 @@ export const stateLabels: Record<PetState, string> = {
   hungry: "Hungry",
 };
 
-export const spriteStageOptions = [
-  { value: "baby", label: "Малой" },
-  { value: "teen", label: "Подросток" },
-  { value: "adult", label: "Взрослый" },
-] satisfies Array<{ value: PetStage; label: string }>;
-
-export const spriteStateOptions = [
-  { value: "idle", label: "Норм" },
-  { value: "hungry", label: "Голодный" },
-  { value: "sad", label: "Грустный" },
-  { value: "happy", label: "Счастливый" },
-] satisfies Array<{ value: PetState; label: string }>;
-
-export function generatedSpriteUrl(pet: LocalPetState, stage: PetStage, state: PetState) {
-  return pet.assetSet?.images[stage]?.[state] || null;
+function assetSetForPet(pet: LocalPetState) {
+  return pet.assetSet ?? (process.env.NODE_ENV === "development" ? TEST_PET_ASSET_SET : undefined);
 }
 
-export function generatedBlinkSpriteUrl(pet: LocalPetState) {
-  return pet.assetSet?.blinkImageUrl || null;
+export function generatedSpriteUrl(pet: LocalPetState, stage: PetStage, state: PetState) {
+  return assetSetForPet(pet)?.images[stage]?.[state] || null;
+}
+
+export function generatedSceneVideoUrl(pet: LocalPetState) {
+  return assetSetForPet(pet)?.videoUrl || null;
 }

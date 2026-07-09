@@ -43,6 +43,7 @@ class GeneratePetAssetResponse(BaseModel):
     assetSetId: str
     generatedAt: datetime
     images: GeneratedPetImages
+    videoUrl: str | None = None
     blinkImageUrl: str | None = None
     spriteSheetUrl: str | None = None
     characterBible: dict[str, Any] | None = None

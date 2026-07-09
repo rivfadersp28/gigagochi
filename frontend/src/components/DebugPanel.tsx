@@ -1,6 +1,6 @@
 "use client";
 
-import { Bug, Database, MessageSquareText, RotateCcw, Trash2, X } from "lucide-react";
+import { Bug, Database, FlaskConical, MessageSquareText, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import {
@@ -19,6 +19,7 @@ type DebugPanelProps = {
   onClose: () => void;
   onResetPet?: () => void;
   onResetPetStats?: () => void;
+  onOpenTestPet?: () => void;
 };
 
 type DebugTab = "feed" | "prompts" | "character";
@@ -192,6 +193,7 @@ export function DebugPanel({
   onClose,
   onResetPet,
   onResetPetStats,
+  onOpenTestPet,
 }: DebugPanelProps) {
   const [activeTab, setActiveTab] = useState<DebugTab>("feed");
   const [events, setEvents] = useState<DebugPanelEvent[]>(() =>
@@ -289,15 +291,29 @@ export function DebugPanel({
             </div>
           </div>
 
-          {onResetPetStats ? (
-            <button
-              type="button"
-              onClick={onResetPetStats}
-              className="mt-4 inline-flex h-9 w-full items-center justify-center gap-2 rounded-[8px] bg-black/[0.055] px-3 text-[12px] font-medium leading-none text-black/62 transition-colors hover:bg-black/[0.085] hover:text-black/78 focus:outline-none focus:ring-2 focus:ring-black/10"
-            >
-              <RotateCcw className="size-3.5" aria-hidden="true" />
-              <span>Сбросить параметры персонажа</span>
-            </button>
+          {onResetPetStats || onOpenTestPet ? (
+            <div className="mt-4 grid gap-2">
+              {onOpenTestPet ? (
+                <button
+                  type="button"
+                  onClick={onOpenTestPet}
+                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-[8px] bg-black/[0.055] px-3 text-[12px] font-medium leading-none text-black/62 transition-colors hover:bg-black/[0.085] hover:text-black/78 focus:outline-none focus:ring-2 focus:ring-black/10"
+                >
+                  <FlaskConical className="size-3.5" aria-hidden="true" />
+                  <span>Открыть тестового персонажа</span>
+                </button>
+              ) : null}
+              {onResetPetStats ? (
+                <button
+                  type="button"
+                  onClick={onResetPetStats}
+                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-[8px] bg-black/[0.055] px-3 text-[12px] font-medium leading-none text-black/62 transition-colors hover:bg-black/[0.085] hover:text-black/78 focus:outline-none focus:ring-2 focus:ring-black/10"
+                >
+                  <RotateCcw className="size-3.5" aria-hidden="true" />
+                  <span>Сбросить параметры персонажа</span>
+                </button>
+              ) : null}
+            </div>
           ) : null}
 
           <div className="mt-4 grid grid-cols-3 gap-1 rounded-[8px] bg-black/[0.035] p-1">

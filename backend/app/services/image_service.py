@@ -5,10 +5,10 @@ import json
 import logging
 import math
 import re
-import subprocess
 import time
 import uuid
 from collections import deque
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -47,6 +47,8 @@ from app.services.openai_service import (
     get_openrouter_headers,
     get_openrouter_image_model,
     get_openrouter_image_url,
+    get_openrouter_video_model,
+    get_openrouter_video_url,
     is_openrouter_provider,
 )
 from app.services.prompt_debug import (
@@ -69,10 +71,6 @@ class KandinskyTaskError(RuntimeError):
 
 KANDINSKY_HTTP_MAX_ATTEMPTS = 2
 KANDINSKY_HTTP_RETRY_SECONDS = (3.0,)
-BACKGROUND_REMOVAL_SCRIPT = (
-    Path(__file__).resolve().parents[2] / "scripts" / "remove_background.mjs"
-)
-
 PLANT_DESCRIPTION_PATTERN = re.compile(
     r"(?:лист|растен|цвет|гриб|мох|сад|теплиц|оранжер|росток|кактус|трава|дерев)",
     re.IGNORECASE,
@@ -215,7 +213,23 @@ FAST_GENERATION_STATE_FALLBACKS = {
     "sad": ("teen", "idle"),
     "hungry": ("teen", "idle"),
 }
-BLINK_IMAGE_PROMPT = "Закрой ему глаза"
+PET_SCENE_COMPOSITION_PROMPT = "Добавь персонажа с первой картинки на вторую"
+PET_SCENE_IMAGE_SIZE = "1024x1536"
+PET_SCENE_BACKGROUND_PATH = (
+    Path(__file__).resolve().parents[2] / "static" / "backgrounds" / "pet-generation-forest.png"
+)
+PET_SCENE_VIDEO_PROMPT = (
+    "Static locked camera. The character remains perfectly still in the exact same pose, "
+    "position, scale, composition, lighting, colors, facial expression, clothing, props, "
+    "background, focus, depth of field and camera angle. Do not move the head, body, ears, "
+    "tail, mouth, nose, hands, clothing or any object. Do not change the environment or "
+    "framing. The only animation is a natural blinks. No eye movement, no pupil movement, "
+    "no expression change, no camera motion, no lighting changes, no color shifts, no "
+    "additional effects. Preserve every pixel of the original image except for the eyelids "
+    "during the blink."
+)
+PET_SCENE_VIDEO_SIZE = "720x1280"
+PET_SCENE_VIDEO_DURATION_SECONDS = 4
 SPRITE_FOREGROUND_DISTANCE = 28
 SPRITE_COMPONENT_DILATION_PX = 25
 SPRITE_SEARCH_PADDING_X_RATIO = 0.2
@@ -1290,6 +1304,153 @@ def generate_image_edit_bytes(
     return _image_result_bytes(response.data[0])
 
 
+def generate_multi_image_edit_bytes(
+    prompt: str,
+    source_paths: list[Path],
+    *,
+    label: str,
+    size: str | None = None,
+) -> bytes:
+    settings = get_settings()
+    input_references = [
+        {
+            "type": "image_url",
+            "image_url": {"url": _image_path_data_url(source_path)},
+        }
+        for source_path in source_paths
+    ]
+    if is_openrouter_provider(settings):
+        return generate_image_bytes(
+            prompt,
+            label=label,
+            size=size,
+            input_references=input_references,
+        )
+
+    client = get_openai_client()
+    kwargs = build_image_edit_kwargs(settings, prompt, size=size)
+    log_image_generation_prompt(label, {**kwargs, "input_references": input_references})
+    with ExitStack() as stack:
+        image_files = [stack.enter_context(source_path.open("rb")) for source_path in source_paths]
+        response = client.images.edit(**kwargs, image=image_files)
+    response_payload = response.model_dump() if hasattr(response, "model_dump") else {}
+    log_image_generation_response(label, kwargs, response_payload)
+    return _image_result_bytes(response.data[0])
+
+
+def _openrouter_video_headers(settings: Any) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {get_openrouter_api_key(settings)}",
+        "Content-Type": "application/json",
+        **get_openrouter_headers(settings),
+    }
+
+
+def _openrouter_video_content_headers(settings: Any) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {get_openrouter_api_key(settings)}",
+        **get_openrouter_headers(settings),
+    }
+
+
+def _openrouter_video_error(response: httpx.Response) -> RuntimeError:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = response.text
+    return RuntimeError(
+        f"OpenRouter video generation failed: status={response.status_code} response={payload}"
+    )
+
+
+def _poll_openrouter_video_job(
+    settings: Any,
+    job_id: str,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + float(settings.openrouter_video_timeout_seconds)
+    poll_interval = max(1.0, float(settings.openrouter_video_poll_interval_seconds))
+    poll_url = f"{get_openrouter_video_url(settings)}/{job_id}"
+    headers = _openrouter_video_content_headers(settings)
+
+    while time.monotonic() < deadline:
+        response = httpx.get(poll_url, headers=headers, timeout=60)
+        if response.status_code >= 400:
+            raise _openrouter_video_error(response)
+        payload = response.json()
+        status_value = str(payload.get("status") or "").lower()
+        if status_value == "completed":
+            return payload
+        if status_value in {"failed", "cancelled", "canceled", "expired", "error"}:
+            raise RuntimeError(f"OpenRouter video job failed: {payload}")
+        time.sleep(poll_interval)
+
+    raise RuntimeError(f"OpenRouter video generation timed out for job {job_id}")
+
+
+def _download_openrouter_video_bytes(settings: Any, job_id: str) -> bytes:
+    content_url = f"{get_openrouter_video_url(settings)}/{job_id}/content"
+    response = httpx.get(
+        content_url,
+        headers=_openrouter_video_content_headers(settings),
+        timeout=180,
+    )
+    if response.status_code >= 400:
+        raise _openrouter_video_error(response)
+    if not response.content:
+        raise RuntimeError("OpenRouter video content response was empty")
+    return response.content
+
+
+def generate_openrouter_video_bytes(
+    source_path: Path,
+    *,
+    label: str,
+) -> bytes:
+    settings = get_settings()
+    model = get_openrouter_video_model(settings)
+    payload = {
+        "model": model,
+        "prompt": PET_SCENE_VIDEO_PROMPT,
+        "duration": PET_SCENE_VIDEO_DURATION_SECONDS,
+        "size": PET_SCENE_VIDEO_SIZE,
+        "generate_audio": False,
+        "frame_images": [
+            {
+                "type": "image_url",
+                "image_url": {"url": _image_path_data_url(source_path)},
+                "frame_type": "first_frame",
+            }
+        ],
+    }
+    log_payload = {
+        **payload,
+        "frame_images": [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,<{source_path.name}>"},
+                "frame_type": "first_frame",
+            }
+        ],
+    }
+    logger.info("OpenRouter video generation prompt label=%s payload=%s", label, log_payload)
+
+    response = httpx.post(
+        get_openrouter_video_url(settings),
+        headers=_openrouter_video_headers(settings),
+        json=payload,
+        timeout=60,
+    )
+    if response.status_code >= 400:
+        raise _openrouter_video_error(response)
+    submit_payload = response.json()
+    job_id = str(submit_payload.get("id") or "").strip()
+    if not job_id:
+        raise RuntimeError(f"OpenRouter video response missing job id: {submit_payload}")
+
+    _poll_openrouter_video_job(settings, job_id)
+    return _download_openrouter_video_bytes(settings, job_id)
+
+
 def generate_openrouter_image_bytes(
     prompt: str,
     *,
@@ -1315,38 +1476,6 @@ def generate_openrouter_image_bytes(
         size=size,
         input_references=input_references,
     )
-
-
-def remove_image_background(image_bytes: bytes) -> bytes:
-    settings = get_settings()
-    if not BACKGROUND_REMOVAL_SCRIPT.exists():
-        raise RuntimeError(f"Background removal script not found: {BACKGROUND_REMOVAL_SCRIPT}")
-
-    try:
-        result = subprocess.run(
-            ["node", str(BACKGROUND_REMOVAL_SCRIPT)],
-            input=image_bytes,
-            capture_output=True,
-            check=False,
-            timeout=settings.background_removal_timeout_seconds,
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError("Node.js is required for background removal.") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("Background removal timed out.") from exc
-
-    if result.returncode != 0:
-        stderr = result.stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"Background removal failed: {stderr or 'unknown error'}")
-
-    if not result.stdout:
-        raise RuntimeError("Background removal returned empty output.")
-
-    return result.stdout
-
-
-def generate_sprite_sheet_bytes(prompt: str) -> bytes:
-    return remove_image_background(generate_image_bytes(prompt))
 
 
 def generated_dir_for(pet_id: uuid.UUID) -> Path:
@@ -1407,28 +1536,33 @@ def align_sprite_to_reference_canvas(image_bytes: bytes, reference_path: Path) -
 
 
 def generate_single_sprite_image_bytes(prompt: str) -> bytes:
-    return normalize_single_sprite_image(remove_image_background(generate_image_bytes(prompt)))
+    return normalize_single_sprite_image(generate_image_bytes(prompt))
 
 
-def generate_blink_sprite_image_bytes(source_path: Path) -> bytes:
-    blink_bytes = remove_image_background(
-        generate_image_edit_bytes(
-            BLINK_IMAGE_PROMPT,
-            source_path,
-            label="pet_creation/blink",
-        )
+def generate_pet_scene_image_bytes(character_path: Path) -> bytes:
+    if not PET_SCENE_BACKGROUND_PATH.exists():
+        raise RuntimeError(f"Pet scene background not found: {PET_SCENE_BACKGROUND_PATH}")
+    return generate_multi_image_edit_bytes(
+        PET_SCENE_COMPOSITION_PROMPT,
+        [character_path, PET_SCENE_BACKGROUND_PATH],
+        label="pet_creation/scene",
+        size=PET_SCENE_IMAGE_SIZE,
     )
-    return align_sprite_to_reference_canvas(blink_bytes, source_path)
+
+
+def generate_pet_scene_video_bytes(scene_path: Path) -> bytes:
+    return generate_openrouter_video_bytes(scene_path, label="pet_creation/scene_video")
 
 
 def generate_individual_sprite_paths(
     asset_id: uuid.UUID,
     description: str,
     character_bible: str | dict[str, Any],
-) -> dict[tuple[str, str], tuple[Path, str]]:
+) -> tuple[dict[tuple[str, str], tuple[Path, str]], Path | None]:
     output_dir = generated_dir_for(asset_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_paths: dict[tuple[str, str], tuple[Path, str]] = {}
+    video_path: Path | None = None
 
     for stage, state in FAST_GENERATION_SKINS:
         prompt = build_pet_single_sprite_prompt(
@@ -1451,16 +1585,17 @@ def generate_individual_sprite_paths(
             )
             sprite_bytes = generate_single_sprite_image_bytes(prompt)
 
+        character_path = output_dir / f"{stage}-{state}-character.png"
+        character_path.write_bytes(sprite_bytes)
+
         path = output_dir / f"{stage}-{state}.png"
-        path.write_bytes(sprite_bytes)
-        output_paths[(stage, state)] = (path, prompt)
-
+        path.write_bytes(generate_pet_scene_image_bytes(character_path))
+        output_paths[(stage, state)] = (path, PET_SCENE_COMPOSITION_PROMPT)
         if stage == FAST_GENERATION_STAGE and state == "idle":
-            blink_path = output_dir / f"{stage}-blink.png"
-            blink_path.write_bytes(generate_blink_sprite_image_bytes(path))
-            output_paths[(stage, "blink")] = (blink_path, BLINK_IMAGE_PROMPT)
+            video_path = output_dir / f"{stage}-{state}.mp4"
+            video_path.write_bytes(generate_pet_scene_video_bytes(path))
 
-    return output_paths
+    return output_paths, video_path
 
 
 def crop_sprite_sheet(pet_id: uuid.UUID, sprite_path: Path) -> dict[tuple[str, str], Path]:
@@ -1507,10 +1642,6 @@ def generation_error_code(exc: Exception) -> str:
         return f"OPENAI_STATUS_{exc.status_code}"
     if isinstance(exc, APIConnectionError | httpx.HTTPError):
         return "OPENAI_CONNECTION_FAILED"
-    if isinstance(exc, RuntimeError):
-        message = str(exc)
-        if message.startswith("Background removal"):
-            return "IMAGE_POSTPROCESS_FAILED"
     if isinstance(exc, OSError):
         return "IMAGE_SAVE_FAILED"
     return "GENERATION_FAILED"
@@ -1521,7 +1652,7 @@ def generate_pet_asset_set(description: str) -> dict[str, Any]:
     output_dir = generated_dir_for(asset_set_id)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    generated_paths = generate_individual_sprite_paths(asset_set_id, description, {})
+    generated_paths, video_path = generate_individual_sprite_paths(asset_set_id, description, {})
     version = int(datetime.now(UTC).timestamp())
 
     generated_urls = {
@@ -1538,6 +1669,11 @@ def generate_pet_asset_set(description: str) -> dict[str, Any]:
         "assetSetId": str(asset_set_id),
         "generatedAt": datetime.now(UTC),
         "images": images,
+        "videoUrl": (
+            f"/static/generated/{asset_set_id}/{video_path.name}?v={version}"
+            if video_path
+            else None
+        ),
         "blinkImageUrl": generated_urls.get((FAST_GENERATION_STAGE, "blink")),
         "spriteSheetUrl": None,
         "characterBible": None,

@@ -63,7 +63,7 @@ const REQUIRED_STAGES = ["baby", "teen", "adult"] as const satisfies readonly Pe
 const REQUIRED_MOODS = ["idle", "happy", "hungry", "sad"] as const satisfies readonly PetMood[];
 const MAX_ERROR_BODY_CHARS = 900;
 const GENERATION_POLL_INTERVAL_MS = 2000;
-const MAX_GENERATION_POLL_MS = 10 * 60 * 1000;
+const MAX_GENERATION_POLL_MS = 15 * 60 * 1000;
 
 type ApiErrorDetail = {
   error?: unknown;
@@ -401,6 +401,7 @@ export async function generatePetAssets(description: string): Promise<GeneratePe
     ...response,
     characterBible: response.characterBible ?? undefined,
     images: completeGeneratedImages(response),
+    videoUrl: response.videoUrl ? publicImageUrl(response.videoUrl) : undefined,
     blinkImageUrl: response.blinkImageUrl ? publicImageUrl(response.blinkImageUrl) : undefined,
     spriteSheetUrl: response.spriteSheetUrl ? publicImageUrl(response.spriteSheetUrl) : undefined,
   };

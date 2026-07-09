@@ -14,7 +14,6 @@ from app.prompts.pet_image_prompts import (
     build_pet_state_strip_prompt,
 )
 from app.services.image_service import (
-    BACKGROUND_REMOVAL_SCRIPT,
     CHARACTER_BIBLE_SCHEMA,
     _character_reasoning_effort_kwargs,
     align_sprite_to_reference_canvas,
@@ -29,18 +28,8 @@ from app.services.image_service import (
     generate_kandinsky_image_bytes,
     generate_openrouter_image_bytes,
     generate_pet_asset_set,
-    generate_sprite_sheet_bytes,
     generation_error_code,
 )
-
-
-def test_background_removal_script_uses_supported_model() -> None:
-    script = BACKGROUND_REMOVAL_SCRIPT.read_text(encoding="utf-8")
-
-    assert 'model: "medium"' in script
-    assert "publicPath:" in script
-    assert 'new Blob([image], { type: "image/png" })' in script
-    assert "isnet_fp16" not in script
 
 
 def image_contains_color(image: Image.Image, color: tuple[int, int, int, int]) -> bool:
@@ -161,44 +150,6 @@ def test_extract_state_strip_cells_splits_horizontal_three_state_strip() -> None
     assert image_contains_color(cells[("teen", "happy")], happy_color)
     assert image_contains_color(cells[("teen", "sad")], sad_color)
     assert not image_contains_color(cells[("teen", "idle")], happy_color)
-
-
-def test_generate_sprite_sheet_omits_unset_background(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-    background_removal_inputs: list[bytes] = []
-
-    class FakeImages:
-        def generate(self, **kwargs):
-            captured.update(kwargs)
-            return SimpleNamespace(
-                data=[SimpleNamespace(b64_json=base64.b64encode(b"image-bytes").decode())]
-            )
-
-    monkeypatch.setattr(
-        "app.services.image_service.get_settings",
-        lambda: SimpleNamespace(
-            openai_image_model="gpt-image-2",
-            openai_image_size="1536x1152",
-            openai_image_quality="medium",
-            openai_image_output_format="png",
-            openai_image_timeout_seconds=180,
-        ),
-    )
-    monkeypatch.setattr(
-        "app.services.image_service.get_openai_client",
-        lambda: SimpleNamespace(images=FakeImages()),
-    )
-    monkeypatch.setattr(
-        "app.services.image_service.remove_image_background",
-        lambda image_bytes: background_removal_inputs.append(image_bytes) or b"foreground-image",
-    )
-
-    result = generate_sprite_sheet_bytes("prompt")
-
-    assert result == b"foreground-image"
-    assert background_removal_inputs == [b"image-bytes"]
-    assert "background" not in captured
-    assert captured["timeout"] == 180
 
 
 def test_generate_image_bytes_uses_openrouter_image_endpoint(monkeypatch) -> None:
@@ -595,7 +546,7 @@ def test_generate_image_edit_bytes_uses_openai_image_edit(monkeypatch, tmp_path)
     result = generate_image_edit_bytes(
         "Закрой ему глаза",
         source_path,
-        label="pet_creation/blink",
+        label="pet_creation/edit",
     )
 
     assert result == b"edited-image"
@@ -626,9 +577,10 @@ def test_align_sprite_to_reference_canvas_matches_reference_bbox(tmp_path) -> No
     )
 
 
-def test_generate_pet_asset_set_generates_idle_and_blink_overlay(monkeypatch, tmp_path) -> None:
+def test_generate_pet_asset_set_generates_idle_scene(monkeypatch, tmp_path) -> None:
     generated_prompts: list[str] = []
-    blink_sources: list[str] = []
+    scene_sources: list[str] = []
+    video_sources: list[str] = []
 
     monkeypatch.setattr(
         "app.services.image_service.generated_dir_for",
@@ -652,8 +604,8 @@ def test_generate_pet_asset_set_generates_idle_and_blink_overlay(monkeypatch, tm
         draw.rectangle((30, 30, 70, 70), fill=(20, 140, 70, 255))
         return png_bytes(image)
 
-    def fake_blink_bytes(source_path):
-        blink_sources.append(source_path.name)
+    def fake_scene_bytes(source_path):
+        scene_sources.append(source_path.name)
         image = Image.new("RGBA", (100, 100), (255, 255, 255, 255))
         draw = ImageDraw.Draw(image)
         draw.rectangle((30, 30, 70, 70), fill=(40, 90, 190, 255))
@@ -665,26 +617,29 @@ def test_generate_pet_asset_set_generates_idle_and_blink_overlay(monkeypatch, tm
         fake_image_bytes,
     )
     monkeypatch.setattr(
-        "app.services.image_service.remove_image_background",
-        lambda image_bytes: image_bytes,
+        "app.services.image_service.generate_pet_scene_image_bytes",
+        fake_scene_bytes,
     )
     monkeypatch.setattr(
-        "app.services.image_service.generate_blink_sprite_image_bytes",
-        fake_blink_bytes,
+        "app.services.image_service.generate_pet_scene_video_bytes",
+        lambda source_path: video_sources.append(source_path.name) or b"video-bytes",
     )
 
     result = generate_pet_asset_set("электрический дракон")
 
     assert generated_prompts == ["single:teen:idle"]
-    assert blink_sources == ["teen-idle.png"]
+    assert scene_sources == ["teen-idle-character.png"]
+    assert video_sources == ["teen-idle.png"]
     assert sorted(path.name for path in next(tmp_path.iterdir()).iterdir()) == [
-        "teen-blink.png",
+        "teen-idle-character.png",
+        "teen-idle.mp4",
         "teen-idle.png",
     ]
 
     images = result["images"]
     assert result["characterBible"] is None
-    assert "/teen-blink.png" in result["blinkImageUrl"]
+    assert "/teen-idle.mp4" in result["videoUrl"]
+    assert result["blinkImageUrl"] is None
     for stage in ("baby", "teen", "adult"):
         assert set(images[stage]) == {"idle", "happy", "hungry", "sad"}
         assert images[stage]["idle"] == images[stage]["happy"]
@@ -750,15 +705,15 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
 
     monkeypatch.setattr("app.services.image_service.generate_image_bytes", fake_image_bytes)
     monkeypatch.setattr(
-        "app.services.image_service.remove_image_background",
-        lambda image_bytes: image_bytes,
-    )
-    monkeypatch.setattr(
-        "app.services.image_service.generate_blink_sprite_image_bytes",
+        "app.services.image_service.generate_pet_scene_image_bytes",
         lambda _source_path: png_bytes(Image.new("RGBA", (100, 100), (255, 255, 255, 0))),
     )
+    monkeypatch.setattr(
+        "app.services.image_service.generate_pet_scene_video_bytes",
+        lambda _source_path: b"video-bytes",
+    )
 
-    result = generate_individual_sprite_paths(
+    result, video_path = generate_individual_sprite_paths(
         uuid.uuid4(),
         "электрический дракон",
         {"species": "дракончик"},
@@ -769,9 +724,10 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
         "safe-retry:teen:idle",
     ]
     assert sorted(path.name for path, _prompt in result.values()) == [
-        "teen-blink.png",
         "teen-idle.png",
     ]
+    assert video_path is not None
+    assert video_path.name == "teen-idle.mp4"
 
 
 def test_create_character_bible_uses_character_timeout(monkeypatch) -> None:
@@ -853,10 +809,10 @@ def test_generation_error_code_defaults_to_generic() -> None:
     assert generation_error_code(RuntimeError("unknown")) == "GENERATION_FAILED"
 
 
-def test_generation_error_code_classifies_background_removal_failures() -> None:
+def test_generation_error_code_keeps_video_runtime_failures_generic() -> None:
     assert (
-        generation_error_code(RuntimeError("Background removal failed: model unavailable"))
-        == "IMAGE_POSTPROCESS_FAILED"
+        generation_error_code(RuntimeError("OpenRouter video generation failed: status=400"))
+        == "GENERATION_FAILED"
     )
 
 

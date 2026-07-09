@@ -22,18 +22,25 @@ const PET_CHARACTER_RISE_EASING = "cubic-bezier(0.2, 0.8, 0.2, 1)";
 
 const petMessageStackStyle: CSSProperties = {
   display: "grid",
-  justifyItems: "start",
-  alignItems: "start",
+  justifyItems: "center",
+  alignItems: "center",
+  minWidth: 0,
   minHeight: 0,
   overflow: "visible",
+  width: "max-content",
+  maxWidth: "100%",
+  whiteSpace: "normal",
+  wordBreak: "normal",
 };
 
 const petMessageLayerStyle: CSSProperties = {
   gridArea: "1 / 1",
+  minWidth: 0,
   maxWidth: "100%",
   margin: 0,
   overflow: "visible",
   overflowWrap: "normal",
+  textAlign: "center",
   whiteSpace: "normal",
   wordBreak: "normal",
   transformOrigin: "center top",

@@ -178,6 +178,7 @@ function normalizeAssetSet(value: unknown): LocalPetAssetSet | undefined {
     characterTemplate: isRecord(value.characterTemplate) ? value.characterTemplate : undefined,
     characterBible: isRecord(value.characterBible) ? value.characterBible : undefined,
     images: normalizedImages,
+    videoUrl: typeof value.videoUrl === "string" ? value.videoUrl : undefined,
     blinkImageUrl: typeof value.blinkImageUrl === "string" ? value.blinkImageUrl : undefined,
     spriteSheetUrl: typeof value.spriteSheetUrl === "string" ? value.spriteSheetUrl : undefined,
   });

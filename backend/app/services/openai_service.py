@@ -72,6 +72,13 @@ def get_openrouter_image_model(settings: Any) -> str:
     )
 
 
+def get_openrouter_video_model(settings: Any) -> str:
+    return (
+        _clean_string(getattr(settings, "openrouter_video_model", None))
+        or "bytedance/seedance-2.0"
+    )
+
+
 def get_openrouter_api_key(settings: Any) -> str:
     api_key = _clean_string(getattr(settings, "openrouter_api_key", None))
     legacy_key = _clean_string(getattr(settings, "openai_api_key", None))
@@ -114,6 +121,10 @@ def get_openrouter_headers(settings: Any) -> dict[str, str]:
 
 def get_openrouter_image_url(settings: Any) -> str:
     return f"{get_openrouter_base_url(settings)}/images"
+
+
+def get_openrouter_video_url(settings: Any) -> str:
+    return f"{get_openrouter_base_url(settings)}/videos"
 
 
 def chat_reasoning_effort_kwargs(reasoning_effort: str | None) -> dict[str, str]:

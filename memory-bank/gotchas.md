@@ -27,13 +27,18 @@
   pipeline. For main-screen glass surfaces, keep the Tailwind-style
   `--tw-backdrop-blur` rule that emits standard `backdrop-filter`, and verify
   with computed styles in the browser.
-- Pet creation intentionally keeps generated sprite stage fallbacks fake/cheap
+- Pet creation intentionally keeps generated visual state fallbacks fake/cheap
   for now. Do not change `FAST_GENERATION_STATE_FALLBACKS` unless the visual
-  staging decision changes explicitly. Current blink experiment is such a
-  visual staging exception: happy/sad/hungry temporarily fall back to idle.
-- Image-edit variants of a pet sprite can keep the same PNG dimensions while
-  changing the visible character bbox. For overlay assets such as blink, align
-  the edited foreground back to the source sprite canvas/bbox before saving.
+  staging decision changes explicitly. The active path generates only
+  `teen-idle-character.png` as an intermediate and `teen-idle.png` as the final
+  composed scene, then maps happy/sad/hungry to that same scene.
+- The dashboard background is now the generated composed pet scene. Do not add
+  a separate centered pet sprite, shadow, blink overlay, tap animation, or
+  background-removal step unless the visual pipeline is intentionally changed.
+- Pet creation waits for an OpenRouter video job after image composition and
+  returns `assetSet.videoUrl`. The frontend generation polling timeout must stay
+  at least as long as `OPENROUTER_VIDEO_TIMEOUT_SECONDS`, otherwise the UI can
+  report timeout while the backend is still waiting for Seedance.
 - Do not mutate character template fields during chat. Evolving per-pet
   character facts belong in `extensions.lite_overlay`; evolving story entities
   belong in `extensions.story_library_overlay`.
@@ -174,3 +179,7 @@
 - Telegram story photo captions are capped at 1024 chars. Keep the stat debug
   footer reserved during truncation, otherwise `/story` debugging can hide the
   analyzer result behind a long generated story.
+- Main-screen speech bubble must stretch from the bubble container, not from an
+  absolutely positioned `<img>` SVG. Percentage height on that replaced element
+  can stay at the intrinsic SVG height while animated text grows; use the SVG
+  as a `background-size: 100% 100%` container background for stretchable bubbles.
