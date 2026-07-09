@@ -48,6 +48,48 @@ const IDENTITY_DIALOGUE_RE = new RegExp(
   ].join("|"),
   "iu",
 );
+const STANDALONE_CHAT_INTENT_RE = new RegExp(
+  `^(?:${[
+    "ты\\s+как",
+    "как\\s+дела",
+    "как\\s+ты",
+    "расскажи",
+    "повесели",
+    "развесели",
+    "придумай",
+    "привет",
+    "ку",
+    "хай",
+  ].join("|")})(?:$|\\s|[?.!,])`,
+  "iu",
+);
+const DIALOGUE_HOOK_REPLY_RE = new RegExp(
+  `^(?:${[
+    "да",
+    "нет",
+    "ага",
+    "угу",
+    "ок",
+    "хочу",
+    "не\\s+хочу",
+    "видел",
+    "не\\s+видел",
+    "не\\s+знаю",
+    "покажи",
+    "давай",
+    "куда",
+    "кто",
+    "что",
+    "где",
+    "почему",
+    "зачем",
+    "как\\s+именно",
+    "и\\s+что",
+    "а\\s+что",
+    "а\\s+ты",
+  ].join("|")})(?:$|\\s|[?.!,])`,
+  "iu",
+);
 
 function localDateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
@@ -71,6 +113,17 @@ function tokenize(text: string) {
 export function isIdentityDialogueQuestion(text: string) {
   const compact = text.trim().replace(/\s+/g, " ");
   return compact.length <= 160 && IDENTITY_DIALOGUE_RE.test(compact);
+}
+
+export function shouldUseDialogueHookContext(text: string) {
+  const compact = text.trim().replace(/\s+/g, " ");
+  if (!compact || compact.length > 120 || isIdentityDialogueQuestion(compact)) {
+    return false;
+  }
+  if (STANDALONE_CHAT_INTENT_RE.test(compact)) {
+    return false;
+  }
+  return DIALOGUE_HOOK_REPLY_RE.test(compact);
 }
 
 function messageTime(message: LocalChatMessage) {

@@ -6,7 +6,7 @@ import {
 } from "./localPetStorage";
 import {
   buildMemoryContextForMessage,
-  isIdentityDialogueQuestion,
+  shouldUseDialogueHookContext,
 } from "./localPetMemoryRecall";
 import {
   recordMemoryContextDebug,
@@ -55,7 +55,7 @@ export async function runLocalPetChatTurn({
   };
   const fullHistoryBeforeMessage = history ?? readLocalChatHistory().messages;
   const historyBeforeMessage = fullHistoryBeforeMessage.slice(-12);
-  const visibleContext = dialogueHookMessage && !isIdentityDialogueQuestion(message)
+  const visibleContext = dialogueHookMessage && shouldUseDialogueHookContext(message)
     ? { lastPetLine: dialogueHookMessage.text }
     : undefined;
   const memoryContext = buildMemoryContextForMessage(

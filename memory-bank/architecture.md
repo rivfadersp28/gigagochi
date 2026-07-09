@@ -145,12 +145,19 @@
   no-ops. Active memory comes from stored chat messages and recalled dialogue
   episodes, not extracted user facts or rewritten summaries.
 - Main-screen ambient and proactive replies are transient dialogue hooks, not
-  durable chat history. The next user message may receive the visible hook as
-  one-time `LAST_VISIBLE_PET_LINE` context, not as an `assistant` history
-  message. `localStorage` chat history stores only user messages and direct pet
-  replies to user chat turns to avoid self-reinforcing generated monologues.
-  Identity questions skip this visible hook entirely so autonomous ambient or
-  proactive phrasing does not become character canon.
+  durable chat history. The next user message receives the visible hook as
+  one-time `LAST_VISIBLE_PET_LINE` context only when the frontend classifies the
+  user text as a direct answer to that hook, not for ordinary new intents such as
+  small talk, “расскажи”, or “повесели”. The hook is not sent as an `assistant`
+  history message. `localStorage` chat history stores only user messages and
+  direct pet replies to user chat turns to avoid self-reinforcing generated
+  monologues. Identity questions skip this visible hook entirely so autonomous
+  ambient or proactive phrasing does not become character canon.
+- Recent ambient replies are prompt-only anti-repeat material. When included,
+  they are marked as already-shown transient wording, not character canon or
+  world facts, and visible replies receive a shared rule not to turn distinctive
+  words from previous replies into permanent traits unless the user continues
+  that topic.
 - Lite chat can read character JSON for explicit lore questions, but no longer
   exposes `update_character_json`. Stable mutable facts are saved by the
   separate `/api/chat/lite-facts` post-reply extractor.

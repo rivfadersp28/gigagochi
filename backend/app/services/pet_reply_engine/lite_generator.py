@@ -73,6 +73,7 @@ from app.services.pet_reply_engine.speech_runtime import (
     speech_template,
     state_layer_surface_flags,
     surface_prompt,
+    transient_context_rule,
     user_memory_consolidation_system_prompt,
     user_memory_extraction_system_prompt,
     world_seed_system_prompt,
@@ -531,13 +532,20 @@ def _ambient_memory_context_block(memory_context: LocalPetMemoryContext | None) 
     return _memory_context_block(memory_context)
 
 
-def _recent_ambient_replies_text(replies: list[str]) -> str:
+def _recent_ambient_replies_block(replies: list[str]) -> str | None:
     lines: list[str] = []
     for reply in replies[-MAX_RECENT_AMBIENT_REPLIES:]:
         text = _clean_optional_text(reply, 180)
         if text:
             lines.append(f"- {text}")
-    return "\n".join(lines)
+    if not lines:
+        return None
+    return (
+        "RECENT_AMBIENT_REPLIES_ALREADY_SHOWN (anti-repeat only, not character canon):\n"
+        + "\n".join(lines)
+        + "\nDo not reuse their distinctive words, objects, metaphors or scenery "
+        "unless the user explicitly continues that topic."
+    )
 
 
 def _ambient_context_prompt() -> str:
@@ -1355,6 +1363,7 @@ def _phrase_plan_for_chat(
         ),
         recent_events_block=recent_events_block,
         world_block=context_bundle.prompt_block or None,
+        extra_rules=(transient_context_rule(),),
     )
 
 
@@ -2538,6 +2547,7 @@ def build_proactive_messages(
         world_block=context_bundle.prompt_block or None,
         character_block=_character_block_for_surface(payload.pet, "proactive", context_plan),
         memory_block=memory_block,
+        extra_rules=(transient_context_rule(),),
     )
     return [
         {
@@ -2589,6 +2599,7 @@ def build_push_messages(
         world_block=context_bundle.prompt_block or None,
         character_block=_character_block_for_surface(payload.pet, "push", context_plan),
         memory_block=memory_block,
+        extra_rules=(transient_context_rule(),),
     )
     return [
         {
@@ -2762,8 +2773,8 @@ def build_ambient_messages(
             payload=payload,
             context_routing=context_plan,
         )
-    recent_ambient_replies = (
-        _recent_ambient_replies_text(payload.recentAmbientReplies)
+    recent_ambient_block = (
+        _recent_ambient_replies_block(payload.recentAmbientReplies)
         if _source_enabled(
             "ambient",
             "recentReplies",
@@ -2771,7 +2782,7 @@ def build_ambient_messages(
             router_source="recentReplies",
             auto_default=True,
         )
-        else ""
+        else None
     )
     plan = PhrasePlan(
         surface="ambient",
@@ -2782,11 +2793,13 @@ def build_ambient_messages(
             description=_reply_identity_label(payload.pet),
             reply_limit=reply_limit,
         ),
-        persona_contract=surface_prompt("ambient", {"recent_replies": recent_ambient_replies}),
+        persona_contract=surface_prompt("ambient", {"recent_replies": ""}),
         tone_block=tone_prompt_block("visibleReply"),
         world_block=context_bundle.prompt_block or None,
         character_block=_character_block_for_surface(payload.pet, "ambient", context_plan),
         memory_block=memory_block,
+        recent_ambient_block=recent_ambient_block,
+        extra_rules=(transient_context_rule(),),
     )
     return [{"role": "system", "content": plan.system_content()}]
 

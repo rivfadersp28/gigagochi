@@ -617,6 +617,7 @@ def test_lite_prompt_keeps_visible_hook_out_of_message_history() -> None:
     assert "LAST_VISIBLE_PET_LINE" in system_message
     assert "pet: Я случайно сказал про неон." in system_message
     assert "ближайший видимый контекст" in system_message
+    assert "Не превращай отдельные слова" in system_message
     assert "Я случайно сказал про неон." not in history_contents
 
 
@@ -1092,7 +1093,9 @@ def test_ambient_prompt_uses_idle_field_without_forced_world_context(
     assert "Спроси меня что-нибудь" not in system_message
     assert "пять минут" not in system_message
     assert "Привет, я Листик. Я просто рядом." in system_message
-    assert "Я просто рядом" in system_message
+    assert "anti-repeat only" in system_message
+    assert "not character canon" in system_message
+    assert "distinctive words" in system_message
     assert "Есть ли в твоем мире монстры?" not in system_message
     assert "Я нашел крошечный ключ от Врат Забвения." not in system_message
     assert "ask_school_or_work_role" not in system_message

@@ -62,6 +62,7 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("identityTemplate",),
     ("memoryUsageRule",),
     ("visibleReply", "babyExamplesIntro"),
+    ("visibleReply", "transientContextRule"),
     ("stateLayer", "stateParamUsageRule"),
     ("worldContext", "template"),
     ("characterMemory", "worldSeedSystem"),
@@ -300,6 +301,10 @@ def memory_usage_rule() -> str:
 
 def baby_examples_intro() -> str:
     return _required_string(speech_runtime_config(), ("visibleReply", "babyExamplesIntro"))
+
+
+def transient_context_rule() -> str:
+    return _required_string(speech_runtime_config(), ("visibleReply", "transientContextRule"))
 
 
 def state_layer_surface_flags(surface: VisibleSurface) -> dict[str, bool]:
