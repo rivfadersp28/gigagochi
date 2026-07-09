@@ -12,6 +12,12 @@ const RECENT_DIRECT_HISTORY_MESSAGES = 12;
 const MAX_RECALL_EPISODES = 3;
 const MAX_RELEVANT_MEMORIES = 5;
 const EPISODE_CONTEXT_RADIUS = 2;
+const RUSSIAN_SUFFIXES = [
+  "иями", "ями", "ами", "ого", "ему", "ому", "ыми", "ими",
+  "ая", "яя", "ое", "ее", "ые", "ие", "ой", "ей", "ам", "ям",
+  "ах", "ях", "ов", "ев", "ом", "ем", "ую", "юю", "ить", "ать", "ять",
+  "ет", "ит", "ют", "ут", "ешь", "ишь", "ы", "и", "а", "я", "у", "ю",
+];
 const STOP_WORDS = new Set([
   "меня",
   "мне",
@@ -112,12 +118,23 @@ function sameLocalDay(left: Date, right: Date) {
   return localDateKey(left) === localDateKey(right);
 }
 
+function normalizeToken(token: string) {
+  if (!/[а-яё]/u.test(token) || token.length < 6) {
+    return token;
+  }
+  const suffix = RUSSIAN_SUFFIXES.find(
+    (candidate) => token.endsWith(candidate) && token.length - candidate.length >= 4,
+  );
+  return suffix ? token.slice(0, -suffix.length) : token;
+}
+
 function tokenize(text: string) {
   return new Set(
     text
       .toLowerCase()
       .match(/[\p{L}\p{N}]{3,}/gu)
-      ?.filter((word) => !STOP_WORDS.has(word)) ?? [],
+      ?.filter((word) => !STOP_WORDS.has(word))
+      .map(normalizeToken) ?? [],
   );
 }
 
@@ -170,6 +187,10 @@ function memoryTime(memory: LocalPetUserMemory) {
   return Number.isNaN(createdAt) ? 0 : createdAt;
 }
 
+function isMemoryActive(memory: LocalPetUserMemory, now: Date) {
+  return !memory.expiresAt || Date.parse(memory.expiresAt) > now.getTime();
+}
+
 function memorySelectionScore(
   memory: LocalPetUserMemory,
   message: string,
@@ -203,11 +224,13 @@ function selectRelevantMemories(
   memory: LocalPetMemoryStateV1 | undefined,
   message: string,
   queryTokens: Set<string>,
+  now: Date,
 ): LocalPetMemoryContext["relevantMemories"] {
   if (!memory?.memories.length) {
     return [];
   }
   return memory.memories
+    .filter((item) => isMemoryActive(item, now))
     .map((item) => ({
       item,
       score: memorySelectionScore(item, message, queryTokens),
@@ -268,7 +291,7 @@ export function buildMemoryContextForMessage(
   memory?: LocalPetMemoryStateV1,
 ): LocalPetMemoryContext {
   const queryTokens = tokenize(message);
-  const relevantMemories = selectRelevantMemories(memory, message, queryTokens);
+  const relevantMemories = selectRelevantMemories(memory, message, queryTokens, now);
   if (!queryTokens.size || history.length <= RECENT_DIRECT_HISTORY_MESSAGES) {
     return { relevantMemories };
   }

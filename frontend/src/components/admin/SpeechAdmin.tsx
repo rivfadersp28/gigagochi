@@ -113,8 +113,8 @@ const CONTEXT_SOURCE_MODES = [
 ] as const;
 
 function unsupportedContextSourceCell(sourceId: string, surfaceId: string): string | null {
-  if (sourceId === "chatHistory" && !["chat", "backgroundStory"].includes(surfaceId)) {
-    return "История используется только в Chat и Story.";
+  if (sourceId === "chatHistory" && !["chat", "ambient", "backgroundStory"].includes(surfaceId)) {
+    return "История используется только в Chat, Idle и Story.";
   }
   if (sourceId === "recentReplies" && !["ambient", "backgroundStory"].includes(surfaceId)) {
     return "Антиповтор используется только в Idle и Story.";

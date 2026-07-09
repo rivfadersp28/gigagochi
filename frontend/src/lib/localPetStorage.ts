@@ -475,11 +475,13 @@ export function applyLiteOverlayPatch(
   state: LocalPetState,
   patch: Record<string, unknown> | undefined,
 ): LocalPetState {
-  if (!patch || !state.assetSet?.characterBible) {
+  if (!patch || !state.assetSet) {
     return state;
   }
 
-  const characterBible = state.assetSet.characterBible;
+  const characterBible = isRecord(state.assetSet.characterBible)
+    ? state.assetSet.characterBible
+    : {};
   const currentExtensions = isRecord(characterBible.extensions) ? characterBible.extensions : {};
   const currentOverlay = isRecord(currentExtensions.lite_overlay)
     ? currentExtensions.lite_overlay
@@ -517,7 +519,7 @@ export function applyStoryLibraryPatch(
   state: LocalPetState,
   patch: Record<string, unknown> | undefined,
 ): LocalPetState {
-  if (!patch || !state.assetSet?.characterBible) {
+  if (!patch || !state.assetSet) {
     return state;
   }
 
@@ -526,7 +528,9 @@ export function applyStoryLibraryPatch(
     return state;
   }
 
-  const characterBible = state.assetSet.characterBible;
+  const characterBible = isRecord(state.assetSet.characterBible)
+    ? state.assetSet.characterBible
+    : {};
   const currentExtensions = isRecord(characterBible.extensions) ? characterBible.extensions : {};
   const currentOverlay = isRecord(currentExtensions.story_library_overlay)
     ? currentExtensions.story_library_overlay
@@ -561,7 +565,7 @@ export function applyRecentStoryEventsPatch(
   state: LocalPetState,
   patch: Record<string, unknown> | undefined,
 ): LocalPetState {
-  if (!patch || !state.assetSet?.characterBible) {
+  if (!patch || !state.assetSet) {
     return state;
   }
 
@@ -570,7 +574,9 @@ export function applyRecentStoryEventsPatch(
     return state;
   }
 
-  const characterBible = state.assetSet.characterBible;
+  const characterBible = isRecord(state.assetSet.characterBible)
+    ? state.assetSet.characterBible
+    : {};
   const currentExtensions = isRecord(characterBible.extensions) ? characterBible.extensions : {};
   const mergedEvents = dedupeRecentStoryEvents([
     ...normalizeRecentStoryEvents(currentExtensions.recent_story_events),

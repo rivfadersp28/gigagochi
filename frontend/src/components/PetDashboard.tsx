@@ -241,8 +241,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         if (ambientRequestIdRef.current !== requestId) {
           return;
         }
-        logBrowserPromptDebug("dashboard ambient", response);
-        recordReplyPromptDebug(response);
+        if (includePromptDebug) {
+          logBrowserPromptDebug("dashboard ambient", response);
+          recordReplyPromptDebug(response);
+        }
         showPetReplyMessage(response.reply, true, {
           dialogueHook: true,
           voiceMode: "generated",
@@ -576,6 +578,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         replyMaxChars: DASHBOARD_CHAT_REPLY_MAX_CHARS,
         dialogueHookMessage,
         logLabel: "dashboard quick chat",
+        onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
       });
       showPetReplyMessage(response.reply, true, { showInConversation: true });
       localPet.applyMoodHint(
@@ -663,7 +666,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       if (includePromptDebug) {
         console.log("[memory-debug] dashboard proactive candidate", proactiveMemoryContext);
       }
-      recordMemoryContextDebug(proactiveMemoryContext, "Память подставлена в proactive prompt");
+      if (includePromptDebug) {
+        recordMemoryContextDebug(
+          proactiveMemoryContext,
+          "Память подставлена в proactive prompt",
+        );
+      }
       void generateLocalProactiveMessage(pet, proactiveMemoryContext, {
         includeDebug: includePromptDebug,
       })
@@ -671,8 +679,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           if (petReplyMessageRef.current) {
             return;
           }
-          logBrowserPromptDebug("dashboard proactive chat", response);
-          recordReplyPromptDebug(response);
+          if (includePromptDebug) {
+            logBrowserPromptDebug("dashboard proactive chat", response);
+            recordReplyPromptDebug(response);
+          }
           const latestMemory = readLocalPetMemory(pet.petId);
           writeLocalPetMemory(
             recordProactiveDelivery(

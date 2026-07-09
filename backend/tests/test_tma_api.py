@@ -19,6 +19,8 @@ from app.schemas import (
     LocalChatResponse,
     LocalPetPushSnapshotResponse,
     LocalProactiveResponse,
+    MemoryConsolidationResponse,
+    MemoryExtractionResponse,
 )
 from app.services.rate_limit_service import rate_limiter
 from app.services.telegram_auth_service import TelegramUserContext
@@ -495,10 +497,14 @@ def test_generate_pet_job_records_provider_failure(monkeypatch, caplog, tmp_path
     app.dependency_overrides.clear()
 
 
-def test_extract_lite_facts_is_noop(monkeypatch) -> None:
+def test_extract_lite_facts_returns_extracted_patch(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.extract_lite_overlay_patch_from_reply",
+        lambda _payload: ({"facts": [{"text": "Мир состоит из базальтовых гор."}]}, None),
     )
 
     client = tma_client()
@@ -524,15 +530,31 @@ def test_extract_lite_facts_is_noop(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {}
+    assert response.json() == {
+        "liteOverlayPatch": {
+            "facts": [{"text": "Мир состоит из базальтовых гор."}],
+        }
+    }
 
     app.dependency_overrides.clear()
 
 
-def test_memory_extract_endpoint_is_noop(monkeypatch) -> None:
+def test_memory_extract_endpoint_returns_operations(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.extract_user_memory_operations",
+        lambda _payload: MemoryExtractionResponse(
+            operations=[
+                {
+                    "type": "remember_user_fact",
+                    "kind": "deadline",
+                    "text": "У пользователя завтра экзамен.",
+                }
+            ]
+        ),
     )
 
     client = tma_client()
@@ -558,15 +580,21 @@ def test_memory_extract_endpoint_is_noop(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {"operations": []}
+    assert response.json()["operations"][0]["kind"] == "deadline"
 
     app.dependency_overrides.clear()
 
 
-def test_memory_consolidate_endpoint_is_noop(monkeypatch) -> None:
+def test_memory_consolidate_endpoint_returns_operations(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.consolidate_user_memory",
+        lambda _payload: MemoryConsolidationResponse(
+            operations=[{"type": "rewrite_summary", "content": "Короткая сводка."}]
+        ),
     )
 
     client = tma_client()
@@ -582,7 +610,9 @@ def test_memory_consolidate_endpoint_is_noop(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {"operations": []}
+    assert response.json() == {
+        "operations": [{"type": "rewrite_summary", "content": "Короткая сводка."}]
+    }
 
     app.dependency_overrides.clear()
 

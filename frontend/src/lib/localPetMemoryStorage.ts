@@ -492,17 +492,21 @@ export function buildExistingMemoryBrief(memory: LocalPetMemoryStateV1): string 
 }
 
 export function shouldRunDailyConsolidation(memory: LocalPetMemoryStateV1, now = new Date()) {
-  const pendingCount = memory.learnings.filter((item) => item.status === "pending").length;
-  if (pendingCount > 10) {
+  const pending = memory.learnings.filter((item) => item.status === "pending");
+  if (pending.length >= 10) {
     return true;
   }
-  if (pendingCount === 0) {
+  if (!pending.length) {
     return false;
   }
-  if (!memory.lastConsolidationAt) {
-    return true;
+  const oldestPendingAt = Math.min(
+    ...pending.map((item) => Date.parse(item.firstSeenAt)).filter(Number.isFinite),
+  );
+  if (!Number.isFinite(oldestPendingAt) || now.getTime() - oldestPendingAt < 86_400_000) {
+    return false;
   }
-  return new Date(memory.lastConsolidationAt).toLocaleDateString() !== now.toLocaleDateString();
+  return !memory.lastConsolidationAt
+    || new Date(memory.lastConsolidationAt).toLocaleDateString() !== now.toLocaleDateString();
 }
 
 export function markMemoryContextUsed(

@@ -41,6 +41,9 @@ from app.services.chat_service import chat_with_local_pet
 from app.services.image_service import generate_pet_asset_set, generation_error_code
 from app.services.openai_service import MissingOpenAIAPIKey
 from app.services.pet_reply_engine.lite_generator import (
+    consolidate_user_memory,
+    extract_lite_overlay_patch_from_reply,
+    extract_user_memory_operations,
     generate_ambient_pet_message,
     generate_proactive_pet_message,
 )
@@ -565,7 +568,8 @@ def extract_lite_facts(
     user: TelegramUser,
 ) -> LiteFactExtractionResponse:
     check_rate_limit("lite_facts", user)
-    return LiteFactExtractionResponse()
+    patch, debug = extract_lite_overlay_patch_from_reply(payload)
+    return LiteFactExtractionResponse(liteOverlayPatch=patch, debug=debug)
 
 
 @router.post(
@@ -578,7 +582,7 @@ def extract_memory(
     user: TelegramUser,
 ) -> MemoryExtractionResponse:
     check_rate_limit("memory", user)
-    return MemoryExtractionResponse()
+    return extract_user_memory_operations(payload)
 
 
 @router.post(
@@ -591,7 +595,7 @@ def consolidate_memory(
     user: TelegramUser,
 ) -> MemoryConsolidationResponse:
     check_rate_limit("memory", user)
-    return MemoryConsolidationResponse()
+    return consolidate_user_memory(payload)
 
 
 @router.post(

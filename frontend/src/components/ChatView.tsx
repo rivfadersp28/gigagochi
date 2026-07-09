@@ -94,13 +94,17 @@ export function ChatView({ petId }: ChatViewProps) {
     if (settings.includePromptDebug) {
       console.log("[memory-debug] proactive candidate", memoryContext);
     }
-    recordMemoryContextDebug(memoryContext, "Память подставлена в proactive prompt");
+    if (settings.includePromptDebug) {
+      recordMemoryContextDebug(memoryContext, "Память подставлена в proactive prompt");
+    }
     void generateLocalProactiveMessage(pet, memoryContext, {
       includeDebug: settings.includePromptDebug,
     })
       .then((response) => {
-        logBrowserPromptDebug("proactive chat", response);
-        recordReplyPromptDebug(response);
+        if (settings.includePromptDebug) {
+          logBrowserPromptDebug("proactive chat", response);
+          recordReplyPromptDebug(response);
+        }
         const proactiveMessage: LocalChatMessage = {
           id: createLocalId("message"),
           role: "pet",
@@ -151,6 +155,7 @@ export function ChatView({ petId }: ChatViewProps) {
         dialogueHookMessage,
         logLabel: "chat",
         onHistoryChange: setMessages,
+        onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
       });
       localPet.applyMoodHint(
         response.moodHint,

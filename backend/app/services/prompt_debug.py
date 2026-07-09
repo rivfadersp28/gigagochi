@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Mapping
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -152,6 +153,14 @@ def _prompt_hash(messages: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _full_prompt_logging_enabled() -> bool:
+    return os.getenv("AI_PROMPT_LOG_FULL", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _text_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def _truncate_log_text(value: str, limit: int = 1000) -> str:
     if len(value) <= limit:
         return value
@@ -166,7 +175,7 @@ def log_ambient_reply_diagnostic(
     visible_reply: str,
 ) -> dict[str, Any]:
     messages = request_kwargs.get("messages", [])
-    payload = {
+    payload: dict[str, Any] = {
         "event": "ambient_reply_diagnostic",
         "promptType": "chat_completion",
         "label": label,
@@ -174,13 +183,19 @@ def log_ambient_reply_diagnostic(
         "promptHash": _prompt_hash(messages),
         "promptMessageCount": len(messages) if isinstance(messages, list) else 0,
         "promptContentChars": _message_content_length(messages),
-        "rawReply": _truncate_log_text(raw_reply),
-        "visibleReply": _truncate_log_text(visible_reply),
+        "rawReplyChars": len(raw_reply),
+        "visibleReplyChars": len(visible_reply),
+        "rawReplyHash": _text_hash(raw_reply),
+        "visibleReplyHash": _text_hash(visible_reply),
     }
+    if _full_prompt_logging_enabled():
+        payload["rawReply"] = _truncate_log_text(raw_reply)
+        payload["visibleReply"] = _truncate_log_text(visible_reply)
     line_payload = write_response_log_line(payload)
-    print("\n=== AI ambient diagnostic ===", flush=True)
-    print(json.dumps(line_payload, ensure_ascii=False, default=str), flush=True)
-    print("=== End AI ambient diagnostic ===\n", flush=True)
+    if _full_prompt_logging_enabled():
+        print("\n=== AI ambient diagnostic ===", flush=True)
+        print(json.dumps(line_payload, ensure_ascii=False, default=str), flush=True)
+        print("=== End AI ambient diagnostic ===\n", flush=True)
     return line_payload
 
 
@@ -248,11 +263,21 @@ def chat_completion_prompt_snapshot(
 
 def log_chat_completion_prompt(label: str, request_kwargs: Mapping[str, Any]) -> dict[str, Any]:
     payload = chat_completion_prompt_snapshot(label, request_kwargs)
+    messages = payload.get("messages", [])
+    log_payload = payload if _full_prompt_logging_enabled() else {
+        "label": label,
+        "model": payload.get("model"),
+        "promptHash": _prompt_hash(messages),
+        "promptMessageCount": len(messages) if isinstance(messages, list) else 0,
+        "promptContentChars": _message_content_length(messages),
+        "hasTools": "tools" in payload,
+        "responseFormat": payload.get("response_format"),
+    }
     line_payload = write_prompt_log_line(
         {
             "event": "ai_prompt",
             "promptType": "chat_completion",
-            **payload,
+            **log_payload,
         }
     )
     _last_prompt_context.set(
@@ -263,9 +288,10 @@ def log_chat_completion_prompt(label: str, request_kwargs: Mapping[str, Any]) ->
             "model": payload.get("model"),
         }
     )
-    print(f"\n=== AI chat prompt: {label} ===", flush=True)
-    print(json.dumps(payload, ensure_ascii=False, indent=2, default=str), flush=True)
-    print("=== End AI chat prompt ===\n", flush=True)
+    if _full_prompt_logging_enabled():
+        print(f"\n=== AI chat prompt: {label} ===", flush=True)
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str), flush=True)
+        print("=== End AI chat prompt ===\n", flush=True)
     return payload
 
 
@@ -289,11 +315,18 @@ def image_generation_prompt_snapshot(
 
 def log_image_generation_prompt(label: str, request_kwargs: Mapping[str, Any]) -> dict[str, Any]:
     payload = image_generation_prompt_snapshot(label, request_kwargs)
+    prompt = str(payload.get("prompt") or "")
+    log_payload = payload if _full_prompt_logging_enabled() else {
+        key: value for key, value in payload.items() if key != "prompt"
+    }
+    if not _full_prompt_logging_enabled():
+        log_payload["promptHash"] = _text_hash(prompt)
+        log_payload["promptChars"] = len(prompt)
     line_payload = write_prompt_log_line(
         {
             "event": "ai_prompt",
             "promptType": "image_generation",
-            **payload,
+            **log_payload,
         }
     )
     _last_prompt_context.set(
@@ -304,7 +337,8 @@ def log_image_generation_prompt(label: str, request_kwargs: Mapping[str, Any]) -
             "model": payload.get("model"),
         }
     )
-    print(f"\n=== AI image prompt: {label} ===", flush=True)
-    print(json.dumps(payload, ensure_ascii=False, indent=2, default=str), flush=True)
-    print("=== End AI image prompt ===\n", flush=True)
+    if _full_prompt_logging_enabled():
+        print(f"\n=== AI image prompt: {label} ===", flush=True)
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str), flush=True)
+        print("=== End AI image prompt ===\n", flush=True)
     return payload

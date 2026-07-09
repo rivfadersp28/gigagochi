@@ -99,10 +99,8 @@ VISIBLE_REPLY_FALLBACKS: dict[PhraseSurface, str] = {
 }
 MAX_MEMORY_CONTEXT_ITEMS = 5
 MAX_RECENT_AMBIENT_REPLIES = 5
-MAX_RECENT_CHAT_REPLY_ANTI_REPEAT = 6
 MAX_RECENT_EVENTS_CONTEXT_ITEMS = 3
-MAX_FRESH_HISTORY_USER_MESSAGES = 4
-MAX_CONTINUATION_HISTORY_MESSAGES = 4
+MAX_RECENT_HISTORY_MESSAGES = 8
 
 
 @dataclass(frozen=True)
@@ -157,26 +155,6 @@ TECHNICAL_WORLD_TEXT_PATTERN = re.compile(
     r")",
     re.IGNORECASE,
 )
-
-CHAT_HISTORY_CONTINUATION_RE = re.compile(
-    r"("
-    r"\b(это|этот|эта|эти|там|так|тогда|тоже|ещ[её]|почему|зачем|как именно)\b|"
-    r"\b(что значит|что это значит|про что|о чем|о ч[её]м|ты говорил|ты сказала|"
-    r"ты сказал|повтори|продолжай|продолжи|извини|прости)\b"
-    r")",
-    re.IGNORECASE,
-)
-
-CHAT_HISTORY_FRESH_START_RE = re.compile(
-    r"^\s*("
-    r"привет|хай|ку|как дела|как ты|ты как|расскажи|скажи|придумай|"
-    r"повесели|развесели|что нового|чем займ[её]мся"
-    r")\b",
-    re.IGNORECASE,
-)
-
-CHAT_HISTORY_LEADING_FILLER_RE = re.compile(r"^\s*(а|ну|слушай|короче)[,\s]+", re.IGNORECASE)
-CHAT_HISTORY_FOLLOWUP_START_RE = re.compile(r"^\s*(а|ну|и)\b", re.IGNORECASE)
 
 PET_STATE_TOOLS: list[dict[str, Any]] = [
     {
@@ -480,16 +458,8 @@ def _visible_reply_response_format(reply_limit: int) -> dict[str, Any]:
     }
 
 
-def _structured_reply_contract_rule(reply_limit: int) -> str:
-    return (
-        "Верни только JSON по контракту: "
-        '{"reply":"видимая реплика","faceHint":null,"moodHint":null}. '
-        "faceHint: happy, excited, curious, content, grumpy, sleepy или null. "
-        "moodHint: idle, happy, hungry, sad или null. "
-        f"reply: 1-{reply_limit} символов, только текст для владельца, без markdown, "
-        "без THOUGHT/FACE/MOOD-служебных строк, без объяснения prompt. "
-        "Одна мысль от первого лица; максимум один короткий вопрос в конце."
-    )
+def _structured_reply_contract_rule() -> str:
+    return "Поле reply содержит только естественную видимую реплику персонажа."
 
 
 def _normalize_structured_hint(value: Any, allowed: tuple[str, ...]) -> str | None:
@@ -728,6 +698,17 @@ def _ambient_memory_context_block(memory_context: LocalPetMemoryContext | None) 
     return _memory_context_block(memory_context)
 
 
+def _ambient_recent_conversation_block(history: list[Any]) -> str | None:
+    lines: list[str] = []
+    for message in history[-4:]:
+        text = _clean_optional_text(getattr(message, "text", None), 300)
+        if not text:
+            continue
+        role = "персонаж" if getattr(message, "role", None) == "pet" else "владелец"
+        lines.append(f"{role}: {text}")
+    return "Недавний разговор:\n" + "\n".join(lines) if lines else None
+
+
 def _recent_reply_lines(replies: list[str], *, limit: int, item_limit: int) -> list[str]:
     lines: list[str] = []
     for reply in replies[-limit:]:
@@ -743,9 +724,7 @@ def _anti_repeat_block(lines: list[str]) -> str | None:
     return (
         "Недавние реплики персонажа, уже показанные владельцу:\n"
         + "\n".join(f"- {line}" for line in lines)
-        + "\nЭто только anti-repeat. Не считай эти строки фактами персонажа или мира. "
-        "Не повторяй заметные существительные, метафоры, шутки и синтаксические конструкции, "
-        "если владелец явно не продолжает эту тему."
+        + "\nЭто только проверка на дословный повтор, а не источник фактов."
     )
 
 
@@ -758,38 +737,11 @@ def _recent_ambient_replies_block(replies: list[str]) -> str | None:
     return _anti_repeat_block(lines)
 
 
-def _recent_chat_replies_block(history: list[Any]) -> str | None:
-    replies = [
-        getattr(message, "text", "")
-        for message in history
-        if getattr(message, "role", None) == "pet"
-    ]
-    lines = _recent_reply_lines(
-        replies,
-        limit=MAX_RECENT_CHAT_REPLY_ANTI_REPEAT,
-        item_limit=220,
-    )
-    return _anti_repeat_block(lines)
-
-
 def _recent_ambient_reply_debug_lines(replies: list[str]) -> list[str]:
     return _recent_reply_lines(
         replies,
         limit=MAX_RECENT_AMBIENT_REPLIES,
         item_limit=180,
-    )
-
-
-def _recent_chat_reply_debug_lines(history: list[Any]) -> list[str]:
-    replies = [
-        getattr(message, "text", "")
-        for message in history
-        if getattr(message, "role", None) == "pet"
-    ]
-    return _recent_reply_lines(
-        replies,
-        limit=MAX_RECENT_CHAT_REPLY_ANTI_REPEAT,
-        item_limit=220,
     )
 
 
@@ -913,7 +865,7 @@ def _visible_context_plan_auto_defaults(surface: PhraseSurface) -> frozenset[str
     if surface == "proactive":
         return frozenset({"userMemory"})
     if surface == "ambient":
-        return frozenset({"recentReplies"})
+        return frozenset({"chatHistory", "recentReplies"})
     return frozenset()
 
 
@@ -951,6 +903,47 @@ def _plan_contexts_for_visible_reply(
                     reason="no_auto_context_sources",
                     raw={"skipped": True, "sourceModes": modes},
                 ),
+                source_enabled=context_source_enabled,
+                auto_default_sources=_visible_context_plan_auto_defaults(surface),
+            ),
+            None,
+        )
+
+    deterministic_sources = {"userMemory", "chatHistory", "recentReplies"}
+    if auto_router_sources.issubset(deterministic_sources):
+        enabled_sources: set[str] = set()
+        memory_context = getattr(payload, "memoryContext", None)
+        if "userMemory" in auto_router_sources and memory_context and any(
+            (
+                memory_context.summary,
+                memory_context.userProfile,
+                memory_context.relevantMemories,
+                memory_context.episodes,
+                memory_context.proactiveCandidate,
+            )
+        ):
+            enabled_sources.add("userMemory")
+        if "chatHistory" in auto_router_sources and getattr(payload, "history", None):
+            enabled_sources.add("chatHistory")
+        if "recentReplies" in auto_router_sources and getattr(
+            payload, "recentAmbientReplies", None
+        ):
+            enabled_sources.add("recentReplies")
+        routing = ContextRoutingDecision(
+            surface=surface,
+            enabled_sources=frozenset(enabled_sources),
+            reason="deterministic_context_routing",
+            raw={
+                "skipped": True,
+                "autoSources": sorted(auto_router_sources),
+                "enabledSources": sorted(enabled_sources),
+            },
+        )
+        return (
+            build_context_plan(
+                surface=surface,
+                modes=modes,
+                routing=routing,
                 source_enabled=context_source_enabled,
                 auto_default_sources=_visible_context_plan_auto_defaults(surface),
             ),
@@ -1217,27 +1210,12 @@ def _character_context_block(
         routing,
         router_source="characterProfile",
     )
-    include_lite_overlay = _source_enabled(
-        surface,
-        "liteOverlay",
-        routing,
-        router_source="characterProfile",
-    )
-    if not include_profile and not include_lite_overlay:
+    if not include_profile:
         return None
     bible = _sanitized_character_bible(pet.characterBible)
-    if not bible and not include_lite_overlay:
+    if not bible:
         return None
-    extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
-    lite_overlay = extensions.get("lite_overlay") if _is_record(extensions) else {}
-    payload = {}
-    if include_profile and bible:
-        payload["characterBible"] = bible
-    if include_lite_overlay and _is_record(lite_overlay):
-        payload["liteOverlay"] = lite_overlay
-    if not payload:
-        return None
-    return "CHARACTER_PROFILE:\n" + _safe_json_context(payload, 3000)
+    return "CHARACTER_PROFILE:\n" + _safe_json_context({"characterBible": bible}, 3000)
 
 
 def _character_block_for_surface(
@@ -1248,6 +1226,57 @@ def _character_block_for_surface(
     return _combine_character_blocks(
         _character_capsule_block(pet),
         _character_context_block(pet, surface, routing),
+    )
+
+
+def _relevant_lite_overlay_block(pet: Any, query: str, *, limit: int = 3) -> str | None:
+    bible = pet.characterBible if _is_record(getattr(pet, "characterBible", None)) else {}
+    extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
+    overlay = extensions.get("lite_overlay") if _is_record(extensions) else {}
+    if not _is_record(overlay):
+        return None
+
+    raw_facts: list[Any] = []
+    if isinstance(overlay.get("facts"), list):
+        raw_facts.extend(overlay["facts"])
+    spheres = overlay.get("spheres") if _is_record(overlay.get("spheres")) else {}
+    for sphere in spheres.values():
+        if _is_record(sphere) and isinstance(sphere.get("facts"), list):
+            raw_facts.extend(sphere["facts"])
+
+    query_tokens = _recent_event_tokens(query)
+    if not query_tokens:
+        return None
+    scored: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for raw_fact in raw_facts:
+        if not _is_record(raw_fact):
+            continue
+        text = _clean_optional_text(raw_fact.get("text"), 360)
+        if not text or text.casefold() in seen:
+            continue
+        seen.add(text.casefold())
+        fact_tokens = _recent_event_tokens(text)
+        overlap = len(query_tokens & fact_tokens)
+        if not overlap:
+            overlap = sum(
+                1
+                for query_token in query_tokens
+                if len(query_token) >= 5
+                and any(
+                    fact_token.startswith(query_token[:5])
+                    or query_token.startswith(fact_token[:5])
+                    for fact_token in fact_tokens
+                    if len(fact_token) >= 5
+                )
+            )
+        if overlap:
+            scored.append((overlap, text))
+    if not scored:
+        return None
+    selected = [text for _score, text in sorted(scored, reverse=True)[:limit]]
+    return "Релевантные устойчивые факты персонажа:\n" + "\n".join(
+        f"- {text}" for text in selected
     )
 
 
@@ -1437,40 +1466,13 @@ def _lite_tools_for_routing(
         "characterProfile",
         context_routing,
         router_source="characterProfile",
-    ) or _source_enabled(
-        "chat",
-        "liteOverlay",
-        context_routing,
-        router_source="characterProfile",
     ):
         tools.extend(LITE_CHARACTER_TOOLS)
     return tools
 
 
-def _is_explicit_chat_continuation(message: str) -> bool:
-    text = _compact_spaces(message).casefold()
-    if not text:
-        return False
-    fresh_intent_text = CHAT_HISTORY_LEADING_FILLER_RE.sub("", text)
-    if CHAT_HISTORY_FRESH_START_RE.search(fresh_intent_text):
-        return False
-    if CHAT_HISTORY_CONTINUATION_RE.search(text):
-        return True
-    if text.endswith("?") and CHAT_HISTORY_FOLLOWUP_START_RE.search(text):
-        return True
-    words = re.findall(r"[\wёЁ]+", text, flags=re.UNICODE)
-    return text.endswith("?") and 0 < len(words) <= 3
-
-
 def _history_items_for_prompt(payload: LocalChatRequest) -> list[Any]:
-    recent_history = payload.history[-12:]
-    if _is_explicit_chat_continuation(payload.message):
-        return recent_history[-MAX_CONTINUATION_HISTORY_MESSAGES:]
-    return [
-        item
-        for item in recent_history
-        if item.role == "user"
-    ][-MAX_FRESH_HISTORY_USER_MESSAGES:]
+    return payload.history[-MAX_RECENT_HISTORY_MESSAGES:]
 
 
 def _history_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
@@ -1548,20 +1550,25 @@ def _phrase_plan_for_chat(
     recent_events_block: str | None = None,
 ) -> PhrasePlan:
     reply_limit = payload.replyMaxChars or MAX_REPLY_CHARS
-    chat_history_enabled = _source_enabled(
-        "chat",
-        "chatHistory",
-        context_routing,
-        router_source="chatHistory",
-        auto_default=True,
-    )
     return PhrasePlan(
         surface="chat",
         reply_limit=reply_limit,
         identity_line=_chat_identity_line(payload, reply_limit),
         persona_contract=surface_prompt("chat"),
-        tone_block=tone_prompt_block("visibleReply"),
-        character_block=_character_block_for_surface(payload.pet, "chat", context_routing),
+        tone_block=None,
+        character_block=_combine_character_blocks(
+            _character_block_for_surface(payload.pet, "chat", context_routing),
+            (
+                _relevant_lite_overlay_block(payload.pet, payload.message)
+                if _source_enabled(
+                    "chat",
+                    "liteOverlay",
+                    context_routing,
+                    router_source="characterProfile",
+                )
+                else None
+            ),
+        ),
         dialogue_block=_visible_context_block(payload),
         memory_block=(
             _memory_context_block(payload.memoryContext)
@@ -1576,12 +1583,10 @@ def _phrase_plan_for_chat(
         ),
         recent_events_block=recent_events_block,
         world_block=context_bundle.prompt_block or None,
-        recent_ambient_block=(
-            _recent_chat_replies_block(payload.history) if chat_history_enabled else None
-        ),
+        recent_ambient_block=None,
         extra_rules=(
             transient_context_rule(),
-            _structured_reply_contract_rule(reply_limit),
+            _structured_reply_contract_rule(),
         ),
     )
 
@@ -2370,22 +2375,20 @@ def generate_lite_pet_reply(
         **context_plan.debug,
         "includedSources": sorted(included_sources),
         "recentEvents": recent_events_debug,
-        "antiRepeatLines": (
-            _recent_chat_reply_debug_lines(payload.history)
-            if context_plan.includes("chatHistory")
-            else []
-        ),
+        "antiRepeatLines": [],
     }
-    debug = LocalChatDebug(
-        usedFallback=structured_reply_used_fallback,
-        validationFlags=structured_reply_validation_flags,
-        promptDebug=prompt_debug,
-        structuredReplyDebug=structured_reply_debug,
-        liteToolCalls=tool_debug,
-        liteOverlayPatch=overlay_patch or None,
-        storyLibraryDebug=_story_context_debug(context_bundle),
-        contextRoutingDebug=context_debug,
-    )
+    debug = None
+    if payload.includeDebug:
+        debug = LocalChatDebug(
+            usedFallback=structured_reply_used_fallback,
+            validationFlags=structured_reply_validation_flags,
+            promptDebug=prompt_debug,
+            structuredReplyDebug=structured_reply_debug,
+            liteToolCalls=tool_debug,
+            liteOverlayPatch=overlay_patch or None,
+            storyLibraryDebug=_story_context_debug(context_bundle),
+            contextRoutingDebug=context_debug,
+        )
     return LocalChatResponse(
         reply=reply,
         moodHint=mood_hint,
@@ -2438,9 +2441,12 @@ def extract_lite_overlay_patch_from_reply(
         patch,
         selected_events,
     )
-    capsule_skips: list[dict[str, str]] = []
+    patch, capsule_skips = _filter_lite_overlay_patch_against_character_capsule(
+        patch,
+        payload.pet,
+    )
     debug = None
-    if payload.includeDebug or prompt_debug:
+    if payload.includeDebug:
         debug = LocalChatDebug(
             usedFallback=False,
             validationFlags=[],
@@ -2606,7 +2612,7 @@ def extract_user_memory_operations(
     log_chat_completion_response("pet_reply/memory_extraction", completion)
     operations = _parse_memory_extraction_payload(completion.choices[0].message.content or "{}")
     debug = None
-    if payload.includeDebug or prompt_debug:
+    if payload.includeDebug:
         debug = LocalChatDebug(
             usedFallback=False,
             validationFlags=[],
@@ -2733,7 +2739,7 @@ def consolidate_user_memory(
     log_chat_completion_response("pet_reply/memory_consolidation", completion)
     operations = _parse_consolidation_payload(completion.choices[0].message.content or "{}")
     debug = None
-    if payload.includeDebug or prompt_debug:
+    if payload.includeDebug:
         debug = LocalChatDebug(
             usedFallback=False,
             validationFlags=[],
@@ -2782,13 +2788,13 @@ def build_proactive_messages(
             reply_limit=MAX_REPLY_CHARS,
         ),
         persona_contract=surface_prompt("proactive", {"reason": reason}),
-        tone_block=tone_prompt_block("visibleReply"),
+        tone_block=None,
         world_block=context_bundle.prompt_block or None,
         character_block=_character_block_for_surface(payload.pet, "proactive", context_plan),
         memory_block=memory_block,
         extra_rules=(
             transient_context_rule(),
-            _structured_reply_contract_rule(MAX_REPLY_CHARS),
+            _structured_reply_contract_rule(),
         ),
     )
     return [
@@ -2837,13 +2843,13 @@ def build_push_messages(
             reply_limit=180,
         ),
         persona_contract=surface_prompt("push", {"reason": _reason_from_payload(payload)}),
-        tone_block=tone_prompt_block("visibleReply"),
+        tone_block=None,
         world_block=context_bundle.prompt_block or None,
         character_block=_character_block_for_surface(payload.pet, "push", context_plan),
         memory_block=memory_block,
         extra_rules=(
             transient_context_rule(),
-            _structured_reply_contract_rule(180),
+            _structured_reply_contract_rule(),
         ),
     )
     return [
@@ -2904,7 +2910,7 @@ def generate_proactive_pet_message(
         payload.memoryContext.proactiveCandidate if payload.memoryContext else None
     )
     debug = None
-    if payload.includeDebug or prompt_debug:
+    if payload.includeDebug:
         debug = LocalChatDebug(
             usedFallback=structured_reply.used_fallback,
             validationFlags=structured_reply.validation_flags,
@@ -2973,7 +2979,7 @@ def generate_push_pet_message(
         reply_limit=180,
     )
     debug = None
-    if payload.includeDebug or prompt_debug:
+    if payload.includeDebug:
         debug = LocalChatDebug(
             usedFallback=structured_reply.used_fallback,
             validationFlags=structured_reply.validation_flags,
@@ -3032,6 +3038,11 @@ def build_ambient_messages(
         )
         else None
     )
+    recent_conversation_block = (
+        _ambient_recent_conversation_block(payload.history)
+        if context_plan.includes("chatHistory")
+        else None
+    )
     plan = PhrasePlan(
         surface="ambient",
         reply_limit=reply_limit,
@@ -3042,14 +3053,15 @@ def build_ambient_messages(
             reply_limit=reply_limit,
         ),
         persona_contract=surface_prompt("ambient", {"recent_replies": ""}),
-        tone_block=tone_prompt_block("visibleReply"),
+        tone_block=None,
         world_block=context_bundle.prompt_block or None,
         character_block=_character_block_for_surface(payload.pet, "ambient", context_plan),
         memory_block=memory_block,
         recent_ambient_block=recent_ambient_block,
+        dialogue_block=recent_conversation_block,
         extra_rules=(
             transient_context_rule(),
-            _structured_reply_contract_rule(reply_limit),
+            _structured_reply_contract_rule(),
         ),
     )
     return [{"role": "system", "content": plan.system_content()}]
@@ -3109,7 +3121,7 @@ def generate_ambient_pet_message(
         visible_reply=structured_reply.reply,
     )
     debug = None
-    if payload.includeDebug or prompt_debug:
+    if payload.includeDebug:
         debug = LocalChatDebug(
             usedFallback=structured_reply.used_fallback,
             validationFlags=structured_reply.validation_flags,

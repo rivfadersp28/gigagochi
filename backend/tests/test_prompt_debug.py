@@ -6,6 +6,7 @@ from app.services import prompt_debug
 
 
 def test_prompt_debug_writes_prompt_log_with_generation_context(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AI_PROMPT_LOG_FULL", "true")
     log_path = tmp_path / "ai-prompts.jsonl"
     monkeypatch.setattr(prompt_debug, "AI_PROMPT_LOG_PATH", log_path)
 
@@ -48,6 +49,7 @@ def test_prompt_debug_writes_prompt_log_with_generation_context(monkeypatch, tmp
 
 
 def test_prompt_debug_writes_response_log_with_generation_id(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AI_PROMPT_LOG_FULL", "true")
     prompt_log_path = tmp_path / "ai-prompts.jsonl"
     response_log_path = tmp_path / "ai-responses.jsonl"
     monkeypatch.setattr(prompt_debug, "AI_PROMPT_LOG_PATH", prompt_log_path)
@@ -112,3 +114,23 @@ def test_prompt_debug_writes_response_log_with_generation_id(monkeypatch, tmp_pa
     assert responses[1]["promptType"] == "image_generation"
     assert responses[1]["providerGenerationId"] == "gen-img-1"
     assert responses[1]["headers"] == {"x-request-id": "req-image-1"}
+
+
+def test_prompt_debug_redacts_prompt_content_by_default(monkeypatch, tmp_path) -> None:
+    log_path = tmp_path / "ai-prompts.jsonl"
+    monkeypatch.delenv("AI_PROMPT_LOG_FULL", raising=False)
+    monkeypatch.setattr(prompt_debug, "AI_PROMPT_LOG_PATH", log_path)
+
+    snapshot = prompt_debug.log_chat_completion_prompt(
+        "pet_reply/lite",
+        {
+            "model": "gpt-5.5",
+            "messages": [{"role": "user", "content": "Меня зовут Секрет"}],
+        },
+    )
+
+    payload = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert snapshot["messages"][0]["content"] == "Меня зовут Секрет"
+    assert "messages" not in payload
+    assert "Секрет" not in log_path.read_text(encoding="utf-8")
+    assert payload["promptContentChars"] == len("Меня зовут Секрет")
