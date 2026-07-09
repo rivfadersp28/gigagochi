@@ -51,11 +51,13 @@ from app.services.image_service import (
 )
 from app.services.openai_service import MissingOpenAIAPIKey
 from app.services.pet_reply_engine.lite_generator import (
-    consolidate_user_memory,
     extract_lite_overlay_patch_from_reply,
-    extract_user_memory_operations,
     generate_ambient_pet_message,
     generate_proactive_pet_message,
+)
+from app.services.pet_reply_engine.memory_operations import (
+    consolidate_user_memory,
+    extract_user_memory_operations,
 )
 from app.services.prompt_debug import (
     reset_prompt_log_context,

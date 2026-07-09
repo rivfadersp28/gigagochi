@@ -44,6 +44,10 @@
 
 ## Pet Replies
 
+- Legacy LLM user-memory extraction and consolidation are isolated in
+  `backend/app/services/pet_reply_engine/memory_operations.py`: JSON schemas,
+  operation normalization, prompt assembly and provider calls live there.
+  `lite_generator.py` owns visible replies, context routing and lite/story facts.
 - Chat, proactive and ambient replies are assembled through the same `PhrasePlan`
   structure: identity, persona contract, optional dialogue-memory episodes and
   surface-specific rules.

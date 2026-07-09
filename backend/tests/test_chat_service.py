@@ -18,14 +18,16 @@ from app.services.pet_reply_engine.lite_generator import (
     build_ambient_messages,
     build_lite_chat_messages,
     build_lite_fact_extraction_messages,
-    build_memory_extraction_messages,
     build_proactive_messages,
-    consolidate_user_memory,
     extract_lite_overlay_patch_from_reply,
-    extract_user_memory_operations,
     generate_ambient_pet_message,
     generate_lite_pet_reply,
     generate_proactive_pet_message,
+)
+from app.services.pet_reply_engine.memory_operations import (
+    build_memory_extraction_messages,
+    consolidate_user_memory,
+    extract_user_memory_operations,
 )
 from app.services.story_library import search_story_library
 
