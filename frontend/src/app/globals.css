@@ -149,8 +149,25 @@ body {
 }
 
 .create-pet-form {
+  --create-pet-inline-padding: 28px;
+
   position: relative;
   z-index: 1;
+}
+
+@media (min-width: 640px) {
+  .create-pet-form {
+    --create-pet-inline-padding: 40px;
+  }
+}
+
+.create-pet-form--keyboard .create-pet-actions {
+  position: absolute;
+  right: var(--create-pet-inline-padding);
+  bottom: calc(var(--create-pet-keyboard-inset, 0px) + 17px);
+  left: var(--create-pet-inline-padding);
+  min-height: 62px;
+  padding: 0;
 }
 
 .create-pet-prompt-block {

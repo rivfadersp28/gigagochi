@@ -3,11 +3,13 @@
 import { Bug } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 
 import { ApiError, generatePetAssets } from "@/lib/api";
 import { hapticNotification } from "@/lib/telegram";
 import { TEST_PET_ASSET_SET, TEST_PET_DESCRIPTION } from "@/lib/testPetFixture";
 import { useLocalPetState } from "@/lib/useLocalPetState";
+import { cn } from "@/lib/utils";
 
 import { PetCreatingStage } from "./PetCreatingStage";
 
@@ -20,8 +22,11 @@ export function CreatePetForm() {
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
   const isSubmittingRef = useRef(false);
   const hasDescription = description.trim().length > 0;
+  const isKeyboardRaised = keyboardInset > 120;
 
   useEffect(() => {
     if (localPet.status === "ready" && localPet.pet) {
@@ -29,6 +34,44 @@ export function CreatePetForm() {
       return;
     }
   }, [localPet.pet, localPet.status, router]);
+
+  useEffect(() => {
+    let animationFrameId: number | null = null;
+
+    function updateKeyboardInset() {
+      animationFrameId = null;
+      const formHeight = formRef.current?.getBoundingClientRect().height ?? window.innerHeight;
+      const visualViewport = window.visualViewport;
+      const visibleBottom = visualViewport
+        ? visualViewport.height + visualViewport.offsetTop
+        : window.innerHeight;
+      const nextInset = Math.max(0, Math.round(formHeight - visibleBottom));
+
+      setKeyboardInset((currentInset) =>
+        currentInset === nextInset ? currentInset : nextInset,
+      );
+    }
+
+    function scheduleKeyboardInsetUpdate() {
+      if (animationFrameId === null) {
+        animationFrameId = window.requestAnimationFrame(updateKeyboardInset);
+      }
+    }
+
+    scheduleKeyboardInsetUpdate();
+    window.addEventListener("resize", scheduleKeyboardInsetUpdate);
+    window.visualViewport?.addEventListener("resize", scheduleKeyboardInsetUpdate);
+    window.visualViewport?.addEventListener("scroll", scheduleKeyboardInsetUpdate);
+
+    return () => {
+      if (animationFrameId !== null) {
+        window.cancelAnimationFrame(animationFrameId);
+      }
+      window.removeEventListener("resize", scheduleKeyboardInsetUpdate);
+      window.visualViewport?.removeEventListener("resize", scheduleKeyboardInsetUpdate);
+      window.visualViewport?.removeEventListener("scroll", scheduleKeyboardInsetUpdate);
+    };
+  }, []);
 
   function handleCreateTestPet() {
     if (isSubmittingRef.current) {
@@ -84,8 +127,13 @@ export function CreatePetForm() {
   return (
     <section className="create-pet-stage tma-screen relative w-screen overflow-hidden text-white" aria-label="Создание питомца">
       <form
+        ref={formRef}
         onSubmit={handleSubmit}
-        className="create-pet-form mx-auto flex min-h-full w-full max-w-[640px] flex-col px-[28px] pb-[calc(var(--tma-safe-bottom)+28px)] pt-[calc(var(--tma-safe-top)+88px)] sm:px-[40px]"
+        className={cn(
+          "create-pet-form mx-auto flex min-h-full w-full max-w-[640px] flex-col px-[28px] pb-[calc(var(--tma-safe-bottom)+28px)] pt-[calc(var(--tma-safe-top)+88px)] sm:px-[40px]",
+          isKeyboardRaised && "create-pet-form--keyboard",
+        )}
+        style={{ "--create-pet-keyboard-inset": `${keyboardInset}px` } as CSSProperties}
       >
         <div className="create-pet-prompt-block">
           <label htmlFor="description" className="create-pet-label">
@@ -127,7 +175,7 @@ export function CreatePetForm() {
           </p>
         ) : null}
 
-        <div className="mt-auto flex min-h-[138px] items-start pb-[calc(var(--tma-safe-bottom)+52px)] pt-[48px]">
+        <div className="create-pet-actions mt-auto flex min-h-[138px] items-start pb-[calc(var(--tma-safe-bottom)+52px)] pt-[48px]">
           {hasDescription ? (
             <button
               type="submit"
