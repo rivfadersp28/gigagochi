@@ -1,0 +1,22 @@
+.scaleTransition {
+  transform: scale(1);
+  transition: transform 180ms ease-out;
+}
+
+.hidden {
+  transform: scale(0.7);
+}
+
+.originTop {
+  transform-origin: 50% 0%;
+}
+
+.originBottom {
+  transform-origin: 50% 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scaleTransition {
+    transition: none;
+  }
+}

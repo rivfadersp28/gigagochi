@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { playPetSpeechAudioSequence } from "@/lib/petSpeechAudio";
 
@@ -13,22 +13,33 @@ export type PetReplyMessage = {
   playSpeechAudio: boolean;
 };
 
-const PET_REPLY_EXIT_MS = 280;
+export type PetMessageLayout = {
+  width: number;
+  height: number;
+};
+
+const PET_REPLY_ENTER_MS = 300;
+const PET_REPLY_EXIT_MS = 100;
 const PET_REPLY_CROSS_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
-const PET_REPLY_CROSS_EXIT_EASING = "cubic-bezier(0.55, 0, 1, 0.45)";
+const PET_REPLY_CROSS_EXIT_EASING = "cubic-bezier(0.2, 0, 0, 1)";
 const PET_CHARACTER_RISE_DURATION_MS = 700;
 const PET_CHARACTER_RISE_STAGGER_MS = 24;
 const PET_CHARACTER_RISE_EASING = "cubic-bezier(0.2, 0.8, 0.2, 1)";
+const PET_MESSAGE_MAX_FONT_SIZE_PX = 26;
+const PET_MESSAGE_MIN_FONT_SIZE_PX = 12;
+const PET_MESSAGE_LINE_HEIGHT = 1.15;
 
 const petMessageStackStyle: CSSProperties = {
+  position: "relative",
   display: "grid",
   justifyItems: "center",
   alignItems: "center",
   minWidth: 0,
   minHeight: 0,
   overflow: "visible",
+  flexShrink: 0,
   width: "max-content",
-  maxWidth: "100%",
+  maxWidth: "270px",
   whiteSpace: "normal",
   wordBreak: "normal",
 };
@@ -41,10 +52,16 @@ const petMessageLayerStyle: CSSProperties = {
   overflow: "visible",
   overflowWrap: "normal",
   textAlign: "center",
+  lineHeight: PET_MESSAGE_LINE_HEIGHT,
   whiteSpace: "normal",
   wordBreak: "normal",
   transformOrigin: "center top",
 };
+
+function renderedMessageLineCount(layer: HTMLElement, fontSize: number) {
+  const lineHeight = fontSize * PET_MESSAGE_LINE_HEIGHT;
+  return Math.max(1, Math.ceil(layer.offsetHeight / lineHeight - 0.05));
+}
 
 const petMessageWordStyle: CSSProperties = {
   display: "inline-block",
@@ -210,36 +227,56 @@ export function PetCharacterMessage({
   message,
   textTranslateY,
   speechEndTrimMs,
+  onCurrentMessageLayout,
+  maxCurrentMessageLines,
 }: {
   message: PetReplyMessage;
   textTranslateY: number;
   speechEndTrimMs: number;
+  onCurrentMessageLayout?: (layout: PetMessageLayout) => void;
+  maxCurrentMessageLines?: number;
 }) {
   const [currentMessage, setCurrentMessage] = useState(message);
   const [previousMessage, setPreviousMessage] = useState<PetReplyMessage | null>(null);
+  const [previousMessageSize, setPreviousMessageSize] = useState<PetMessageLayout | null>(null);
+  const [currentFontSize, setCurrentFontSize] = useState(PET_MESSAGE_MAX_FONT_SIZE_PX);
+  const [previousFontSize, setPreviousFontSize] = useState<number | null>(null);
   const currentMessageRef = useRef(message);
   const currentLayerRef = useRef<HTMLParagraphElement>(null);
   const previousLayerRef = useRef<HTMLParagraphElement>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (message.id === currentMessageRef.current.id) {
       return;
     }
 
     const outgoingMessage = currentMessageRef.current;
+    const outgoingLayer = currentLayerRef.current;
+    const outgoingSize = outgoingLayer
+      ? { width: outgoingLayer.offsetWidth, height: outgoingLayer.offsetHeight }
+      : null;
+    const outgoingFontSize = currentFontSize;
     currentMessageRef.current = message;
 
     setPreviousMessage(outgoingMessage);
+    setPreviousMessageSize(outgoingSize);
+    setPreviousFontSize(outgoingFontSize);
     setCurrentMessage(message);
+    setCurrentFontSize(PET_MESSAGE_MAX_FONT_SIZE_PX);
 
     const timeoutId = window.setTimeout(() => {
-      setPreviousMessage((storedMessage) =>
-        storedMessage?.id === outgoingMessage.id ? null : storedMessage,
-      );
+      setPreviousMessage((storedMessage) => {
+        if (storedMessage?.id !== outgoingMessage.id) {
+          return storedMessage;
+        }
+        setPreviousMessageSize(null);
+        setPreviousFontSize(null);
+        return null;
+      });
     }, PET_REPLY_EXIT_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [message]);
+  }, [currentFontSize, message]);
 
   useEffect(() => {
     const currentLayer = currentLayerRef.current;
@@ -266,7 +303,7 @@ export function PetCharacterMessage({
         { opacity: 1, transform: "scale(1)" },
       ],
       {
-        duration: PET_REPLY_EXIT_MS,
+        duration: PET_REPLY_ENTER_MS,
         easing: PET_REPLY_CROSS_EASING,
         fill: "forwards",
       },
@@ -331,9 +368,53 @@ export function PetCharacterMessage({
     return () => animation.cancel();
   }, [previousMessage]);
 
+  useLayoutEffect(() => {
+    const currentLayer = currentLayerRef.current;
+    if (!currentLayer || !maxCurrentMessageLines) {
+      return;
+    }
+
+    let fittedFontSize = PET_MESSAGE_MAX_FONT_SIZE_PX;
+    currentLayer.style.fontSize = `${fittedFontSize}px`;
+
+    while (
+      fittedFontSize > PET_MESSAGE_MIN_FONT_SIZE_PX &&
+      renderedMessageLineCount(currentLayer, fittedFontSize) > maxCurrentMessageLines
+    ) {
+      fittedFontSize -= 1;
+      currentLayer.style.fontSize = `${fittedFontSize}px`;
+    }
+
+    setCurrentFontSize((storedFontSize) =>
+      storedFontSize === fittedFontSize ? storedFontSize : fittedFontSize,
+    );
+  }, [currentMessage.id, maxCurrentMessageLines]);
+
+  useLayoutEffect(() => {
+    const currentLayer = currentLayerRef.current;
+    if (!currentLayer || !onCurrentMessageLayout) {
+      return;
+    }
+
+    const reportLayout = (layout: PetMessageLayout) => onCurrentMessageLayout(layout);
+    reportLayout({ width: currentLayer.offsetWidth, height: currentLayer.offsetHeight });
+
+    if (typeof ResizeObserver !== "function") {
+      return;
+    }
+
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) {
+        reportLayout({ width: entry.contentRect.width, height: entry.contentRect.height });
+      }
+    });
+    observer.observe(currentLayer);
+    return () => observer.disconnect();
+  }, [currentMessage.id, onCurrentMessageLayout]);
+
   return (
     <div
-      className="main-speech-bubble__message text-center text-[20.357px] font-bold leading-[normal]"
+      className="main-speech-bubble__message text-center font-bold leading-[normal]"
       style={petMessageStackStyle}
       aria-live="polite"
     >
@@ -343,8 +424,18 @@ export function PetCharacterMessage({
           ref={previousLayerRef}
           style={{
             ...petMessageLayerStyle,
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            zIndex: 2,
+            width: previousMessageSize ? `${previousMessageSize.width}px` : "max-content",
+            height: previousMessageSize ? `${previousMessageSize.height}px` : "auto",
+            maxWidth: "none",
+            fontSize: `${previousFontSize ?? PET_MESSAGE_MAX_FONT_SIZE_PX}px`,
+            translate: "-50% -50%",
             opacity: 1,
             transform: "scale(1)",
+            transformOrigin: "center center",
           }}
           aria-hidden="true"
         >
@@ -358,6 +449,7 @@ export function PetCharacterMessage({
           ...petMessageLayerStyle,
           position: "relative",
           zIndex: 1,
+          fontSize: `${currentFontSize}px`,
           opacity: 0,
           transform: "scale(1.035)",
         }}

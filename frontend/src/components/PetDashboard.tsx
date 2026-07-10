@@ -43,7 +43,10 @@ import {
   appendRecentAmbientReply,
   readRecentAmbientReplies,
 } from "@/lib/localPetAmbientMemory";
-import { splitPetReplySentences } from "@/lib/petReplySentences";
+import {
+  splitPetReplyPortions,
+  splitPetReplySentences,
+} from "@/lib/petReplySentences";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
 import { TEST_PET_ASSET_SET, TEST_PET_DESCRIPTION } from "@/lib/testPetFixture";
@@ -53,7 +56,13 @@ import { useLocalPetState } from "@/lib/useLocalPetState";
 import { DebugPanel } from "./DebugPanel";
 import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import { DraggableFoodToken, type FoodAsset } from "./pet-dashboard/DraggableFoodToken";
-import { PetCharacterMessage, type PetReplyMessage } from "./pet-dashboard/PetCharacterMessage";
+import type { PetReplyMessage } from "./pet-dashboard/PetCharacterMessage";
+import { PetSpeechBubble } from "./pet-dashboard/PetSpeechBubble";
+import {
+  PET_THINKING_FRAME_SOURCES,
+  PET_THINKING_MIN_VISIBLE_MS,
+  PetThinkingIndicator,
+} from "./pet-dashboard/PetThinkingIndicator";
 import { TravelStoryOverlay } from "./pet-dashboard/TravelStoryOverlay";
 import { useConversationKeyboardOffset } from "./pet-dashboard/useConversationKeyboardOffset";
 import { usePetBackgroundAssets } from "./pet-dashboard/usePetBackgroundAssets";
@@ -79,6 +88,8 @@ type ShowPetReplyOptions = {
   showInConversation?: boolean;
   dialogueHook?: boolean;
   voiceMode?: PetVoiceMode;
+  maxPortions?: number;
+  autoAdvanceDelayMs?: number;
 };
 
 type ConfirmationAction = "resetPet" | "resetStats" | "openTestPet";
@@ -105,9 +116,12 @@ const confirmationCopy: Record<
 };
 
 const INITIAL_PET_REPLY_FALLBACK = "…";
-const DASHBOARD_REPLY_MAX_CHARS = 300;
+const CHAT_REPLY_MAX_CHARS = 300;
+const IDLE_REPLY_MAX_CHARS = 120;
+const IDLE_REPLY_MAX_PORTIONS = 3;
+const IDLE_REPLY_AUTO_ADVANCE_MS = 4_000;
 const UNNAMED_STATUS_NAME = "Без имени";
-const ACTION_ICON_CACHE_VERSION = "20260709-figma-117-1029-3";
+const ACTION_ICON_CACHE_VERSION = "20260710-figma-142-1509-1";
 const VIDEO_FILTER_CACHE_VERSION = "20260709-video-filter-normal-2";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
 const SCENE_VIDEO_START_OFFSET_SECONDS = 0.1;
@@ -139,6 +153,12 @@ function seekSceneVideoToStart(video: HTMLVideoElement) {
 function restartSceneVideo(video: HTMLVideoElement) {
   seekSceneVideoToStart(video);
   void video.play().catch(() => undefined);
+}
+
+function createMinimumThinkingDelay() {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, PET_THINKING_MIN_VISIBLE_MS);
+  });
 }
 
 function preloadImage(src: string) {
@@ -214,8 +234,8 @@ const dashboardStaticImageSources = [
   ...Object.values(actionIconSrc),
   ...Object.values(statusIconSrc),
   speechBubbleSrc,
-  "/figma/speech-bubble-mask.svg",
   conversationSendIconSrc,
+  ...PET_THINKING_FRAME_SOURCES,
   ...feedFoodAssets.map((food) => food.src),
 ];
 
@@ -240,6 +260,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [chatInput, setChatInput] = useState("");
   const [chatError, setChatError] = useState<string | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
+  const [isGeneratingIdleReply, setIsGeneratingIdleReply] = useState(false);
   const [isTravelGenerating, setIsTravelGenerating] = useState(false);
   const [travelResult, setTravelResult] = useState<GenerateTravelResponse | null>(null);
   const [travelError, setTravelError] = useState<string | null>(null);
@@ -247,19 +268,32 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [feedSuccessId, setFeedSuccessId] = useState(0);
   const [includePromptDebug] = useState(() => readLocalPetSettings().includePromptDebug);
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
+  const [hasNextReplySentence, setHasNextReplySentence] = useState(false);
   const [assetsReadyForPetId, setAssetsReadyForPetId] = useState<string | null>(null);
   const [assetLoadErrorForPetId, setAssetLoadErrorForPetId] = useState<string | null>(null);
   const proactiveAttemptedRef = useRef(false);
   const ambientRequestIdRef = useRef(0);
+  const idleThinkingRequestIdRef = useRef(0);
   const ambientReplyHistoryRef = useRef<string[]>([]);
   const petReplyMessageRef = useRef<PetReplyMessage | null>(null);
   const petReplySentenceQueueRef = useRef<string[]>([]);
+  const replyAutoAdvanceRef = useRef<{ messageId: number; delayMs: number } | null>(null);
+  const replyAutoAdvanceTimeoutRef = useRef<number | null>(null);
   const activeDialogueHookRef = useRef<string | null>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const sceneRef = useRef<HTMLElement>(null);
   const feedDropTargetRef = useRef<HTMLDivElement>(null);
   const isSendingChatRef = useRef(false);
   const isTravelGeneratingRef = useRef(false);
+  const beginIdleThinking = useCallback(() => {
+    const requestId = idleThinkingRequestIdRef.current + 1;
+    idleThinkingRequestIdRef.current = requestId;
+    setIsGeneratingIdleReply(true);
+    return {
+      minimumThinkingTime: createMinimumThinkingDelay(),
+      requestId,
+    };
+  }, []);
   const pet = localPet.pet;
   const hasSadAssets = pet ? hasGeneratedSadAssets(pet) : false;
   const isAnyStatRed = pet ? isPetInRedZone(pet) : false;
@@ -334,16 +368,29 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     playSpeechAudio: boolean,
     options: ShowPetReplyOptions = {},
   ) => {
+    if (replyAutoAdvanceTimeoutRef.current !== null) {
+      window.clearTimeout(replyAutoAdvanceTimeoutRef.current);
+      replyAutoAdvanceTimeoutRef.current = null;
+    }
     const voicedText = applyPetVoice(text, pet, {
       mode: options.voiceMode ?? "generated",
     });
-    const sentences = splitPetReplySentences(voicedText);
+    const sentences = options.maxPortions
+      ? splitPetReplyPortions(voicedText, {
+          maxPortions: options.maxPortions,
+        })
+      : splitPetReplySentences(voicedText);
     const nextMessage = {
       id: (petReplyMessageRef.current?.id ?? 0) + 1,
       text: sentences[0] ?? voicedText,
       playSpeechAudio,
     };
-    petReplySentenceQueueRef.current = sentences.slice(1);
+    const remainingSentences = sentences.slice(1);
+    petReplySentenceQueueRef.current = remainingSentences;
+    replyAutoAdvanceRef.current = remainingSentences.length > 0 && options.autoAdvanceDelayMs
+      ? { messageId: nextMessage.id, delayMs: options.autoAdvanceDelayMs }
+      : null;
+    setHasNextReplySentence(remainingSentences.length > 0);
     petReplyMessageRef.current = nextMessage;
     activeDialogueHookRef.current = options.dialogueHook ? voicedText : null;
     setPetReplyMessage(nextMessage);
@@ -365,6 +412,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       text: nextSentence,
     };
     petReplySentenceQueueRef.current = remainingSentences;
+    setHasNextReplySentence(remainingSentences.length > 0);
     petReplyMessageRef.current = nextMessage;
     setPetReplyMessage(nextMessage);
     setConversationReplyMessageId((currentConversationMessageId) =>
@@ -375,6 +423,43 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     return true;
   }, []);
 
+  useEffect(() => {
+    const autoAdvance = replyAutoAdvanceRef.current;
+    if (
+      !autoAdvance
+      || autoAdvance.messageId !== petReplyMessage?.id
+      || petReplySentenceQueueRef.current.length === 0
+    ) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      replyAutoAdvanceTimeoutRef.current = null;
+      if (replyAutoAdvanceRef.current?.messageId !== autoAdvance.messageId) {
+        return;
+      }
+
+      const didAdvance = advancePetReplySentence();
+      const nextMessage = petReplyMessageRef.current;
+      if (didAdvance && nextMessage && petReplySentenceQueueRef.current.length > 0) {
+        replyAutoAdvanceRef.current = {
+          messageId: nextMessage.id,
+          delayMs: autoAdvance.delayMs,
+        };
+      } else {
+        replyAutoAdvanceRef.current = null;
+      }
+    }, autoAdvance.delayMs);
+    replyAutoAdvanceTimeoutRef.current = timeoutId;
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      if (replyAutoAdvanceTimeoutRef.current === timeoutId) {
+        replyAutoAdvanceTimeoutRef.current = null;
+      }
+    };
+  }, [advancePetReplySentence, petReplyMessage?.id]);
+
   const requestAmbientReply = useCallback(() => {
     if (!pet) {
       return;
@@ -382,6 +467,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
     const requestId = ambientRequestIdRef.current + 1;
     ambientRequestIdRef.current = requestId;
+    const {
+      minimumThinkingTime,
+      requestId: idleThinkingRequestId,
+    } = beginIdleThinking();
     const history = readLocalChatHistory().messages;
     const memoryContext = buildAmbientMemoryContext(readLocalPetMemory(pet.petId));
 
@@ -390,10 +479,14 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       memoryContext,
       history,
       recentAmbientReplies: ambientReplyHistoryRef.current,
-      replyMaxChars: DASHBOARD_REPLY_MAX_CHARS,
+      replyMaxChars: IDLE_REPLY_MAX_CHARS,
     })
-      .then((response) => {
-        if (ambientRequestIdRef.current !== requestId) {
+      .then(async (response) => {
+        await minimumThinkingTime;
+        if (
+          ambientRequestIdRef.current !== requestId ||
+          idleThinkingRequestIdRef.current !== idleThinkingRequestId
+        ) {
           return;
         }
         if (includePromptDebug) {
@@ -403,6 +496,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         showPetReplyMessage(response.reply, true, {
           dialogueHook: true,
           voiceMode: "generated",
+          maxPortions: IDLE_REPLY_MAX_PORTIONS,
+          autoAdvanceDelayMs: IDLE_REPLY_AUTO_ADVANCE_MS,
         });
         ambientReplyHistoryRef.current = appendRecentAmbientReply(pet.petId, response.reply);
         localPet.applyMoodHint(
@@ -410,13 +505,25 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
         );
       })
-      .catch(() => {
-        if (ambientRequestIdRef.current !== requestId) {
+      .catch(async () => {
+        await minimumThinkingTime;
+        if (
+          ambientRequestIdRef.current !== requestId ||
+          idleThinkingRequestIdRef.current !== idleThinkingRequestId
+        ) {
           return;
         }
         showPetReplyMessage("…", false, { voiceMode: "system" });
+      })
+      .finally(() => {
+        if (
+          ambientRequestIdRef.current === requestId &&
+          idleThinkingRequestIdRef.current === idleThinkingRequestId
+        ) {
+          setIsGeneratingIdleReply(false);
+        }
       });
-  }, [includePromptDebug, localPet, pet, showPetReplyMessage]);
+  }, [beginIdleThinking, includePromptDebug, localPet, pet, showPetReplyMessage]);
 
   const closeChatMode = useCallback(() => {
     setIsChatMode(false);
@@ -557,6 +664,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }
 
   function handleOpenChatMode() {
+    if (replyAutoAdvanceTimeoutRef.current !== null) {
+      window.clearTimeout(replyAutoAdvanceTimeoutRef.current);
+      replyAutoAdvanceTimeoutRef.current = null;
+    }
+    replyAutoAdvanceRef.current = null;
+    petReplySentenceQueueRef.current = [];
+    setHasNextReplySentence(false);
     setIsFeedMode(false);
     setIsDebugPanelOpen(false);
     setChatError(null);
@@ -588,6 +702,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     setConversationReplyMessageId(null);
     isSendingChatRef.current = true;
     setIsSendingChat(true);
+    const minimumThinkingTime = createMinimumThinkingDelay();
 
     const activeDialogueHook = activeDialogueHookRef.current;
     activeDialogueHookRef.current = null;
@@ -605,11 +720,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         pet,
         message,
         includePromptDebug,
-        replyMaxChars: DASHBOARD_REPLY_MAX_CHARS,
+        replyMaxChars: CHAT_REPLY_MAX_CHARS,
         dialogueHookMessage,
         logLabel: "dashboard quick chat",
         onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
       });
+      await minimumThinkingTime;
       showPetReplyMessage(response.reply, true, { showInConversation: true });
       localPet.applyMoodHint(
         response.moodHint,
@@ -619,6 +735,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         localPet.updateName(response.petPatch.name);
       }
     } catch (caught) {
+      await minimumThinkingTime;
       setChatError(
         caught instanceof ApiError ? caught.message : "Не удалось отправить сообщение.",
       );
@@ -644,8 +761,20 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     void submitChatMessage({ dismissKeyboard: true });
   }
 
+  function handleReplyNextButtonClick(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    advancePetReplySentence();
+  }
+
   function handleSceneClickCapture(event: MouseEvent<HTMLElement>) {
-    if (travelResult || isDebugPanelOpen || confirmationAction) {
+    if (!isChatMode || travelResult || isDebugPanelOpen || confirmationAction) {
+      return;
+    }
+    if (
+      event.target instanceof Element &&
+      event.target.closest("[data-reply-next-button='true']")
+    ) {
       return;
     }
     if (!advancePetReplySentence()) {
@@ -686,7 +815,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }
 
   useEffect(() => {
-    if (localPet.status === "loading" || !pet || pet.petId !== petId) {
+    if (
+      localPet.status === "loading" ||
+      !pet ||
+      pet.petId !== petId ||
+      assetsReadyForPetId !== petId
+    ) {
       return;
     }
     if (proactiveAttemptedRef.current) {
@@ -702,46 +836,72 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     const history = readLocalChatHistory().messages;
     const proactiveMemoryContext = buildDailyProactiveMemoryContext(pet, memory, history);
     if (proactiveMemoryContext) {
-      if (includePromptDebug) {
-        console.log("[memory-debug] dashboard proactive candidate", proactiveMemoryContext);
-      }
-      if (includePromptDebug) {
-        recordMemoryContextDebug(
-          proactiveMemoryContext,
-          "Память подставлена в proactive prompt",
-        );
-      }
-      void generateLocalProactiveMessage(pet, proactiveMemoryContext, {
-        includeDebug: includePromptDebug,
-      })
-        .then((response) => {
-          if (petReplyMessageRef.current) {
-            return;
-          }
-          if (includePromptDebug) {
-            logBrowserPromptDebug("dashboard proactive chat", response);
-            recordReplyPromptDebug(response);
-          }
-          const latestMemory = readLocalPetMemory(pet.petId);
-          writeLocalPetMemory(
-            recordProactiveDelivery(
-              latestMemory,
-              proactiveMemoryContext.proactiveCandidate?.memoryIds ?? [],
-              response.reply,
-            ),
+      window.queueMicrotask(() => {
+        const {
+          minimumThinkingTime,
+          requestId: idleThinkingRequestId,
+        } = beginIdleThinking();
+        if (includePromptDebug) {
+          console.log("[memory-debug] dashboard proactive candidate", proactiveMemoryContext);
+        }
+        if (includePromptDebug) {
+          recordMemoryContextDebug(
+            proactiveMemoryContext,
+            "Память подставлена в proactive prompt",
           );
-          showPetReplyMessage(response.reply, true, { dialogueHook: true });
-          localPet.applyMoodHint(
-            response.moodHint,
-            response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
-          );
+        }
+        void generateLocalProactiveMessage(pet, proactiveMemoryContext, {
+          includeDebug: includePromptDebug,
         })
-        .catch(() => undefined);
+          .then(async (response) => {
+            await minimumThinkingTime;
+            if (
+              idleThinkingRequestIdRef.current !== idleThinkingRequestId ||
+              petReplyMessageRef.current
+            ) {
+              return;
+            }
+            if (includePromptDebug) {
+              logBrowserPromptDebug("dashboard proactive chat", response);
+              recordReplyPromptDebug(response);
+            }
+            const latestMemory = readLocalPetMemory(pet.petId);
+            writeLocalPetMemory(
+              recordProactiveDelivery(
+                latestMemory,
+                proactiveMemoryContext.proactiveCandidate?.memoryIds ?? [],
+                response.reply,
+              ),
+            );
+            showPetReplyMessage(response.reply, true, { dialogueHook: true });
+            localPet.applyMoodHint(
+              response.moodHint,
+              response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
+            );
+          })
+          .catch(async () => {
+            await minimumThinkingTime;
+          })
+          .finally(() => {
+            if (idleThinkingRequestIdRef.current === idleThinkingRequestId) {
+              setIsGeneratingIdleReply(false);
+            }
+          });
+      });
       return;
     }
 
-    requestAmbientReply();
-  }, [includePromptDebug, localPet, pet, petId, requestAmbientReply, showPetReplyMessage]);
+    window.queueMicrotask(requestAmbientReply);
+  }, [
+    assetsReadyForPetId,
+    beginIdleThinking,
+    includePromptDebug,
+    localPet,
+    pet,
+    petId,
+    requestAmbientReply,
+    showPetReplyMessage,
+  ]);
 
   if (localPet.status === "loading") {
     return (
@@ -782,6 +942,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   };
   const shouldShowConversationReply =
     isChatMode && conversationReplyMessageId === displayedReply.id;
+  const isIdleThinkingVisible =
+    !isChatMode && !isFeedMode && isGeneratingIdleReply;
+  const shouldShowSpeechBubble =
+    !isFeedMode && !isIdleThinkingVisible && (!isChatMode || shouldShowConversationReply);
+  const canAdvanceReply = isChatMode && hasNextReplySentence && !isSendingChat;
   const displayedPetName = pet.name?.trim() || UNNAMED_STATUS_NAME;
   const hungerPercent = Math.max(0, Math.min(100, pet.stats.hunger));
   const moodPercent = Math.max(0, Math.min(100, pet.stats.happiness));
@@ -855,6 +1020,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
         <div ref={feedDropTargetRef} className="feed-drop-target" aria-hidden="true" />
 
+        {isIdleThinkingVisible || (isChatMode && isSendingChat) ? (
+          <PetThinkingIndicator />
+        ) : null}
+
         <DebugPanel
           pet={pet}
           isOpen={isDebugPanelOpen}
@@ -887,27 +1056,39 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         </div>
 
         <div
-          className={`feed-fade-target absolute left-1/2 top-[226px] z-30 -translate-x-1/2 ${
+          className={`main-speech-bubble-anchor feed-fade-target ${
             shouldShowConversationReply
               ? "conversation-reply-bubble"
               : "conversation-fade-target"
-          }`}
+          } ${isIdleThinkingVisible ? "conversation-fade-target--hidden" : ""}`}
         >
-          <div className="main-speech-bubble">
-            <img
-              src={speechBubbleSrc}
-              alt=""
-              className="main-speech-bubble__shape"
-              aria-hidden="true"
-              draggable={false}
-            />
-            <PetCharacterMessage
-              message={displayedReply}
-              textTranslateY={0}
-              speechEndTrimMs={0}
-            />
-          </div>
+          <PetSpeechBubble
+            isVisible={shouldShowSpeechBubble}
+            message={displayedReply}
+            scaleOrigin={isChatMode ? "bottom" : "top"}
+            shapeSrc={speechBubbleSrc}
+          />
         </div>
+
+        {isChatMode ? (
+          <span className="conversation-next-control feed-fade-target">
+            <button
+              type="button"
+              className={`conversation-next-button ${
+                canAdvanceReply
+                  ? "conversation-next-button--visible"
+                  : ""
+              }`}
+              data-reply-next-button="true"
+              disabled={!canAdvanceReply}
+              aria-hidden={!canAdvanceReply}
+              tabIndex={canAdvanceReply ? 0 : -1}
+              onClick={handleReplyNextButtonClick}
+            >
+              Далее
+            </button>
+          </span>
+        ) : null}
 
         <form
           onSubmit={handleChatSubmit}

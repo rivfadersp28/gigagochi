@@ -1,0 +1,71 @@
+@keyframes frame {
+  0% {
+    opacity: 1;
+  }
+
+  33.333% {
+    opacity: 0;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+.indicator {
+  position: absolute;
+  top: calc(22.3112% + 20px);
+  left: 50%;
+  z-index: 30;
+  width: auto;
+  height: 9.7379%;
+  aspect-ratio: 80 / 85.109;
+  transform: translate3d(-50%, 0, 0);
+  pointer-events: none;
+}
+
+.image {
+  position: absolute;
+  display: block;
+  max-width: none;
+  opacity: 0;
+  animation: frame 600ms steps(1, jump-end) infinite;
+  pointer-events: none;
+  user-select: none;
+}
+
+.image1 {
+  top: -2.52%;
+  left: -2.68%;
+  width: 105.36%;
+  height: 105.94%;
+}
+
+.image2 {
+  top: -2.52%;
+  left: -2.68%;
+  width: 105.36%;
+  height: 102.52%;
+  transform: scaleX(-1);
+  animation-delay: 200ms;
+}
+
+.image3 {
+  top: -2.52%;
+  left: -3.27%;
+  width: 105.95%;
+  height: 102.52%;
+  transform: scale(-1, -1);
+  animation-delay: 400ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image {
+    opacity: 0;
+    animation: none;
+  }
+
+  .image1 {
+    opacity: 1;
+  }
+}
