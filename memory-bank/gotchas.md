@@ -256,6 +256,12 @@
 - Dashboard status arcs must render from live pet stats through
   `StatProgressRing`. The exported `status-*-new.svg` files contain baked arcs
   and cannot visually reflect chat, feeding, story, or decay changes.
+- Main-screen pet tap feedback intentionally composes the active visual-mode
+  poster with a client-side static heart overlay for 180 ms while pausing the
+  video. This keeps the character pixel-aligned and makes the reaction available
+  to existing localStorage pets without regenerating backend assets. Do not
+  replace it with a newly generated full-frame image unless old-pet migration and
+  per-mode alignment are handled explicitly.
 - Server-generated story stat changes must sync back to Mini App through a
   partial `statsPatch`. Do not replace the whole stats object unless every
   `lastStatTickAt` key is also reset consistently; otherwise independent decay
