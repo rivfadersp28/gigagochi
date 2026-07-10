@@ -18,18 +18,27 @@ describe("API response contracts", () => {
       parseLocalChatResponse({
         reply: "Я здесь",
         moodHint: null,
+        happinessDelta: null,
         petPatch: null,
         debug: null,
       }),
     ).toEqual({
       reply: "Я здесь",
       moodHint: undefined,
+      happinessDelta: undefined,
       innerThought: undefined,
       faceHint: undefined,
       petPatch: undefined,
       storyLibraryPatch: undefined,
       debug: undefined,
     });
+  });
+
+  it("accepts only supported conversation happiness deltas", () => {
+    expect(parseLocalChatResponse({ reply: "Я здесь", happinessDelta: -80 }).happinessDelta)
+      .toBe(-80);
+    expect(() => parseLocalChatResponse({ reply: "Я здесь", happinessDelta: -10 }))
+      .toThrow(ApiContractError);
   });
 
   it("rejects an incomplete generation job", () => {

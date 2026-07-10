@@ -1306,6 +1306,19 @@
             ],
             "title": "Facehint"
           },
+          "happinessDelta": {
+            "default": 0,
+            "enum": [
+              -80,
+              -60,
+              -40,
+              -20,
+              0,
+              20
+            ],
+            "title": "Happinessdelta",
+            "type": "integer"
+          },
           "innerThought": {
             "anyOf": [
               {
@@ -1634,6 +1647,18 @@
             ],
             "title": "Createdat"
           },
+          "diedAt": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diedat"
+          },
           "history": {
             "items": {
               "$ref": "#/components/schemas/LocalChatHistoryItem"
@@ -1725,6 +1750,27 @@
               }
             ],
             "title": "Updatedat"
+          },
+          "zeroStatSinceAt": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "enum": [
+                    "hunger",
+                    "happiness",
+                    "energy"
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zerostatsinceat"
           }
         },
         "required": [

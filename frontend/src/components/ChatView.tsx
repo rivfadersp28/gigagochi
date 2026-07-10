@@ -160,6 +160,7 @@ export function ChatView({ petId }: ChatViewProps) {
       localPet.applyMoodHint(
         response.moodHint,
         response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
+        response.happinessDelta,
       );
       if (response.petPatch?.name) {
         localPet.updateName(response.petPatch.name);

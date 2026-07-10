@@ -291,6 +291,7 @@ def test_chat_accepts_local_pet_state(monkeypatch) -> None:
     assert response.json() == {
         "reply": "Я рядом.",
         "moodHint": "happy",
+        "happinessDelta": 0,
     }
     assert captured["lore"] == {"home": {"favorite_spot": "мягкая звездная подушка"}}
 

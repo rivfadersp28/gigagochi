@@ -7,6 +7,7 @@ import type {
   UserMemoryKind,
 } from "./localPetMemoryTypes";
 import type {
+  ConversationHappinessDelta,
   GenerateTravelResponse,
   LiteFactExtractionResponse,
   LocalChatResponse,
@@ -73,6 +74,7 @@ const MEMORY_KINDS = new Set<UserMemoryKind>([
   "boundary",
 ]);
 const PET_STAT_KEYS = ["hunger", "happiness", "energy"] as const satisfies readonly PetStatKey[];
+const HAPPINESS_DELTAS = new Set<ConversationHappinessDelta>([-80, -60, -40, -20, 0, 20]);
 
 function fail(path: string, expectation: string): never {
   throw new ApiContractError(`${path}: ожидалось ${expectation}`);
@@ -140,6 +142,20 @@ function optionalEnumValue<T extends string>(
   return value === null || value === undefined ? undefined : enumValue(value, values, path);
 }
 
+function optionalConversationHappinessDelta(
+  value: unknown,
+  path: string,
+): ConversationHappinessDelta | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  const parsed = number(value, path) as ConversationHappinessDelta;
+  if (!HAPPINESS_DELTAS.has(parsed)) {
+    return fail(path, "supported happiness delta");
+  }
+  return parsed;
+}
+
 function parseDebug(value: unknown, path: string): LocalChatResponse["debug"] {
   return optionalRecord(value, path) as LocalChatResponse["debug"];
 }
@@ -185,6 +201,10 @@ export function parseLocalChatResponse(value: unknown): LocalChatResponse {
   return {
     reply: string(payload.reply, "localChat.reply"),
     moodHint: optionalEnumValue(payload.moodHint, PET_MOODS, "localChat.moodHint"),
+    happinessDelta: optionalConversationHappinessDelta(
+      payload.happinessDelta,
+      "localChat.happinessDelta",
+    ),
     innerThought: optionalString(payload.innerThought, "localChat.innerThought"),
     faceHint: optionalEnumValue(payload.faceHint, FACE_HINTS, "localChat.faceHint"),
     petPatch: petPatch

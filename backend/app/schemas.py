@@ -32,8 +32,10 @@ UserMemoryKind = Literal[
     "boundary",
 ]
 FaceHintValue = Literal["happy", "excited", "curious", "content", "grumpy", "sleepy"]
+HappinessDeltaValue = Literal[-80, -60, -40, -20, 0, 20]
 PET_STAGE_VALUES: tuple[PetStageValue, ...] = ("baby", "teen", "adult")
 PET_STATE_VALUES: tuple[PetStateValue, ...] = ("idle", "happy", "hungry", "sad")
+HAPPINESS_DELTA_VALUES: tuple[HappinessDeltaValue, ...] = (-80, -60, -40, -20, 0, 20)
 
 
 class GeneratePetRequest(BaseModel):
@@ -206,6 +208,7 @@ class GenerateTravelResponse(BaseModel):
 class LocalChatResponse(BaseModel):
     reply: str
     moodHint: PetStateValue | None = None
+    happinessDelta: HappinessDeltaValue = 0
     innerThought: str | None = Field(default=None, max_length=80)
     faceHint: FaceHintValue | None = None
     petPatch: LocalPetPatch | None = None

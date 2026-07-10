@@ -10,6 +10,7 @@ import {
   applyStoryLibraryPatch as applyStoredStoryLibraryPatch,
   calculatePetMood,
   calculatePetStage,
+  clampStat,
   clearLocalChatHistory,
   createLocalPetState,
   readLocalPetState,
@@ -18,7 +19,13 @@ import {
   writeLocalPetState,
 } from "./localPetStorage";
 import { resetLocalPetMemory } from "./localPetMemoryStorage";
-import type { LocalPetAssetSet, LocalPetState, PetMood, PetStatsPatch } from "./types";
+import type {
+  ConversationHappinessDelta,
+  LocalPetAssetSet,
+  LocalPetState,
+  PetMood,
+  PetStatsPatch,
+} from "./types";
 
 type LocalPetStateStatus = "loading" | "ready" | "empty" | "error";
 const LOCAL_PET_TICK_MS = 60_000;
@@ -37,6 +44,7 @@ type UseLocalPetStateResult = {
   applyMoodHint: (
     moodHint?: PetMood,
     storyLibraryPatch?: Record<string, unknown>,
+    happinessDelta?: ConversationHappinessDelta,
   ) => LocalPetState | null;
   applyLiteOverlayPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
   applyStoryLibraryPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
@@ -247,6 +255,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
   const applyMoodHint = useCallback((
     moodHint?: PetMood,
     storyLibraryPatch?: Record<string, unknown>,
+    happinessDelta: ConversationHappinessDelta = 0,
   ) => {
     const currentPet = readProgressedPet(pet);
     if (!currentPet) {
@@ -257,7 +266,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
     const nowIso = now.toISOString();
     const stats = {
       ...currentPet.stats,
-      happiness: Math.min(100, currentPet.stats.happiness + 5),
+      happiness: clampStat(currentPet.stats.happiness + happinessDelta),
     };
     const lastStatTickAt = {
       ...currentPet.lastStatTickAt,

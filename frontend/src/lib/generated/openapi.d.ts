@@ -667,6 +667,12 @@ export interface components {
             readonly debug?: components["schemas"]["LocalChatDebug"] | null;
             /** Facehint */
             readonly faceHint?: ("happy" | "excited" | "curious" | "content" | "grumpy" | "sleepy") | null;
+            /**
+             * Happinessdelta
+             * @default 0
+             * @enum {integer}
+             */
+            readonly happinessDelta: -80 | -60 | -40 | -20 | 0 | 20;
             /** Innerthought */
             readonly innerThought?: string | null;
             /** Moodhint */
@@ -751,6 +757,8 @@ export interface components {
         readonly LocalPetPushSnapshotRequest: {
             /** Createdat */
             readonly createdAt?: string | null;
+            /** Diedat */
+            readonly diedAt?: string | null;
             /** History */
             readonly history?: readonly components["schemas"]["LocalChatHistoryItem"][];
             /** Laststattickat */
@@ -769,6 +777,10 @@ export interface components {
             readonly timezone?: string | null;
             /** Updatedat */
             readonly updatedAt?: string | null;
+            /** Zerostatsinceat */
+            readonly zeroStatSinceAt?: {
+                readonly [key: string]: string;
+            } | null;
         };
         /** LocalPetPushSnapshotResponse */
         readonly LocalPetPushSnapshotResponse: {

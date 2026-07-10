@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from app.config import get_settings
 from app.schemas import (
+    HAPPINESS_DELTA_VALUES,
     LiteFactExtractionRequest,
     LocalAmbientRequest,
     LocalChatDebug,
@@ -179,6 +180,7 @@ class VisibleReplyResult:
     reply: str
     mood_hint: str | None
     face_hint: str | None
+    happiness_delta: int
     used_fallback: bool
     validation_flags: list[str]
     debug: dict[str, Any]
@@ -366,8 +368,34 @@ def _clean_optional_text(value: str | None, limit: int) -> str | None:
     return _truncate_text(text, limit) if text else None
 
 
-def _visible_reply_response_format(reply_limit: int) -> dict[str, Any]:
+def _visible_reply_response_format(
+    reply_limit: int,
+    *,
+    include_happiness_delta: bool = False,
+) -> dict[str, Any]:
     limit = max(1, min(reply_limit, MAX_REPLY_CHARS))
+    properties: dict[str, Any] = {
+        "reply": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": limit,
+        },
+        "faceHint": {
+            "type": ["string", "null"],
+            "enum": [*FACE_HINTS, None],
+        },
+        "moodHint": {
+            "type": ["string", "null"],
+            "enum": [*MOOD_HINTS, None],
+        },
+    }
+    required = ["reply", "faceHint", "moodHint"]
+    if include_happiness_delta:
+        properties["happinessDelta"] = {
+            "type": "integer",
+            "enum": list(HAPPINESS_DELTA_VALUES),
+        }
+        required.append("happinessDelta")
     return {
         "type": "json_schema",
         "json_schema": {
@@ -376,22 +404,8 @@ def _visible_reply_response_format(reply_limit: int) -> dict[str, Any]:
             "schema": {
                 "type": "object",
                 "additionalProperties": False,
-                "properties": {
-                    "reply": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": limit,
-                    },
-                    "faceHint": {
-                        "type": ["string", "null"],
-                        "enum": [*FACE_HINTS, None],
-                    },
-                    "moodHint": {
-                        "type": ["string", "null"],
-                        "enum": [*MOOD_HINTS, None],
-                    },
-                },
-                "required": ["reply", "faceHint", "moodHint"],
+                "properties": properties,
+                "required": required,
             },
         },
     }
@@ -401,6 +415,19 @@ def _structured_reply_contract_rule() -> str:
     return (
         "Поле reply содержит только слова, которые персонаж произносит вслух. "
         "Не пиши авторскую ремарку или описание кадра вместо реплики."
+    )
+
+
+def _conversation_happiness_rule() -> str:
+    return (
+        "Оцени, как ТЕКУЩЕЕ сообщение пользователя обращено к персонажу, и заполни "
+        "happinessDelta. Игнорируй цитаты, пересказ, ролевую сцену, вопросы об угрозах и "
+        "предыдущую историю: они сами по себе нейтральны. Добрые слова, забота, поддержка, "
+        "благодарность или искренний комплимент: 20. Обычная нейтральная беседа: 0. "
+        "Оскорбление, грубость или недоброжелательность: -20. Усиленное унижение или "
+        "жестокое пожелание вреда: -40. Явная угроза причинить серьёзный вред: -60. "
+        "Прямая угроза убийством, пыткой или уничтожением персонажа: -80. "
+        "Выбирай только одно из значений 20, 0, -20, -40, -60, -80."
     )
 
 
@@ -444,6 +471,7 @@ def _fallback_visible_reply_result(
             "reply": fallback,
             "faceHint": None,
             "moodHint": None,
+            "happinessDelta": 0,
         },
         "usedFallback": True,
         "validationFlags": validation_flags,
@@ -452,6 +480,7 @@ def _fallback_visible_reply_result(
         reply=fallback,
         mood_hint=None,
         face_hint=None,
+        happiness_delta=0,
         used_fallback=True,
         validation_flags=validation_flags,
         debug=debug,
@@ -486,6 +515,11 @@ def _parse_visible_reply_response(
     if parsed.get("moodHint") is not None and mood_hint is None:
         validation_flags.append("structured_reply_invalid_mood_hint")
 
+    happiness_delta = parsed.get("happinessDelta", 0)
+    if happiness_delta not in HAPPINESS_DELTA_VALUES:
+        happiness_delta = 0
+        validation_flags.append("structured_reply_invalid_happiness_delta")
+
     if not reply:
         return _fallback_visible_reply_result(
             surface=surface,
@@ -502,6 +536,7 @@ def _parse_visible_reply_response(
             "reply": reply,
             "faceHint": face_hint,
             "moodHint": mood_hint,
+            "happinessDelta": happiness_delta,
         },
         "usedFallback": False,
         "validationFlags": validation_flags,
@@ -510,6 +545,7 @@ def _parse_visible_reply_response(
         reply=reply,
         mood_hint=mood_hint,
         face_hint=face_hint,
+        happiness_delta=happiness_delta,
         used_fallback=False,
         validation_flags=validation_flags,
         debug=debug,
@@ -1354,6 +1390,7 @@ def _phrase_plan_for_chat(
             _recent_event_truth_rule(payload, recent_events_block),
             transient_context_rule(),
             _structured_reply_contract_rule(),
+            _conversation_happiness_rule(),
         ),
     )
 
@@ -2089,6 +2126,7 @@ def generate_lite_pet_reply(
     reply = ""
     mood_hint: str | None = None
     face_hint: str | None = None
+    happiness_delta = 0
     structured_reply_debug: dict[str, Any] | None = None
     structured_reply_used_fallback = False
     structured_reply_validation_flags: list[str] = []
@@ -2098,7 +2136,10 @@ def generate_lite_pet_reply(
         request_kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "response_format": _visible_reply_response_format(reply_limit),
+            "response_format": _visible_reply_response_format(
+                reply_limit,
+                include_happiness_delta=True,
+            ),
             "timeout": timeout,
             **chat_reasoning_effort_kwargs("none" if tools else visible_reply_reasoning_effort()),
         }
@@ -2122,6 +2163,7 @@ def generate_lite_pet_reply(
             reply = structured_reply.reply
             mood_hint = structured_reply.mood_hint
             face_hint = structured_reply.face_hint
+            happiness_delta = structured_reply.happiness_delta
             structured_reply_debug = structured_reply.debug
             structured_reply_used_fallback = structured_reply.used_fallback
             structured_reply_validation_flags = structured_reply.validation_flags
@@ -2153,6 +2195,7 @@ def generate_lite_pet_reply(
         reply = structured_reply.reply
         mood_hint = structured_reply.mood_hint
         face_hint = structured_reply.face_hint
+        happiness_delta = structured_reply.happiness_delta
         structured_reply_debug = structured_reply.debug
         structured_reply_used_fallback = structured_reply.used_fallback
         structured_reply_validation_flags = structured_reply.validation_flags
@@ -2181,6 +2224,7 @@ def generate_lite_pet_reply(
     return LocalChatResponse(
         reply=reply,
         moodHint=mood_hint,
+        happinessDelta=happiness_delta,
         innerThought=None,
         faceHint=face_hint,
         petPatch=pet_patch or None,

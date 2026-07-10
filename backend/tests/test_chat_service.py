@@ -85,6 +85,12 @@ def _visible_reply_message_for_call(message: SimpleNamespace, kwargs: dict) -> S
                     "reply": content,
                     "faceHint": None,
                     "moodHint": None,
+                    **(
+                        {"happinessDelta": 0}
+                        if "happinessDelta"
+                        in kwargs["response_format"]["json_schema"]["schema"]["properties"]
+                        else {}
+                    ),
                 },
                 ensure_ascii=False,
             ),
@@ -274,6 +280,8 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert "гоблин" in system_message
     assert "только слова, которые персонаж произносит вслух" in system_message
     assert "Не пиши авторскую ремарку" in system_message
+    assert "ТЕКУЩЕЕ сообщение пользователя" in system_message
+    assert "Прямая угроза убийством" in system_message
     assert "используй update_pet_name" in system_message
     assert "Ответь на последнее сообщение как этот персонаж." in system_message
     assert "Верни только JSON" not in system_message
@@ -282,6 +290,9 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
         request["response_format"]["json_schema"]["schema"]["properties"]["reply"]["maxLength"]
         == 300
     )
+    assert request["response_format"]["json_schema"]["schema"]["properties"]["happinessDelta"][
+        "enum"
+    ] == [-80, -60, -40, -20, 0, 20]
     assert "tools" not in request
     assert "STORY_LIBRARY" not in system_message
 
@@ -1070,6 +1081,7 @@ def test_lite_reads_structured_face_and_mood_hints() -> None:
                     "reply": "Я рядом, слышу тебя.",
                     "faceHint": "content",
                     "moodHint": "happy",
+                    "happinessDelta": 20,
                 },
                 ensure_ascii=False,
             ),
@@ -1083,8 +1095,30 @@ def test_lite_reads_structured_face_and_mood_hints() -> None:
     assert response.innerThought is None
     assert response.faceHint == "content"
     assert response.moodHint == "happy"
+    assert response.happinessDelta == 20
     assert response.debug is not None
     assert response.debug.structuredReplyDebug["normalizedResponse"]["faceHint"] == "content"
+
+
+def test_lite_reads_severe_threat_happiness_delta() -> None:
+    client, _completions = fake_lite_client(
+        SimpleNamespace(
+            content=json.dumps(
+                {
+                    "reply": "Мне страшно это слышать.",
+                    "faceHint": "grumpy",
+                    "moodHint": "sad",
+                    "happinessDelta": -80,
+                },
+                ensure_ascii=False,
+            ),
+            tool_calls=None,
+        )
+    )
+
+    response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
+
+    assert response.happinessDelta == -80
 
 
 def test_lite_uses_safe_fallback_for_invalid_structured_reply() -> None:

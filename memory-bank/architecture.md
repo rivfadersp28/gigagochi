@@ -287,6 +287,10 @@
   request receives the exact causal turn without regex classification. Chat
   prompt assembly keeps the latest eight complete messages instead of dropping
   prior pet replies.
+- Normal `/api/chat` replies return `happinessDelta` from the same structured
+  visible-reply pass. Its scale is `20, 0, -20, -40, -60, -80`; only actual
+  user send handlers apply it to local `stats.happiness` with a `0..100` clamp.
+  Ambient, proactive, push, and synthetic food-reaction turns do not change it.
 - After the visible reply, `localPetChatTurn.ts` runs user-memory and character-
   fact extraction in the background. `/api/chat/memory-extract`,
   `/api/chat/memory-consolidate`, and `/api/chat/lite-facts` call the existing

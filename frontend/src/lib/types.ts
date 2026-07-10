@@ -3,6 +3,7 @@ export type PetState = "idle" | "happy" | "sad" | "hungry";
 export type PetLifeStage = "baby" | "teen" | "adult";
 export type PetMood = "idle" | "happy" | "hungry" | "sad";
 export type PetStatKey = "hunger" | "happiness" | "energy";
+export type ConversationHappinessDelta = -80 | -60 | -40 | -20 | 0 | 20;
 export type PetStatTickMap = Record<PetStatKey, string>;
 export type PetBackgroundGenerationStatus = "running" | "succeeded" | "failed";
 export type PetBackgroundGenerationPhase =
@@ -124,6 +125,7 @@ export type LocalChatPetPatch = {
 export type LocalChatResponse = {
   reply: string;
   moodHint?: PetMood;
+  happinessDelta?: ConversationHappinessDelta;
   innerThought?: string;
   faceHint?: "happy" | "excited" | "curious" | "content" | "grumpy" | "sleepy";
   petPatch?: LocalChatPetPatch;

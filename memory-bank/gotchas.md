@@ -114,6 +114,9 @@
   and pass it to `/story` only as `ANTI_REPEAT`.
 - Do not canonize a new ability/title/profession from one generated chat reply.
   The lite-fact extractor must validate such facts against the character capsule.
+- `runLocalPetChatTurn` is also used for synthetic food-reaction prompts. Do not
+  apply `happinessDelta` inside that shared helper; apply it only in actual user
+  send handlers, or feeding will accidentally count as praise/abuse.
 - Do not make the background-story aftermath analyzer choose stats again.
   `statImpacts[]` comes from the story generation payload and backend caps it;
   aftermath only extracts durable lite facts plus compact recent-event data.
