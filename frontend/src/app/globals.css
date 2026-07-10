@@ -291,7 +291,8 @@ body {
   --conversation-keyboard-motion-easing: cubic-bezier(0.645, 0.045, 0.355, 1);
 
   isolation: isolate;
-  background: var(--main-scene-bg);
+  background: var(--main-scene-bg) url("/figma/main-scene-underlay.webp") center / cover
+    no-repeat;
   color: var(--main-scene-ink);
   font-family: var(--font-sans);
 }
