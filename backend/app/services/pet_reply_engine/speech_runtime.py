@@ -33,6 +33,7 @@ AGE_STAGES = ("baby", "teen", "adult")
 STATE_MODIFIER_KEYS = ("hungry", "happy", "happyLowEnergy", "sad", "lowEnergy")
 STATE_PARAM_KEYS = ("hunger", "happiness", "energy")
 STATE_PARAM_BANDS = ("low", "normal", "high")
+AMBIENT_STATE_LEVELS = ("mild", "low", "critical")
 CONTEXT_ROUTING_SOURCE_KEYS = (
     "worldContext",
     "characterProfile",
@@ -220,6 +221,25 @@ def validate_speech_runtime_config(config: Any) -> None:
     for key in STATE_PARAM_KEYS:
         for band in STATE_PARAM_BANDS:
             _required_string(config, ("stateLayer", "stateParamLabels", key, band))
+        for level in AMBIENT_STATE_LEVELS:
+            _required_string(
+                config,
+                ("stateLayer", "ambientStateReaction", "labels", key, level),
+            )
+    ambient_thresholds = [
+        _required_int(
+            config,
+            ("stateLayer", "ambientStateReaction", "thresholds", key),
+        )
+        for key in ("criticalBelow", "lowBelow", "mildBelow")
+    ]
+    if ambient_thresholds != sorted(ambient_thresholds) or len(set(ambient_thresholds)) != 3:
+        raise ValueError(
+            "stateLayer.ambientStateReaction thresholds must satisfy "
+            "criticalBelow < lowBelow < mildBelow"
+        )
+    _required_string(config, ("stateLayer", "ambientStateReaction", "activeRule"))
+    _required_string(config, ("stateLayer", "ambientStateReaction", "normalRule"))
     for source in CONTEXT_ROUTING_SOURCE_KEYS:
         _required_string(config, ("contextRouting", "sources", source, "description"))
         _required_string(config, ("contextRouting", "sources", source, "criteria"))
@@ -408,6 +428,47 @@ def dialogue_state_modifier(
 
 def state_param_usage_rule() -> str:
     return _required_string(speech_runtime_config(), ("stateLayer", "stateParamUsageRule"))
+
+
+def ambient_state_reactivity_rule(
+    *,
+    hunger: int | None,
+    happiness: int | None,
+    energy: int | None,
+) -> str:
+    config = speech_runtime_config()
+    base_path = ("stateLayer", "ambientStateReaction")
+    thresholds = {
+        level: _required_int(config, (*base_path, "thresholds", f"{level}Below"))
+        for level in AMBIENT_STATE_LEVELS
+    }
+    stat_names = {
+        "hunger": "сытость",
+        "happiness": "настроение",
+        "energy": "здоровье",
+    }
+    values = {
+        "hunger": hunger,
+        "happiness": happiness,
+        "energy": energy,
+    }
+    active_states: list[str] = []
+    for key, value in values.items():
+        if value is None or value >= thresholds["mild"]:
+            continue
+        if value < thresholds["critical"]:
+            level = "critical"
+        elif value < thresholds["low"]:
+            level = "low"
+        else:
+            level = "mild"
+        label = _required_string(config, (*base_path, "labels", key, level))
+        active_states.append(f"- {stat_names[key]} {value}/100: {label}")
+
+    if not active_states:
+        return _required_string(config, (*base_path, "normalRule"))
+    active_rule = _required_string(config, (*base_path, "activeRule"))
+    return "\n".join(("Текущее состояние для idle:", *active_states, active_rule))
 
 
 def _state_param_band(value: int | None, *, low_max: int, high_min: int) -> str:

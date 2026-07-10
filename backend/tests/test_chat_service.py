@@ -1325,6 +1325,73 @@ def test_ambient_prompt_receives_one_selected_dialogue_impulse(monkeypatch) -> N
     assert "поприветствуй и прояви интерес к собеседнику" not in prompt
 
 
+@pytest.mark.parametrize(
+    ("stats", "expected_state"),
+    [
+        ({"hunger": 69, "happiness": 80, "energy": 80}, "сытость 69/100: слегка хочется есть"),
+        ({"hunger": 39, "happiness": 80, "energy": 80}, "сытость 39/100: хочется есть"),
+        ({"hunger": 19, "happiness": 80, "energy": 80}, "сытость 19/100: очень хочется есть"),
+        ({"hunger": 80, "happiness": 69, "energy": 80}, "настроение 69/100: слегка грустно"),
+        ({"hunger": 80, "happiness": 39, "energy": 80}, "настроение 39/100: грустно"),
+        ({"hunger": 80, "happiness": 19, "energy": 80}, "настроение 19/100: очень грустно"),
+        ({"hunger": 80, "happiness": 80, "energy": 69}, "здоровье 69/100: слегка нездоровится"),
+        ({"hunger": 80, "happiness": 80, "energy": 39}, "здоровье 39/100: плохо себя чувствуешь"),
+        (
+            {"hunger": 80, "happiness": 80, "energy": 19},
+            "здоровье 19/100: очень плохо себя чувствуешь",
+        ),
+    ],
+)
+def test_ambient_prompt_grades_low_stats(stats, expected_state) -> None:
+    payload = LocalAmbientRequest.model_validate(
+        {
+            "pet": {
+                "name": "Листик",
+                "description": "лесной зверёк",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": stats,
+            }
+        }
+    )
+
+    prompt = build_ambient_messages(payload)[0]["content"]
+
+    assert expected_state in prompt
+    assert "Обязательно сделай idle-реплику естественной реакцией" in prompt
+    assert "Параметры состояния — это опциональные кирпичики" not in prompt
+
+
+@pytest.mark.parametrize(
+    ("stats", "expected_state"),
+    [
+        ({"hunger": 70, "happiness": 80, "energy": 80}, None),
+        ({"hunger": 40, "happiness": 80, "energy": 80}, "сытость 40/100: слегка хочется есть"),
+        ({"hunger": 20, "happiness": 80, "energy": 80}, "сытость 20/100: хочется есть"),
+    ],
+)
+def test_ambient_state_thresholds_are_strict(stats, expected_state) -> None:
+    payload = LocalAmbientRequest.model_validate(
+        {
+            "pet": {
+                "name": "Листик",
+                "description": "лесной зверёк",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": stats,
+            }
+        }
+    )
+
+    prompt = build_ambient_messages(payload)[0]["content"]
+
+    if expected_state is None:
+        assert "Все параметры не ниже 70" in prompt
+        assert "Текущее состояние для idle:" not in prompt
+    else:
+        assert expected_state in prompt
+
+
 def test_speech_runtime_rejects_empty_ambient_dialogue_impulses() -> None:
     runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))
     runtime["ambientDialogueImpulses"] = []

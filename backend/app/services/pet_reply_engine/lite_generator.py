@@ -55,6 +55,7 @@ from app.services.pet_reply_engine.recent_events import (
 from app.services.pet_reply_engine.reply_limits import MAX_REPLY_CHARS, clamp_reply_text
 from app.services.pet_reply_engine.speech_runtime import (
     age_role_hint,
+    ambient_state_reactivity_rule,
     ambient_dialogue_impulse,
     character_fact_extraction_system_prompt,
     context_routing_sources,
@@ -2614,7 +2615,11 @@ def build_ambient_messages(
         recent_ambient_block=recent_ambient_block,
         dialogue_block=recent_conversation_block,
         extra_rules=(
-            state_param_usage_rule(),
+            ambient_state_reactivity_rule(
+                hunger=payload.pet.stats.hunger,
+                happiness=payload.pet.stats.happiness,
+                energy=payload.pet.stats.energy,
+            ),
             transient_context_rule(),
             _structured_reply_contract_rule(),
             f"Разговорный импульс этой реплики: {ambient_dialogue_impulse()}.",
