@@ -96,7 +96,7 @@ def test_pet_character_region_uses_fixed_centered_two_by_three_crop() -> None:
     assert pet_character_region_box((720, 1280)) == (120, 320, 600, 1040)
 
 
-def test_generate_pet_tap_reaction_refines_and_returns_a_full_scene(
+def test_generate_pet_tap_reaction_reuses_happy_crop_refinement_pipeline(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -134,24 +134,25 @@ def test_generate_pet_tap_reaction_refines_and_returns_a_full_scene(
     assert edit_calls == [
         (
             PET_TAP_REACTION_IMAGE_PROMPT,
-            "teen-idle.png",
+            "teen-tap-source-region.png",
             "pet_creation/tap_reaction",
-            (720, 1280),
+            (480, 720),
         )
     ]
     assert refinement_calls == [
         (
             PET_TAP_REACTION_COMPOSITION_REFINEMENT_PROMPT,
-            ["teen-idle.png", "teen-tap-pose.png"],
+            ["teen-tap-source-region.png", "teen-tap-pose.png"],
             "pet_creation/tap_reaction_refinement",
             "1024x1536",
         )
     ]
     assert result_path.name == "teen-tap.png"
     assert result.size == (720, 1280)
-    assert result.getpixel((0, 0)) == (90, 110, 130)
+    assert result.getpixel((0, 0)) == (10, 20, 30)
     assert result.getpixel((360, 680)) == (90, 110, 130)
     assert not (output_dir / "teen-tap-pose.png").exists()
+    assert not (output_dir / "teen-tap-source-region.png").exists()
 
 
 def test_composite_pet_character_region_preserves_pixels_outside_fixed_crop(tmp_path) -> None:

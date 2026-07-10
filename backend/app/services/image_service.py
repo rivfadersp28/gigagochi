@@ -289,8 +289,10 @@ PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT = (
     "не показывай зубы и не меняй ничего больше."
 )
 PET_TAP_REACTION_IMAGE_PROMPT = (
-    "Это полный фиксированный кадр сцены. Сохрани точные границы кадра, камеру, фон, положение, "
-    "масштаб, позу, силуэт, пропорции, одежду, аксессуары, предметы, освещение и цвета. "
+    "Это фиксированный crop области персонажа. Сохрани его точные границы и координаты: "
+    "не центрируй, не сдвигай, не масштабируй и не приближай персонажа внутри crop. Сохрани "
+    "положение, масштаб, позу, силуэт, пропорции, одежду, аксессуары, предметы, фон, освещение "
+    "и цвета. "
     "Не центрируй, не сдвигай, не масштабируй и не приближай персонажа. Измени только глаза "
     "и рот. Вместо обоих глаз персонажа нарисуй два выразительных глаза в форме сердец: "
     "каждое сердце должно полностью занимать место соответствующего исходного глаза, быть "
@@ -301,16 +303,16 @@ PET_TAP_REACTION_IMAGE_PROMPT = (
     "разрешены только вместо двух глаз. Больше ничего не меняй."
 )
 PET_TAP_REACTION_COMPOSITION_REFINEMENT_PROMPT = (
-    "Обе картинки являются полными кадрами одной сцены. Первая картинка — "
-    "единственный обязательный эталон всех пиксельных координат, масштаба, позы, силуэта, "
-    "пропорций, фона, одежды, аксессуаров и предметов. Вторая картинка используется только как "
-    "референс двух глаз в форме сердец и открытого радостного рта. Верни полный кадр точно "
-    "в положении и масштабе первой картинки: голова, тело, конечности, одежда и предметы должны "
-    "занимать ровно те же пиксели. Не центрируй, не сдвигай, не масштабируй, не приближай и не "
-    "увеличивай персонажа или голову. Перенеси со второй картинки только сердца на точные места "
-    "двух исходных глаз и открытый рот на точное место исходного рта. Исходных глаз, зрачков и "
-    "радужек не должно быть видно. Никаких других сердец, частиц, символов, украшений или новых "
-    "предметов. Больше ничего не меняй."
+    "Обе картинки имеют одинаковые фиксированные границы области персонажа. Первая картинка — "
+    "обязательный эталон всех пиксельных координат, масштаба, позы, силуэта, пропорций, фона, "
+    "одежды, аксессуаров и предметов. Вторая картинка используется только как референс двух глаз "
+    "в форме сердец и открытого радостного рта. Верни crop с персонажем точно в положении и "
+    "масштабе первой картинки: голова, тело, конечности, одежда и предметы должны занимать ровно "
+    "те же пиксели. Не центрируй, не сдвигай, не масштабируй, не приближай и не увеличивай "
+    "персонажа или голову. Перенеси со второй картинки только сердца на точные места двух "
+    "исходных глаз и открытый рот на точное место исходного рта. Исходных глаз, зрачков и радужек "
+    "не должно быть видно. Никаких других сердец, частиц, символов, украшений или новых предметов. "
+    "Больше ничего не меняй."
 )
 PET_SAD_SCENE_VIDEO_PROMPT = (
     "Static locked camera. The character remains perfectly still in the exact same pose, "
@@ -1996,25 +1998,38 @@ def tap_reaction_path_for_asset(asset_id: uuid.UUID) -> Path:
 def generate_pet_tap_reaction_scene_path(asset_id: uuid.UUID, scene_path: Path) -> Path:
     output_dir = generated_dir_for(asset_id)
     output_dir.mkdir(parents=True, exist_ok=True)
+    source_region_path = output_dir / f"{FAST_GENERATION_STAGE}-tap-source-region.png"
+    source_region_bytes = extract_pet_character_region_bytes(scene_path)
+    source_region_path.write_bytes(source_region_bytes)
+    with Image.open(BytesIO(source_region_bytes)) as source_region:
+        region_size = source_region.size
+
     reaction_pose_path = output_dir / f"{FAST_GENERATION_STAGE}-tap-pose.png"
     try:
         reaction_pose_bytes = generate_image_edit_bytes(
             PET_TAP_REACTION_IMAGE_PROMPT,
-            scene_path,
+            source_region_path,
             label="pet_creation/tap_reaction",
         )
-        reaction_pose_path.write_bytes(normalize_pet_scene_video_frame_bytes(reaction_pose_bytes))
-        reaction_scene_bytes = generate_multi_image_edit_bytes(
+        reaction_pose_path.write_bytes(
+            normalize_pet_character_region_bytes(reaction_pose_bytes, region_size)
+        )
+        reaction_region_bytes = generate_multi_image_edit_bytes(
             PET_TAP_REACTION_COMPOSITION_REFINEMENT_PROMPT,
-            [scene_path, reaction_pose_path],
+            [source_region_path, reaction_pose_path],
             label="pet_creation/tap_reaction_refinement",
             size=PET_SCENE_IMAGE_SIZE,
         )
+        reaction_scene_bytes = composite_pet_character_region_bytes(
+            scene_path,
+            reaction_region_bytes,
+        )
     finally:
         reaction_pose_path.unlink(missing_ok=True)
+        source_region_path.unlink(missing_ok=True)
 
     reaction_path = tap_reaction_path_for_asset(asset_id)
-    reaction_path.write_bytes(normalize_pet_scene_video_frame_bytes(reaction_scene_bytes))
+    reaction_path.write_bytes(reaction_scene_bytes)
     return reaction_path
 
 
