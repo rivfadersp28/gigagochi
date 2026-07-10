@@ -55,8 +55,8 @@ from app.services.pet_reply_engine.recent_events import (
 from app.services.pet_reply_engine.reply_limits import MAX_REPLY_CHARS, clamp_reply_text
 from app.services.pet_reply_engine.speech_runtime import (
     age_role_hint,
-    ambient_state_reactivity_rule,
     ambient_dialogue_impulse,
+    ambient_state_reactivity_rule,
     character_fact_extraction_system_prompt,
     context_routing_sources,
     context_routing_system_prompt,
