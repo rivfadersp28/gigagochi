@@ -17,17 +17,28 @@ export const stateLabels: Record<PetState, string> = {
   hungry: "Hungry",
 };
 
+const SAD_ASSET_CACHE_VERSION = "20260710-2";
+
+export function versionedSadAssetUrl(url: string) {
+  if (!url || url.includes("sad_asset_v=")) {
+    return url;
+  }
+  return `${url}${url.includes("?") ? "&" : "?"}sad_asset_v=${SAD_ASSET_CACHE_VERSION}`;
+}
+
 function assetSetForPet(pet: LocalPetState) {
   return pet.assetSet ?? (process.env.NODE_ENV === "development" ? TEST_PET_ASSET_SET : undefined);
 }
 
 export function generatedSpriteUrl(pet: LocalPetState, stage: PetStage, state: PetState) {
-  return assetSetForPet(pet)?.images[stage]?.[state] || null;
+  const imageUrl = assetSetForPet(pet)?.images[stage]?.[state] || null;
+  return imageUrl && state === "sad" ? versionedSadAssetUrl(imageUrl) : imageUrl;
 }
 
 export function generatedSceneVideoUrl(pet: LocalPetState, sad = false) {
   const assetSet = assetSetForPet(pet);
-  return (sad ? assetSet?.sadVideoUrl : assetSet?.videoUrl) || null;
+  const videoUrl = (sad ? assetSet?.sadVideoUrl : assetSet?.videoUrl) || null;
+  return videoUrl && sad ? versionedSadAssetUrl(videoUrl) : videoUrl;
 }
 
 export function isPetInRedZone(pet: LocalPetState) {

@@ -5,6 +5,8 @@ import { useEffect } from "react";
 import { ApiError, refreshPetBackgroundAssets } from "@/lib/api";
 import type { LocalPetAssetSet } from "@/lib/types";
 
+import { versionedSadAssetUrl } from "./petSprite";
+
 const BACKGROUND_ASSET_POLL_MS = 2_000;
 
 export function legacySadAssetUrls(assetSet: LocalPetAssetSet) {
@@ -13,8 +15,12 @@ export function legacySadAssetUrls(assetSet: LocalPetAssetSet) {
     return null;
   }
   return {
-    imageUrl: idleUrl.replace(/teen-idle\.png(?=\?|$)/, "teen-sad.png"),
-    videoUrl: idleUrl.replace(/teen-idle\.png(?=\?|$)/, "teen-sad.mp4"),
+    imageUrl: versionedSadAssetUrl(
+      idleUrl.replace(/teen-idle\.png(?=\?|$)/, "teen-sad.png"),
+    ),
+    videoUrl: versionedSadAssetUrl(
+      idleUrl.replace(/teen-idle\.png(?=\?|$)/, "teen-sad.mp4"),
+    ),
   };
 }
 

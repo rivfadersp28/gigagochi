@@ -245,7 +245,26 @@ PET_SCENE_VIDEO_PROMPT = (
     "during the blink."
 )
 PET_SAD_SCENE_IMAGE_PROMPT = (
-    "пусть персонаж сидит на земле и грустно плачет\nбольше ничего не меняй"
+    "пусть персонаж сидит на земле и грустно плачет\n"
+    "больше ничего не меняй\n\n"
+    "КРИТИЧЕСКИ ВАЖНО СОХРАНИТЬ КОМПОЗИЦИЮ: используй точно ту же камеру, дистанцию "
+    "до персонажа, кадрирование, перспективу и размер персонажа в кадре. Не приближай "
+    "персонажа, не увеличивай голову или тело, не делай портретный или крупный план. "
+    "Голова персонажа должна остаться того же пиксельного размера, что на исходной "
+    "картинке, а персонаж должен занимать не больше места в кадре, чем на исходнике. "
+    "Сохрани точное положение камеры, фон, освещение, цвета, одежду и все предметы. "
+    "Измени только позу персонажа на сидящую на земле и добавь грустный плач."
+)
+PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT = (
+    "Первая картинка — единственный обязательный эталон композиции и масштаба. "
+    "Сохрани из первой картинки точную камеру, кадрирование, перспективу, фон, "
+    "положение персонажа, размер головы в пикселях и общий размер персонажа в кадре. "
+    "Вторая картинка используется только как референс сидящей плачущей позы.\n\n"
+    "Верни сцену в композиции первой картинки: персонаж должен находиться на той же "
+    "дистанции от камеры и занимать не больше места, чем персонаж на первой картинке. "
+    "Не приближай, не увеличивай, не делай крупный план. Персонаж сидит на земле и "
+    "грустно плачет, как на второй картинке. Сохрани дизайн, одежду, посох, книгу, "
+    "флаконы, освещение и окружение первой картинки. Больше ничего не меняй."
 )
 PET_SAD_SCENE_VIDEO_PROMPT = (
     "Static locked camera. The character remains perfectly still in the exact same pose, "
@@ -1912,12 +1931,25 @@ def generate_pet_scene_video_path(asset_id: uuid.UUID, scene_path: Path) -> Path
 
 
 def generate_pet_sad_scene_path(image_set: PetAssetImageSet) -> Path:
-    sad_scene_bytes = generate_image_edit_bytes(
+    sad_pose_bytes = generate_image_edit_bytes(
         PET_SAD_SCENE_IMAGE_PROMPT,
         image_set.scene_path,
-        label="pet_creation/sad_scene",
+        label="pet_creation/sad_pose",
     )
-    sad_scene_path = generated_dir_for(image_set.asset_set_id) / f"{FAST_GENERATION_STAGE}-sad.png"
+    output_dir = generated_dir_for(image_set.asset_set_id)
+    sad_pose_path = output_dir / f"{FAST_GENERATION_STAGE}-sad-pose.png"
+    sad_pose_path.write_bytes(normalize_pet_scene_video_frame_bytes(sad_pose_bytes))
+    try:
+        sad_scene_bytes = generate_multi_image_edit_bytes(
+            PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT,
+            [image_set.scene_path, sad_pose_path],
+            label="pet_creation/sad_scene",
+            size=PET_SCENE_IMAGE_SIZE,
+        )
+    finally:
+        sad_pose_path.unlink(missing_ok=True)
+
+    sad_scene_path = output_dir / f"{FAST_GENERATION_STAGE}-sad.png"
     sad_scene_path.write_bytes(normalize_pet_scene_video_frame_bytes(sad_scene_bytes))
     return sad_scene_path
 

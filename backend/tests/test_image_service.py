@@ -17,6 +17,7 @@ from app.prompts.pet_image_prompts import (
 )
 from app.services.image_service import (
     CHARACTER_BIBLE_SCHEMA,
+    PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT,
     PET_SAD_SCENE_IMAGE_PROMPT,
     PET_SAD_SCENE_VIDEO_PROMPT,
     PetAssetImageSet,
@@ -997,6 +998,7 @@ def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, t
         generated_at=datetime.now(UTC),
     )
     image_calls: list[tuple[str, str, str]] = []
+    refinement_calls: list[tuple[str, list[str], str, str]] = []
     video_calls: list[tuple[str, str, str]] = []
 
     monkeypatch.setattr(
@@ -1012,7 +1014,15 @@ def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, t
         video_calls.append((scene_path.name, prompt, label))
         return b"sad-video"
 
+    def fake_multi_image_edit(prompt, source_paths, *, label, size):
+        refinement_calls.append((prompt, [path.name for path in source_paths], label, size))
+        return png_bytes(Image.new("RGB", (1024, 1536), (70, 80, 90)))
+
     monkeypatch.setattr("app.services.image_service.generate_image_edit_bytes", fake_image_edit)
+    monkeypatch.setattr(
+        "app.services.image_service.generate_multi_image_edit_bytes",
+        fake_multi_image_edit,
+    )
     monkeypatch.setattr(
         "app.services.image_service.generate_pet_scene_video_bytes",
         fake_video_bytes,
@@ -1021,7 +1031,16 @@ def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, t
     sad_scene_path = generate_pet_sad_scene_path(image_set)
     sad_video_path = generate_pet_sad_video_for_image_asset_set(image_set, sad_scene_path)
 
-    assert image_calls == [(PET_SAD_SCENE_IMAGE_PROMPT, "teen-idle.png", "pet_creation/sad_scene")]
+    assert image_calls == [(PET_SAD_SCENE_IMAGE_PROMPT, "teen-idle.png", "pet_creation/sad_pose")]
+    assert refinement_calls == [
+        (
+            PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT,
+            ["teen-idle.png", "teen-sad-pose.png"],
+            "pet_creation/sad_scene",
+            "1024x1536",
+        )
+    ]
+    assert not (output_dir / "teen-sad-pose.png").exists()
     assert video_calls == [
         ("teen-sad.png", PET_SAD_SCENE_VIDEO_PROMPT, "pet_creation/sad_scene_video")
     ]

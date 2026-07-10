@@ -270,6 +270,10 @@
   Legacy asset sets without a generation job probe deterministic sibling files
   `teen-sad.png` and `teen-sad.mp4` once on dashboard mount; this lets one-off
   production backfills become visible without rewriting browser localStorage.
+  Sad scene generation is two-pass: the first edit creates the sitting/crying
+  pose, and a second multi-reference edit treats the idle scene as the
+  authoritative camera/scale while using the first result only as a pose
+  reference. The temporary pose image is removed after refinement.
   Per-pet story events stay in
   `characterBible.extensions.recent_story_events` for old pets when present, but
   chat canon should come from history/memory rather than `lite_overlay`.

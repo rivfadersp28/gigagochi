@@ -34,6 +34,11 @@
   composed base scene, then maps happy/sad/hungry to that scene until both
   background-generated sad assets are ready. Publish the sad image and video
   atomically so the dashboard never combines a sad poster with the idle video.
+  Sad image prompts must explicitly lock camera distance, head size and character
+  occupancy: a generic "change only the pose" instruction can still make the
+  image model reframe the character as a close-up. Render sad URLs with a
+  dedicated cache version when replacing a generated pair in place, because
+  Telegram WebView may retain the previous MP4 under the original asset URL.
 - The dashboard background is now the generated composed pet scene. Do not add
   a separate centered pet sprite, shadow, blink overlay, tap animation, or
   background-removal step unless the visual pipeline is intentionally changed.
