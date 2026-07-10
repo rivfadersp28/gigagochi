@@ -915,6 +915,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }
 
   function handleStartOver() {
+    localPet.reset();
     router.replace("/");
   }
 
@@ -1103,14 +1104,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           className="main-mobile-scene pet-death-scene tma-screen relative mx-auto w-full max-w-[402px] overflow-hidden"
           aria-label="Питомец умер"
         >
-          <div className="main-scene-media" aria-hidden="true">
-            <img
-              src={sceneBackgroundSrc}
-              alt=""
-              className="main-scene-background"
-              draggable={false}
-            />
-          </div>
           <div className="pet-death-speech-bubble-anchor">
             <PetSpeechBubble
               isVisible

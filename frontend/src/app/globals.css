@@ -285,6 +285,12 @@ body {
   color: var(--main-scene-ink);
 }
 
+.main-shell--story-open {
+  filter: blur(26px);
+  transform: scale(1.04);
+  transform-origin: center;
+}
+
 .main-shell,
 .main-mobile-scene {
   background-color: var(--main-scene-bg);
@@ -367,6 +373,14 @@ body {
   left: 50%;
   z-index: 30;
   transform: translate3d(-50%, 0, 0);
+}
+
+.pet-death-speech-bubble-anchor {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 30;
+  transform: translate3d(-50%, -50%, 0);
 }
 
 .main-mobile-scene:not(.main-mobile-scene--chat) .main-speech-bubble-anchor {
@@ -477,6 +491,15 @@ body {
     background-color 160ms ease,
     box-shadow 160ms ease,
     opacity 160ms ease;
+}
+
+.main-action-button.pet-death-restart {
+  position: absolute;
+  right: 28px;
+  bottom: max(48px, calc(var(--tma-safe-bottom) + 28px));
+  left: 28px;
+  z-index: 30;
+  width: auto;
 }
 
 .main-action-button:enabled:hover {
@@ -646,8 +669,16 @@ body {
   inset: 0;
   z-index: 70;
   overflow: hidden;
-  background: #000000;
   color: #ffffff;
+}
+
+.travel-story-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(26px);
+  -webkit-backdrop-filter: blur(26px);
+  animation: travel-story-backdrop-in 180ms ease-out both;
 }
 
 .travel-story-phone {
@@ -658,21 +689,32 @@ body {
   margin: 0 auto;
   overflow-x: hidden;
   overflow-y: auto;
-  background: #000000;
+  overscroll-behavior: contain;
   scrollbar-width: none;
+  cursor: grab;
+  touch-action: none;
   -webkit-overflow-scrolling: touch;
+}
+
+.travel-story-phone:active {
+  cursor: grabbing;
 }
 
 .travel-story-phone::-webkit-scrollbar {
   display: none;
 }
 
+.travel-story-phone:focus-visible {
+  outline: 2px solid var(--main-focus-ring);
+  outline-offset: -2px;
+}
+
 .travel-story-close {
   position: fixed;
   top: max(18px, calc(var(--tma-safe-top) + 12px));
   right: max(18px, var(--tma-safe-right));
-  z-index: 2;
-  display: grid;
+  z-index: 72;
+  display: none;
   width: 48px;
   height: 48px;
   place-items: center;
@@ -690,43 +732,208 @@ body {
   outline-offset: 3px;
 }
 
-.travel-story-stack {
-  display: flex;
+.travel-story-scroll-track {
+  position: relative;
   min-height: 100%;
-  flex-direction: column;
-  gap: min(calc(100vw * 0.0402), 16.17px);
-  padding-top: min(calc(100vw * 0.1343), 54px);
-  padding-bottom: max(80px, calc(var(--tma-safe-bottom) + 48px));
 }
 
-.travel-scene-card-slot {
-  display: flex;
-  width: min(calc(100vw * 0.915), 367.839px);
-  height: min(calc(100vw * 1.408), 566.009px);
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  margin-left: min(var(--travel-card-offset-x), calc((100vw - min(calc(100vw * 0.915), 367.839px)) / 2));
+.travel-story-stage {
+  position: sticky;
+  top: 0;
+  height: var(--tma-viewport-height);
+  min-height: var(--tma-viewport-height);
+  overflow: clip;
+  touch-action: none;
 }
 
-.travel-scene-card {
-  width: min(calc(100vw * 0.801), 322px);
-  height: min(calc(100vw * 1.343), 540px);
-  flex: 0 0 auto;
-  overflow: hidden;
-  border-radius: min(calc(100vw * 0.0796), 32px);
-  background: #ffffff;
-  transform: rotate(var(--travel-card-rotation, 5deg));
+.travel-story-title {
+  position: absolute;
+  top: max(66px, calc(var(--tma-safe-top) + 20px));
+  left: 50%;
+  z-index: 71;
+  margin: 0;
+  color: #ffffff;
+  font-family: var(--font-open-runde), ui-rounded, system-ui, sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: normal;
+  transform: translateX(-50%);
+}
+
+.travel-story-deck {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.travel-story-card-shell {
+  --story-card-y: min(35.323vw, 142px);
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: min(85.075vw, 342px);
+  height: min(130.846vw, 526px);
+  filter: drop-shadow(0 18px 21px rgba(0, 0, 0, 0.3));
+  opacity: 1;
+  transform: translate3d(-50%, var(--story-card-y), 0)
+    rotate(var(--story-card-rotation, 1.7deg));
   transform-origin: 50% 50%;
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.3);
 }
 
-.travel-scene-card img {
+.travel-story-card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #ffffff;
+  clip-path: polygon(
+    1.2% 1.6%, 8% 0.8%, 17% 1.5%, 28% 0.7%, 39% 1.4%, 51% 0.8%,
+    63% 1.5%, 76% 0.7%, 88% 1.3%, 98.8% 0.9%, 99.2% 11%, 98.7% 23%,
+    99.3% 36%, 98.8% 49%, 99.2% 62%, 98.7% 75%, 99.1% 88%, 98.5% 99%,
+    89% 98.5%, 77% 99.2%, 64% 98.6%, 52% 99.3%, 39% 98.7%, 27% 99.2%,
+    15% 98.6%, 0.9% 99.1%, 1.5% 88%, 0.8% 75%, 1.4% 62%, 0.7% 49%,
+    1.3% 36%, 0.8% 23%, 1.4% 11%
+  );
+}
+
+.travel-story-card__paper-texture,
+.travel-story-empty__paper-texture {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  filter: brightness(0) invert(1);
+  pointer-events: none;
+}
+
+.travel-story-card__image-mask {
+  position: absolute;
+  top: min(1.244vw, 5px);
+  left: min(1.244vw, 5px);
+  width: min(82.587vw, 332px);
+  height: min(73.383vw, 295px);
+  overflow: hidden;
+  clip-path: polygon(
+    1.2% 1.8%, 10% 0.9%, 21% 1.6%, 33% 0.8%, 46% 1.5%, 58% 0.7%,
+    71% 1.4%, 84% 0.8%, 98.8% 1.5%, 99.2% 16%, 98.7% 33%, 99.3% 51%,
+    98.8% 68%, 99.2% 84%, 98.5% 98.5%, 86% 99.1%, 72% 98.5%, 58% 99.2%,
+    44% 98.6%, 30% 99.1%, 16% 98.5%, 1% 99.2%, 1.5% 84%, 0.8% 68%,
+    1.4% 51%, 0.7% 33%, 1.3% 16%
+  );
+  z-index: 1;
+}
+
+.travel-story-card__image-mask img {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
   user-select: none;
+}
+
+.travel-story-card__text {
+  position: absolute;
+  top: min(80.1vw, 322px);
+  left: min(4.478vw, 18px);
+  width: min(76.866vw, 309px);
+  margin: 0;
+  overflow: hidden;
+  color: #000000;
+  display: -webkit-box;
+  font-family: var(--font-open-runde), ui-rounded, system-ui, sans-serif;
+  font-size: min(4.229vw, 17px);
+  font-weight: 500;
+  line-height: 1.08;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 11;
+  z-index: 1;
+}
+
+.travel-story-card--text-only .travel-story-card__text {
+  top: min(7.463vw, 30px);
+  -webkit-line-clamp: 25;
+}
+
+.travel-story-empty {
+  position: absolute;
+  top: min(35.323vw, 142px);
+  left: 50%;
+  width: min(85.075vw, 342px);
+  min-height: 240px;
+  padding: 44px 28px;
+  background: #ffffff;
+  color: #000000;
+  text-align: center;
+  transform: translateX(-50%) rotate(1.7deg);
+  clip-path: polygon(
+    1.2% 1.6%, 10% 0.8%, 22% 1.5%, 36% 0.7%, 51% 1.4%, 65% 0.8%,
+    80% 1.5%, 98.8% 0.9%, 99.2% 25%, 98.7% 50%, 99.1% 75%, 98.5% 99%,
+    78% 98.5%, 55% 99.2%, 31% 98.6%, 0.9% 99.1%, 1.4% 75%, 0.8% 50%,
+    1.3% 25%
+  );
+}
+
+.travel-story-empty__title,
+.travel-story-empty__text {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+}
+
+.travel-story-empty__title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.travel-story-empty__text {
+  margin-top: 10px;
+  font-size: 16px;
+}
+
+.travel-story-empty__action {
+  position: relative;
+  z-index: 1;
+  min-height: 44px;
+  margin-top: 26px;
+  border: 0;
+  border-radius: 22px;
+  background: #1f241d;
+  padding: 0 22px;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.travel-story-empty__action:focus-visible {
+  outline: 2px solid var(--main-focus-ring);
+  outline-offset: 3px;
+}
+
+@keyframes travel-story-backdrop-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (min-width: 600px) {
+  .travel-story-close {
+    display: grid;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .travel-story-backdrop {
+    animation: none;
+  }
+
+  .travel-story-phone {
+    scroll-behavior: auto;
+  }
 }
 
 .conversation-fade-target {

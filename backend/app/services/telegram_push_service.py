@@ -25,6 +25,7 @@ from app.services.background_story_service import (
     generate_background_story,
     generate_background_story_image_bytes,
 )
+from app.services.image_service import generated_dir_for
 from app.services.lite_overlay import merge_lite_overlay_patch
 from app.services.pet_reply_engine.lite_generator import generate_push_pet_message
 from app.services.story_delivery_format import (
@@ -44,6 +45,7 @@ STORE_VERSION = 1
 STAT_KEYS = ("hunger", "happiness", "energy")
 STAT_FULL_DECAY_HOURS = 6
 STAT_DECAY_PER_HOUR = 100 / STAT_FULL_DECAY_HOURS
+PET_DEATH_AFTER_ZERO = timedelta(hours=24)
 DAILY_PUSH_REASON = "Ежедневный короткий пуш владельцу от питомца."
 MANUAL_PUSH_REASON = "Ручной debug-триггер из админки."
 MAX_RECENT_STORY_EVENTS = 10
@@ -379,6 +381,9 @@ def _record_recent_story_events(record: dict[str, Any] | None) -> list[dict[str,
                 {
                     "title": last_story.get("title"),
                     "summary": summary.strip(),
+                    "storyText": last_story.get("storyText"),
+                    "imageUrl": last_story.get("imageUrl"),
+                    "generatedAt": last_story.get("generatedAt"),
                     "eventType": last_story.get("eventType"),
                     "tags": (
                         last_story.get("tags") if isinstance(last_story.get("tags"), list) else []
@@ -408,6 +413,25 @@ def _append_recent_story_event(
 def _recent_story_events_patch(record: dict[str, Any] | None) -> dict[str, Any] | None:
     events = _record_recent_story_events(record)
     return {"events": events} if events else None
+
+
+def _persist_background_story_image(
+    record: dict[str, Any],
+    image_bytes: bytes,
+    *,
+    generated_at: datetime,
+) -> str:
+    raw_pet_id = str(record.get("petId") or record.get("telegramId") or "story")
+    safe_pet_id = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "-"
+        for character in raw_pet_id
+    ).strip("-")[:120] or "story"
+    output_dir = generated_dir_for(safe_pet_id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"background-story-{generated_at.strftime('%Y%m%dT%H%M%S%fZ')}.png"
+    (output_dir / filename).write_bytes(image_bytes)
+    version = int(generated_at.timestamp())
+    return f"/static/generated/{safe_pet_id}/{filename}?v={version}"
 
 
 def _clamp_stat(value: Any) -> int:
@@ -502,6 +526,39 @@ def _record_current_stats(record: dict[str, Any], now: datetime) -> dict[str, in
     return current_stats
 
 
+def _record_death_at(record: dict[str, Any], now: datetime) -> datetime | None:
+    explicit_death = _parse_iso(record.get("diedAt"))
+    if explicit_death:
+        return explicit_death
+    if record.get("deathTrackingEnabled") is not True:
+        return None
+
+    pet = record.get("pet") if isinstance(record.get("pet"), dict) else {}
+    stats = pet.get("stats") if isinstance(pet.get("stats"), dict) else {}
+    ticks = _stat_tick_map(record, fallback=now)
+    raw_zero_times = record.get("zeroStatSinceAt")
+    zero_times = raw_zero_times if isinstance(raw_zero_times, dict) else {}
+    death_candidates: list[datetime] = []
+
+    for key in STAT_KEYS:
+        raw_value = stats.get(key, 0)
+        value = float(raw_value) if isinstance(raw_value, (int, float)) else 0.0
+        zero_at = _parse_iso(zero_times.get(key))
+        if value > 0:
+            zero_at = ticks[key] + timedelta(hours=value / STAT_DECAY_PER_HOUR)
+        elif zero_at is None:
+            zero_at = ticks[key]
+        death_at = zero_at + PET_DEATH_AFTER_ZERO
+        if now > death_at:
+            death_candidates.append(death_at)
+
+    return min(death_candidates) if death_candidates else None
+
+
+def _record_is_dead(record: dict[str, Any], now: datetime) -> bool:
+    return _record_death_at(record, now) is not None
+
+
 def _all_stat_ticks(now: datetime) -> dict[str, datetime]:
     return {key: now for key in STAT_KEYS}
 
@@ -576,6 +633,10 @@ def register_push_snapshot(
     now = _now()
     now_iso = _iso(now)
     fallback_stat_tick = payload.lastStatsTickAt or payload.updatedAt or now_iso
+    death_tracking_enabled = (
+        "zeroStatSinceAt" in payload.model_fields_set
+        or "diedAt" in payload.model_fields_set
+    )
     incoming_record = {
         "telegramId": user.telegram_id,
         "chatId": user.telegram_id,
@@ -593,6 +654,9 @@ def register_push_snapshot(
         "updatedAt": payload.updatedAt,
         "lastStatsTickAt": fallback_stat_tick,
         "lastStatTickAt": payload.lastStatTickAt or {key: fallback_stat_tick for key in STAT_KEYS},
+        "zeroStatSinceAt": payload.zeroStatSinceAt or {},
+        "diedAt": payload.diedAt,
+        "deathTrackingEnabled": death_tracking_enabled,
         "timezone": payload.timezone,
         "registeredAt": now_iso,
     }
@@ -749,6 +813,8 @@ def _build_push_payload(
     include_debug: bool,
 ) -> LocalPushRequest:
     now = _now()
+    if _record_is_dead(record, now):
+        raise TelegramPushError("PET_DEAD", "Питомец умер и больше не может отправлять сообщения.")
     pet = LocalPetChatContext.model_validate(_current_pet_record(record, now))
     memory_context = None
     if isinstance(record.get("memoryContext"), dict):
@@ -1069,6 +1135,22 @@ def generate_story_for_telegram_user(
     now = _now()
     now_iso = _iso(now)
     recent_story_event = getattr(result, "recent_story_event", None)
+    history_event = {
+        "title": result.title,
+        "summary": result.summary,
+        "eventType": result.event_type,
+        "valence": result.valence,
+        "tags": list(result.tags),
+        **(recent_story_event if isinstance(recent_story_event, dict) else {}),
+        "storyText": result.story_text,
+        "generatedAt": now_iso,
+        "createdAt": (
+            recent_story_event.get("createdAt")
+            if isinstance(recent_story_event, dict)
+            else now_iso
+        ),
+        "source": "background_story",
+    }
     stat_impacts = list(getattr(result, "stat_impacts", ()) or [])
     stat_impact = getattr(result, "stat_impact", None) or (
         stat_impacts[0] if stat_impacts else None
@@ -1087,6 +1169,7 @@ def generate_story_for_telegram_user(
         "title": result.title,
         "summary": result.summary,
         "storyText": result.story_text,
+        "generatedAt": now_iso,
         "eventType": result.event_type,
         "valence": result.valence,
         "tags": list(result.tags),
@@ -1125,7 +1208,7 @@ def generate_story_for_telegram_user(
             "lastStory": persisted_story,
             "recentStoryEvents": _append_recent_story_event(
                 source_record,
-                recent_story_event,
+                history_event,
                 last_story=persisted_story,
             ),
         }
@@ -1138,10 +1221,16 @@ def generate_story_for_telegram_user(
     next_record = _update_record(_telegram_id_from_record(record), save_story)
     story_image: dict[str, Any] | None = None
     story_image_error: str | None = None
+    story_image_url: str | None = None
     try:
         image_bytes = generate_background_story_image_bytes(
             pet=payload.pet,
             story=result,
+        )
+        story_image_url = _persist_background_story_image(
+            record,
+            image_bytes,
+            generated_at=now,
         )
         story_image = {
             "bytes": image_bytes,
@@ -1159,8 +1248,25 @@ def generate_story_for_telegram_user(
             return source_record
         if source_record.get("lastStoryAt") != now_iso:
             return source_record
+        last_story_record = (
+            source_record["lastStory"].copy()
+            if isinstance(source_record.get("lastStory"), dict)
+            else {}
+        )
+        recent_events = []
+        for item in source_record.get("recentStoryEvents", []):
+            if not isinstance(item, dict):
+                continue
+            next_item = item.copy()
+            if story_image_url and item.get("generatedAt") == now_iso:
+                next_item["imageUrl"] = story_image_url
+            recent_events.append(next_item)
+        if story_image_url:
+            last_story_record["imageUrl"] = story_image_url
         return {
             **source_record,
+            "lastStory": last_story_record,
+            "recentStoryEvents": recent_events,
             "lastStoryImageStatus": "failed" if story_image_error else "generated",
             "lastStoryImageError": story_image_error,
             "lastStoryImageErrorAt": image_status_at if story_image_error else None,
@@ -1169,6 +1275,15 @@ def generate_story_for_telegram_user(
     next_record = _update_record(
         _telegram_id_from_record(record),
         save_story_image_status,
+    )
+    stored_recent_events = _record_recent_story_events(next_record)
+    stored_recent_story_event = next(
+        (
+            item
+            for item in reversed(stored_recent_events)
+            if item.get("generatedAt") == now_iso
+        ),
+        history_event,
     )
     return {
         "generated": True,
@@ -1180,7 +1295,7 @@ def generate_story_for_telegram_user(
         "storyImageError": story_image_error,
         "storyLibraryPatch": None,
         "liteOverlayPatch": _record_lite_overlay_patch(next_record),
-        "recentStoryEvent": recent_story_event,
+        "recentStoryEvent": stored_recent_story_event,
         "statsPatch": stats_patch,
         "statImpacts": stat_impacts,
         "statImpact": stat_impact,
@@ -1278,7 +1393,12 @@ def send_manual_push_to_reachable(
     include_debug: bool = True,
 ) -> dict[str, Any]:
     records = _snapshot_records()
-    reachable = [record for record in records if record.get("chatReachable") is True]
+    now = _now()
+    reachable = [
+        record
+        for record in records
+        if record.get("chatReachable") is True and not _record_is_dead(record, now)
+    ]
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     for record in reachable:
@@ -1286,7 +1406,7 @@ def send_manual_push_to_reachable(
             results.append(
                 _send_push_record(
                     record,
-                    reason=reason or MANUAL_PUSH_REASON,
+                    reason=reason or _push_reason_for_record(record, _now()),
                     manual=True,
                     include_debug=include_debug,
                 )
@@ -1314,6 +1434,8 @@ def _due_records(now: datetime) -> list[dict[str, Any]]:
         if not isinstance(record, dict):
             continue
         if not _has_snapshot(record) or record.get("chatReachable") is not True:
+            continue
+        if _record_is_dead(record, now):
             continue
         if _scheduled_push_slot(record, now) is not None:
             due.append(record)
@@ -1357,6 +1479,8 @@ def _due_story_records(now: datetime) -> list[dict[str, Any]]:
         if not isinstance(record, dict):
             continue
         if not _has_snapshot(record) or record.get("chatReachable") is not True:
+            continue
+        if _record_is_dead(record, now):
             continue
         base_time = _latest_time(record.get("lastStoryAt"), record.get("lastStoryAttemptAt"))
         if base_time is None:

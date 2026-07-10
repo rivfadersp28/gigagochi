@@ -79,3 +79,46 @@ describe("DebugPanel visual mode selector", () => {
     expect(screen.getByRole("button", { name: "Нормальный" })).toBeEnabled();
   });
 });
+
+describe("DebugPanel pet life controls", () => {
+  it("kills a living pet and enables resurrection only after death", () => {
+    const onKillPet = vi.fn();
+    const onRevivePet = vi.fn();
+    const { rerender } = render(
+      <DebugPanel
+        pet={pet()}
+        isOpen
+        onClose={() => undefined}
+        onKillPet={onKillPet}
+        onRevivePet={onRevivePet}
+      />,
+    );
+
+    const killButton = screen.getByRole("button", { name: "Убить персонажа" });
+    const reviveButton = screen.getByRole("button", {
+      name: "Воскресить последнего персонажа",
+    });
+    expect(killButton).toBeEnabled();
+    expect(reviveButton).toBeDisabled();
+    fireEvent.click(killButton);
+    expect(onKillPet).toHaveBeenCalledOnce();
+
+    rerender(
+      <DebugPanel
+        pet={{ ...pet(), diedAt: "2026-07-10T11:00:00.000Z" }}
+        isOpen
+        isPetDead
+        onClose={() => undefined}
+        onKillPet={onKillPet}
+        onRevivePet={onRevivePet}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Убить персонажа" })).toBeDisabled();
+    const enabledReviveButton = screen.getByRole("button", {
+      name: "Воскресить последнего персонажа",
+    });
+    expect(enabledReviveButton).toBeEnabled();
+    fireEvent.click(enabledReviveButton);
+    expect(onRevivePet).toHaveBeenCalledOnce();
+  });
+});

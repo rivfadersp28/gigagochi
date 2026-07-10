@@ -119,9 +119,9 @@ describe("sad pet assets", () => {
 
     expect(legacyHappyAssetUrls(state.assetSet!)).toEqual({
       imageUrl:
-        "https://example.test/static/generated/asset-1/teen-happy.png?v=7&happy_asset_v=20260710-1",
+        "https://example.test/static/generated/asset-1/teen-happy.png?v=7&happy_asset_v=20260710-2",
       videoUrl:
-        "https://example.test/static/generated/asset-1/teen-happy.mp4?v=7&happy_asset_v=20260710-1",
+        "https://example.test/static/generated/asset-1/teen-happy.mp4?v=7&happy_asset_v=20260710-2",
     });
   });
 
@@ -130,7 +130,7 @@ describe("sad pet assets", () => {
 
     expect(generatedSpriteUrl(state, "teen", "sad")).toContain("sad_asset_v=20260710-2");
     expect(generatedSceneVideoUrl(state, "sad")).toContain("sad_asset_v=20260710-2");
-    expect(generatedSceneVideoUrl(state, "happy")).toContain("happy_asset_v=20260710-1");
+    expect(generatedSceneVideoUrl(state, "happy")).toContain("happy_asset_v=20260710-2");
     expect(generatedSpriteUrl(state, "teen", "idle")).toBe("/idle.png");
     expect(generatedSceneVideoUrl(state)).toBe("/idle.mp4");
   });

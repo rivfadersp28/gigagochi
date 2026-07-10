@@ -307,6 +307,8 @@ class LocalPetPushSnapshotRequest(BaseModel):
     updatedAt: str | None = Field(default=None, max_length=80)
     lastStatsTickAt: str | None = Field(default=None, max_length=80)
     lastStatTickAt: dict[PetStatKeyValue, str] | None = None
+    zeroStatSinceAt: dict[PetStatKeyValue, str] | None = None
+    diedAt: str | None = Field(default=None, max_length=80)
     timezone: str | None = Field(default=None, max_length=80)
 
 

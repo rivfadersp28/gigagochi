@@ -99,6 +99,12 @@
   `energy` (shown to users as health). Frontend local storage and backend push
   snapshots track `lastStatTickAt` per key; a stat decays from full to zero over
   six hours, and partial server `statsPatch` updates only the affected keys.
+- Pet death is persisted with `zeroStatSinceAt` and `diedAt`. A pet dies only
+  after any one stat remains exactly zero for more than 24 continuous hours;
+  restoring that stat clears its zero timer. New push snapshots enable the same
+  lifecycle on the backend so dead pets stop receiving proactive pushes and
+  background stories, while legacy snapshots remain active until refreshed by
+  a new client.
 - `backend/app/services/context_assembler.py` can still retrieve selected
   `WORLD_CONTEXT` bricks when a surface enables `storyLibrary`, but the current
   runtime disables `storyLibrary` for chat, ambient, proactive, push and
@@ -279,6 +285,12 @@
   pose, and a second multi-reference edit treats the idle scene as the
   authoritative camera/scale while using the first result only as a pose
   reference. The temporary pose image is removed after refinement.
+  Happy scene generation protects the full-frame composition deterministically:
+  both image-edit passes operate on a fixed centered `480x720` character region
+  extracted from the normalized `720x1280` idle scene. The refined region is
+  composited back into the exact same `(120, 320)-(600, 1040)` box with an
+  inward feather; every pixel outside that box remains from the idle scene.
+  This compensates for image providers that accept references but no edit mask.
   Per-pet story events stay in
   `characterBible.extensions.recent_story_events` for old pets when present, but
   chat canon should come from history/memory rather than `lite_overlay`.

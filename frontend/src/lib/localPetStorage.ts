@@ -17,6 +17,7 @@ import {
   legacyStatsTick,
   normalizeStats,
   normalizeStatTickMap,
+  normalizeZeroStatSinceMap,
   PET_STAT_KEYS,
   staggeredStatTicks,
 } from "./localPetStats";
@@ -604,6 +605,7 @@ function normalizePetState(value: unknown): LocalPetStateV2 | null {
   const lastStatsTickAt = isIsoDate(value.lastStatsTickAt) ? value.lastStatsTickAt : updatedAt;
   const lastStatTickAt = normalizeStatTickMap(value.lastStatTickAt, lastStatsTickAt);
   const stats = normalizeStats(value.stats);
+  const zeroStatSinceAt = normalizeZeroStatSinceMap(value.zeroStatSinceAt, stats, lastStatTickAt);
   const assetSet = normalizeAssetSet(value.assetSet);
 
   return {
@@ -619,6 +621,8 @@ function normalizePetState(value: unknown): LocalPetStateV2 | null {
     lastInteractionAt: isIsoDate(value.lastInteractionAt) ? value.lastInteractionAt : updatedAt,
     lastStatsTickAt: legacyStatsTick(lastStatTickAt),
     lastStatTickAt,
+    zeroStatSinceAt,
+    diedAt: isIsoDate(value.diedAt) ? value.diedAt : undefined,
     stage: normalizeStage(value.stage),
     mood: normalizeMood(value.mood ?? calculatePetMood(stats)),
     stats,
@@ -684,6 +688,7 @@ export function createLocalPetState(
     lastInteractionAt: now,
     lastStatsTickAt: legacyStatsTick(lastStatTickAt),
     lastStatTickAt,
+    zeroStatSinceAt: {},
     stage: "baby",
     mood: "idle",
     stats: {

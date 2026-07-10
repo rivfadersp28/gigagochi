@@ -19,7 +19,7 @@ export const stateLabels: Record<PetState, string> = {
 };
 
 const SAD_ASSET_CACHE_VERSION = "20260710-2";
-const HAPPY_ASSET_CACHE_VERSION = "20260710-1";
+const HAPPY_ASSET_CACHE_VERSION = "20260710-2";
 
 export function versionedSadAssetUrl(url: string) {
   if (!url || url.includes("sad_asset_v=")) {

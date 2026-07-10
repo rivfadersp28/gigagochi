@@ -26,7 +26,11 @@ import {
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
-import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
+import {
+  canUseDebugMenu,
+  hapticNotification,
+  useTelegramBackButton,
+} from "@/lib/telegram";
 import type { LocalChatMessage } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 
@@ -48,6 +52,7 @@ export function ChatView({ petId }: ChatViewProps) {
   const proactiveAttemptedRef = useRef(false);
   const proactiveDialogueHookRef = useRef<LocalChatMessage | null>(null);
   const pet = localPet.pet;
+  const canShowDebugMenu = canUseDebugMenu();
 
   const goBack = useCallback(() => {
     router.push(`/pet/${petId}`);
@@ -194,7 +199,7 @@ export function ChatView({ petId }: ChatViewProps) {
             <h1 className="mt-1 text-2xl font-semibold text-[var(--ink)]">Chat</h1>
           </div>
           <div className="flex items-center gap-2">
-            {pet ? (
+            {pet && canShowDebugMenu ? (
               <button
                 type="button"
                 aria-controls="debug-panel"
@@ -276,7 +281,7 @@ export function ChatView({ petId }: ChatViewProps) {
           </div>
         </form>
       </div>
-      {pet ? (
+      {pet && canShowDebugMenu ? (
         <DebugPanel
           pet={pet}
           isOpen={isDebugPanelOpen}

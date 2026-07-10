@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { canUseDerivedPetAssets, getTelegramUserId } from "./telegram";
+import {
+  canUseDebugMenu,
+  canUseDerivedPetAssets,
+  getTelegramUserId,
+} from "./telegram";
 
 type TelegramTestWindow = Window & {
   Telegram?: {
@@ -37,5 +41,23 @@ describe("derived asset pilot", () => {
 
     expect(getTelegramUserId()).toBe(42);
     expect(canUseDerivedPetAssets()).toBe(false);
+  });
+});
+
+describe("debug menu access", () => {
+  it("enables the debug menu for Sergey", () => {
+    setTelegramUser(62943754);
+
+    expect(canUseDebugMenu()).toBe(true);
+  });
+
+  it("hides the debug menu from other Telegram users", () => {
+    setTelegramUser(42);
+
+    expect(canUseDebugMenu()).toBe(false);
+  });
+
+  it("hides the debug menu outside Telegram", () => {
+    expect(canUseDebugMenu()).toBe(false);
   });
 });

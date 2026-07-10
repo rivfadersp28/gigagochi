@@ -39,6 +39,10 @@
   image model reframe the character as a close-up. Render sad URLs with a
   dedicated cache version when replacing a generated pair in place, because
   Telegram WebView may retain the previous MP4 under the original asset URL.
+  Happy prompts alone do not reliably preserve the character's horizontal
+  position. Keep happy edits confined to the fixed character-region crop and
+  composite the result back into the idle scene; also bump the happy asset cache
+  version whenever replacing an existing PNG/MP4 pair in place.
 - The dashboard background is now the generated composed pet scene. Do not add
   a separate centered pet sprite, shadow, blink overlay, tap animation, or
   background-removal step unless the visual pipeline is intentionally changed.
@@ -256,6 +260,10 @@
   partial `statsPatch`. Do not replace the whole stats object unless every
   `lastStatTickAt` key is also reset consistently; otherwise independent decay
   timers will double-decay or collapse into one shared clock.
+- Do not derive the 24-hour death window from the latest stat tick: ticks keep
+  advancing while a stat is already zero. Persist the first continuous zero
+  time in `zeroStatSinceAt`, clear it as soon as the stat becomes positive, and
+  set `diedAt` only when elapsed time is strictly greater than 24 hours.
 - Telegram story photo captions are capped at 1024 chars. Keep the stat debug
   footer reserved during truncation, otherwise `/story` debugging can hide the
   analyzer result behind a long generated story.

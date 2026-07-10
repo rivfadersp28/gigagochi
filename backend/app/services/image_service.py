@@ -26,7 +26,7 @@ from openai import (
     PermissionDeniedError,
     RateLimitError,
 )
-from PIL import Image, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from app.config import get_settings
 from app.prompts.pet_image_prompts import (
@@ -231,6 +231,9 @@ FAST_GENERATION_STATE_FALLBACKS = {
 }
 PET_SCENE_COMPOSITION_PROMPT = "Добавь персонажа с первой картинки на вторую в центр"
 PET_SCENE_IMAGE_SIZE = "1024x1536"
+PET_CHARACTER_REGION_SIZE = "480x720"
+PET_CHARACTER_REGION_CENTER_Y_RATIO = 0.53125
+PET_CHARACTER_REGION_FEATHER_RATIO = 0.04
 PET_SCENE_BACKGROUND_PATH = (
     Path(__file__).resolve().parents[2] / "static" / "backgrounds" / "pet-generation-forest.png"
 )
@@ -267,30 +270,23 @@ PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT = (
     "флаконы, освещение и окружение первой картинки. Больше ничего не меняй."
 )
 PET_HAPPY_SCENE_IMAGE_PROMPT = (
-    "пусть персонаж слегка приподнимет голову, чуть более жизнерадостно посмотрит и "
-    "слегка естественно улыбнётся\n"
-    "больше ничего не меняй\n\n"
-    "КРИТИЧЕСКИ ВАЖНО СОХРАНИТЬ КОМПОЗИЦИЮ: используй точно ту же камеру, дистанцию "
-    "до персонажа, кадрирование, перспективу и размер персонажа в кадре. Не приближай "
-    "персонажа, не увеличивай голову или тело, не делай портретный или крупный план. "
-    "Сохрани точное положение персонажа, фон, освещение, цвета, дизайн, одежду и все "
-    "предметы. Измени только голову и выражение лица: чуть-чуть приподними подбородок, "
-    "сделай глаза немного более открытыми и живыми, сохранив их исходную форму, и добавь "
-    "лёгкую закрытую улыбку. Не запрокидывай голову, не меняй положение тела, не открывай "
-    "рот, не показывай зубы и не превращай эмоцию в широкую или мультяшную."
+    "Это фиксированный crop области персонажа. Сохрани его точные границы и координаты: "
+    "не центрируй, не сдвигай, не масштабируй и не приближай персонажа внутри crop. "
+    "Положение тела, ног, головы, головного убора, одежды и всех предметов должно остаться "
+    "на тех же пиксельных координатах. Пусть персонаж лишь слегка приподнимет подбородок, "
+    "чуть более жизнерадостно посмотрит и слегка естественно улыбнётся закрытым ртом. "
+    "Сделай глаза немного более открытыми и живыми, сохранив их исходную форму. Не меняй "
+    "фон внутри crop, дизайн, пропорции, освещение и цвета. Не открывай рот, не показывай "
+    "зубы и не превращай эмоцию в широкую или мультяшную."
 )
 PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT = (
-    "Первая картинка — единственный обязательный эталон композиции, масштаба и окружения. "
-    "Сохрани из первой картинки точную камеру, кадрирование, перспективу, фон, положение "
-    "персонажа, размер головы в пикселях и общий размер персонажа в кадре. Вторая картинка "
-    "используется только как референс слегка приподнятой головы и более жизнерадостного "
-    "выражения персонажа.\n\n"
-    "Верни сцену в композиции первой картинки. Персонаж должен находиться на той же "
-    "дистанции от камеры, сохранять положение тела и занимать ровно столько же места, сколько на "
-    "первой картинке. Сохрани дизайн персонажа, одежду, аксессуары, фон, освещение и все "
-    "предметы первой картинки. Перенеси со второй картинки только чуть приподнятый подбородок, "
-    "немного более открытые и живые глаза и лёгкую естественную закрытую улыбку. Не изменяй "
-    "размер или форму головы и глаз, не открывай рот, не показывай зубы и не меняй ничего больше."
+    "Обе картинки имеют одинаковые фиксированные границы области персонажа. Первая картинка — "
+    "обязательный эталон всех пиксельных координат, масштаба, фона, дизайна и предметов. Вторая "
+    "картинка используется только как референс эмоции. Верни crop с персонажем точно в положении "
+    "первой картинки: не центрируй, не сдвигай, не масштабируй и не меняй позу тела. Перенеси "
+    "со второй картинки только чуть приподнятый подбородок, немного более открытые и живые глаза "
+    "и лёгкую естественную закрытую улыбку. Не изменяй размер головы или глаз, не открывай рот, "
+    "не показывай зубы и не меняй ничего больше."
 )
 PET_SAD_SCENE_VIDEO_PROMPT = (
     "Static locked camera. The character remains perfectly still in the exact same pose, "
@@ -1723,6 +1719,82 @@ def normalize_pet_scene_video_frame_bytes(image_bytes: bytes) -> bytes:
         return buffer.getvalue()
 
 
+def pet_character_region_box(scene_size: tuple[int, int]) -> tuple[int, int, int, int]:
+    scene_width, scene_height = scene_size
+    target_width, target_height = _parse_pixel_size(PET_CHARACTER_REGION_SIZE)
+    width_ratio = target_width / _parse_pixel_size(PET_SCENE_VIDEO_SIZE)[0]
+    region_width = min(scene_width, max(1, round(scene_width * width_ratio)))
+    region_height = min(
+        scene_height,
+        max(1, round(region_width * target_height / target_width)),
+    )
+    center_x = scene_width // 2
+    center_y = round(scene_height * PET_CHARACTER_REGION_CENTER_Y_RATIO)
+    left = max(0, min(scene_width - region_width, center_x - region_width // 2))
+    top = max(0, min(scene_height - region_height, center_y - region_height // 2))
+    return left, top, left + region_width, top + region_height
+
+
+def extract_pet_character_region_bytes(scene_path: Path) -> bytes:
+    with Image.open(scene_path) as image:
+        normalized = image.convert("RGB")
+        region = normalized.crop(pet_character_region_box(normalized.size))
+        buffer = BytesIO()
+        region.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
+def normalize_pet_character_region_bytes(
+    image_bytes: bytes,
+    target_size: tuple[int, int],
+) -> bytes:
+    with Image.open(BytesIO(image_bytes)) as image:
+        output = ImageOps.fit(
+            image.convert("RGB"),
+            target_size,
+            method=Image.Resampling.LANCZOS,
+            centering=(0.5, 0.5),
+        )
+        buffer = BytesIO()
+        output.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
+def composite_pet_character_region_bytes(
+    scene_path: Path,
+    generated_region_bytes: bytes,
+) -> bytes:
+    with Image.open(scene_path) as scene_image:
+        output = scene_image.convert("RGB")
+        left, top, right, bottom = pet_character_region_box(output.size)
+        region_size = (right - left, bottom - top)
+        normalized_region_bytes = normalize_pet_character_region_bytes(
+            generated_region_bytes,
+            region_size,
+        )
+        with Image.open(BytesIO(normalized_region_bytes)) as region_image:
+            region = region_image.convert("RGB")
+
+        feather = max(2, round(min(region_size) * PET_CHARACTER_REGION_FEATHER_RATIO))
+        mask = Image.new("L", region_size, 0)
+        draw = ImageDraw.Draw(mask)
+        draw.rectangle(
+            (
+                feather,
+                feather,
+                region_size[0] - feather - 1,
+                region_size[1] - feather - 1,
+            ),
+            fill=255,
+        )
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=max(1, feather / 2)))
+        output.paste(region, (left, top), mask)
+
+        buffer = BytesIO()
+        output.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
 def generate_openrouter_video_bytes(
     source_path: Path,
     *,
@@ -1995,26 +2067,37 @@ def generate_pet_sad_video_for_image_asset_set(
 
 
 def generate_pet_happy_scene_path(image_set: PetAssetImageSet) -> Path:
-    happy_pose_bytes = generate_image_edit_bytes(
-        PET_HAPPY_SCENE_IMAGE_PROMPT,
-        image_set.scene_path,
-        label="pet_creation/happy_pose",
-    )
     output_dir = generated_dir_for(image_set.asset_set_id)
+    source_region_path = output_dir / f"{FAST_GENERATION_STAGE}-happy-source-region.png"
+    source_region_bytes = extract_pet_character_region_bytes(image_set.scene_path)
+    source_region_path.write_bytes(source_region_bytes)
+    with Image.open(BytesIO(source_region_bytes)) as source_region:
+        region_size = source_region.size
+
     happy_pose_path = output_dir / f"{FAST_GENERATION_STAGE}-happy-pose.png"
-    happy_pose_path.write_bytes(normalize_pet_scene_video_frame_bytes(happy_pose_bytes))
     try:
+        happy_pose_bytes = generate_image_edit_bytes(
+            PET_HAPPY_SCENE_IMAGE_PROMPT,
+            source_region_path,
+            label="pet_creation/happy_pose",
+        )
+        happy_pose_path.write_bytes(
+            normalize_pet_character_region_bytes(happy_pose_bytes, region_size)
+        )
         happy_scene_bytes = generate_multi_image_edit_bytes(
             PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT,
-            [image_set.scene_path, happy_pose_path],
+            [source_region_path, happy_pose_path],
             label="pet_creation/happy_scene",
             size=PET_SCENE_IMAGE_SIZE,
         )
     finally:
         happy_pose_path.unlink(missing_ok=True)
+        source_region_path.unlink(missing_ok=True)
 
     happy_scene_path = output_dir / f"{FAST_GENERATION_STAGE}-happy.png"
-    happy_scene_path.write_bytes(normalize_pet_scene_video_frame_bytes(happy_scene_bytes))
+    happy_scene_path.write_bytes(
+        composite_pet_character_region_bytes(image_set.scene_path, happy_scene_bytes)
+    )
     return happy_scene_path
 
 

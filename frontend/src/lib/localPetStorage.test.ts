@@ -51,4 +51,34 @@ describe("localPetStats", () => {
     expect(updated.lastStatTickAt.hunger).toBe(state.lastStatTickAt.hunger);
     expect(updated.lastStatTickAt.energy).toBe("2026-07-09T10:00:00.000Z");
   });
+
+  it("dies only after spending more than 24 continuous hours at zero", () => {
+    const zeroThreshold = new Date("2026-07-10T10:48:00.000Z");
+    const atThreshold = applyOfflineProgress(petState(), zeroThreshold);
+
+    expect(atThreshold.stats.hunger).toBe(0);
+    expect(atThreshold.zeroStatSinceAt?.hunger).toBe("2026-07-09T10:48:00.000Z");
+    expect(atThreshold.diedAt).toBeUndefined();
+
+    const afterThreshold = applyOfflineProgress(
+      atThreshold,
+      new Date("2026-07-10T10:48:00.001Z"),
+    );
+    expect(afterThreshold.diedAt).toBe("2026-07-10T10:48:00.000Z");
+  });
+
+  it("clears a stale zero timer when the parameter is restored", () => {
+    const state = {
+      ...petState(),
+      zeroStatSinceAt: { hunger: "2026-07-01T00:00:00.000Z" },
+    };
+
+    const progressed = applyOfflineProgress(
+      state,
+      new Date("2026-07-09T06:00:00.000Z"),
+    );
+
+    expect(progressed.zeroStatSinceAt?.hunger).toBeUndefined();
+    expect(progressed.diedAt).toBeUndefined();
+  });
 });

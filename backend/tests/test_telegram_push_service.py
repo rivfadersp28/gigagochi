@@ -234,6 +234,30 @@ def test_current_pet_record_decays_stats_and_recomputes_stage() -> None:
     }
 
 
+def test_record_dies_only_after_more_than_24_hours_at_zero() -> None:
+    zero_since = datetime(2026, 7, 7, 12, 0, tzinfo=UTC)
+    record = {
+        "deathTrackingEnabled": True,
+        "lastStatsTickAt": zero_since.isoformat().replace("+00:00", "Z"),
+        "lastStatTickAt": {
+            "hunger": zero_since.isoformat().replace("+00:00", "Z"),
+            "happiness": zero_since.isoformat().replace("+00:00", "Z"),
+            "energy": zero_since.isoformat().replace("+00:00", "Z"),
+        },
+        "zeroStatSinceAt": {"hunger": zero_since.isoformat().replace("+00:00", "Z")},
+        "pet": {
+            "stats": {"hunger": 0, "happiness": 80, "energy": 80},
+        },
+    }
+
+    threshold = zero_since + timedelta(hours=24)
+    assert telegram_push_service._record_death_at(record, threshold) is None
+    assert telegram_push_service._record_death_at(
+        record,
+        threshold + timedelta(microseconds=1),
+    ) == threshold
+
+
 def test_background_story_is_saved_and_preserved_on_next_snapshot(
     monkeypatch,
     tmp_path,
@@ -327,6 +351,11 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
         "generate_background_story_image_bytes",
         fake_story_image_bytes,
     )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_persist_background_story_image",
+        lambda *_args, **_kwargs: "/static/generated/pet-1/background-story.png?v=1",
+    )
 
     telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
     result = telegram_push_service.generate_story_for_telegram_user(
@@ -358,6 +387,8 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
     events = store["records"][str(TEST_TELEGRAM_ID)]["recentStoryEvents"]
     assert events[0]["summary"] == "На Громма напала меловая тень у каменного порога."
+    assert events[0]["storyText"] == "На Громма напала меловая тень у каменного порога."
+    assert events[0]["imageUrl"] == "/static/generated/pet-1/background-story.png?v=1"
     assert events[0]["canonicalFacts"] == ["меловая тень напала на Громма"]
     assert events[0]["statImpacts"][1]["stat"] == "happiness"
     assert store["records"][str(TEST_TELEGRAM_ID)]["lastStory"]["statsDelta"] == {
@@ -365,6 +396,10 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
         "happiness": -20,
         "energy": -15,
     }
+    assert (
+        store["records"][str(TEST_TELEGRAM_ID)]["lastStory"]["imageUrl"]
+        == "/static/generated/pet-1/background-story.png?v=1"
+    )
     assert store["records"][str(TEST_TELEGRAM_ID)]["lastStoryImageStatus"] == "generated"
     assert store["records"][str(TEST_TELEGRAM_ID)]["lastStoryImageError"] is None
     assert store["records"][str(TEST_TELEGRAM_ID)]["lastStoryImageErrorAt"] is None
@@ -377,6 +412,10 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     assert response.liteOverlayPatch["facts"][0]["source"] == "background_story_aftermath"
     assert response.recentStoryEventsPatch is not None
     assert response.recentStoryEventsPatch["events"][0]["eventType"] == "attack"
+    assert (
+        response.recentStoryEventsPatch["events"][0]["imageUrl"]
+        == "/static/generated/pet-1/background-story.png?v=1"
+    )
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
     assert (
         store["records"][str(TEST_TELEGRAM_ID)]["recentStoryEvents"][0]["summary"]
@@ -472,6 +511,9 @@ def test_recent_story_events_fallback_uses_last_story_for_anti_repeat() -> None:
             "lastStory": {
                 "title": "Падение у миски",
                 "summary": "Громм уже споткнулся у миски.",
+                "storyText": "Громм задел миску лапой и упал на мокрый пол.",
+                "imageUrl": "/static/generated/pet-1/story.png?v=1",
+                "generatedAt": "2026-07-07T12:00:00Z",
                 "eventType": "accident",
                 "tags": ["случайность"],
             }
@@ -481,6 +523,9 @@ def test_recent_story_events_fallback_uses_last_story_for_anti_repeat() -> None:
     assert events[0]["title"] == "Падение у миски"
     assert events[0]["summary"] == "Громм уже споткнулся у миски."
     assert events[0]["compactText"] == "Громм уже споткнулся у миски."
+    assert events[0]["storyText"] == "Громм задел миску лапой и упал на мокрый пол."
+    assert events[0]["imageUrl"] == "/static/generated/pet-1/story.png?v=1"
+    assert events[0]["generatedAt"] == "2026-07-07T12:00:00Z"
     assert events[0]["eventType"] == "accident"
     assert events[0]["tags"] == ["случайность"]
     assert events[0]["source"] == "last_story_fallback"

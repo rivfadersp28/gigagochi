@@ -30,6 +30,7 @@ from app.services.image_service import (
     align_sprite_to_reference_canvas,
     build_pet_asset_set_response,
     character_bible_quality_issues,
+    composite_pet_character_region_bytes,
     create_character_bible,
     extract_sprite_cells,
     extract_state_strip_cells,
@@ -47,6 +48,7 @@ from app.services.image_service import (
     generate_pet_sad_video_for_image_asset_set,
     generation_error_code,
     normalize_pet_scene_video_frame_bytes,
+    pet_character_region_box,
 )
 from app.services.tone_runtime import tone_context_payload
 
@@ -85,6 +87,27 @@ def test_normalize_pet_scene_video_frame_bytes_crops_to_seedance_frame() -> None
     assert output.size == (720, 1280)
     assert output.getpixel((0, 0)) == (0, 160, 80)
     assert output.getpixel((719, 1279)) == (0, 160, 80)
+
+
+def test_pet_character_region_uses_fixed_centered_two_by_three_crop() -> None:
+    assert pet_character_region_box((720, 1280)) == (120, 320, 600, 1040)
+
+
+def test_composite_pet_character_region_preserves_pixels_outside_fixed_crop(tmp_path) -> None:
+    scene_path = tmp_path / "scene.png"
+    scene = Image.new("RGB", (720, 1280), (10, 20, 30))
+    scene.save(scene_path)
+    generated = Image.new("RGB", (1024, 1536), (200, 100, 50))
+
+    result = Image.open(
+        BytesIO(composite_pet_character_region_bytes(scene_path, png_bytes(generated)))
+    )
+
+    assert result.size == scene.size
+    assert result.getpixel((0, 0)) == (10, 20, 30)
+    assert result.getpixel((119, 700)) == (10, 20, 30)
+    assert result.getpixel((600, 700)) == (10, 20, 30)
+    assert result.getpixel((360, 680)) == (200, 100, 50)
 
 
 def test_extract_sprite_cells_selects_component_and_aligns_bottom_padding() -> None:
@@ -1107,17 +1130,22 @@ def test_generate_happy_assets_preserve_scene_and_reuse_normal_blink_prompt(
     )
 
     assert image_calls == [
-        (PET_HAPPY_SCENE_IMAGE_PROMPT, "teen-idle.png", "pet_creation/happy_pose")
+        (
+            PET_HAPPY_SCENE_IMAGE_PROMPT,
+            "teen-happy-source-region.png",
+            "pet_creation/happy_pose",
+        )
     ]
     assert refinement_calls == [
         (
             PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT,
-            ["teen-idle.png", "teen-happy-pose.png"],
+            ["teen-happy-source-region.png", "teen-happy-pose.png"],
             "pet_creation/happy_scene",
             "1024x1536",
         )
     ]
     assert not (output_dir / "teen-happy-pose.png").exists()
+    assert not (output_dir / "teen-happy-source-region.png").exists()
     assert video_calls == [
         ("teen-happy.png", PET_SCENE_VIDEO_PROMPT, "pet_creation/happy_scene_video")
     ]

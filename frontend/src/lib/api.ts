@@ -583,6 +583,8 @@ export async function registerPetPushSnapshot(
         updatedAt: pet.updatedAt,
         lastStatsTickAt: pet.lastStatsTickAt,
         lastStatTickAt: pet.lastStatTickAt,
+        zeroStatSinceAt: pet.zeroStatSinceAt,
+        diedAt: pet.diedAt,
         timezone: browserTimezone(),
         memoryContext: memoryContextForApi(memoryContext),
         history: chatHistoryForApi(options.history ?? []),

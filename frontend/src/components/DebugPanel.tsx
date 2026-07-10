@@ -9,9 +9,11 @@ import {
   Frown,
   MessageSquareText,
   RotateCcw,
+  Skull,
   Smile,
   Trash2,
   X,
+  HeartPulse,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -34,6 +36,9 @@ type DebugPanelProps = {
   onClose: () => void;
   onResetPet?: () => void;
   onResetPetStats?: () => void;
+  onKillPet?: () => void;
+  onRevivePet?: () => void;
+  isPetDead?: boolean;
   onOpenTestPet?: () => void;
   canShowSadAsset?: boolean;
   canShowHappyAsset?: boolean;
@@ -275,6 +280,9 @@ export function DebugPanel({
   onClose,
   onResetPet,
   onResetPetStats,
+  onKillPet,
+  onRevivePet,
+  isPetDead = false,
   onOpenTestPet,
   canShowSadAsset = false,
   canShowHappyAsset = false,
@@ -375,7 +383,7 @@ export function DebugPanel({
             </div>
           </div>
 
-          {onResetPetStats || onOpenTestPet || onVisualModeOverrideChange ? (
+          {onResetPetStats || onKillPet || onRevivePet || onOpenTestPet || onVisualModeOverrideChange ? (
             <div className="mt-4 grid gap-2">
               {onOpenTestPet ? (
                 <button
@@ -385,6 +393,28 @@ export function DebugPanel({
                 >
                   <FlaskConical className="size-3.5" aria-hidden="true" />
                   <span>Открыть тестового персонажа</span>
+                </button>
+              ) : null}
+              {onKillPet ? (
+                <button
+                  type="button"
+                  onClick={onKillPet}
+                  disabled={isPetDead}
+                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[8px] bg-black/[0.055] px-3 text-[12px] font-medium leading-none text-black/62 transition-colors hover:bg-black/[0.085] hover:text-black/78 focus:outline-none focus:ring-2 focus:ring-black/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Skull className="size-3.5" aria-hidden="true" />
+                  <span>Убить персонажа</span>
+                </button>
+              ) : null}
+              {onRevivePet ? (
+                <button
+                  type="button"
+                  onClick={onRevivePet}
+                  disabled={!isPetDead}
+                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[8px] bg-black/[0.055] px-3 text-[12px] font-medium leading-none text-black/62 transition-colors hover:bg-black/[0.085] hover:text-black/78 focus:outline-none focus:ring-2 focus:ring-black/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <HeartPulse className="size-3.5" aria-hidden="true" />
+                  <span>Воскресить последнего персонажа</span>
                 </button>
               ) : null}
               {onResetPetStats ? (
