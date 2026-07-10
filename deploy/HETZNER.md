@@ -103,12 +103,8 @@ systemctl disable caddy
 docker compose --env-file .env.production -f docker-compose.prod.yml --profile container-caddy up -d --build
 ```
 
-PostgreSQL is not started by default because the current MVP keeps pet progress and chat history in
-Telegram WebView `localStorage`. Start it only for legacy/post-MVP DB routes:
-
-```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml --profile legacy-db up -d
-```
+The active MVP has no PostgreSQL service. Pet progress and chat history stay in Telegram WebView
+`localStorage`; Telegram delivery state uses the persistent `push_data` volume.
 
 ## Update
 
@@ -126,7 +122,7 @@ from `./backend/data` into the backend image as read-only binds, while `push_dat
 ```bash
 cd /opt/gigagochi
 git pull --ff-only origin main
-docker compose --env-file .env.production -f docker-compose.prod.yml up -d --no-build backend bot
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --no-build --force-recreate backend bot
 ```
 
 ## Local admin publish
