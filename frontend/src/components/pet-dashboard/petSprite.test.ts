@@ -132,7 +132,7 @@ describe("sad pet assets", () => {
       "https://example.test/static/generated/asset-1/teen-tap.png?v=7";
 
     expect(generatedTapReactionImageUrl(state)).toBe(
-      "https://example.test/static/generated/asset-1/teen-tap.png?v=7&tap_asset_v=20260710-1",
+      "https://example.test/static/generated/asset-1/teen-tap.png?v=7&tap_asset_v=20260710-2",
     );
   });
 
@@ -142,7 +142,7 @@ describe("sad pet assets", () => {
       "https://example.test/static/generated/asset-1/teen-idle.png?v=7";
 
     expect(generatedTapReactionImageUrl(state)).toBe(
-      "https://example.test/static/generated/asset-1/teen-tap.png?v=7&tap_asset_v=20260710-1",
+      "https://example.test/static/generated/asset-1/teen-tap.png?v=7&tap_asset_v=20260710-2",
     );
   });
 

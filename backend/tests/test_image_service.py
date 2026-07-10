@@ -23,6 +23,7 @@ from app.services.image_service import (
     PET_SAD_SCENE_IMAGE_PROMPT,
     PET_SAD_SCENE_VIDEO_PROMPT,
     PET_SCENE_VIDEO_PROMPT,
+    PET_TAP_REACTION_COMPOSITION_REFINEMENT_PROMPT,
     PET_TAP_REACTION_IMAGE_PROMPT,
     PetAssetImageSet,
     _character_reasoning_effort_kwargs,
@@ -95,7 +96,7 @@ def test_pet_character_region_uses_fixed_centered_two_by_three_crop() -> None:
     assert pet_character_region_box((720, 1280)) == (120, 320, 600, 1040)
 
 
-def test_generate_pet_tap_reaction_edits_only_fixed_character_crop(
+def test_generate_pet_tap_reaction_refines_and_returns_a_full_scene(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -104,7 +105,8 @@ def test_generate_pet_tap_reaction_edits_only_fixed_character_crop(
     output_dir.mkdir()
     scene_path = output_dir / "teen-idle.png"
     Image.new("RGB", (720, 1280), (10, 20, 30)).save(scene_path)
-    calls: list[tuple[str, str, str, tuple[int, int]]] = []
+    edit_calls: list[tuple[str, str, str, tuple[int, int]]] = []
+    refinement_calls: list[tuple[str, list[str], str, str]] = []
 
     monkeypatch.setattr(
         "app.services.image_service.generated_dir_for",
@@ -113,27 +115,43 @@ def test_generate_pet_tap_reaction_edits_only_fixed_character_crop(
 
     def fake_image_edit(prompt, source_path, *, label):
         with Image.open(source_path) as source:
-            calls.append((prompt, source_path.name, label, source.size))
-        return png_bytes(Image.new("RGB", (480, 720), (200, 80, 100)))
+            edit_calls.append((prompt, source_path.name, label, source.size))
+        return png_bytes(Image.new("RGB", (1024, 1536), (200, 80, 100)))
+
+    def fake_multi_image_edit(prompt, source_paths, *, label, size):
+        refinement_calls.append((prompt, [path.name for path in source_paths], label, size))
+        return png_bytes(Image.new("RGB", (1024, 1536), (90, 110, 130)))
 
     monkeypatch.setattr("app.services.image_service.generate_image_edit_bytes", fake_image_edit)
+    monkeypatch.setattr(
+        "app.services.image_service.generate_multi_image_edit_bytes",
+        fake_multi_image_edit,
+    )
 
     result_path = generate_pet_tap_reaction_scene_path(asset_id, scene_path)
     result = Image.open(result_path)
 
-    assert calls == [
+    assert edit_calls == [
         (
             PET_TAP_REACTION_IMAGE_PROMPT,
-            "teen-tap-source-region.png",
+            "teen-idle.png",
             "pet_creation/tap_reaction",
-            (480, 720),
+            (720, 1280),
+        )
+    ]
+    assert refinement_calls == [
+        (
+            PET_TAP_REACTION_COMPOSITION_REFINEMENT_PROMPT,
+            ["teen-idle.png", "teen-tap-pose.png"],
+            "pet_creation/tap_reaction_refinement",
+            "1024x1536",
         )
     ]
     assert result_path.name == "teen-tap.png"
     assert result.size == (720, 1280)
-    assert result.getpixel((0, 0)) == (10, 20, 30)
-    assert result.getpixel((360, 680)) == (200, 80, 100)
-    assert not (output_dir / "teen-tap-source-region.png").exists()
+    assert result.getpixel((0, 0)) == (90, 110, 130)
+    assert result.getpixel((360, 680)) == (90, 110, 130)
+    assert not (output_dir / "teen-tap-pose.png").exists()
 
 
 def test_composite_pet_character_region_preserves_pixels_outside_fixed_crop(tmp_path) -> None:

@@ -266,11 +266,12 @@
   `StatProgressRing`. The exported `status-*-new.svg` files contain baked arcs
   and cannot visually reflect chat, feeding, story, or decay changes.
 - Main-screen pet tap feedback uses the generated `teen-tap.png` scene for 180 ms
-  while pausing the video. The backend edits only the fixed character crop and
-  composites it onto the original idle scene; the reaction has heart-shaped eyes
-  and an open mouth, with no client-side floating hearts. Legacy localStorage pets
-  derive the stable filename from their idle URL, so the corresponding file must
-  be backfilled before their reaction becomes available.
+  while pausing the video. Generate and replace the complete `720x1280` scene;
+  compositing an edited character crop creates a visible central rectangle because
+  the image model also changes the crop background. The reaction has heart-shaped
+  eyes and an open mouth, with no client-side floating hearts. Legacy localStorage
+  pets derive the stable filename from their idle URL, so the corresponding file
+  must be backfilled before their reaction becomes available.
 - Server-generated story stat changes must sync back to Mini App through a
   partial `statsPatch`. Do not replace the whole stats object unless every
   `lastStatTickAt` key is also reset consistently; otherwise independent decay
