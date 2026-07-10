@@ -8,6 +8,8 @@ export type PetBackgroundGenerationStatus = "running" | "succeeded" | "failed";
 export type PetBackgroundGenerationPhase =
   | "generating_sad_image"
   | "generating_sad_video"
+  | "generating_happy_image"
+  | "generating_happy_video"
   | "completed";
 export type PetStatsPatch = {
   stats?: Partial<Record<PetStatKey, number>>;
@@ -27,6 +29,7 @@ export type LocalPetAssetSet = {
   };
   videoUrl?: string;
   sadVideoUrl?: string;
+  happyVideoUrl?: string;
   generationJobId?: string;
   backgroundGenerationStatus?: PetBackgroundGenerationStatus;
   backgroundGenerationPhase?: PetBackgroundGenerationPhase;
@@ -95,6 +98,7 @@ export type GeneratePetResponse = {
   images: LocalPetAssetSet["images"];
   videoUrl?: string;
   sadVideoUrl?: string;
+  happyVideoUrl?: string;
   generationJobId?: string;
   backgroundGenerationStatus?: PetBackgroundGenerationStatus;
   backgroundGenerationPhase?: PetBackgroundGenerationPhase;

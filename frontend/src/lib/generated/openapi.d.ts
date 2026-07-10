@@ -429,6 +429,8 @@ export interface components {
              * Format: date-time
              */
             readonly generatedAt: string;
+            /** Happyvideourl */
+            readonly happyVideoUrl?: string | null;
             readonly images: components["schemas"]["GeneratedPetImages"];
             /** Sadvideourl */
             readonly sadVideoUrl?: string | null;
@@ -459,7 +461,7 @@ export interface components {
              * @default queued
              * @enum {string}
              */
-            readonly phase: "queued" | "generating_images" | "generating_video" | "generating_sad_image" | "generating_sad_video" | "completed";
+            readonly phase: "queued" | "generating_images" | "generating_video" | "generating_sad_image" | "generating_sad_video" | "generating_happy_image" | "generating_happy_video" | "completed";
             readonly result?: components["schemas"]["GeneratePetAssetResponse"] | null;
             /**
              * Status

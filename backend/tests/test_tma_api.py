@@ -109,6 +109,7 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
             enable_in_memory_rate_limit=False,
             openai_api_key=None,
             openrouter_api_key="test-openrouter-key",
+            derived_asset_pilot_telegram_ids={42},
         ),
     )
     captured: dict[str, object] = {}
@@ -166,11 +167,28 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
         lambda _image_set, _sad_scene_path: SimpleNamespace(name="teen-sad.mp4"),
     )
     monkeypatch.setattr(
-        "app.routers.tma.build_pet_asset_set_response",
-        lambda _image_set, _video_path, _sad_scene_path, _sad_video_path: {
+        "app.routers.tma.generate_pet_happy_scene_path",
+        lambda _image_set: SimpleNamespace(name="teen-happy.png"),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.generate_pet_happy_video_for_image_asset_set",
+        lambda _image_set, _happy_scene_path: SimpleNamespace(name="teen-happy.mp4"),
+    )
+
+    def fake_build_pet_asset_set_response(*args):
+        _sad_video_path = args[3]
+        _happy_video_path = args[5]
+        return {
             **generated_response,
             "sadVideoUrl": ("/static/generated/asset-1/teen-sad.mp4" if _sad_video_path else None),
-        },
+            "happyVideoUrl": (
+                "/static/generated/asset-1/teen-happy.mp4" if _happy_video_path else None
+            ),
+        }
+
+    monkeypatch.setattr(
+        "app.routers.tma.build_pet_asset_set_response",
+        fake_build_pet_asset_set_response,
     )
     client = tma_client()
 
@@ -189,6 +207,7 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
     assert captured["description"] == "маленький дракон"
     assert captured["kwargs"] == {}
     assert result["sadVideoUrl"] == "/static/generated/asset-1/teen-sad.mp4"
+    assert result["happyVideoUrl"] == "/static/generated/asset-1/teen-happy.mp4"
     for stage in ("baby", "teen", "adult"):
         assert set(result["images"][stage]) == {"idle", "happy", "hungry", "sad"}
 
@@ -792,8 +811,24 @@ def test_generation_rate_limit(monkeypatch) -> None:
         lambda _image_set: SimpleNamespace(name="teen-idle.mp4"),
     )
     monkeypatch.setattr(
+        "app.routers.tma.generate_pet_sad_scene_path",
+        lambda _image_set: SimpleNamespace(name="teen-sad.png"),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.generate_pet_sad_video_for_image_asset_set",
+        lambda _image_set, _sad_scene_path: SimpleNamespace(name="teen-sad.mp4"),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.generate_pet_happy_scene_path",
+        lambda _image_set: SimpleNamespace(name="teen-happy.png"),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.generate_pet_happy_video_for_image_asset_set",
+        lambda _image_set, _happy_scene_path: SimpleNamespace(name="teen-happy.mp4"),
+    )
+    monkeypatch.setattr(
         "app.routers.tma.build_pet_asset_set_response",
-        lambda _image_set, _video_path: generated_response,
+        lambda *_args: generated_response,
     )
     with rate_limiter._lock:
         rate_limiter._events.clear()

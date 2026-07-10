@@ -15,6 +15,8 @@ GeneratePetJobPhaseValue = Literal[
     "generating_video",
     "generating_sad_image",
     "generating_sad_video",
+    "generating_happy_image",
+    "generating_happy_video",
     "completed",
 ]
 UserMemoryKind = Literal[
@@ -53,6 +55,7 @@ class GeneratePetAssetResponse(BaseModel):
     images: GeneratedPetImages
     videoUrl: str | None = None
     sadVideoUrl: str | None = None
+    happyVideoUrl: str | None = None
     blinkImageUrl: str | None = None
     spriteSheetUrl: str | None = None
     characterBible: dict[str, Any] | None = None

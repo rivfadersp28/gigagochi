@@ -143,6 +143,7 @@ function normalizeAssetSet(value: unknown): LocalPetAssetSet | undefined {
     images: normalizedImages,
     videoUrl: typeof value.videoUrl === "string" ? value.videoUrl : undefined,
     sadVideoUrl: typeof value.sadVideoUrl === "string" ? value.sadVideoUrl : undefined,
+    happyVideoUrl: typeof value.happyVideoUrl === "string" ? value.happyVideoUrl : undefined,
     generationJobId:
       typeof value.generationJobId === "string" ? value.generationJobId : undefined,
     backgroundGenerationStatus:
@@ -154,6 +155,8 @@ function normalizeAssetSet(value: unknown): LocalPetAssetSet | undefined {
     backgroundGenerationPhase:
       value.backgroundGenerationPhase === "generating_sad_image"
       || value.backgroundGenerationPhase === "generating_sad_video"
+      || value.backgroundGenerationPhase === "generating_happy_image"
+      || value.backgroundGenerationPhase === "generating_happy_video"
       || value.backgroundGenerationPhase === "completed"
         ? value.backgroundGenerationPhase
         : undefined,
@@ -341,6 +344,8 @@ function normalizeRecentStoryEvent(value: unknown): Record<string, unknown> | nu
     title: normalizeText(value.title, 120),
     summary,
     compactText: compactText || summary,
+    storyText: normalizeText(value.storyText, 2000),
+    imageUrl: normalizeText(value.imageUrl, 2000),
     eventType: normalizeText(value.eventType, 60),
     valence: normalizeText(value.valence, 20),
     participants: normalizeStringList(value.participants, 6, 80),
@@ -353,6 +358,7 @@ function normalizeRecentStoryEvent(value: unknown): Record<string, unknown> | nu
     statImpacts: normalizeStatImpacts(value.statImpacts, value.statImpact),
     tags: normalizeStringList(value.tags, 8, 60),
     createdAt: isIsoDate(value.createdAt) ? value.createdAt : new Date().toISOString(),
+    generatedAt: isIsoDate(value.generatedAt) ? value.generatedAt : undefined,
     source: normalizeText(value.source, 80) || "background_story",
   };
 }

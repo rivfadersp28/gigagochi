@@ -17,9 +17,12 @@ from app.prompts.pet_image_prompts import (
 )
 from app.services.image_service import (
     CHARACTER_BIBLE_SCHEMA,
+    PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT,
+    PET_HAPPY_SCENE_IMAGE_PROMPT,
     PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT,
     PET_SAD_SCENE_IMAGE_PROMPT,
     PET_SAD_SCENE_VIDEO_PROMPT,
+    PET_SCENE_VIDEO_PROMPT,
     PetAssetImageSet,
     _character_reasoning_effort_kwargs,
     _internal_reference_image_url,
@@ -38,6 +41,8 @@ from app.services.image_service import (
     generate_openrouter_image_bytes,
     generate_openrouter_video_bytes,
     generate_pet_asset_set,
+    generate_pet_happy_scene_path,
+    generate_pet_happy_video_for_image_asset_set,
     generate_pet_sad_scene_path,
     generate_pet_sad_video_for_image_asset_set,
     generation_error_code,
@@ -1048,6 +1053,78 @@ def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, t
     assert sad_video_path.read_bytes() == b"sad-video"
 
 
+def test_generate_happy_assets_preserve_scene_and_reuse_normal_blink_prompt(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    asset_id = uuid.uuid4()
+    output_dir = tmp_path / str(asset_id)
+    output_dir.mkdir()
+    idle_scene_path = output_dir / "teen-idle.png"
+    idle_scene_path.write_bytes(png_bytes(Image.new("RGB", (720, 1280), (30, 40, 50))))
+    image_set = PetAssetImageSet(
+        asset_set_id=asset_id,
+        generated_paths={("teen", "idle"): (idle_scene_path, "scene")},
+        scene_path=idle_scene_path,
+        version=1,
+        generated_at=datetime.now(UTC),
+    )
+    image_calls: list[tuple[str, str, str]] = []
+    refinement_calls: list[tuple[str, list[str], str, str]] = []
+    video_calls: list[tuple[str, str, str]] = []
+
+    monkeypatch.setattr(
+        "app.services.image_service.generated_dir_for",
+        lambda _asset_id: output_dir,
+    )
+
+    def fake_image_edit(prompt, source_path, *, label):
+        image_calls.append((prompt, source_path.name, label))
+        return png_bytes(Image.new("RGB", (1024, 1536), (60, 70, 80)))
+
+    def fake_video_bytes(scene_path, *, prompt, label):
+        video_calls.append((scene_path.name, prompt, label))
+        return b"happy-video"
+
+    def fake_multi_image_edit(prompt, source_paths, *, label, size):
+        refinement_calls.append((prompt, [path.name for path in source_paths], label, size))
+        return png_bytes(Image.new("RGB", (1024, 1536), (70, 80, 90)))
+
+    monkeypatch.setattr("app.services.image_service.generate_image_edit_bytes", fake_image_edit)
+    monkeypatch.setattr(
+        "app.services.image_service.generate_multi_image_edit_bytes",
+        fake_multi_image_edit,
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.generate_pet_scene_video_bytes",
+        fake_video_bytes,
+    )
+
+    happy_scene_path = generate_pet_happy_scene_path(image_set)
+    happy_video_path = generate_pet_happy_video_for_image_asset_set(
+        image_set,
+        happy_scene_path,
+    )
+
+    assert image_calls == [
+        (PET_HAPPY_SCENE_IMAGE_PROMPT, "teen-idle.png", "pet_creation/happy_pose")
+    ]
+    assert refinement_calls == [
+        (
+            PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT,
+            ["teen-idle.png", "teen-happy-pose.png"],
+            "pet_creation/happy_scene",
+            "1024x1536",
+        )
+    ]
+    assert not (output_dir / "teen-happy-pose.png").exists()
+    assert video_calls == [
+        ("teen-happy.png", PET_SCENE_VIDEO_PROMPT, "pet_creation/happy_scene_video")
+    ]
+    assert Image.open(happy_scene_path).size == (720, 1280)
+    assert happy_video_path.read_bytes() == b"happy-video"
+
+
 def test_asset_response_switches_sad_urls_only_when_both_sad_assets_are_ready(tmp_path) -> None:
     asset_id = uuid.uuid4()
     idle_path = tmp_path / "teen-idle.png"
@@ -1074,6 +1151,45 @@ def test_asset_response_switches_sad_urls_only_when_both_sad_assets_are_ready(tm
     assert pending["images"]["teen"]["sad"] == pending["images"]["teen"]["idle"]
     assert ready["sadVideoUrl"].endswith("teen-sad.mp4?v=7")
     assert ready["images"]["teen"]["sad"].endswith("teen-sad.png?v=7")
+
+
+def test_asset_response_switches_happy_urls_only_when_both_happy_assets_are_ready(
+    tmp_path,
+) -> None:
+    asset_id = uuid.uuid4()
+    idle_path = tmp_path / "teen-idle.png"
+    idle_video_path = tmp_path / "teen-idle.mp4"
+    happy_path = tmp_path / "teen-happy.png"
+    happy_video_path = tmp_path / "teen-happy.mp4"
+    image_set = PetAssetImageSet(
+        asset_set_id=asset_id,
+        generated_paths={("teen", "idle"): (idle_path, "scene")},
+        scene_path=idle_path,
+        version=7,
+        generated_at=datetime.now(UTC),
+    )
+
+    pending = build_pet_asset_set_response(
+        image_set,
+        idle_video_path,
+        None,
+        None,
+        happy_path,
+        None,
+    )
+    ready = build_pet_asset_set_response(
+        image_set,
+        idle_video_path,
+        None,
+        None,
+        happy_path,
+        happy_video_path,
+    )
+
+    assert pending["happyVideoUrl"] is None
+    assert pending["images"]["teen"]["happy"] == pending["images"]["teen"]["idle"]
+    assert ready["happyVideoUrl"].endswith("teen-happy.mp4?v=7")
+    assert ready["images"]["teen"]["happy"].endswith("teen-happy.png?v=7")
 
 
 def test_state_strip_prompt_omits_lore_only_do_not_change() -> None:

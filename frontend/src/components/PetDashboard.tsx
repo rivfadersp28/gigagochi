@@ -48,7 +48,11 @@ import {
   splitPetReplySentences,
 } from "@/lib/petReplySentences";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
-import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
+import {
+  canUseDerivedPetAssets,
+  hapticNotification,
+  useTelegramBackButton,
+} from "@/lib/telegram";
 import { TEST_PET_ASSET_SET, TEST_PET_DESCRIPTION } from "@/lib/testPetFixture";
 import type { GenerateTravelResponse } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
@@ -69,11 +73,13 @@ import { usePetBackgroundAssets } from "./pet-dashboard/usePetBackgroundAssets";
 import { usePetPushSnapshotSync } from "./pet-dashboard/usePetPushSnapshotSync";
 import {
   generatedSceneVideoUrl,
-  generatedSpriteUrl,
+  generatedVisualPosterUrl,
+  hasGeneratedHappyAssets,
   hasGeneratedSadAssets,
-  isPetInRedZone,
+  resolvedPetVisualMode,
   stageLabels,
   stateLabels,
+  type PetVisualMode,
 } from "./pet-dashboard/petSprite";
 
 type PetDashboardProps = {
@@ -253,7 +259,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const localPet = useLocalPetState();
   const [isFeeding, setIsFeeding] = useState(false);
   const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
-  const [isSadAssetForced, setIsSadAssetForced] = useState(false);
+  const [visualModeOverride, setVisualModeOverride] = useState<PetVisualMode | null>(null);
   const [confirmationAction, setConfirmationAction] = useState<ConfirmationAction | null>(null);
   const [isChatMode, setIsChatMode] = useState(false);
   const [isFeedMode, setIsFeedMode] = useState(false);
@@ -271,6 +277,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
   const [assetsReadyForPetId, setAssetsReadyForPetId] = useState<string | null>(null);
   const [assetLoadErrorForPetId, setAssetLoadErrorForPetId] = useState<string | null>(null);
+  const [loadedSceneMedia, setLoadedSceneMedia] = useState<{
+    petId: string;
+    backgroundSrc: string;
+    videoSrc: string | null;
+  } | null>(null);
   const proactiveAttemptedRef = useRef(false);
   const ambientRequestIdRef = useRef(0);
   const idleThinkingRequestIdRef = useRef(0);
@@ -308,18 +319,28 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     };
   }, []);
   const pet = localPet.pet;
-  const hasSadAssets = pet ? hasGeneratedSadAssets(pet) : false;
-  const isAnyStatRed = pet ? isPetInRedZone(pet) : false;
-  const shouldUseSadAssets = hasSadAssets && (isSadAssetForced || isAnyStatRed);
-  const sceneBackgroundSrc = pet
-    ? generatedSpriteUrl(pet, pet.stage, shouldUseSadAssets ? "sad" : pet.mood)
+  const derivedAssetsEnabled = canUseDerivedPetAssets();
+  const hasSadAssets = derivedAssetsEnabled && pet ? hasGeneratedSadAssets(pet) : false;
+  const hasHappyAssets = derivedAssetsEnabled && pet ? hasGeneratedHappyAssets(pet) : false;
+  const visualMode = pet
+    ? resolvedPetVisualMode(pet, visualModeOverride, derivedAssetsEnabled)
+    : "normal";
+  const requestedSceneBackgroundSrc = pet
+    ? generatedVisualPosterUrl(pet, visualMode)
       ?? mainSceneBackgroundSrc
     : null;
-  const sceneVideoSrc = pet ? generatedSceneVideoUrl(pet, shouldUseSadAssets) : null;
+  const requestedSceneVideoSrc = pet ? generatedSceneVideoUrl(pet, visualMode) : null;
+  const sceneBackgroundSrc = loadedSceneMedia?.petId === petId
+    ? loadedSceneMedia.backgroundSrc
+    : requestedSceneBackgroundSrc;
+  const sceneVideoSrc = loadedSceneMedia?.petId === petId
+    ? loadedSceneMedia.videoSrc
+    : requestedSceneVideoSrc;
   const conversationInputOffsetY = useConversationKeyboardOffset(isChatMode, sceneRef);
   usePetBackgroundAssets({
     assetSet: pet?.assetSet,
     applyGeneratedAssets: localPet.applyGeneratedAssets,
+    derivedAssetsEnabled,
   });
   usePetPushSnapshotSync({
     status: localPet.status,
@@ -374,6 +395,48 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     petId,
     sceneBackgroundSrc,
     sceneVideoSrc,
+  ]);
+
+  useEffect(() => {
+    if (
+      assetsReadyForPetId !== petId
+      || !requestedSceneBackgroundSrc
+      || (
+        loadedSceneMedia?.petId === petId
+        && loadedSceneMedia.backgroundSrc === requestedSceneBackgroundSrc
+        && loadedSceneMedia.videoSrc === requestedSceneVideoSrc
+      )
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const imageReady = preloadImage(requestedSceneBackgroundSrc);
+    const videoReady = requestedSceneVideoSrc
+      ? preloadVideo(requestedSceneVideoSrc)
+      : Promise.resolve();
+
+    void Promise.all([imageReady, videoReady]).then(() => {
+      if (!cancelled) {
+        setLoadedSceneMedia({
+          petId,
+          backgroundSrc: requestedSceneBackgroundSrc,
+          videoSrc: requestedSceneVideoSrc,
+        });
+      }
+    }).catch(() => {
+      // Keep the currently rendered media if a generated variant cannot be preloaded.
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    assetsReadyForPetId,
+    loadedSceneMedia,
+    petId,
+    requestedSceneBackgroundSrc,
+    requestedSceneVideoSrc,
   ]);
 
   const showPetReplyMessage = useCallback((
@@ -1052,12 +1115,14 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           onResetPetStats={handleResetPetStats}
           onOpenTestPet={handleOpenTestPet}
           canShowSadAsset={hasSadAssets}
-          isSadAssetForced={isSadAssetForced}
-          onToggleSadAsset={() => setIsSadAssetForced((forced) => !forced)}
+          canShowHappyAsset={hasHappyAssets}
+          visualModeOverride={visualModeOverride}
+          onVisualModeOverrideChange={setVisualModeOverride}
         />
 
         <div className="sr-only" aria-live="polite">
-          Stage {stageLabels[pet.stage]}. State {stateLabels[pet.mood]}. Hunger{" "}
+          Stage {stageLabels[pet.stage]}. State {stateLabels[pet.mood]}. Visual mode{" "}
+          {visualMode}. Hunger{" "}
           {roundedHungerPercent}/100. Happiness {roundedMoodPercent}/100. Health{" "}
           {roundedHealthPercent}/100.
         </div>

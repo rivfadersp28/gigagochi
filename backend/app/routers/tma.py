@@ -45,6 +45,8 @@ from app.services.generation_job_service import (
 )
 from app.services.image_service import (
     build_pet_asset_set_response,
+    generate_pet_happy_scene_path,
+    generate_pet_happy_video_for_image_asset_set,
     generate_pet_image_asset_set,
     generate_pet_sad_scene_path,
     generate_pet_sad_video_for_image_asset_set,
@@ -167,15 +169,13 @@ def _generation_job_service() -> GenerationJobService:
             generate_background_video=lambda image_set, sad_scene_path: (
                 generate_pet_sad_video_for_image_asset_set(image_set, sad_scene_path)
             ),
-            build_response=lambda image_set, video_path, sad_scene_path, sad_video_path: (
-                build_pet_asset_set_response(
-                    image_set,
-                    video_path,
-                    sad_scene_path,
-                    sad_video_path,
-                )
+            generate_happy_image=lambda image_set: generate_pet_happy_scene_path(image_set),
+            generate_happy_video=lambda image_set, happy_scene_path: (
+                generate_pet_happy_video_for_image_asset_set(image_set, happy_scene_path)
             ),
+            build_response=build_pet_asset_set_response,
             build_failure=_build_generation_failure,
+            derived_asset_owner_ids=settings.derived_asset_pilot_telegram_ids,
         )
     return generation_job_service
 

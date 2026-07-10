@@ -245,16 +245,19 @@ function completeGeneratedImages(response: GeneratePetApiResponse): GeneratePetR
 
 function backgroundGenerationState(job: GeneratePetJobResponse) {
   const hasBackgroundError = Boolean(job.backgroundError);
-  const hasSadAssets = Boolean(job.result?.sadVideoUrl);
-  const status = hasBackgroundError || job.status === "failed"
+  const status = job.status === "failed"
     ? "failed"
-    : job.status === "succeeded" && hasSadAssets
-      ? "succeeded"
-      : "running";
+    : job.phase !== "completed"
+      ? "running"
+      : hasBackgroundError
+        ? "failed"
+        : "succeeded";
   const errorDetail = job.backgroundError ?? (job.status === "failed" ? job.error : undefined);
   const error = errorDetail ? apiErrorFromDetail(errorDetail).message : undefined;
   const phase = job.phase === "generating_sad_image"
     || job.phase === "generating_sad_video"
+    || job.phase === "generating_happy_image"
+    || job.phase === "generating_happy_video"
     || job.phase === "completed"
     ? job.phase
     : undefined;
@@ -284,6 +287,7 @@ function generatedPetResponseFromJob(job: GeneratePetJobResponse): GeneratePetRe
     images: completeGeneratedImages(response),
     videoUrl: response.videoUrl ? publicImageUrl(response.videoUrl) : undefined,
     sadVideoUrl: response.sadVideoUrl ? publicImageUrl(response.sadVideoUrl) : undefined,
+    happyVideoUrl: response.happyVideoUrl ? publicImageUrl(response.happyVideoUrl) : undefined,
     blinkImageUrl: response.blinkImageUrl ? publicImageUrl(response.blinkImageUrl) : undefined,
     spriteSheetUrl: response.spriteSheetUrl ? publicImageUrl(response.spriteSheetUrl) : undefined,
   };

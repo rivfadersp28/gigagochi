@@ -266,6 +266,32 @@ PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT = (
     "грустно плачет, как на второй картинке. Сохрани дизайн, одежду, посох, книгу, "
     "флаконы, освещение и окружение первой картинки. Больше ничего не меняй."
 )
+PET_HAPPY_SCENE_IMAGE_PROMPT = (
+    "пусть персонаж слегка приподнимет голову, чуть более жизнерадостно посмотрит и "
+    "слегка естественно улыбнётся\n"
+    "больше ничего не меняй\n\n"
+    "КРИТИЧЕСКИ ВАЖНО СОХРАНИТЬ КОМПОЗИЦИЮ: используй точно ту же камеру, дистанцию "
+    "до персонажа, кадрирование, перспективу и размер персонажа в кадре. Не приближай "
+    "персонажа, не увеличивай голову или тело, не делай портретный или крупный план. "
+    "Сохрани точное положение персонажа, фон, освещение, цвета, дизайн, одежду и все "
+    "предметы. Измени только голову и выражение лица: чуть-чуть приподними подбородок, "
+    "сделай глаза немного более открытыми и живыми, сохранив их исходную форму, и добавь "
+    "лёгкую закрытую улыбку. Не запрокидывай голову, не меняй положение тела, не открывай "
+    "рот, не показывай зубы и не превращай эмоцию в широкую или мультяшную."
+)
+PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT = (
+    "Первая картинка — единственный обязательный эталон композиции, масштаба и окружения. "
+    "Сохрани из первой картинки точную камеру, кадрирование, перспективу, фон, положение "
+    "персонажа, размер головы в пикселях и общий размер персонажа в кадре. Вторая картинка "
+    "используется только как референс слегка приподнятой головы и более жизнерадостного "
+    "выражения персонажа.\n\n"
+    "Верни сцену в композиции первой картинки. Персонаж должен находиться на той же "
+    "дистанции от камеры, сохранять положение тела и занимать ровно столько же места, сколько на "
+    "первой картинке. Сохрани дизайн персонажа, одежду, аксессуары, фон, освещение и все "
+    "предметы первой картинки. Перенеси со второй картинки только чуть приподнятый подбородок, "
+    "немного более открытые и живые глаза и лёгкую естественную закрытую улыбку. Не изменяй "
+    "размер или форму головы и глаз, не открывай рот, не показывай зубы и не меняй ничего больше."
+)
 PET_SAD_SCENE_VIDEO_PROMPT = (
     "Static locked camera. The character remains perfectly still in the exact same pose, "
     "position, scale, composition, lighting, colors, clothing, props, background, focus, "
@@ -1968,6 +1994,44 @@ def generate_pet_sad_video_for_image_asset_set(
     return video_path
 
 
+def generate_pet_happy_scene_path(image_set: PetAssetImageSet) -> Path:
+    happy_pose_bytes = generate_image_edit_bytes(
+        PET_HAPPY_SCENE_IMAGE_PROMPT,
+        image_set.scene_path,
+        label="pet_creation/happy_pose",
+    )
+    output_dir = generated_dir_for(image_set.asset_set_id)
+    happy_pose_path = output_dir / f"{FAST_GENERATION_STAGE}-happy-pose.png"
+    happy_pose_path.write_bytes(normalize_pet_scene_video_frame_bytes(happy_pose_bytes))
+    try:
+        happy_scene_bytes = generate_multi_image_edit_bytes(
+            PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT,
+            [image_set.scene_path, happy_pose_path],
+            label="pet_creation/happy_scene",
+            size=PET_SCENE_IMAGE_SIZE,
+        )
+    finally:
+        happy_pose_path.unlink(missing_ok=True)
+
+    happy_scene_path = output_dir / f"{FAST_GENERATION_STAGE}-happy.png"
+    happy_scene_path.write_bytes(normalize_pet_scene_video_frame_bytes(happy_scene_bytes))
+    return happy_scene_path
+
+
+def generate_pet_happy_video_for_image_asset_set(
+    image_set: PetAssetImageSet,
+    happy_scene_path: Path,
+) -> Path:
+    video_bytes = generate_pet_scene_video_bytes(
+        happy_scene_path,
+        prompt=PET_SCENE_VIDEO_PROMPT,
+        label="pet_creation/happy_scene_video",
+    )
+    video_path = generated_dir_for(image_set.asset_set_id) / f"{FAST_GENERATION_STAGE}-happy.mp4"
+    video_path.write_bytes(video_bytes)
+    return video_path
+
+
 def crop_sprite_sheet(pet_id: uuid.UUID, sprite_path: Path) -> dict[tuple[str, str], Path]:
     output_paths: dict[tuple[str, str], Path] = {}
     with Image.open(sprite_path) as image:
@@ -2042,6 +2106,8 @@ def build_pet_asset_set_response(
     video_path: Path,
     sad_scene_path: Path | None = None,
     sad_video_path: Path | None = None,
+    happy_scene_path: Path | None = None,
+    happy_video_path: Path | None = None,
 ) -> dict[str, Any]:
     asset_set_id = image_set.asset_set_id
     generated_paths = image_set.generated_paths
@@ -2052,9 +2118,15 @@ def build_pet_asset_set_response(
         for key, (path, _prompt) in generated_paths.items()
     }
     sad_assets_ready = sad_scene_path is not None and sad_video_path is not None
+    happy_assets_ready = happy_scene_path is not None and happy_video_path is not None
     sad_scene_url = (
         f"/static/generated/{asset_set_id}/{sad_scene_path.name}?v={version}"
         if sad_assets_ready
+        else None
+    )
+    happy_scene_url = (
+        f"/static/generated/{asset_set_id}/{happy_scene_path.name}?v={version}"
+        if happy_assets_ready
         else None
     )
     images: dict[str, dict[str, str]] = {stage: {} for stage in STAGE_ROWS}
@@ -2064,6 +2136,8 @@ def build_pet_asset_set_response(
             images[stage][state] = generated_urls[source_key]
         if sad_scene_url:
             images[stage]["sad"] = sad_scene_url
+        if happy_scene_url:
+            images[stage]["happy"] = happy_scene_url
 
     return {
         "assetSetId": str(asset_set_id),
@@ -2073,6 +2147,11 @@ def build_pet_asset_set_response(
         "sadVideoUrl": (
             f"/static/generated/{asset_set_id}/{sad_video_path.name}?v={version}"
             if sad_assets_ready
+            else None
+        ),
+        "happyVideoUrl": (
+            f"/static/generated/{asset_set_id}/{happy_video_path.name}?v={version}"
+            if happy_assets_ready
             else None
         ),
         "blinkImageUrl": generated_urls.get((FAST_GENERATION_STAGE, "blink")),

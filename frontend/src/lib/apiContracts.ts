@@ -56,6 +56,8 @@ const JOB_PHASES = new Set([
   "generating_video",
   "generating_sad_image",
   "generating_sad_video",
+  "generating_happy_image",
+  "generating_happy_video",
   "completed",
 ]);
 const MEMORY_KINDS = new Set<UserMemoryKind>([
@@ -155,6 +157,7 @@ function parseGeneratedPetAsset(value: unknown, path: string): GeneratePetApiRes
   }
   optionalString(payload.videoUrl, `${path}.videoUrl`);
   optionalString(payload.sadVideoUrl, `${path}.sadVideoUrl`);
+  optionalString(payload.happyVideoUrl, `${path}.happyVideoUrl`);
   optionalString(payload.blinkImageUrl, `${path}.blinkImageUrl`);
   optionalString(payload.spriteSheetUrl, `${path}.spriteSheetUrl`);
   optionalRecord(payload.characterBible, `${path}.characterBible`);

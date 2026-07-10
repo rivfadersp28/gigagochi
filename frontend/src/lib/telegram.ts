@@ -56,6 +56,7 @@ type TelegramWindow = Window &
   };
 
 let lockedTelegramViewportHeight: number | null = null;
+const DERIVED_ASSET_PILOT_TELEGRAM_IDS = new Set([62943754]);
 
 function telegramWindow() {
   if (typeof window === "undefined") {
@@ -74,6 +75,30 @@ export function getTelegramInitData(): string {
 
 export function getTelegramInitDataUnsafe(): Record<string, unknown> | undefined {
   return getTelegramWebApp()?.initDataUnsafe;
+}
+
+export function getTelegramUserId(): number | null {
+  const user = getTelegramInitDataUnsafe()?.user;
+  if (!user || typeof user !== "object" || Array.isArray(user)) {
+    return null;
+  }
+  const id = (user as Record<string, unknown>).id;
+  if (typeof id === "number" && Number.isSafeInteger(id)) {
+    return id;
+  }
+  if (typeof id === "string" && /^\d+$/.test(id)) {
+    const parsed = Number(id);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+export function canUseDerivedPetAssets(): boolean {
+  const telegramUserId = getTelegramUserId();
+  if (telegramUserId !== null) {
+    return DERIVED_ASSET_PILOT_TELEGRAM_IDS.has(telegramUserId);
+  }
+  return process.env.NODE_ENV === "development" && !getTelegramInitData();
 }
 
 export function getTelegramThemeParams(): Record<string, string> {

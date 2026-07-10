@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import { ApiError, refreshPetBackgroundAssets } from "@/lib/api";
 import type { LocalPetAssetSet } from "@/lib/types";
 
-import { versionedSadAssetUrl } from "./petSprite";
+import { versionedHappyAssetUrl, versionedSadAssetUrl } from "./petSprite";
 
 const BACKGROUND_ASSET_POLL_MS = 2_000;
 
@@ -24,21 +24,38 @@ export function legacySadAssetUrls(assetSet: LocalPetAssetSet) {
   };
 }
 
+export function legacyHappyAssetUrls(assetSet: LocalPetAssetSet) {
+  const idleUrl = assetSet.images.teen.idle;
+  if (!/teen-idle\.png(?:\?|$)/.test(idleUrl)) {
+    return null;
+  }
+  return {
+    imageUrl: versionedHappyAssetUrl(
+      idleUrl.replace(/teen-idle\.png(?=\?|$)/, "teen-happy.png"),
+    ),
+    videoUrl: versionedHappyAssetUrl(
+      idleUrl.replace(/teen-idle\.png(?=\?|$)/, "teen-happy.mp4"),
+    ),
+  };
+}
+
 type UsePetBackgroundAssetsOptions = {
   assetSet?: LocalPetAssetSet;
   applyGeneratedAssets: (assetSet: LocalPetAssetSet) => unknown;
+  derivedAssetsEnabled: boolean;
 };
 
 export function usePetBackgroundAssets({
   assetSet,
   applyGeneratedAssets,
+  derivedAssetsEnabled,
 }: UsePetBackgroundAssetsOptions) {
   const jobId = assetSet?.generationJobId;
   const status = assetSet?.backgroundGenerationStatus;
   const updatedAt = assetSet?.backgroundGenerationUpdatedAt;
 
   useEffect(() => {
-    if (!assetSet || !jobId || status !== "running") {
+    if (!derivedAssetsEnabled || !assetSet || !jobId || status !== "running") {
       return;
     }
 
@@ -83,10 +100,10 @@ export function usePetBackgroundAssets({
         window.clearTimeout(timeoutId);
       }
     };
-  }, [applyGeneratedAssets, assetSet, jobId, status, updatedAt]);
+  }, [applyGeneratedAssets, assetSet, derivedAssetsEnabled, jobId, status, updatedAt]);
 
   useEffect(() => {
-    if (!assetSet || jobId || status || assetSet.sadVideoUrl) {
+    if (!derivedAssetsEnabled || !assetSet || jobId || status || assetSet.sadVideoUrl) {
       return;
     }
     const sadAssets = legacySadAssetUrls(assetSet);
@@ -125,5 +142,50 @@ export function usePetBackgroundAssets({
     return () => {
       cancelled = true;
     };
-  }, [applyGeneratedAssets, assetSet, jobId, status]);
+  }, [applyGeneratedAssets, assetSet, derivedAssetsEnabled, jobId, status]);
+
+  useEffect(() => {
+    if (
+      !derivedAssetsEnabled
+      || !assetSet
+      || status === "running"
+      || assetSet.happyVideoUrl
+    ) {
+      return;
+    }
+    const happyAssets = legacyHappyAssetUrls(assetSet);
+    if (!happyAssets) {
+      return;
+    }
+
+    let cancelled = false;
+    const discover = async () => {
+      try {
+        const responses = await Promise.all([
+          fetch(happyAssets.imageUrl, { method: "HEAD" }),
+          fetch(happyAssets.videoUrl, { method: "HEAD" }),
+        ]);
+        if (cancelled || responses.some((response) => !response.ok)) {
+          return;
+        }
+        applyGeneratedAssets({
+          ...assetSet,
+          images: {
+            baby: { ...assetSet.images.baby, happy: happyAssets.imageUrl },
+            teen: { ...assetSet.images.teen, happy: happyAssets.imageUrl },
+            adult: { ...assetSet.images.adult, happy: happyAssets.imageUrl },
+          },
+          happyVideoUrl: happyAssets.videoUrl,
+          backgroundGenerationUpdatedAt: new Date().toISOString(),
+        });
+      } catch {
+        // A missing pilot asset keeps the current normal fallback.
+      }
+    };
+
+    void discover();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyGeneratedAssets, assetSet, derivedAssetsEnabled, status]);
 }

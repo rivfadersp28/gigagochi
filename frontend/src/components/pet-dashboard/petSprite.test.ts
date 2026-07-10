@@ -3,12 +3,15 @@ import { describe, expect, it } from "vitest";
 import type { LocalPetState } from "@/lib/types";
 
 import {
+  automaticPetVisualMode,
   generatedSceneVideoUrl,
   generatedSpriteUrl,
+  hasGeneratedHappyAssets,
   hasGeneratedSadAssets,
   isPetInRedZone,
+  resolvedPetVisualMode,
 } from "./petSprite";
-import { legacySadAssetUrls } from "./usePetBackgroundAssets";
+import { legacyHappyAssetUrls, legacySadAssetUrls } from "./usePetBackgroundAssets";
 
 function pet(): LocalPetState {
   const tick = "2026-07-10T10:00:00.000Z";
@@ -29,10 +32,11 @@ function pet(): LocalPetState {
       generatedAt: tick,
       videoUrl: "/idle.mp4",
       sadVideoUrl: "/sad.mp4",
+      happyVideoUrl: "/happy.mp4",
       images: {
-        baby: { idle: "/idle.png", happy: "/idle.png", hungry: "/idle.png", sad: "/sad.png" },
-        teen: { idle: "/idle.png", happy: "/idle.png", hungry: "/idle.png", sad: "/sad.png" },
-        adult: { idle: "/idle.png", happy: "/idle.png", hungry: "/idle.png", sad: "/sad.png" },
+        baby: { idle: "/idle.png", happy: "/happy.png", hungry: "/idle.png", sad: "/sad.png" },
+        teen: { idle: "/idle.png", happy: "/happy.png", hungry: "/idle.png", sad: "/sad.png" },
+        adult: { idle: "/idle.png", happy: "/happy.png", hungry: "/idle.png", sad: "/sad.png" },
       },
     },
   };
@@ -62,6 +66,39 @@ describe("sad pet assets", () => {
     expect(hasGeneratedSadAssets(state)).toBe(false);
   });
 
+  it("requires both a distinct happy image and a happy video", () => {
+    const state = pet();
+    expect(hasGeneratedHappyAssets(state)).toBe(true);
+
+    state.assetSet!.images.teen.happy = state.assetSet!.images.teen.idle;
+    expect(hasGeneratedHappyAssets(state)).toBe(false);
+  });
+
+  it("selects sad, happy, and normal from the shared stat thresholds", () => {
+    const state = pet();
+    state.stats = { hunger: 29, happiness: 100, energy: 100 };
+    expect(automaticPetVisualMode(state)).toBe("sad");
+
+    state.stats = { hunger: 70, happiness: 70, energy: 70 };
+    expect(automaticPetVisualMode(state)).toBe("happy");
+
+    state.stats = { hunger: 30, happiness: 100, energy: 100 };
+    expect(automaticPetVisualMode(state)).toBe("normal");
+  });
+
+  it("lets a ready debug override win and falls back when its assets are unavailable", () => {
+    const state = pet();
+    state.stats = { hunger: 29, happiness: 100, energy: 100 };
+    expect(resolvedPetVisualMode(state, "normal")).toBe("normal");
+    expect(resolvedPetVisualMode(state, "happy")).toBe("happy");
+
+    delete state.assetSet!.happyVideoUrl;
+    expect(resolvedPetVisualMode(state, "happy")).toBe("normal");
+
+    state.assetSet!.happyVideoUrl = "/happy.mp4";
+    expect(resolvedPetVisualMode(state, "happy", false)).toBe("normal");
+  });
+
   it("derives legacy sad asset URLs from the generated idle scene", () => {
     const state = pet();
     state.assetSet!.images.teen.idle =
@@ -75,11 +112,25 @@ describe("sad pet assets", () => {
     });
   });
 
+  it("derives legacy happy asset URLs from the generated idle scene", () => {
+    const state = pet();
+    state.assetSet!.images.teen.idle =
+      "https://example.test/static/generated/asset-1/teen-idle.png?v=7";
+
+    expect(legacyHappyAssetUrls(state.assetSet!)).toEqual({
+      imageUrl:
+        "https://example.test/static/generated/asset-1/teen-happy.png?v=7&happy_asset_v=20260710-1",
+      videoUrl:
+        "https://example.test/static/generated/asset-1/teen-happy.mp4?v=7&happy_asset_v=20260710-1",
+    });
+  });
+
   it("cache-busts only rendered sad assets", () => {
     const state = pet();
 
     expect(generatedSpriteUrl(state, "teen", "sad")).toContain("sad_asset_v=20260710-2");
-    expect(generatedSceneVideoUrl(state, true)).toContain("sad_asset_v=20260710-2");
+    expect(generatedSceneVideoUrl(state, "sad")).toContain("sad_asset_v=20260710-2");
+    expect(generatedSceneVideoUrl(state, "happy")).toContain("happy_asset_v=20260710-1");
     expect(generatedSpriteUrl(state, "teen", "idle")).toBe("/idle.png");
     expect(generatedSceneVideoUrl(state)).toBe("/idle.mp4");
   });

@@ -20,7 +20,12 @@ GenerateImages = Callable[[str], Any]
 GenerateVideo = Callable[[Any], Any]
 GenerateBackgroundImage = Callable[[Any], Any]
 GenerateBackgroundVideo = Callable[[Any, Any], Any]
-BuildResponse = Callable[[Any, Any, Any | None, Any | None], dict[str, Any]]
+GenerateHappyImage = Callable[[Any], Any]
+GenerateHappyVideo = Callable[[Any, Any], Any]
+BuildResponse = Callable[
+    [Any, Any, Any | None, Any | None, Any | None, Any | None],
+    dict[str, Any],
+]
 BuildFailure = Callable[[str, str, Exception], dict[str, object]]
 _UNSET = object()
 
@@ -47,16 +52,22 @@ class GenerationJobService:
         generate_video: GenerateVideo,
         generate_background_image: GenerateBackgroundImage,
         generate_background_video: GenerateBackgroundVideo,
+        generate_happy_image: GenerateHappyImage,
+        generate_happy_video: GenerateHappyVideo,
         build_response: BuildResponse,
         build_failure: BuildFailure,
+        derived_asset_owner_ids: set[int] | None = None,
         job_ttl: timedelta = timedelta(hours=1),
     ) -> None:
         self._generate_images = generate_images
         self._generate_video = generate_video
         self._generate_background_image = generate_background_image
         self._generate_background_video = generate_background_video
+        self._generate_happy_image = generate_happy_image
+        self._generate_happy_video = generate_happy_video
         self._build_response = build_response
         self._build_failure = build_failure
+        self._derived_asset_owner_ids = derived_asset_owner_ids
         self._job_ttl = job_ttl
         self._image_workers = image_workers
         self._video_workers = video_workers
@@ -115,7 +126,15 @@ class GenerationJobService:
             self._video_workers,
         )
         try:
-            self._image_executor.submit(self._run_image_job, job_id, description)
+            self._image_executor.submit(
+                self._run_image_job,
+                job_id,
+                description,
+                (
+                    self._derived_asset_owner_ids is None
+                    or user.telegram_id in self._derived_asset_owner_ids
+                ),
+            )
         except Exception as exc:
             self._fail(job_id, exc, phase="generating_images")
         return response
@@ -179,6 +198,20 @@ class GenerationJobService:
             background_error=detail,
         )
 
+    def _record_background_failure(self, job_id: str, exc: Exception, *, phase: str) -> None:
+        detail = self._build_failure(job_id, phase, exc)
+        logger.warning(
+            "pet_background_generation_failed jobId=%s phase=%s errorType=%s",
+            job_id,
+            phase,
+            type(exc).__name__,
+        )
+        self._update(
+            job_id,
+            status_value="running",
+            background_error=detail,
+        )
+
     def _prompt_context(self, job_id: str) -> Any:
         return set_prompt_log_context(
             {
@@ -187,7 +220,12 @@ class GenerationJobService:
             }
         )
 
-    def _run_image_job(self, job_id: str, description: str) -> None:
+    def _run_image_job(
+        self,
+        job_id: str,
+        description: str,
+        generate_derived_assets: bool,
+    ) -> None:
         started_at = time.monotonic()
         self._update(job_id, status_value="running", phase="generating_images")
         logger.info("pet_generation_stage_started jobId=%s phase=generating_images", job_id)
@@ -209,11 +247,21 @@ class GenerationJobService:
         )
         self._update(job_id, status_value="running", phase="generating_video")
         try:
-            self._video_executor.submit(self._run_video_job, job_id, image_set)
+            self._video_executor.submit(
+                self._run_video_job,
+                job_id,
+                image_set,
+                generate_derived_assets,
+            )
         except Exception as exc:
             self._fail(job_id, exc, phase="generating_video")
 
-    def _run_video_job(self, job_id: str, image_set: Any) -> None:
+    def _run_video_job(
+        self,
+        job_id: str,
+        image_set: Any,
+        generate_derived_assets: bool,
+    ) -> None:
         started_at = time.monotonic()
         logger.info(
             "pet_generation_stage_started jobId=%s phase=generating_video assetSetId=%s",
@@ -224,7 +272,7 @@ class GenerationJobService:
         try:
             video_path = self._generate_video(image_set)
             result = GeneratePetAssetResponse.model_validate(
-                self._build_response(image_set, video_path, None, None)
+                self._build_response(image_set, video_path, None, None, None, None)
             )
         except Exception as exc:
             self._fail(job_id, exc, phase="generating_video")
@@ -239,6 +287,14 @@ class GenerationJobService:
             time.monotonic() - started_at,
             image_set.asset_set_id,
         )
+        if not generate_derived_assets:
+            self._update(
+                job_id,
+                status_value="succeeded",
+                phase="completed",
+                result=result,
+            )
+            return
         self._update(
             job_id,
             status_value="running",
@@ -253,7 +309,8 @@ class GenerationJobService:
                 video_path,
             )
         except Exception as exc:
-            self._finish_background_failure(job_id, exc, phase="generating_sad_image")
+            self._record_background_failure(job_id, exc, phase="generating_sad_image")
+            self._start_happy_image_job(job_id, image_set, video_path, None, None)
 
     def _run_background_image_job(self, job_id: str, image_set: Any, video_path: Any) -> None:
         started_at = time.monotonic()
@@ -266,7 +323,8 @@ class GenerationJobService:
         try:
             sad_scene_path = self._generate_background_image(image_set)
         except Exception as exc:
-            self._finish_background_failure(job_id, exc, phase="generating_sad_image")
+            self._record_background_failure(job_id, exc, phase="generating_sad_image")
+            self._start_happy_image_job(job_id, image_set, video_path, None, None)
             return
         finally:
             reset_prompt_log_context(prompt_log_token)
@@ -288,7 +346,8 @@ class GenerationJobService:
                 sad_scene_path,
             )
         except Exception as exc:
-            self._finish_background_failure(job_id, exc, phase="generating_sad_video")
+            self._record_background_failure(job_id, exc, phase="generating_sad_video")
+            self._start_happy_image_job(job_id, image_set, video_path, None, None)
 
     def _run_background_video_job(
         self,
@@ -306,16 +365,9 @@ class GenerationJobService:
         prompt_log_token = self._prompt_context(job_id)
         try:
             sad_video_path = self._generate_background_video(image_set, sad_scene_path)
-            result = GeneratePetAssetResponse.model_validate(
-                self._build_response(
-                    image_set,
-                    video_path,
-                    sad_scene_path,
-                    sad_video_path,
-                )
-            )
         except Exception as exc:
-            self._finish_background_failure(job_id, exc, phase="generating_sad_video")
+            self._record_background_failure(job_id, exc, phase="generating_sad_video")
+            self._start_happy_image_job(job_id, image_set, video_path, None, None)
             return
         finally:
             reset_prompt_log_context(prompt_log_token)
@@ -327,10 +379,138 @@ class GenerationJobService:
             time.monotonic() - started_at,
             image_set.asset_set_id,
         )
+        self._start_happy_image_job(
+            job_id,
+            image_set,
+            video_path,
+            sad_scene_path,
+            sad_video_path,
+        )
+
+    def _start_happy_image_job(
+        self,
+        job_id: str,
+        image_set: Any,
+        video_path: Any,
+        sad_scene_path: Any | None,
+        sad_video_path: Any | None,
+    ) -> None:
+        result = GeneratePetAssetResponse.model_validate(
+            self._build_response(
+                image_set,
+                video_path,
+                sad_scene_path,
+                sad_video_path,
+                None,
+                None,
+            )
+        )
+        self._update(
+            job_id,
+            status_value="running",
+            phase="generating_happy_image",
+            result=result,
+        )
+        try:
+            self._image_executor.submit(
+                self._run_happy_image_job,
+                job_id,
+                image_set,
+                video_path,
+                sad_scene_path,
+                sad_video_path,
+            )
+        except Exception as exc:
+            self._finish_background_failure(job_id, exc, phase="generating_happy_image")
+
+    def _run_happy_image_job(
+        self,
+        job_id: str,
+        image_set: Any,
+        video_path: Any,
+        sad_scene_path: Any | None,
+        sad_video_path: Any | None,
+    ) -> None:
+        started_at = time.monotonic()
+        logger.info(
+            "pet_generation_stage_started jobId=%s phase=generating_happy_image assetSetId=%s",
+            job_id,
+            image_set.asset_set_id,
+        )
+        prompt_log_token = self._prompt_context(job_id)
+        try:
+            happy_scene_path = self._generate_happy_image(image_set)
+        except Exception as exc:
+            self._finish_background_failure(job_id, exc, phase="generating_happy_image")
+            return
+        finally:
+            reset_prompt_log_context(prompt_log_token)
+
+        logger.info(
+            "pet_generation_stage_completed jobId=%s phase=generating_happy_image "
+            "durationSeconds=%.3f assetSetId=%s",
+            job_id,
+            time.monotonic() - started_at,
+            image_set.asset_set_id,
+        )
+        self._update(job_id, status_value="running", phase="generating_happy_video")
+        try:
+            self._video_executor.submit(
+                self._run_happy_video_job,
+                job_id,
+                image_set,
+                video_path,
+                sad_scene_path,
+                sad_video_path,
+                happy_scene_path,
+            )
+        except Exception as exc:
+            self._finish_background_failure(job_id, exc, phase="generating_happy_video")
+
+    def _run_happy_video_job(
+        self,
+        job_id: str,
+        image_set: Any,
+        video_path: Any,
+        sad_scene_path: Any | None,
+        sad_video_path: Any | None,
+        happy_scene_path: Any,
+    ) -> None:
+        started_at = time.monotonic()
+        logger.info(
+            "pet_generation_stage_started jobId=%s phase=generating_happy_video assetSetId=%s",
+            job_id,
+            image_set.asset_set_id,
+        )
+        prompt_log_token = self._prompt_context(job_id)
+        try:
+            happy_video_path = self._generate_happy_video(image_set, happy_scene_path)
+            result = GeneratePetAssetResponse.model_validate(
+                self._build_response(
+                    image_set,
+                    video_path,
+                    sad_scene_path,
+                    sad_video_path,
+                    happy_scene_path,
+                    happy_video_path,
+                )
+            )
+        except Exception as exc:
+            self._finish_background_failure(job_id, exc, phase="generating_happy_video")
+            return
+        finally:
+            reset_prompt_log_context(prompt_log_token)
+
+        logger.info(
+            "pet_generation_stage_completed jobId=%s phase=generating_happy_video "
+            "durationSeconds=%.3f assetSetId=%s",
+            job_id,
+            time.monotonic() - started_at,
+            image_set.asset_set_id,
+        )
         self._update(
             job_id,
             status_value="succeeded",
             phase="completed",
             result=result,
-            background_error=None,
         )

@@ -561,6 +561,17 @@
             "title": "Generatedat",
             "type": "string"
           },
+          "happyVideoUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Happyvideourl"
+          },
           "images": {
             "$ref": "#/components/schemas/GeneratedPetImages"
           },
@@ -649,6 +660,8 @@
               "generating_video",
               "generating_sad_image",
               "generating_sad_video",
+              "generating_happy_image",
+              "generating_happy_video",
               "completed"
             ],
             "title": "Phase",

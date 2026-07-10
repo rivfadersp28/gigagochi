@@ -3,6 +3,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   Bug,
+  Circle,
   Database,
   FlaskConical,
   Frown,
@@ -25,6 +26,8 @@ import type { LocalPetMemoryStateV1 } from "@/lib/localPetMemoryTypes";
 import type { LocalPetState } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+import type { PetVisualMode } from "./pet-dashboard/petSprite";
+
 type DebugPanelProps = {
   pet: LocalPetState;
   isOpen: boolean;
@@ -33,8 +36,9 @@ type DebugPanelProps = {
   onResetPetStats?: () => void;
   onOpenTestPet?: () => void;
   canShowSadAsset?: boolean;
-  isSadAssetForced?: boolean;
-  onToggleSadAsset?: () => void;
+  canShowHappyAsset?: boolean;
+  visualModeOverride?: PetVisualMode | null;
+  onVisualModeOverrideChange?: (mode: PetVisualMode | null) => void;
 };
 
 type DebugTab = "feed" | "prompts" | "character";
@@ -206,38 +210,46 @@ function BackgroundGenerationProgress({ pet }: { pet: LocalPetState }) {
   const assetSet = pet.assetSet;
   const status = assetSet?.backgroundGenerationStatus;
   const phase = assetSet?.backgroundGenerationPhase;
-  const progress = status === "succeeded"
-    ? 2
-    : phase === "generating_sad_video"
-      ? 1
-      : 0;
+  const progress = status === "succeeded" || phase === "completed"
+    ? 4
+    : phase === "generating_happy_video"
+      ? 3
+      : phase === "generating_happy_image"
+        ? 2
+        : phase === "generating_sad_video"
+          ? 1
+          : 0;
   const label = status === "succeeded"
     ? "Готово"
     : status === "failed"
-      ? "Ошибка"
-      : phase === "generating_sad_video"
-        ? "Генерируется грустное видео"
-        : phase === "generating_sad_image"
-          ? "Генерируется грустная картинка"
-          : assetSet?.generationJobId
-            ? "Ожидание фоновой генерации"
-            : "Фоновая генерация не запускалась";
+      ? "Готово с ошибками"
+      : phase === "generating_happy_video"
+        ? "Генерируется счастливое видео"
+        : phase === "generating_happy_image"
+          ? "Генерируется счастливая картинка"
+          : phase === "generating_sad_video"
+            ? "Генерируется грустное видео"
+            : phase === "generating_sad_image"
+              ? "Генерируется грустная картинка"
+              : assetSet?.generationJobId
+                ? "Ожидание фоновой генерации"
+                : "Фоновая генерация не запускалась";
 
   return (
     <section className="mt-4 rounded-lg bg-black/[0.035] p-3" aria-label="Фоновая генерация">
       <div className="flex items-center justify-between gap-3 text-[12px] leading-[16px]">
         <span className="text-pretty font-medium text-black/62">{label}</span>
-        <span className="shrink-0 tabular-nums text-black/42">{progress}/2</span>
+        <span className="shrink-0 tabular-nums text-black/42">{progress}/4</span>
       </div>
       <div
-        className="mt-2 grid grid-cols-2 gap-1"
+        className="mt-2 grid grid-cols-4 gap-1"
         role="progressbar"
-        aria-label={`${label}: ${progress} из 2`}
+        aria-label={`${label}: ${progress} из 4`}
         aria-valuemin={0}
-        aria-valuemax={2}
+        aria-valuemax={4}
         aria-valuenow={progress}
       >
-        {[1, 2].map((step) => (
+        {[1, 2, 3, 4].map((step) => (
           <span
             key={step}
             className={cn(
@@ -265,8 +277,9 @@ export function DebugPanel({
   onResetPetStats,
   onOpenTestPet,
   canShowSadAsset = false,
-  isSadAssetForced = false,
-  onToggleSadAsset,
+  canShowHappyAsset = false,
+  visualModeOverride = null,
+  onVisualModeOverrideChange,
 }: DebugPanelProps) {
   const [activeTab, setActiveTab] = useState<DebugTab>("feed");
   const [events, setEvents] = useState<DebugPanelEvent[]>(() =>
@@ -297,6 +310,16 @@ export function DebugPanel({
     { id: "prompts", label: "Prompts", icon: MessageSquareText },
     { id: "character", label: "Персонаж", icon: Bug },
   ] satisfies { id: DebugTab; label: string; icon: typeof Bug }[];
+  const visualModes = [
+    { id: "sad", label: "Грустный", icon: Frown, disabled: !canShowSadAsset },
+    { id: "normal", label: "Нормальный", icon: Circle, disabled: false },
+    { id: "happy", label: "Счастливый", icon: Smile, disabled: !canShowHappyAsset },
+  ] satisfies {
+    id: PetVisualMode;
+    label: string;
+    icon: typeof Bug;
+    disabled: boolean;
+  }[];
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -352,7 +375,7 @@ export function DebugPanel({
             </div>
           </div>
 
-          {onResetPetStats || onOpenTestPet || onToggleSadAsset ? (
+          {onResetPetStats || onOpenTestPet || onVisualModeOverrideChange ? (
             <div className="mt-4 grid gap-2">
               {onOpenTestPet ? (
                 <button
@@ -374,21 +397,47 @@ export function DebugPanel({
                   <span>Сбросить параметры персонажа</span>
                 </button>
               ) : null}
-              {onToggleSadAsset ? (
-                <button
-                  type="button"
-                  aria-pressed={isSadAssetForced}
-                  disabled={!canShowSadAsset}
-                  onClick={onToggleSadAsset}
-                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-black/[0.055] px-3 text-[12px] font-medium leading-none text-black/62 transition-colors hover:bg-black/[0.085] hover:text-black/78 focus:outline-none focus:ring-2 focus:ring-black/10 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {isSadAssetForced ? (
-                    <Smile className="size-3.5" aria-hidden="true" />
-                  ) : (
-                    <Frown className="size-3.5" aria-hidden="true" />
-                  )}
-                  <span>{isSadAssetForced ? "Вернуть обычный ассет" : "Сделать грустным"}</span>
-                </button>
+              {onVisualModeOverrideChange ? (
+                <div>
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <span className="text-[12px] font-medium leading-[16px] text-black/62">
+                      Вид персонажа
+                    </span>
+                    <span className="text-[11px] leading-[16px] text-black/42">
+                      {visualModeOverride ? "Ручной режим" : "Авто"}
+                    </span>
+                  </div>
+                  <div
+                    className="grid grid-cols-3 gap-1 rounded-[8px] bg-black/[0.035] p-1"
+                    role="group"
+                    aria-label="Принудительный вид персонажа"
+                  >
+                    {visualModes.map((mode) => {
+                      const Icon = mode.icon;
+                      const isSelected = visualModeOverride === mode.id;
+                      return (
+                        <button
+                          key={mode.id}
+                          type="button"
+                          aria-pressed={isSelected}
+                          disabled={mode.disabled}
+                          onClick={() => onVisualModeOverrideChange(
+                            isSelected ? null : mode.id,
+                          )}
+                          className={cn(
+                            "inline-flex h-9 items-center justify-center gap-1.5 rounded-[7px] px-2 text-[11px] font-medium leading-none transition-colors focus:outline-none focus:ring-2 focus:ring-black/10 disabled:cursor-not-allowed disabled:opacity-40",
+                            isSelected
+                              ? "bg-white text-black/82 shadow-sm"
+                              : "text-black/45 hover:bg-white/60 hover:text-black/70",
+                          )}
+                        >
+                          <Icon className="size-3.5" aria-hidden="true" />
+                          <span>{mode.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               ) : null}
             </div>
           ) : null}
