@@ -795,7 +795,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
   function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void submitChatMessage();
+    void submitChatMessage({ dismissKeyboard: true });
   }
 
   function handleSendButtonClick(event: MouseEvent<HTMLButtonElement>) {
