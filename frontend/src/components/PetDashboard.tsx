@@ -52,8 +52,13 @@ import {
   canUseDebugMenu,
   canUseDerivedPetAssets,
   hapticNotification,
+  setTelegramBackgroundColor,
   useTelegramBackButton,
 } from "@/lib/telegram";
+import {
+  APP_BACKGROUND_COLOR,
+  DASHBOARD_BACKGROUND_COLOR,
+} from "@/lib/theme";
 import { TEST_PET_ASSET_SET, TEST_PET_DESCRIPTION } from "@/lib/testPetFixture";
 import type { LocalPetState } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
@@ -665,6 +670,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [closeChatMode, closeFeedMode, isFeedMode, isStoryHistoryOpen]);
 
   useTelegramBackButton(handleTelegramBack, isChatMode || isFeedMode || isStoryHistoryOpen);
+
+  useEffect(() => {
+    setTelegramBackgroundColor(DASHBOARD_BACKGROUND_COLOR);
+    return () => setTelegramBackgroundColor(APP_BACKGROUND_COLOR);
+  }, []);
 
   useEffect(() => {
     primePetFeedSound();

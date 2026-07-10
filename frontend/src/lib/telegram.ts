@@ -123,6 +123,25 @@ export function expandTelegramWebApp() {
   getTelegramWebApp()?.expand?.();
 }
 
+export function setTelegramBackgroundColor(color: string) {
+  if (typeof document !== "undefined") {
+    document.documentElement.style.backgroundColor = color;
+    document.body.style.backgroundColor = color;
+  }
+
+  const webApp = getTelegramWebApp();
+  if (!webApp?.initData) {
+    return;
+  }
+
+  try {
+    webApp.setBackgroundColor?.(color);
+    webApp.setBottomBarColor?.(color);
+  } catch {
+    // Telegram color APIs are optional across clients.
+  }
+}
+
 export function requestTelegramFullscreen() {
   const webApp = getTelegramWebApp();
   if (!webApp?.initData) {

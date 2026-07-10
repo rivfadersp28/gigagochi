@@ -1,1 +1,2 @@
 export const APP_BACKGROUND_COLOR = "#000000";
+export const DASHBOARD_BACKGROUND_COLOR = "#434137";
