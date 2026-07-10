@@ -683,6 +683,88 @@ def test_daily_push_reason_uses_actual_low_pet_stat(monkeypatch) -> None:
     assert "хочешь кушать" in reason
 
 
+def test_latest_fresh_story_event_uses_timestamp_not_list_order() -> None:
+    now = datetime(2026, 7, 10, 20, 0, tzinfo=UTC)
+    record = {
+        "recentStoryEvents": [
+            {
+                "summary": "Это последняя история.",
+                "createdAt": "2026-07-10T18:00:00Z",
+            },
+            {
+                "summary": "Это более старая история, записанная последней в массиве.",
+                "createdAt": "2026-07-10T12:00:00Z",
+            },
+        ]
+    }
+
+    event = telegram_push_service._latest_fresh_story_event(record, now)
+
+    assert event is not None
+    assert event["summary"] == "Это последняя история."
+
+
+def test_latest_fresh_story_event_rejects_stale_or_missing_story() -> None:
+    now = datetime(2026, 7, 10, 20, 0, tzinfo=UTC)
+    stale_record = {
+        "recentStoryEvents": [
+            {
+                "summary": "Эта история уже устарела.",
+                "createdAt": "2026-07-10T07:59:59Z",
+            }
+        ]
+    }
+
+    assert telegram_push_service._latest_fresh_story_event(stale_record, now) is None
+    assert telegram_push_service._latest_fresh_story_event({}, now) is None
+
+
+def test_push_reason_uses_only_latest_fresh_story_or_another_topic(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        telegram_daily_push_hours=[9, 15, 21],
+        telegram_daily_push_default_timezone="UTC",
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    now = next(
+        datetime(2026, 7, day, 21, 0, tzinfo=UTC)
+        for day in range(1, 5)
+        if (datetime(2026, 7, day).date().toordinal() + 2) % 3 == 0
+    )
+    record = {
+        "timezone": "UTC",
+        "pet": {"stats": {"hunger": 80, "happiness": 80, "energy": 80}},
+        "recentStoryEvents": [
+            {
+                "summary": "Последняя история про новый мост.",
+                "createdAt": (now - timedelta(hours=2)).isoformat(),
+            },
+            {
+                "summary": "Старая история про башню.",
+                "createdAt": (now - timedelta(hours=8)).isoformat(),
+            },
+        ],
+    }
+
+    story_reason = telegram_push_service._push_reason_for_record(record, now)
+    stale_reason = telegram_push_service._push_reason_for_record(
+        {
+            **record,
+            "recentStoryEvents": [
+                {
+                    "summary": "Давно забытая история.",
+                    "createdAt": (now - timedelta(days=2)).isoformat(),
+                }
+            ],
+        },
+        now,
+    )
+
+    assert "Последняя история про новый мост" in story_reason
+    assert "Старая история про башню" not in story_reason
+    assert "Недавно со мной произошло" in story_reason
+    assert "скучаешь" in stale_reason
+
+
 def test_story_novelty_history_keeps_compact_long_term_entries() -> None:
     record = {
         "recentStoryEvents": [

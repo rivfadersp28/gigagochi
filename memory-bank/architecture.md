@@ -160,6 +160,10 @@
   the same generation path manually without consuming an automatic window.
   Runtime `/story` and `/push` work is submitted by `app.bot` to a bounded worker
   pool so AI/image generation does not block `getUpdates` polling.
+- A story-based push may use only the newest background event by `createdAt`,
+  and only while it is at most 12 hours old. Its reason explicitly frames the
+  event as something that happened recently; when no fresh event exists, the
+  push falls back to a non-story topic instead of recalling an older episode.
 - The MVP push registry remains JSON-backed, but all reads and mutations go
   through `backend/app/services/telegram_push_store.py`. It uses an advisory
   file lock shared by backend and bot processes, unique temporary files plus

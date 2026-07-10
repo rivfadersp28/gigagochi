@@ -50,6 +50,7 @@ PET_DEATH_AFTER_ZERO = timedelta(hours=24)
 DAILY_PUSH_REASON = "Ежедневный короткий пуш владельцу от питомца."
 MANUAL_PUSH_REASON = "Ручной debug-триггер из админки."
 MAX_RECENT_STORY_EVENTS = 10
+PUSH_STORY_MAX_AGE = timedelta(hours=12)
 MAX_STORY_NOVELTY_HISTORY = 400
 STORY_STAT_MAX_ITEMS = 2
 STORY_STAT_MAX_SINGLE_DAMAGE = 25
@@ -386,6 +387,7 @@ def _record_recent_story_events(record: dict[str, Any] | None) -> list[dict[str,
                     "storyText": last_story.get("storyText"),
                     "imageUrl": last_story.get("imageUrl"),
                     "generatedAt": last_story.get("generatedAt"),
+                    "createdAt": last_story.get("generatedAt") or record.get("lastStoryAt"),
                     "eventType": last_story.get("eventType"),
                     "tags": (
                         last_story.get("tags") if isinstance(last_story.get("tags"), list) else []
@@ -396,6 +398,24 @@ def _record_recent_story_events(record: dict[str, Any] | None) -> list[dict[str,
             )
             return [fallback] if fallback else []
     return events
+
+
+def _latest_fresh_story_event(
+    record: dict[str, Any],
+    now: datetime,
+) -> dict[str, Any] | None:
+    candidates: list[tuple[datetime, dict[str, Any]]] = []
+    for event in _record_recent_story_events(record):
+        created_at = _parse_iso(event.get("createdAt"))
+        if created_at is None or created_at > now:
+            continue
+        candidates.append((created_at, event))
+    if not candidates:
+        return None
+    created_at, event = max(candidates, key=lambda item: item[0])
+    if now - created_at > PUSH_STORY_MAX_AGE:
+        return None
+    return event
 
 
 def _append_recent_story_event(
@@ -951,16 +971,17 @@ def _push_reason_for_record(record: dict[str, Any], now: datetime) -> str:
     if needs[0][0] <= 35:
         return needs[0][1]
 
-    recent_events = _record_recent_story_events(record)
+    latest_story = _latest_fresh_story_event(record, now)
     settings = get_settings()
     local_now = now.astimezone(_push_timezone(record, settings))
     hours = _daily_push_hours(settings)
     slot_index = max(0, sum(1 for hour in hours if hour <= local_now.hour) - 1)
-    if recent_events and (local_now.date().toordinal() + slot_index) % 3 == 0:
-        summary = _compact_event_text(recent_events[-1].get("summary"), limit=280)
+    if latest_story and (local_now.date().toordinal() + slot_index) % 3 == 0:
+        summary = _compact_event_text(latest_story.get("summary"), limit=280)
         if summary:
             return (
-                "Коротко расскажи владельцу о недавнем событии, не добавляя новых фактов: "
+                "Свяжи пуш только с самой последней недавней историей. "
+                "Начни с ясной связки «Недавно со мной произошло…» и не добавляй новых фактов: "
                 f"{summary}"
             )
 
