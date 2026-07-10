@@ -19,6 +19,7 @@ import {
   writeLocalPetState,
 } from "./localPetStorage";
 import { resetLocalPetMemory } from "./localPetMemoryStorage";
+import { applyFoodEffect, type FoodId } from "./localPetFood";
 import type {
   ConversationHappinessDelta,
   LocalPetAssetSet,
@@ -35,10 +36,12 @@ type UseLocalPetStateResult = {
   status: LocalPetStateStatus;
   error: string | null;
   create: (description: string, assetSet?: LocalPetAssetSet) => LocalPetState;
-  feed: () => LocalPetState | null;
+  feed: (foodId: FoodId) => LocalPetState | null;
   play: () => LocalPetState | null;
   reset: () => void;
   resetStats: () => LocalPetState | null;
+  kill: () => LocalPetState | null;
+  revive: () => LocalPetState | null;
   updateName: (name: string) => LocalPetState | null;
   applyGeneratedAssets: (assetSet: LocalPetAssetSet) => LocalPetState | null;
   applyMoodHint: (
@@ -121,7 +124,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
     return nextPet;
   }, []);
 
-  const feed = useCallback(() => {
+  const feed = useCallback((foodId: FoodId) => {
     if (!pet) {
       return null;
     }
@@ -130,13 +133,12 @@ export function useLocalPetState(): UseLocalPetStateResult {
     if (!currentPet) {
       return null;
     }
+    if (currentPet.diedAt) {
+      return currentPet;
+    }
 
     const nextPet = saveAndReturn(
-      withPetInteraction(currentPet, (stats) => ({
-        ...stats,
-        hunger: stats.hunger + 25,
-        happiness: stats.happiness + 4,
-      })),
+      withPetInteraction(currentPet, (stats) => applyFoodEffect(stats, foodId)),
     );
     setPet(nextPet);
     return nextPet;
@@ -196,6 +198,66 @@ export function useLocalPetState(): UseLocalPetStateResult {
       lastInteractionAt: nowIso,
       lastStatsTickAt: nowIso,
       lastStatTickAt,
+      zeroStatSinceAt: {
+        hunger: nowIso,
+        happiness: nowIso,
+        energy: nowIso,
+      },
+      diedAt: undefined,
+      stage: calculatePetStage(currentPet.createdAt, now),
+      mood: calculatePetMood(stats),
+      stats,
+    });
+    setPet(nextPet);
+    setStatus("ready");
+    setError(null);
+    return nextPet;
+  }, [pet]);
+
+  const kill = useCallback(() => {
+    const currentPet = readProgressedPet(pet);
+    if (!currentPet) {
+      return null;
+    }
+
+    const nowIso = new Date().toISOString();
+    const nextPet = saveAndReturn({
+      ...currentPet,
+      updatedAt: nowIso,
+      diedAt: nowIso,
+    });
+    setPet(nextPet);
+    setStatus("ready");
+    setError(null);
+    return nextPet;
+  }, [pet]);
+
+  const revive = useCallback(() => {
+    const currentPet = readLocalPetState() ?? pet;
+    if (!currentPet?.diedAt) {
+      return null;
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const stats = {
+      hunger: 80,
+      happiness: 80,
+      energy: 80,
+    };
+    const lastStatTickAt = {
+      hunger: nowIso,
+      happiness: nowIso,
+      energy: nowIso,
+    };
+    const nextPet = saveAndReturn({
+      ...currentPet,
+      updatedAt: nowIso,
+      lastInteractionAt: nowIso,
+      lastStatsTickAt: nowIso,
+      lastStatTickAt,
+      zeroStatSinceAt: {},
+      diedAt: undefined,
       stage: calculatePetStage(currentPet.createdAt, now),
       mood: calculatePetMood(stats),
       stats,
@@ -215,6 +277,9 @@ export function useLocalPetState(): UseLocalPetStateResult {
     const currentPet = readProgressedPet(pet);
     if (!currentPet) {
       return null;
+    }
+    if (currentPet.diedAt) {
+      return currentPet;
     }
 
     const now = new Date();
@@ -261,6 +326,9 @@ export function useLocalPetState(): UseLocalPetStateResult {
     if (!currentPet) {
       return null;
     }
+    if (currentPet.diedAt) {
+      return currentPet;
+    }
 
     const now = new Date();
     const nowIso = now.toISOString();
@@ -272,12 +340,19 @@ export function useLocalPetState(): UseLocalPetStateResult {
       ...currentPet.lastStatTickAt,
       happiness: nowIso,
     };
+    const zeroStatSinceAt = { ...currentPet.zeroStatSinceAt };
+    if (stats.happiness > 0) {
+      delete zeroStatSinceAt.happiness;
+    } else if (!zeroStatSinceAt.happiness) {
+      zeroStatSinceAt.happiness = nowIso;
+    }
     const nextState = {
       ...currentPet,
       updatedAt: nowIso,
       lastInteractionAt: nowIso,
       lastStatsTickAt: nowIso,
       lastStatTickAt,
+      zeroStatSinceAt,
       stage: calculatePetStage(currentPet.createdAt, now),
       mood: moodHint ?? calculatePetMood(stats),
       stats,
@@ -359,6 +434,8 @@ export function useLocalPetState(): UseLocalPetStateResult {
     play,
     reset,
     resetStats,
+    kill,
+    revive,
     updateName,
     applyGeneratedAssets,
     applyMoodHint,

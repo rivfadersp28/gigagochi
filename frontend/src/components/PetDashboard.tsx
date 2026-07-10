@@ -14,7 +14,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   generateLocalAmbientMessage,
-  generatePetTravel,
   generateLocalProactiveMessage,
 } from "@/lib/api";
 import {
@@ -37,6 +36,7 @@ import {
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
 import { runLocalPetChatTurn } from "@/lib/localPetChatTurn";
+import { foodReactionPrompt, type FoodId } from "@/lib/localPetFood";
 import { playPetFeedSound, primePetFeedSound } from "@/lib/petFeedAudio";
 import { applyPetVoice, type PetVoiceMode } from "@/lib/petVoice";
 import {
@@ -49,12 +49,13 @@ import {
 } from "@/lib/petReplySentences";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import {
+  canUseDebugMenu,
   canUseDerivedPetAssets,
   hapticNotification,
   useTelegramBackButton,
 } from "@/lib/telegram";
 import { TEST_PET_ASSET_SET, TEST_PET_DESCRIPTION } from "@/lib/testPetFixture";
-import type { GenerateTravelResponse } from "@/lib/types";
+import type { LocalPetState } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 
 import { DebugPanel } from "./DebugPanel";
@@ -69,6 +70,7 @@ import {
 } from "./pet-dashboard/PetThinkingIndicator";
 import { StatProgressRing } from "./pet-dashboard/StatProgressRing";
 import { TravelStoryOverlay } from "./pet-dashboard/TravelStoryOverlay";
+import { storyHistoryFromPet } from "./pet-dashboard/storyHistory";
 import { useConversationKeyboardOffset } from "./pet-dashboard/useConversationKeyboardOffset";
 import { usePetBackgroundAssets } from "./pet-dashboard/usePetBackgroundAssets";
 import { usePetPushSnapshotSync } from "./pet-dashboard/usePetPushSnapshotSync";
@@ -93,13 +95,14 @@ type ConversationSceneStyle = CSSProperties & {
 
 type ShowPetReplyOptions = {
   showInConversation?: boolean;
+  showInFeed?: boolean;
   dialogueHook?: boolean;
   voiceMode?: PetVoiceMode;
   maxPortions?: number;
   autoAdvanceDelayMs?: number;
 };
 
-type ConfirmationAction = "resetPet" | "resetStats" | "openTestPet";
+type ConfirmationAction = "resetPet" | "resetStats" | "openTestPet" | "killPet";
 
 const confirmationCopy: Record<
   ConfirmationAction,
@@ -120,12 +123,19 @@ const confirmationCopy: Record<
     description: "Текущий питомец и история будут заменены тестовыми данными.",
     confirmLabel: "Заменить",
   },
+  killPet: {
+    title: "Убить персонажа?",
+    description: "Откроется экран смерти. Персонажа можно воскресить через debug-меню.",
+    confirmLabel: "Убить",
+  },
 };
 
 const INITIAL_PET_REPLY_FALLBACK = "…";
+const PET_DEATH_MESSAGE = "Хозяин, я умер. Жаль, что я тебе не понравился";
 const CHAT_REPLY_MAX_CHARS = 300;
 const IDLE_REPLY_MAX_CHARS = 120;
 const IDLE_REPLY_MAX_PORTIONS = 3;
+const FOOD_REPLY_MAX_CHARS = 60;
 const REPLY_AUTO_ADVANCE_MS = 3_000;
 const UNNAMED_STATUS_NAME = "Без имени";
 const ACTION_ICON_CACHE_VERSION = "20260710-figma-142-1509-1";
@@ -133,6 +143,7 @@ const VIDEO_FILTER_CACHE_VERSION = "20260709-video-filter-normal-2";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
 const SCENE_VIDEO_START_OFFSET_SECONDS = 0.1;
 const mainSceneBackgroundSrc = `/figma/main-screen-bg.png?v=${MAIN_SCENE_BACKGROUND_CACHE_VERSION}`;
+const emptySceneBackgroundSrc = "/figma/main-scene-underlay.webp";
 const videoFilterSrc = `/figma/video-filter-normal.png?v=${VIDEO_FILTER_CACHE_VERSION}`;
 const actionIconSrc = {
   chat: `/figma/action-chat-icon-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
@@ -212,18 +223,6 @@ const feedFoodAssets = [
     rotation: -8,
   },
   {
-    id: "moon-bun",
-    label: "булочка",
-    src: "/figma/feed-food-moon-bun.svg",
-    rotation: 7,
-  },
-  {
-    id: "fish-snack",
-    label: "рыбка",
-    src: "/figma/feed-food-fish-snack.svg",
-    rotation: -4,
-  },
-  {
     id: "leaf-crunch",
     label: "листик",
     src: "/figma/feed-food-leaf-crunch.svg",
@@ -263,10 +262,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [isSendingChat, setIsSendingChat] = useState(false);
   const [isGeneratingIdleReply, setIsGeneratingIdleReply] = useState(false);
   const [isIdleSpeechBubbleDismissed, setIsIdleSpeechBubbleDismissed] = useState(false);
-  const [isTravelGenerating, setIsTravelGenerating] = useState(false);
-  const [travelResult, setTravelResult] = useState<GenerateTravelResponse | null>(null);
-  const [travelError, setTravelError] = useState<string | null>(null);
+  const [isStoryHistoryOpen, setIsStoryHistoryOpen] = useState(false);
   const [conversationReplyMessageId, setConversationReplyMessageId] = useState<number | null>(null);
+  const [feedReplyMessageId, setFeedReplyMessageId] = useState<number | null>(null);
+  const [feedError, setFeedError] = useState<string | null>(null);
   const [feedSuccessId, setFeedSuccessId] = useState(0);
   const [includePromptDebug] = useState(() => readLocalPetSettings().includePromptDebug);
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
@@ -289,8 +288,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const chatInputRef = useRef<HTMLInputElement>(null);
   const sceneRef = useRef<HTMLElement>(null);
   const feedDropTargetRef = useRef<HTMLDivElement>(null);
+  const isFeedingRef = useRef(false);
   const isSendingChatRef = useRef(false);
-  const isTravelGeneratingRef = useRef(false);
   const cancelReplyAutoAdvance = useCallback(() => {
     if (replyAutoAdvanceTimeoutRef.current !== null) {
       window.clearTimeout(replyAutoAdvanceTimeoutRef.current);
@@ -314,6 +313,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     };
   }, []);
   const pet = localPet.pet;
+  const isPetDead = Boolean(pet?.diedAt);
+  const storyHistory = pet ? storyHistoryFromPet(pet) : [];
+  const canShowDebugMenu = canUseDebugMenu();
   const derivedAssetsEnabled = canUseDerivedPetAssets();
   const hasSadAssets = derivedAssetsEnabled && pet ? hasGeneratedSadAssets(pet) : false;
   const hasHappyAssets = derivedAssetsEnabled && pet ? hasGeneratedHappyAssets(pet) : false;
@@ -321,10 +323,14 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     ? resolvedPetVisualMode(pet, visualModeOverride, derivedAssetsEnabled)
     : "normal";
   const requestedSceneBackgroundSrc = pet
-    ? generatedVisualPosterUrl(pet, visualMode)
-      ?? mainSceneBackgroundSrc
+    ? isPetDead
+      ? emptySceneBackgroundSrc
+      : generatedVisualPosterUrl(pet, visualMode)
+        ?? mainSceneBackgroundSrc
     : null;
-  const requestedSceneVideoSrc = pet ? generatedSceneVideoUrl(pet, visualMode) : null;
+  const requestedSceneVideoSrc = pet && !isPetDead
+    ? generatedSceneVideoUrl(pet, visualMode)
+    : null;
   const sceneBackgroundSrc = loadedSceneMedia?.petId === petId
     ? loadedSceneMedia.backgroundSrc
     : requestedSceneBackgroundSrc;
@@ -365,7 +371,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     let cancelled = false;
 
     const fontReady = document.fonts?.ready ?? Promise.resolve();
-    const imageReady = [sceneBackgroundSrc, ...dashboardStaticImageSources].map(preloadImage);
+    const staticImageSources = isPetDead
+      ? [speechBubbleSrc]
+      : dashboardStaticImageSources;
+    const imageReady = [sceneBackgroundSrc, ...staticImageSources].map(preloadImage);
     const videoReady = sceneVideoSrc ? [preloadVideo(sceneVideoSrc)] : [];
 
     void Promise.all([fontReady, ...imageReady, ...videoReady])
@@ -386,6 +395,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [
     assetsReadyForPetId,
     localPet.status,
+    isPetDead,
     pet,
     petId,
     sceneBackgroundSrc,
@@ -469,6 +479,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     if (options.showInConversation) {
       setConversationReplyMessageId(nextMessage.id);
     }
+    if (options.showInFeed) {
+      setFeedReplyMessageId(nextMessage.id);
+    }
   }, [pet]);
 
   const advancePetReplySentence = useCallback(() => {
@@ -533,7 +546,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [advancePetReplySentence, petReplyMessage?.id]);
 
   const requestAmbientReply = useCallback(() => {
-    if (!pet) {
+    if (!pet || pet.diedAt) {
       return;
     }
 
@@ -615,7 +628,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       isChatMode
       || isFeedMode
       || isDebugPanelOpen
-      || travelResult
+      || isStoryHistoryOpen
       || confirmationAction
     ) {
       return;
@@ -634,19 +647,24 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     isChatMode,
     isDebugPanelOpen,
     isFeedMode,
-    travelResult,
+    isStoryHistoryOpen,
   ]);
 
   const handleTelegramBack = useCallback(() => {
+    if (isStoryHistoryOpen) {
+      setIsStoryHistoryOpen(false);
+      return;
+    }
+
     if (isFeedMode) {
       closeFeedMode();
       return;
     }
 
     closeChatMode();
-  }, [closeChatMode, closeFeedMode, isFeedMode]);
+  }, [closeChatMode, closeFeedMode, isFeedMode, isStoryHistoryOpen]);
 
-  useTelegramBackButton(handleTelegramBack, isChatMode || isFeedMode);
+  useTelegramBackButton(handleTelegramBack, isChatMode || isFeedMode || isStoryHistoryOpen);
 
   useEffect(() => {
     primePetFeedSound();
@@ -670,31 +688,71 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
 
+    cancelReplyAutoAdvance();
+    cancelIdleReplyGeneration();
     setIsDebugPanelOpen(false);
-    setTravelError(null);
+    setFeedError(null);
+    setFeedReplyMessageId(null);
     setIsFeedMode(true);
   }
 
-  function serveFood() {
-    if (!pet || isFeeding) {
+  async function generateFoodReaction(nextPet: LocalPetState, foodId: FoodId) {
+    const minimumThinkingTime = createMinimumThinkingDelay();
+    try {
+      const { response } = await runLocalPetChatTurn({
+        pet: nextPet,
+        message: foodReactionPrompt(foodId),
+        includePromptDebug,
+        replyMaxChars: FOOD_REPLY_MAX_CHARS,
+        logLabel: `dashboard food reaction: ${foodId}`,
+        onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
+      });
+      await minimumThinkingTime;
+      showPetReplyMessage(response.reply, true, {
+        showInFeed: true,
+        voiceMode: "generated",
+        maxPortions: 1,
+      });
+    } catch (caught) {
+      await minimumThinkingTime;
+      setFeedError(
+        caught instanceof ApiError
+          ? caught.message
+          : "Не удалось получить ответ персонажа.",
+      );
+      hapticNotification("error");
+    } finally {
+      isFeedingRef.current = false;
+      setIsFeeding(false);
+    }
+  }
+
+  function serveFood(foodId: FoodId) {
+    if (!pet || isFeedingRef.current) {
       return false;
     }
 
+    cancelReplyAutoAdvance();
+    setFeedError(null);
+    setFeedReplyMessageId(null);
+    isFeedingRef.current = true;
     setIsFeeding(true);
-    const nextPet = localPet.feed();
+    const nextPet = localPet.feed(foodId);
     if (!nextPet) {
+      isFeedingRef.current = false;
       setIsFeeding(false);
       return false;
     }
 
     setFeedSuccessId((currentId) => currentId + 1);
     void playPetFeedSound();
+    void primePetSpeechAudio();
     hapticNotification("success");
-    window.setTimeout(() => setIsFeeding(false), 420);
+    void generateFoodReaction(nextPet, foodId);
     return true;
   }
 
-  function handleFoodDrop(clientX: number, clientY: number) {
+  function handleFoodDrop(clientX: number, clientY: number, foodId: FoodId) {
     if (!isFeedMode) {
       return false;
     }
@@ -709,50 +767,19 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return false;
     }
 
-    return serveFood();
+    return serveFood(foodId);
   }
 
-  async function handleTravel() {
-    if (!pet || isTravelGeneratingRef.current) {
+  function handleTravel() {
+    if (!pet) {
       return;
     }
 
-    void primePetSpeechAudio();
-    isTravelGeneratingRef.current = true;
-    setIsTravelGenerating(true);
-    setTravelError(null);
+    cancelReplyAutoAdvance();
+    setIsIdleSpeechBubbleDismissed(true);
     setIsFeedMode(false);
     setIsDebugPanelOpen(false);
-    showPetReplyMessage("Собираю путешествие...", false, { voiceMode: "local" });
-    const travelStatusTimeoutId = window.setTimeout(() => {
-      if (isTravelGeneratingRef.current) {
-        showPetReplyMessage("Рисую кадры путешествия...", false, { voiceMode: "local" });
-      }
-    }, 2200);
-
-    try {
-      const response = await generatePetTravel(pet, { includeDebug: includePromptDebug });
-      logBrowserPromptDebug("dashboard travel", response);
-      setTravelResult(response);
-      localPet.play();
-
-      const firstSceneText = response.story.scenes[0]?.text.trim();
-      showPetReplyMessage(firstSceneText || "Я вернулся с теплой находкой!", true, {
-        voiceMode: firstSceneText ? "generated" : "local",
-      });
-    } catch (caught) {
-      const message =
-        caught instanceof ApiError ? caught.message : "Не удалось создать путешествие.";
-      setTravelError(message);
-      showPetReplyMessage("Путешествие не собралось. Попробуем позже.", false, {
-        voiceMode: "local",
-      });
-      hapticNotification("error");
-    } finally {
-      window.clearTimeout(travelStatusTimeoutId);
-      isTravelGeneratingRef.current = false;
-      setIsTravelGenerating(false);
-    }
+    setIsStoryHistoryOpen(true);
   }
 
   function focusChatInput() {
@@ -874,6 +901,23 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     setConfirmationAction("openTestPet");
   }
 
+  function handleKillPet() {
+    setConfirmationAction("killPet");
+  }
+
+  function handleRevivePet() {
+    const revivedPet = localPet.revive();
+    if (!revivedPet) {
+      return;
+    }
+    setIsDebugPanelOpen(false);
+    hapticNotification("success");
+  }
+
+  function handleStartOver() {
+    router.replace("/");
+  }
+
   function confirmDashboardAction() {
     if (confirmationAction === "resetPet") {
       setIsDebugPanelOpen(false);
@@ -887,6 +931,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       setIsDebugPanelOpen(false);
       hapticNotification("success");
       router.replace(`/pet/${testPet.petId}`);
+    } else if (confirmationAction === "killPet") {
+      localPet.kill();
+      setIsDebugPanelOpen(false);
+      hapticNotification("warning");
     }
     setConfirmationAction(null);
   }
@@ -895,6 +943,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     if (
       localPet.status === "loading" ||
       !pet ||
+      pet.diedAt ||
       pet.petId !== petId ||
       assetsReadyForPetId !== petId
     ) {
@@ -1012,6 +1061,83 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     return null;
   }
 
+  const debugPanel = canShowDebugMenu ? (
+    <DebugPanel
+      pet={pet}
+      isOpen={isDebugPanelOpen}
+      isPetDead={isPetDead}
+      onClose={() => setIsDebugPanelOpen(false)}
+      onResetPet={handleResetPet}
+      onResetPetStats={handleResetPetStats}
+      onKillPet={handleKillPet}
+      onRevivePet={handleRevivePet}
+      onOpenTestPet={handleOpenTestPet}
+      canShowSadAsset={hasSadAssets}
+      canShowHappyAsset={hasHappyAssets}
+      visualModeOverride={visualModeOverride}
+      onVisualModeOverrideChange={setVisualModeOverride}
+    />
+  ) : null;
+  const debugTrigger = canShowDebugMenu ? (
+    <button
+      type="button"
+      aria-controls="debug-panel"
+      aria-expanded={isDebugPanelOpen}
+      aria-label={isDebugPanelOpen ? "Скрыть debug-панель" : "Показать debug-панель"}
+      onClick={() => setIsDebugPanelOpen(true)}
+      className={isPetDead
+        ? "main-debug-button absolute right-[max(16px,var(--tma-safe-right))] top-[max(16px,var(--tma-safe-top))] z-40"
+        : "main-debug-button feed-fade-target conversation-fade-target absolute left-[327px] top-[685px] z-40"}
+    >
+      <Bug className="main-debug-button__fallback-icon" aria-hidden="true" />
+      <span className="main-debug-button__symbol" aria-hidden="true">
+        􀌛
+      </span>
+    </button>
+  ) : null;
+
+  if (isPetDead) {
+    return (
+      <main className="main-shell tma-screen overflow-clip">
+        <section
+          className="main-mobile-scene pet-death-scene tma-screen relative mx-auto w-full max-w-[402px] overflow-hidden"
+          aria-label="Питомец умер"
+        >
+          <div className="main-scene-media" aria-hidden="true">
+            <img
+              src={sceneBackgroundSrc}
+              alt=""
+              className="main-scene-background"
+              draggable={false}
+            />
+          </div>
+          <div className="pet-death-speech-bubble-anchor">
+            <PetSpeechBubble
+              isVisible
+              message={{
+                id: 0,
+                text: PET_DEATH_MESSAGE,
+                playSpeechAudio: false,
+                hasNextPortion: false,
+              }}
+              scaleOrigin="bottom"
+              shapeSrc={speechBubbleSrc}
+            />
+          </div>
+          <button
+            type="button"
+            className="main-action-button pet-death-restart"
+            onClick={handleStartOver}
+          >
+            начать сначала
+          </button>
+          {debugPanel}
+          {debugTrigger}
+        </section>
+      </main>
+    );
+  }
+
   const displayedReply = petReplyMessage ?? {
     id: 0,
     text: INITIAL_PET_REPLY_FALLBACK,
@@ -1020,12 +1146,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   };
   const shouldShowConversationReply =
     isChatMode && conversationReplyMessageId === displayedReply.id;
+  const shouldShowFeedReply =
+    isFeedMode && feedReplyMessageId === displayedReply.id;
   const isIdleThinkingVisible =
     !isChatMode && !isFeedMode && isGeneratingIdleReply;
   const shouldShowSpeechBubble =
-    !isFeedMode
-    && !isIdleThinkingVisible
-    && (isChatMode ? shouldShowConversationReply : !isIdleSpeechBubbleDismissed);
+    !isIdleThinkingVisible
+    && (isFeedMode
+      ? shouldShowFeedReply
+      : isChatMode
+        ? shouldShowConversationReply
+        : !isIdleSpeechBubbleDismissed);
   const displayedPetName = pet.name?.trim() || UNNAMED_STATUS_NAME;
   const hungerPercent = Math.max(0, Math.min(100, pet.stats.hunger));
   const moodPercent = Math.max(0, Math.min(100, pet.stats.happiness));
@@ -1039,7 +1170,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
   return (
     <main
-      className="main-shell tma-screen overflow-clip"
+      className={`main-shell tma-screen overflow-clip ${
+        isStoryHistoryOpen ? "main-shell--story-open" : ""
+      }`}
       onClick={handleMainScreenTap}
     >
       {localPet.error ? (
@@ -1047,12 +1180,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           {localPet.error}
         </div>
       ) : null}
-      {travelError ? (
-        <div className="fixed left-5 right-5 top-[max(20px,calc(var(--tma-safe-top)+12px))] z-40 rounded-[8px] border border-[var(--danger-line)] bg-white px-4 py-3 text-sm text-[var(--danger)] sm:left-8 sm:right-auto sm:max-w-sm">
-          {travelError}
-        </div>
-      ) : null}
-
       <section
         ref={sceneRef}
         className={`main-mobile-scene tma-screen relative mx-auto w-full max-w-[402px] overflow-hidden ${
@@ -1099,22 +1226,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
         <div ref={feedDropTargetRef} className="feed-drop-target" aria-hidden="true" />
 
-        {isIdleThinkingVisible || (isChatMode && isSendingChat) ? (
+        {isIdleThinkingVisible || (isChatMode && isSendingChat) || (isFeedMode && isFeeding) ? (
           <PetThinkingIndicator />
         ) : null}
 
-        <DebugPanel
-          pet={pet}
-          isOpen={isDebugPanelOpen}
-          onClose={() => setIsDebugPanelOpen(false)}
-          onResetPet={handleResetPet}
-          onResetPetStats={handleResetPetStats}
-          onOpenTestPet={handleOpenTestPet}
-          canShowSadAsset={hasSadAssets}
-          canShowHappyAsset={hasHappyAssets}
-          visualModeOverride={visualModeOverride}
-          onVisualModeOverrideChange={setVisualModeOverride}
-        />
+        {debugPanel}
 
         <div className="sr-only" aria-live="polite">
           Stage {stageLabels[pet.stage]}. State {stateLabels[pet.mood]}. Visual mode{" "}
@@ -1137,7 +1253,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         </div>
 
         <div
-          className={`main-speech-bubble-anchor feed-fade-target ${
+          className={`main-speech-bubble-anchor ${
             shouldShowConversationReply
               ? "conversation-reply-bubble"
               : "conversation-fade-target"
@@ -1206,24 +1322,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           </button>
         </form>
 
-        <button
-          type="button"
-          aria-controls="debug-panel"
-          aria-expanded={isDebugPanelOpen}
-          aria-label={isDebugPanelOpen ? "Скрыть debug-панель" : "Показать debug-панель"}
-          onClick={() => setIsDebugPanelOpen(true)}
-          className="main-debug-button feed-fade-target conversation-fade-target absolute left-[327px] top-[685px] z-40"
-        >
-          <Bug className="main-debug-button__fallback-icon" aria-hidden="true" />
-          <span className="main-debug-button__symbol" aria-hidden="true">
-            􀌛
-          </span>
-        </button>
+        {debugTrigger}
 
         {isFeedMode ? (
-          <div className="feed-mode-layer" aria-label="Кормление">
+          <div className="feed-mode-layer" aria-label="Кормление" aria-busy={isFeeding}>
             {feedSuccessId > 0 ? (
               <span key={feedSuccessId} className="feed-drop-pulse" aria-hidden="true" />
+            ) : null}
+            {feedError ? (
+              <p className="feed-mode-error" role="alert">
+                {feedError}
+              </p>
             ) : null}
             <div className="feed-food-shelf" aria-label="Еда">
               {feedFoodAssets.map((food) => (
@@ -1283,26 +1392,24 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           <button
             type="button"
             onClick={handleTravel}
-            disabled={isTravelGenerating}
-            className="main-action-button main-action-button--travel disabled:cursor-not-allowed disabled:opacity-70"
+            className="main-action-button main-action-button--travel"
           >
-            {isTravelGenerating ? (
-              <Loader2 className="size-[24px] animate-spin" aria-hidden="true" />
-            ) : (
-              <img
-                src={actionIconSrc.travel}
-                alt=""
-                aria-hidden="true"
-                className="main-action-button__icon"
-                draggable={false}
-              />
-            )}
+            <img
+              src={actionIconSrc.travel}
+              alt=""
+              aria-hidden="true"
+              className="main-action-button__icon"
+              draggable={false}
+            />
             <span>В путешествие</span>
           </button>
         </div>
       </div>
-      {travelResult ? (
-        <TravelStoryOverlay result={travelResult} onClose={() => setTravelResult(null)} />
+      {isStoryHistoryOpen ? (
+        <TravelStoryOverlay
+          stories={storyHistory}
+          onClose={() => setIsStoryHistoryOpen(false)}
+        />
       ) : null}
       {confirmationAction ? (
         <ConfirmActionDialog

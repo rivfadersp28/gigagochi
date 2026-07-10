@@ -4,8 +4,10 @@
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { useRef, useState } from "react";
 
+import type { FoodId } from "@/lib/localPetFood";
+
 export type FoodAsset = {
-  id: string;
+  id: FoodId;
   label: string;
   src: string;
   rotation: number;
@@ -25,8 +27,8 @@ type FeedFoodTokenStyle = CSSProperties & {
 type DraggableFoodTokenProps = {
   food: FoodAsset;
   disabled: boolean;
-  onDrop: (clientX: number, clientY: number, foodId: string) => boolean;
-  onActivate: (foodId: string) => boolean;
+  onDrop: (clientX: number, clientY: number, foodId: FoodId) => boolean;
+  onActivate: (foodId: FoodId) => boolean;
 };
 
 export function DraggableFoodToken({
