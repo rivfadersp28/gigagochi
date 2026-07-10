@@ -149,10 +149,32 @@
 - Avoid putting literal `WORLD_CONTEXT` into generic visible reply rules. Tests
   use that marker to distinguish actual injected world context from normal
   speech instructions.
+- Do not append the full `lore_runtime` world block to every visible reply.
+  Its nature/ruin/material palette strongly primes ornate mini-stories even when
+  `storyLibrary` is disabled. Ordinary chat/idle/proactive/push use the compact
+  character capsule plus `world.dialogueVocabulary`; richer world lore must
+  enter through an explicit context path.
+- Visible `reply` is direct speech, not a prose caption. A character may say
+  `я охотилась на гоблинов`, but the generator must not substitute an authorial
+  action description for words spoken aloud.
+- Keep the visible-reply length ceiling in editable
+  `speech_runtime.visibleReply.maxChars`; callers may request a lower limit but
+  must not bypass the shared cap with surface-specific hardcoded maxima.
+- Keep visible phrase model/reasoning in `speech_runtime.visibleReply`, not in
+  global `OPENAI_CHAT_MODEL` / `OPENAI_CHAT_REASONING_EFFORT`. The global chat
+  settings are also used by stories, travel, memory/extractors and image-scene
+  preparation. `gpt-5.4-mini` Chat Completions rejects function tools combined
+  with reasoning: ordinary chat should omit tools and keep phrase reasoning;
+  only explicit rename-intent messages attach `update_pet_name` and omit the
+  reasoning parameter.
 - Deadline/event memories belong to proactive, not ordinary ambient idle.
   Ambient prompt assembly should only pass soft memory kinds such as
   preference/relationship/routine/boundary, and should not include memory
   summary lines that can pull deadline context into idle.
+- Do not paste the whole idle intent catalog into one generation. Keep broad
+  conversation purposes in editable `ambientDialogueImpulses` and inject only
+  one selected impulse per idle reply; recent replies separately prevent reuse
+  of the same wording and conversational purpose.
 - Do not re-enable `VOICE_CONTROL` for visible replies without an explicit
   product decision. Current prompt behavior relies on character name/description
   instead of `characterBible.voice`, catchphrases, sample replies, or

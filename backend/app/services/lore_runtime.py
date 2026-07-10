@@ -17,6 +17,7 @@ LoreSurface = Literal[
 WORLD_LIST_KEYS = (
     "environmentPalette",
     "materialPalette",
+    "dialogueVocabulary",
     "continuityRules",
     "toneRange",
 )
@@ -90,6 +91,15 @@ def lore_runtime_config() -> dict[str, Any]:
 
 def lore_world_payload() -> dict[str, Any]:
     return json.loads(json.dumps(lore_runtime_config()["world"], ensure_ascii=False))
+
+
+def dialogue_vocabulary_block() -> str:
+    vocabulary = _required_string_list(
+        lore_runtime_config(),
+        "world",
+        "dialogueVocabulary",
+    )
+    return "Слова мира, если подходят по смыслу: " + ", ".join(vocabulary) + "."
 
 
 def lore_prompt_block(surface: LoreSurface) -> str:

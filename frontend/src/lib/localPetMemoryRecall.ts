@@ -3,6 +3,7 @@ import type {
   LocalPetMemoryContext,
   LocalPetMemoryStateV1,
   LocalPetUserMemory,
+  UserMemoryKind,
 } from "./localPetMemoryTypes";
 import type { LocalChatMessage, LocalPetState } from "./types";
 
@@ -11,6 +12,14 @@ const HOUR_MS = 3_600_000;
 const RECENT_DIRECT_HISTORY_MESSAGES = 12;
 const MAX_RECALL_EPISODES = 3;
 const MAX_RELEVANT_MEMORIES = 5;
+const AMBIENT_MEMORY_KINDS = new Set<UserMemoryKind>([
+  "user_fact",
+  "preference",
+  "relationship",
+  "routine",
+  "emotion",
+  "boundary",
+]);
 const EPISODE_CONTEXT_RADIUS = 2;
 const RUSSIAN_SUFFIXES = [
   "иями", "ями", "ами", "ого", "ему", "ому", "ыми", "ими",
@@ -345,6 +354,32 @@ export function buildMemorySnapshotContext(
     userProfile: memory.userProfile,
     relevantMemories: memory.memories
       .filter((item) => isMemoryActive(item, now))
+      .slice(0, MAX_RELEVANT_MEMORIES)
+      .map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        text: item.text,
+        dueAt: item.dueAt,
+      })),
+  };
+}
+
+export function buildAmbientMemoryContext(
+  memory: LocalPetMemoryStateV1,
+  now = new Date(),
+): LocalPetMemoryContext {
+  return {
+    relevantMemories: memory.memories
+      .filter((item) => isMemoryActive(item, now) && AMBIENT_MEMORY_KINDS.has(item.kind))
+      .sort((left, right) => {
+        const leftIsName = left.normalizedKey === "user-name" ? 1 : 0;
+        const rightIsName = right.normalizedKey === "user-name" ? 1 : 0;
+        return (
+          rightIsName - leftIsName
+          || right.importance - left.importance
+          || memoryTime(right) - memoryTime(left)
+        );
+      })
       .slice(0, MAX_RELEVANT_MEMORIES)
       .map((item) => ({
         id: item.id,

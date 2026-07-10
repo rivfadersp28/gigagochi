@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -139,11 +140,25 @@ def _required_int(config: dict[str, Any], path: tuple[str, ...] | list[str]) -> 
     raise ValueError(f"{_path_label(path)} must be an integer")
 
 
+def _required_string_list(
+    config: dict[str, Any],
+    path: tuple[str, ...] | list[str],
+) -> list[str]:
+    value = _read_path(config, path)
+    if not isinstance(value, list):
+        raise ValueError(f"{_path_label(path)} must be a list")
+    result = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+    if not result or len(result) != len(value):
+        raise ValueError(f"{_path_label(path)} must contain non-empty strings")
+    return result
+
+
 def validate_speech_runtime_config(config: Any) -> None:
     if not _is_record(config):
         raise ValueError("speech_runtime must be a JSON object")
     for path in REQUIRED_STRING_PATHS:
         _required_string(config, path)
+    _required_string_list(config, ("ambientDialogueImpulses",))
     for surface in SURFACES:
         for flag in STATE_FLAGS:
             _required_bool(config, ("stateLayer", "surfaces", surface, flag))
@@ -157,6 +172,18 @@ def validate_speech_runtime_config(config: Any) -> None:
     _required_int(config, ("stateLayer", "thresholds", "energyHighMin"))
     _required_int(config, ("backgroundStory", "maxStoryChars"))
     _required_int(config, ("backgroundStory", "maxRagChars"))
+    visible_reply_max_chars = _required_int(config, ("visibleReply", "maxChars"))
+    if not 1 <= visible_reply_max_chars <= 300:
+        raise ValueError("visibleReply.maxChars must be between 1 and 300")
+    _required_string(config, ("visibleReply", "model"))
+    visible_reply_reasoning_effort = _required_string(
+        config,
+        ("visibleReply", "reasoningEffort"),
+    )
+    if visible_reply_reasoning_effort not in {"none", "low", "medium", "high", "xhigh"}:
+        raise ValueError(
+            "visibleReply.reasoningEffort must be one of none, low, medium, high, xhigh"
+        )
     background_reasoning_effort = _required_string(
         config,
         ("backgroundStory", "reasoningEffort"),
@@ -242,6 +269,11 @@ def surface_prompt(surface: VisibleSurface, values: dict[str, str] | None = None
     return _template_replace(template, values or {})
 
 
+def ambient_dialogue_impulse() -> str:
+    impulses = _required_string_list(speech_runtime_config(), ("ambientDialogueImpulses",))
+    return random.choice(impulses)
+
+
 def context_routing_system_prompt() -> str:
     return _required_string(speech_runtime_config(), ("contextRouting", "systemPrompt"))
 
@@ -307,6 +339,21 @@ def memory_usage_rule() -> str:
 
 def transient_context_rule() -> str:
     return _required_string(speech_runtime_config(), ("visibleReply", "transientContextRule"))
+
+
+def visible_reply_limit(requested: int | None = None) -> int:
+    configured = _required_int(speech_runtime_config(), ("visibleReply", "maxChars"))
+    if requested is None:
+        return configured
+    return max(1, min(requested, configured))
+
+
+def visible_reply_model() -> str:
+    return _required_string(speech_runtime_config(), ("visibleReply", "model"))
+
+
+def visible_reply_reasoning_effort() -> str:
+    return _required_string(speech_runtime_config(), ("visibleReply", "reasoningEffort"))
 
 
 def state_layer_surface_flags(surface: VisibleSurface) -> dict[str, bool]:

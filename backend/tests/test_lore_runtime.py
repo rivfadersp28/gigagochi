@@ -7,6 +7,7 @@ import pytest
 from app.services.character_dossier import build_character_capsule, effective_character_data
 from app.services.lore_runtime import (
     DATA_PATH,
+    dialogue_vocabulary_block,
     lore_prompt_block,
     validate_lore_runtime_config,
 )
@@ -27,6 +28,15 @@ def test_lore_runtime_validation_rejects_missing_surface() -> None:
 
     with pytest.raises(ValueError, match="surfaces.dialogueLore"):
         validate_lore_runtime_config(config)
+
+
+def test_dialogue_vocabulary_is_compact_world_language() -> None:
+    block = dialogue_vocabulary_block()
+
+    assert block.startswith("Слова мира, если подходят по смыслу:")
+    assert "руины" in block
+    assert "гоблин" in block
+    assert "Большой загадочный пограничный мир" not in block
 
 
 def test_effective_character_dossier_keeps_voice_world_and_durable_facts() -> None:

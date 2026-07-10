@@ -206,17 +206,33 @@
   inside the phrase plan. The old configurable `surfaceRules` layer was removed
   so proactive/ambient behavior is shaped by visible reply rules, state,
   dialogue-memory episodes and the idle self-prompt only.
-- Backend chat/proactive/ambient prompts no longer use generated
-  `characterBible`/`liteOverlay` as speech canon. The identity line is
-  deliberately short and uses the display name, or the raw pet description when
-  the name is missing, plus state/reply limit. Baby stage only rewrites that
-  identity as `маленький/маленькая {identity}` instead of adding separate
-  dataset examples or a verbose age hint;
-  durable personality details should emerge from recent chat history and
-  dialogue-memory episodes, not from pre-generated favorite phrases, conflicts,
-  appetites or voice rules. The context router receives only minimal pet state (`name`, `stage`,
-  `mood`), not raw `pet.description`; `voice_profile.py` remains in the codebase
-  but is not on the visible-reply path.
+- Backend chat/proactive/ambient prompts use a compact core character capsule;
+  the larger raw `CHARACTER_PROFILE` and selectively matched `liteOverlay` facts
+  remain controlled separately by the context-source policy. The identity line
+  uses the display name, or the raw pet description when the name is missing.
+  Baby stage only rewrites it as `маленький/маленькая {identity}` instead of
+  injecting age examples. All visible surfaces share one concise speech shape
+  from `identityTemplate`. Chat, idle, proactive and push share the isolated
+  `visibleReply` runtime: `gpt-5.4-mini`, reasoning `high`, and the mechanical
+  `maxChars` cap (`120` currently). Background stories, travel, memory/extractor
+  passes and image-scene preparation continue using their existing global/task
+  model settings. Normal chat only attaches `update_pet_name` for messages with
+  an explicit rename signal; that rare tool path uses the same phrase model with
+  reasoning omitted because Chat Completions rejects function tools plus
+  reasoning for `gpt-5.4-mini`. Visible text is contracted as words spoken aloud in first
+  person, not an authorial action caption. The full global `lore_runtime` world
+  block is not injected into ordinary visible replies; they receive only the
+  compact `world.dialogueVocabulary` noun palette, while richer world material
+  belongs to explicit world-context paths. Generic small-talk resets omit old
+  chat history, while actual
+  continuations keep it. Ambient idle omits chat history and uses recent idle
+  replies only for anti-repeat. Each idle generation receives one randomly
+  selected, admin-editable `ambientDialogueImpulses` item rather than the whole
+  intent catalog. The frontend sends a dedicated ambient memory context with
+  the user name prioritized; backend filtering keeps only soft kinds such as
+  user facts, preferences and relationships, excluding deadlines/events and
+  summary/profile text. The context router receives only minimal pet state
+  (`name`, `stage`, `mood`), not raw `pet.description`.
 - Generated pets follow a template -> instance contract in frontend local
   storage for legacy pets only. New pet asset generation does not call
   `create_character_bible` and returns no `characterBible`; image prompts use the

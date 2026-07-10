@@ -331,10 +331,10 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "source": "speech_runtime",
                 "editable": True,
                 "fileId": "speech_runtime",
-                "configPath": "surfacePrompts",
+                "configPath": "surfacePrompts / ambientDialogueImpulses",
                 "summary": (
-                    "Единые prompt-поля для chat, proactive, idle и Telegram push "
-                    "без отдельных hidden rules/user prompts."
+                    "Единые prompt-поля для chat, proactive, idle и Telegram push; "
+                    "для idle один разговорный импульс выбирается из редактируемого набора."
                 ),
             },
             {
@@ -346,7 +346,20 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "fileId": "speech_runtime",
                 "configPath": "identityTemplate",
                 "summary": (
-                    "Один шаблон identity/age/state/reply-limit строки для всех видимых реплик."
+                    "Один шаблон identity/age/state строки для всех видимых реплик."
+                ),
+            },
+            {
+                "id": "visible_reply_runtime",
+                "label": "Visible reply runtime",
+                "surfaces": surfaces,
+                "source": "speech_runtime",
+                "editable": True,
+                "fileId": "speech_runtime",
+                "configPath": "visibleReply.model / reasoningEffort / maxChars",
+                "summary": (
+                    "Отдельные модель, reasoning и механический максимум длины для "
+                    "chat, idle, proactive и push; фоновые генераторы их не используют."
                 ),
             },
             {

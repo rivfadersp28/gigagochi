@@ -30,7 +30,7 @@ from app.services.lite_overlay import (
     merge_lite_overlay_patch,
     overlay_patch_from_extracted_facts,
 )
-from app.services.lore_runtime import lore_prompt_block
+from app.services.lore_runtime import dialogue_vocabulary_block, lore_prompt_block
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_chat_model,
@@ -54,6 +54,7 @@ from app.services.pet_reply_engine.recent_events import (
 from app.services.pet_reply_engine.reply_limits import MAX_REPLY_CHARS, clamp_reply_text
 from app.services.pet_reply_engine.speech_runtime import (
     age_role_hint,
+    ambient_dialogue_impulse,
     character_fact_extraction_system_prompt,
     context_routing_sources,
     context_routing_system_prompt,
@@ -68,6 +69,9 @@ from app.services.pet_reply_engine.speech_runtime import (
     state_param_usage_rule,
     surface_prompt,
     transient_context_rule,
+    visible_reply_limit,
+    visible_reply_model,
+    visible_reply_reasoning_effort,
     world_seed_system_prompt,
 )
 from app.services.prompt_debug import (
@@ -93,6 +97,9 @@ VISIBLE_REPLY_FALLBACKS: dict[PhraseSurface, str] = {
 MAX_MEMORY_CONTEXT_ITEMS = 5
 MAX_RECENT_AMBIENT_REPLIES = 10
 MAX_RECENT_HISTORY_MESSAGES = 8
+AMBIENT_MEMORY_KINDS = frozenset(
+    {"user_fact", "preference", "relationship", "routine", "emotion", "boundary"}
+)
 RECENT_EVENT_QUESTION_RE = re.compile(
     r"(?:недавно|за последнее время|что интересного было|что случилось|что произошло)",
     re.IGNORECASE,
@@ -217,6 +224,15 @@ PET_STATE_TOOLS: list[dict[str, Any]] = [
         },
     }
 ]
+
+PET_RENAME_INTENT_RE = re.compile(
+    r"(?:"
+    r"буду\s+звать\s+тебя|зову\s+тебя|называю\s+тебя|назову\s+тебя|"
+    r"пусть\s+тебя\s+зовут|тебя\s+зовут|тво[её]\s+имя|переимен|"
+    r"теперь\s+ты|отныне\s+ты"
+    r")",
+    re.IGNORECASE,
+)
 
 LITE_CHARACTER_TOOLS: list[dict[str, Any]] = [
     {
@@ -382,7 +398,10 @@ def _visible_reply_response_format(reply_limit: int) -> dict[str, Any]:
 
 
 def _structured_reply_contract_rule() -> str:
-    return "Поле reply содержит только естественную видимую реплику персонажа."
+    return (
+        "Поле reply содержит только слова, которые персонаж произносит вслух. "
+        "Не пиши авторскую ремарку или описание кадра вместо реплики."
+    )
 
 
 def _normalize_structured_hint(value: Any, allowed: tuple[str, ...]) -> str | None:
@@ -509,7 +528,9 @@ _CHARACTER_DETAIL_REQUEST_RE = re.compile(
     r"прошл|истори|пита|\bешь\b|ед[ауеы]|батар|нюх|вывес)",
     re.IGNORECASE,
 )
-_CASUAL_CHARACTER_SUPPRESSED_SOURCES = frozenset({"characterProfile", "liteOverlay"})
+_CASUAL_CHARACTER_SUPPRESSED_SOURCES = frozenset(
+    {"characterProfile", "liteOverlay", "chatHistory"}
+)
 
 
 def _is_casual_character_small_talk(message: str) -> bool:
@@ -616,7 +637,17 @@ def _visible_context_block(payload: LocalChatRequest) -> str | None:
 
 
 def _ambient_memory_context_block(memory_context: LocalPetMemoryContext | None) -> str | None:
-    return _memory_context_block(memory_context)
+    if not memory_context:
+        return None
+    lines = [
+        f"- [{item.kind}] {text}"
+        for item in memory_context.relevantMemories[:MAX_MEMORY_CONTEXT_ITEMS]
+        if item.kind in AMBIENT_MEMORY_KINDS
+        and (text := _clean_optional_text(item.text, 300))
+    ]
+    if not lines:
+        return None
+    return "Мягкая память о собеседнике:\n" + "\n".join(lines) + f"\n{memory_usage_rule()}"
 
 
 def _ambient_recent_conversation_block(history: list[Any]) -> str | None:
@@ -684,7 +715,7 @@ def _anti_repeat_block(lines: list[str]) -> str | None:
         "Недавние реплики персонажа, уже показанные владельцу:\n"
         + "\n".join(f"- {line}" for line in lines)
         + "\nИзбегай не только дословного повтора, но и той же стартовой конструкции, "
-        "действия, предмета и метафоры. Это не источник фактов."
+        "действия, предмета, метафоры и повода заговорить. Это не источник фактов."
         + marker_rule
     )
 
@@ -826,7 +857,7 @@ def _visible_context_plan_auto_defaults(surface: PhraseSurface) -> frozenset[str
     if surface == "proactive":
         return frozenset({"userMemory"})
     if surface == "ambient":
-        return frozenset({"chatHistory", "recentReplies"})
+        return frozenset({"userMemory", "chatHistory", "recentReplies"})
     return frozenset()
 
 
@@ -1009,7 +1040,6 @@ def _character_block_for_surface(
         _character_capsule_block(
             pet,
             include_durable_facts=surface != "chat",
-            include_lore_frame=True,
         ),
         _character_context_block(pet, surface, routing),
     )
@@ -1102,7 +1132,6 @@ def _character_capsule_block(
     pet: Any,
     *,
     include_durable_facts: bool = True,
-    include_lore_frame: bool = False,
 ) -> str | None:
     capsule = build_character_capsule(
         pet,
@@ -1110,14 +1139,17 @@ def _character_capsule_block(
     )
     if not capsule:
         return None
-    if include_lore_frame:
-        return f"{capsule}\n\n{lore_prompt_block('dialogueLore')}"
     return capsule
 
 
 def _combine_character_blocks(*blocks: str | None) -> str | None:
     values = [block for block in blocks if block]
     return "\n\n".join(values) if values else None
+
+
+def _visible_world_block(context_bundle: AssembledPetContext) -> str:
+    values = [dialogue_vocabulary_block(), context_bundle.prompt_block]
+    return "\n\n".join(value for value in values if value)
 
 
 def _story_context_for_routing(
@@ -1193,10 +1225,11 @@ def _age_role_hint(payload: LocalChatRequest) -> str:
     return _age_role_hint_for_pet(payload.pet)
 
 
-def _lite_tools_for_routing(
+def _lite_tools_for_payload(
+    payload: LocalChatRequest,
     context_routing: ContextRoutingDecision | ContextPlan,
 ) -> list[dict[str, Any]] | None:
-    tools = list(PET_STATE_TOOLS)
+    tools = list(PET_STATE_TOOLS) if PET_RENAME_INTENT_RE.search(payload.message) else []
     if _source_enabled(
         "chat",
         "characterProfile",
@@ -1204,7 +1237,7 @@ def _lite_tools_for_routing(
         router_source="characterProfile",
     ):
         tools.extend(LITE_CHARACTER_TOOLS)
-    return tools
+    return tools or None
 
 
 def _history_items_for_prompt(payload: LocalChatRequest) -> list[Any]:
@@ -1285,7 +1318,7 @@ def _phrase_plan_for_chat(
     context_routing: ContextRoutingDecision | ContextPlan | None = None,
     recent_events_block: str | None = None,
 ) -> PhrasePlan:
-    reply_limit = payload.replyMaxChars or MAX_REPLY_CHARS
+    reply_limit = visible_reply_limit(payload.replyMaxChars)
     return PhrasePlan(
         surface="chat",
         reply_limit=reply_limit,
@@ -1318,7 +1351,7 @@ def _phrase_plan_for_chat(
             else None
         ),
         recent_events_block=recent_events_block,
-        world_block=context_bundle.prompt_block or None,
+        world_block=_visible_world_block(context_bundle),
         recent_ambient_block=None,
         extra_rules=(
             state_param_usage_rule(),
@@ -2028,7 +2061,7 @@ def generate_lite_pet_reply(
     timeout: float | None = None,
 ) -> LocalChatResponse:
     settings = get_settings()
-    model = model or get_chat_model(settings)
+    model = model or visible_reply_model()
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
     context_plan, context_routing_prompt_debug = _plan_contexts_for_visible_reply(
@@ -2050,7 +2083,7 @@ def generate_lite_pet_reply(
         context_plan=context_plan,
         recent_events_block=recent_events_block,
     )
-    tools = _lite_tools_for_routing(context_plan)
+    tools = _lite_tools_for_payload(payload, context_plan)
     overlay_patch: dict[str, Any] = {}
     pet_patch: dict[str, Any] = {}
     tool_debug: list[dict[str, Any]] = []
@@ -2063,7 +2096,7 @@ def generate_lite_pet_reply(
     structured_reply_debug: dict[str, Any] | None = None
     structured_reply_used_fallback = False
     structured_reply_validation_flags: list[str] = []
-    reply_limit = payload.replyMaxChars or MAX_REPLY_CHARS
+    reply_limit = visible_reply_limit(payload.replyMaxChars)
 
     for round_index in range(MAX_LITE_TOOL_ROUNDS + 1):
         request_kwargs: dict[str, Any] = {
@@ -2071,14 +2104,13 @@ def generate_lite_pet_reply(
             "messages": messages,
             "response_format": _visible_reply_response_format(reply_limit),
             "timeout": timeout,
+            **chat_reasoning_effort_kwargs(
+                "none" if tools else visible_reply_reasoning_effort()
+            ),
         }
         if tools:
             request_kwargs["tools"] = tools
             request_kwargs["tool_choice"] = "auto"
-        else:
-            request_kwargs.update(
-                chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort)
-            )
 
         prompt_debug.append(
             log_chat_completion_prompt(f"pet_reply/lite round {round_index + 1}", request_kwargs)
@@ -2256,18 +2288,19 @@ def build_proactive_messages(
             context_routing=context_plan,
         )
     reason = _reason_from_payload(payload)
+    reply_limit = visible_reply_limit()
     plan = PhrasePlan(
         surface="proactive",
-        reply_limit=MAX_REPLY_CHARS,
+        reply_limit=reply_limit,
         identity_line=_identity_line_for_pet(
             surface="proactive",
             pet=payload.pet,
             description=_reply_identity_label(payload.pet),
-            reply_limit=MAX_REPLY_CHARS,
+            reply_limit=reply_limit,
         ),
         persona_contract=surface_prompt("proactive", {"reason": reason}),
         tone_block=None,
-        world_block=context_bundle.prompt_block or None,
+        world_block=_visible_world_block(context_bundle),
         character_block=_character_block_for_surface(payload.pet, "proactive", context_plan),
         memory_block=memory_block,
         extra_rules=(
@@ -2312,18 +2345,19 @@ def build_push_messages(
             payload=payload,
             context_routing=context_plan,
         )
+    reply_limit = visible_reply_limit()
     plan = PhrasePlan(
         surface="push",
-        reply_limit=180,
+        reply_limit=reply_limit,
         identity_line=_identity_line_for_pet(
             surface="push",
             pet=payload.pet,
             description=_reply_identity_label(payload.pet),
-            reply_limit=180,
+            reply_limit=reply_limit,
         ),
         persona_contract=surface_prompt("push", {"reason": _reason_from_payload(payload)}),
         tone_block=None,
-        world_block=context_bundle.prompt_block or None,
+        world_block=_visible_world_block(context_bundle),
         character_block=_character_block_for_surface(payload.pet, "push", context_plan),
         memory_block=memory_block,
         extra_rules=(
@@ -2348,7 +2382,7 @@ def generate_proactive_pet_message(
     timeout: float | None = None,
 ) -> LocalProactiveResponse:
     settings = get_settings()
-    model = model or get_chat_model(settings)
+    model = model or visible_reply_model()
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
     prompt_debug: list[dict[str, Any]] = []
@@ -2367,6 +2401,7 @@ def generate_proactive_pet_message(
         context_routing=context_plan,
     )
 
+    reply_limit = visible_reply_limit()
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": build_proactive_messages(
@@ -2374,9 +2409,9 @@ def generate_proactive_pet_message(
             context_bundle=context_bundle,
             context_plan=context_plan,
         ),
-        "response_format": _visible_reply_response_format(MAX_REPLY_CHARS),
+        "response_format": _visible_reply_response_format(reply_limit),
         "timeout": timeout,
-        **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
+        **chat_reasoning_effort_kwargs(visible_reply_reasoning_effort()),
     }
     prompt_debug.append(log_chat_completion_prompt("pet_reply/proactive", request_kwargs))
     completion = openai_client.chat.completions.create(**request_kwargs)
@@ -2384,7 +2419,7 @@ def generate_proactive_pet_message(
     structured_reply = _parse_visible_reply_response(
         completion.choices[0].message.content or "",
         surface="proactive",
-        reply_limit=MAX_REPLY_CHARS,
+        reply_limit=reply_limit,
     )
     proactive_candidate = (
         payload.memoryContext.proactiveCandidate if payload.memoryContext else None
@@ -2420,7 +2455,7 @@ def generate_push_pet_message(
     timeout: float | None = None,
 ) -> LocalProactiveResponse:
     settings = get_settings()
-    model = model or get_chat_model(settings)
+    model = model or visible_reply_model()
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
     prompt_debug: list[dict[str, Any]] = []
@@ -2439,6 +2474,7 @@ def generate_push_pet_message(
         context_routing=context_plan,
     )
 
+    reply_limit = visible_reply_limit()
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": build_push_messages(
@@ -2446,9 +2482,9 @@ def generate_push_pet_message(
             context_bundle=context_bundle,
             context_plan=context_plan,
         ),
-        "response_format": _visible_reply_response_format(180),
+        "response_format": _visible_reply_response_format(reply_limit),
         "timeout": timeout,
-        **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
+        **chat_reasoning_effort_kwargs(visible_reply_reasoning_effort()),
     }
     prompt_debug.append(log_chat_completion_prompt("pet_reply/push", request_kwargs))
     completion = openai_client.chat.completions.create(**request_kwargs)
@@ -2456,7 +2492,7 @@ def generate_push_pet_message(
     structured_reply = _parse_visible_reply_response(
         completion.choices[0].message.content or "",
         surface="push",
-        reply_limit=180,
+        reply_limit=reply_limit,
     )
     debug = None
     if payload.includeDebug:
@@ -2489,7 +2525,7 @@ def build_ambient_messages(
         surface="ambient",
         routing=context_routing,
     )
-    reply_limit = payload.replyMaxChars or 160
+    reply_limit = visible_reply_limit(payload.replyMaxChars)
     memory_block = (
         _ambient_memory_context_block(payload.memoryContext)
         if _source_enabled(
@@ -2534,7 +2570,7 @@ def build_ambient_messages(
         ),
         persona_contract=surface_prompt("ambient", {"recent_replies": ""}),
         tone_block=None,
-        world_block=context_bundle.prompt_block or None,
+        world_block=_visible_world_block(context_bundle),
         character_block=_character_block_for_surface(payload.pet, "ambient", context_plan),
         memory_block=memory_block,
         recent_ambient_block=recent_ambient_block,
@@ -2543,6 +2579,7 @@ def build_ambient_messages(
             state_param_usage_rule(),
             transient_context_rule(),
             _structured_reply_contract_rule(),
+            f"Разговорный импульс этой реплики: {ambient_dialogue_impulse()}.",
         ),
     )
     return [{"role": "system", "content": plan.system_content()}]
@@ -2556,7 +2593,7 @@ def generate_ambient_pet_message(
     timeout: float | None = None,
 ) -> LocalChatResponse:
     settings = get_settings()
-    model = model or get_chat_model(settings)
+    model = model or visible_reply_model()
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     openai_client = client or get_openai_client()
     prompt_debug: list[dict[str, Any]] = []
@@ -2575,6 +2612,7 @@ def generate_ambient_pet_message(
         context_routing=context_plan,
     )
 
+    reply_limit = visible_reply_limit(payload.replyMaxChars)
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": build_ambient_messages(
@@ -2582,9 +2620,9 @@ def generate_ambient_pet_message(
             context_bundle=context_bundle,
             context_plan=context_plan,
         ),
-        "response_format": _visible_reply_response_format(payload.replyMaxChars or 160),
+        "response_format": _visible_reply_response_format(reply_limit),
         "timeout": timeout,
-        **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
+        **chat_reasoning_effort_kwargs(visible_reply_reasoning_effort()),
     }
     prompt_debug.append(log_chat_completion_prompt("pet_reply/ambient", request_kwargs))
     completion = openai_client.chat.completions.create(**request_kwargs)
@@ -2593,7 +2631,7 @@ def generate_ambient_pet_message(
     structured_reply = _parse_visible_reply_response(
         raw_reply,
         surface="ambient",
-        reply_limit=payload.replyMaxChars or 160,
+        reply_limit=reply_limit,
     )
     log_ambient_reply_diagnostic(
         "pet_reply/ambient",

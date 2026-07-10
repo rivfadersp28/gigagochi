@@ -22,7 +22,10 @@ import {
   readLocalChatHistory,
   readLocalPetSettings,
 } from "@/lib/localPetStorage";
-import { buildDailyProactiveMemoryContext } from "@/lib/localPetMemoryRecall";
+import {
+  buildAmbientMemoryContext,
+  buildDailyProactiveMemoryContext,
+} from "@/lib/localPetMemoryRecall";
 import {
   readLocalPetMemory,
   recordProactiveDelivery,
@@ -243,9 +246,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     const requestId = ambientRequestIdRef.current + 1;
     ambientRequestIdRef.current = requestId;
     const history = readLocalChatHistory().messages;
+    const memoryContext = buildAmbientMemoryContext(readLocalPetMemory(pet.petId));
 
     void generateLocalAmbientMessage(pet, {
       includeDebug: includePromptDebug,
+      memoryContext,
       history,
       recentAmbientReplies: ambientReplyHistoryRef.current,
       replyMaxChars: 160,

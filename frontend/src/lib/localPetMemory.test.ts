@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { extractDeterministicMemoryOperations } from "./localPetDeterministicMemory";
 import {
+  buildAmbientMemoryContext,
   buildMemoryContextForMessage,
   buildMemorySnapshotContext,
 } from "./localPetMemoryRecall";
@@ -43,6 +44,44 @@ describe("local pet memory", () => {
       summary: memory.summary,
       userProfile: memory.userProfile,
     });
+  });
+
+  it("gives ambient only soft memory and prioritizes the user name", () => {
+    const memory = applyMemoryOperations(createEmptyLocalPetMemory("pet-1"), [
+      {
+        type: "remember_user_fact",
+        kind: "deadline",
+        text: "У пользователя завтра экзамен.",
+        normalizedKey: "exam",
+        confidence: 1,
+        importance: 1,
+      },
+      {
+        type: "remember_user_fact",
+        kind: "preference",
+        text: "Пользователь любит чай.",
+        normalizedKey: "tea",
+        confidence: 1,
+        importance: 0.8,
+      },
+      {
+        type: "remember_user_fact",
+        kind: "user_fact",
+        text: "Пользователя зовут Серёга.",
+        normalizedKey: "user-name",
+        confidence: 1,
+        importance: 1,
+      },
+    ]);
+
+    const context = buildAmbientMemoryContext(memory);
+
+    expect(context.summary).toBeUndefined();
+    expect(context.userProfile).toBeUndefined();
+    expect(context.relevantMemories.map((item) => item.text)).toEqual([
+      "Пользователя зовут Серёга.",
+      "Пользователь любит чай.",
+    ]);
   });
 
   it("replaces stale preference wording even with lower confidence", () => {

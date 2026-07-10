@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from app.schemas import (
     LiteFactExtractionRequest,
     LocalAmbientRequest,
@@ -257,18 +259,28 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert len(completions.calls) == 1
     request = completions.calls[0]
     system_message = request["messages"][0]["content"]
+    assert request["model"] == "gpt-5.4-mini"
+    assert request["reasoning_effort"] == "high"
     assert system_message.startswith(
         "Ты Громм. Сейчас ты взрослый, сформировавшийся представитель такого существа. "
-        "Говори естественно от первого лица."
+        "Говори от первого лица одной короткой, простой и конкретной репликой."
     )
     assert "гигантский земляной великан" in system_message
     assert "КАНОН ПЕРСОНАЖА:" in system_message
-    assert "ОБЩАЯ БИБЛИЯ МИРА:" in system_message
+    assert "ОБЩАЯ БИБЛИЯ МИРА:" not in system_message
+    assert "Слова мира, если подходят по смыслу:" in system_message
+    assert "руины" in system_message
+    assert "гоблин" in system_message
+    assert "только слова, которые персонаж произносит вслух" in system_message
+    assert "Не пиши авторскую ремарку" in system_message
     assert "используй update_pet_name" in system_message
-    assert "Ответь владельцу на последнее сообщение как этот персонаж." in system_message
+    assert "Ответь на последнее сообщение как этот персонаж." in system_message
     assert "Верни только JSON" not in system_message
     assert request["response_format"]["json_schema"]["name"] == "visible_pet_reply"
-    assert [tool["function"]["name"] for tool in request["tools"]] == ["update_pet_name"]
+    assert request["response_format"]["json_schema"]["schema"]["properties"]["reply"][
+        "maxLength"
+    ] == 120
+    assert "tools" not in request
     assert "STORY_LIBRARY" not in system_message
 
 
@@ -393,6 +405,24 @@ def test_chat_prompt_keeps_recent_replies_as_dialogue_not_anti_repeat() -> None:
     assert "Недавние реплики персонажа" not in messages[0]["content"]
 
 
+def test_chat_small_talk_does_not_copy_old_reply_style() -> None:
+    messages = build_lite_chat_messages(
+        lite_payload(
+            message="как дела?",
+            history=[
+                {"role": "user", "text": "давай"},
+                {
+                    "role": "pet",
+                    "text": "Я слушаю, как стеклянное семечко шепчет корнями в лунной тени.",
+                },
+            ],
+        )
+    )
+
+    assert [message["role"] for message in messages] == ["system", "user"]
+    assert "стеклянное семечко" not in messages[0]["content"]
+
+
 def test_chat_prompt_retrieves_only_matching_lite_overlay_facts() -> None:
     system_message = build_lite_chat_messages(
         lite_payload(
@@ -440,8 +470,8 @@ def test_lite_prompt_includes_state_modifier() -> None:
         "Ты сейчас радостный, здоровый, полный сил."
         not in build_lite_chat_messages(happy)[0]["content"]
     )
-    assert "Настроение сейчас радостное" in build_lite_chat_messages(happy)[0]["content"]
-    assert "Голод сейчас низкий" in build_lite_chat_messages(hungry)[0]["content"]
+    assert "У тебя радостное настроение" in build_lite_chat_messages(happy)[0]["content"]
+    assert "Ты очень хочешь есть" in build_lite_chat_messages(hungry)[0]["content"]
 
 
 def test_context_sources_policy_disables_state_params(monkeypatch, tmp_path) -> None:
@@ -485,6 +515,34 @@ def test_speech_runtime_rejects_state_params_auto() -> None:
         raise AssertionError("stateParams=auto must be rejected")
 
 
+def test_visible_reply_limit_uses_runtime_cap_and_honors_lower_request() -> None:
+    assert speech_runtime.visible_reply_model() == "gpt-5.4-mini"
+    assert speech_runtime.visible_reply_reasoning_effort() == "high"
+    assert speech_runtime.visible_reply_limit() == 120
+    assert speech_runtime.visible_reply_limit(220) == 120
+    assert speech_runtime.visible_reply_limit(40) == 40
+
+
+def test_speech_runtime_rejects_invalid_visible_reply_limit() -> None:
+    runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))
+    runtime["visibleReply"]["maxChars"] = 301
+
+    try:
+        speech_runtime.validate_speech_runtime_config(runtime)
+    except ValueError as exc:
+        assert "visibleReply.maxChars" in str(exc)
+    else:
+        raise AssertionError("visibleReply.maxChars above schema limit must be rejected")
+
+
+def test_speech_runtime_rejects_invalid_visible_reply_reasoning() -> None:
+    runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))
+    runtime["visibleReply"]["reasoningEffort"] = "max"
+
+    with pytest.raises(ValueError, match="visibleReply.reasoningEffort"):
+        speech_runtime.validate_speech_runtime_config(runtime)
+
+
 def test_lite_prompt_includes_compact_character_voice_without_raw_controls() -> None:
     payload = lite_payload(
         pet={
@@ -518,7 +576,11 @@ def test_lite_prompt_includes_compact_character_voice_without_raw_controls() -> 
 
     system_message = build_lite_chat_messages(payload)[0]["content"]
 
-    assert "Ты маленький Пончик. Говори естественно от первого лица." in system_message
+    assert (
+        "Ты маленький Пончик. Говори от первого лица одной короткой, простой и конкретной "
+        "репликой."
+        in system_message
+    )
     assert "кремовый котенок-компаньон" in system_message
     assert "VOICE_CONTROL" not in system_message
     assert "нижний регулятор всех видимых реплик питомца" not in system_message
@@ -663,7 +725,8 @@ def test_chat_small_talk_keeps_core_character_but_suppresses_overlay_noise() -> 
     )[0]["content"]
 
     assert (
-        "Ты Пипс. Сейчас ты подросток такого существа. Говори естественно от первого лица."
+        "Ты Пипс. Сейчас ты подросток такого существа. Говори от первого лица одной "
+        "короткой, простой и конкретной репликой."
         in system_message
     )
     assert "Персонаж:" not in system_message
@@ -989,12 +1052,12 @@ def test_speech_runtime_config_controls_reply_and_extractor_prompts(
     assert "Recent event canonical facts" in extraction_messages[0]["content"]
 
 
-def test_lite_clamps_reply_to_300_chars() -> None:
+def test_lite_clamps_reply_to_runtime_limit() -> None:
     client, _completions = fake_lite_client(SimpleNamespace(content="а" * 420, tool_calls=None))
 
     response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
 
-    assert len(response.reply) <= 300
+    assert len(response.reply) <= 120
     assert response.reply.endswith("…")
 
 
@@ -1127,8 +1190,8 @@ def test_proactive_prompt_includes_compact_character_voice_without_catchphrases(
     assert "говорит через маленькие бытовые детали" in system_message
     assert "нос подсказывает" not in system_message
     assert (
-        "Напиши владельцу первым одну короткую живую реплику. "
-        "Повод: пользователь обещал вернуться вечером" in system_message
+        "Напиши первым. Повод: пользователь обещал вернуться вечером"
+        in system_message
     )
     assert "Ты сам решил написать пользователю первым" not in system_message
     assert "Напиши одну живую реплику" not in system_message
@@ -1204,6 +1267,38 @@ def test_proactive_prompt_uses_preselected_world_context_when_needed() -> None:
     assert "STORY_LIBRARY" not in system_message
 
 
+def test_ambient_prompt_receives_one_selected_dialogue_impulse(monkeypatch) -> None:
+    monkeypatch.setattr(speech_runtime.random, "choice", lambda values: values[1])
+    payload = LocalAmbientRequest.model_validate(
+        {
+            "pet": {
+                "name": "Листик",
+                "description": "лесной зверёк",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": {"hunger": 80, "happiness": 80, "energy": 80},
+            }
+        }
+    )
+
+    prompt = build_ambient_messages(payload)[0]["content"]
+
+    assert (
+        "Разговорный импульс этой реплики: поделись внезапной мыслью или вопросом, "
+        "который тебя занимает."
+        in prompt
+    )
+    assert "поприветствуй и прояви интерес к собеседнику" not in prompt
+
+
+def test_speech_runtime_rejects_empty_ambient_dialogue_impulses() -> None:
+    runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))
+    runtime["ambientDialogueImpulses"] = []
+
+    with pytest.raises(ValueError, match="ambientDialogueImpulses"):
+        speech_runtime.validate_speech_runtime_config(runtime)
+
+
 def test_ambient_prompt_uses_idle_field_without_forced_world_context(
     monkeypatch,
     tmp_path,
@@ -1268,6 +1363,11 @@ def test_ambient_prompt_uses_idle_field_without_forced_world_context(
                         "kind": "preference",
                         "text": "Пользователь любит короткие ответы.",
                     },
+                    {
+                        "id": "m3",
+                        "kind": "user_fact",
+                        "text": "Пользователя зовут Серёга.",
+                    },
                 ],
             },
             "replyMaxChars": 120,
@@ -1287,13 +1387,14 @@ def test_ambient_prompt_uses_idle_field_without_forced_world_context(
     assert "пять минут" not in system_message
     assert "Привет, я Листик. Я просто рядом." in system_message
     assert "Избегай не только дословного повтора" in system_message
-    assert "той же стартовой конструкции, действия, предмета и метафоры" in system_message
-    assert "Есть ли в твоем мире монстры?" in system_message
-    assert "Я нашел крошечный ключ от Врат Забвения." in system_message
+    assert "действия, предмета, метафоры и повода заговорить" in system_message
+    assert "Есть ли в твоем мире монстры?" not in system_message
+    assert "Я нашел крошечный ключ от Врат Забвения." not in system_message
     assert "ask_school_or_work_role" not in system_message
     assert "У пользователя завтра экзамен." not in system_message
     assert "Пользователь готовится к экзамену." not in system_message
-    assert "Пользователь любит короткие ответы." not in system_message
+    assert "Пользователь любит короткие ответы." in system_message
+    assert "Пользователя зовут Серёга." in system_message
     assert "VOICE_CONTROL" not in system_message
     assert "Детали мира для этой реплики" not in system_message
     assert "лист шепчет" not in system_message
@@ -1454,11 +1555,9 @@ def test_lite_tools_do_not_expose_character_json() -> None:
 
     assert response.reply == "Я ем мокрую глину после дождя."
     assert len(completions.calls) == 1
-    assert "tools" in completions.calls[0]
+    assert "tools" not in completions.calls[0]
+    assert completions.calls[0]["reasoning_effort"] == "high"
     assert response.debug is not None
-    assert [tool["function"]["name"] for tool in completions.calls[0]["tools"]] == [
-        "update_pet_name",
-    ]
     assert response.debug.liteToolCalls == []
     assert response.debug.liteOverlayPatch is None
 
@@ -1480,7 +1579,7 @@ def test_lite_story_library_context_is_disabled_without_story_tools() -> None:
     request = completions.calls[0]
     system_message = request["messages"][0]["content"]
     assert "WORLD_CONTEXT" not in system_message
-    assert "search_story_library" not in [tool["function"]["name"] for tool in request["tools"]]
+    assert "tools" not in request
     assert response.debug is not None
     assert response.debug.storyLibraryPatch is None
     assert response.debug.storyLibraryDebug is not None
@@ -1643,6 +1742,11 @@ def test_lite_tool_updates_pet_name() -> None:
         "saved": True,
         "petPatch": {"name": "Дружок"},
     }
+    assert all("reasoning_effort" not in request for request in completions.calls)
+    assert all(
+        [tool["function"]["name"] for tool in request["tools"]] == ["update_pet_name"]
+        for request in completions.calls
+    )
 
 
 def test_lite_world_tool_bootstrap_is_disabled() -> None:
@@ -1694,7 +1798,7 @@ def test_lite_world_tool_bootstrap_is_disabled() -> None:
         "pet_reply/lite round 1",
     ]
     request = completions.calls[0]
-    assert [tool["function"]["name"] for tool in request["tools"]] == ["update_pet_name"]
+    assert "tools" not in request
 
 
 def test_lite_fact_extraction_groups_facts_by_sphere() -> None:

@@ -446,6 +446,12 @@ function SpeechRuntimeEditor({
           rows={8}
           onChange={(value) => updatePath(["surfacePrompts", "idle"], value)}
         />
+        <RuntimeLineList
+          label="Разговорные импульсы"
+          values={stringListAt(config, ["ambientDialogueImpulses"])}
+          rows={10}
+          onChange={(values) => updatePath(["ambientDialogueImpulses"], values)}
+        />
       </Section>
 
       <Section title="Обычный чат">
@@ -466,6 +472,23 @@ function SpeechRuntimeEditor({
           value={stringAt(config, ["identityTemplate"])}
           rows={4}
           onChange={(value) => updatePath(["identityTemplate"], value)}
+        />
+        <RuntimeNumberField
+          label="Максимум символов в реплике"
+          value={numberAt(config, ["visibleReply", "maxChars"])}
+          onChange={(value) => updatePath(["visibleReply", "maxChars"], value)}
+        />
+        <RuntimeField
+          label="Модель видимых реплик"
+          value={stringAt(config, ["visibleReply", "model"])}
+          rows={2}
+          onChange={(value) => updatePath(["visibleReply", "model"], value)}
+        />
+        <RuntimeField
+          label="Reasoning видимых реплик"
+          value={stringAt(config, ["visibleReply", "reasoningEffort"])}
+          rows={2}
+          onChange={(value) => updatePath(["visibleReply", "reasoningEffort"], value)}
         />
       </Section>
 
