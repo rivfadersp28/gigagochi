@@ -48,7 +48,7 @@ from app.services.pet_reply_engine.speech_runtime import (
 )
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
 from app.services.story_library import search_story_library
-from app.services.tone_runtime import tone_context_payload, tone_prompt_block
+from app.services.tone_runtime import tone_prompt_block
 
 logger = logging.getLogger(__name__)
 
@@ -669,6 +669,9 @@ def _story_event_briefs(recent_story_events: list[dict[str, Any]] | None) -> lis
         if not _is_record(item):
             continue
         parts: list[str] = []
+        title = _text_value(item.get("title"), limit=120)
+        if title:
+            parts.append(f"название: {title}")
         event_type = _text_value(item.get("eventType"), limit=60)
         if event_type:
             parts.append(f"тип: {event_type}")
@@ -678,12 +681,21 @@ def _story_event_briefs(recent_story_events: list[dict[str, Any]] | None) -> lis
         participants = _string_list(item.get("participants"), limit=4)
         if participants:
             parts.append(f"участники: {', '.join(participants)}")
+        tags = _string_list(item.get("tags"), limit=6)
+        if tags:
+            parts.append(f"ключевые мотивы: {', '.join(tags)}")
+        actions = _string_list(item.get("actions"), limit=3)
+        if actions:
+            parts.append(f"действия: {', '.join(actions)}")
         objects = _string_list(item.get("objects"), limit=4)
         if objects:
             parts.append(f"предметы: {', '.join(objects)}")
         location = _text_value(item.get("location"), limit=120)
         if location:
             parts.append(f"место: {location}")
+        outcome = _text_value(item.get("outcome"), limit=180)
+        if outcome:
+            parts.append(f"развязка: {outcome}")
         brief = "; ".join(parts)
         if brief:
             briefs.append(brief)
@@ -699,8 +711,10 @@ def _anti_repeat_block(recent_story_events: list[dict[str, Any]] | None) -> str:
         "ANTI_REPEAT: эти события уже происходили. "
         "Используй список только как запрет на повтор, "
         "не как источник новых деталей сюжета. "
-        "Не повторяй по сути то же сочетание участник + "
-        "тип события + предмет + место + тон исхода.\n"
+        "Не повторяй центральные слова, образы и мотивы из названий и тегов, "
+        "даже с другим прилагательным или в другой словоформе. Не повторяй по сути "
+        "тот же конфликт, действие, предмет, место или способ развязки. "
+        "Новая история должна заметно отличаться сразу по нескольким признакам.\n"
         f"{lines}"
     )
 
@@ -778,7 +792,6 @@ def _background_routing_payload(
         "surface": "backgroundStory",
         "task": "generate_background_story",
         "eventType": background_story_default_event_type(),
-        "toneProfile": tone_context_payload("contextRouting"),
         "now": now_iso or _now_iso(),
         "timezone": timezone,
         "pet": pet_payload,
@@ -1490,9 +1503,7 @@ def generate_background_story(
         "messages": [
             {
                 "role": "system",
-                "content": (
-                    f"{background_story_system_prompt()}\n\n{tone_prompt_block('backgroundStory')}"
-                ),
+                "content": background_story_system_prompt(),
             },
             {"role": "user", "content": user_content},
         ],
