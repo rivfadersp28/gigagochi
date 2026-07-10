@@ -78,6 +78,45 @@ function errorDetail(payload: unknown): ApiErrorDetail {
   return record as ApiErrorDetail;
 }
 
+function validationErrorMessage(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object") {
+    return undefined;
+  }
+  const detail = (payload as { detail?: unknown }).detail;
+  if (!Array.isArray(detail)) {
+    return undefined;
+  }
+  const firstError = detail.find(
+    (item): item is Record<string, unknown> => Boolean(item) && typeof item === "object",
+  );
+  if (!firstError) {
+    return undefined;
+  }
+
+  const location = Array.isArray(firstError.loc)
+    ? firstError.loc
+        .filter((item): item is string | number => (
+          typeof item === "string" || typeof item === "number"
+        ))
+        .filter((item) => item !== "body")
+        .join(".")
+    : "";
+  const reason =
+    firstError.type === "string_too_short"
+      ? "значение не должно быть пустым"
+      : firstError.type === "string_too_long"
+        ? "значение слишком длинное"
+        : firstError.type === "missing"
+          ? "обязательное значение отсутствует"
+          : firstError.type === "literal_error"
+            ? "недопустимое значение"
+            : stringValue(firstError.msg) ?? "недопустимое значение";
+
+  return location
+    ? `Некорректное поле ${location}: ${reason}.`
+    : `Некорректные данные запроса: ${reason}.`;
+}
+
 function errorMessageFromResponse(
   response: Response,
   payload: unknown,
@@ -87,6 +126,7 @@ function errorMessageFromResponse(
   const message =
     stringValue(detail.message) ??
     firstErrorMessage(detail.errors) ??
+    validationErrorMessage(payload) ??
     stringValue((payload as { message?: unknown } | undefined)?.message);
 
   if (code === "rate_limited") {

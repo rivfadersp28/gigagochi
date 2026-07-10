@@ -79,4 +79,24 @@ describe("API response contracts", () => {
       status: 502,
     });
   });
+
+  it("shows the field path for FastAPI validation errors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({
+          detail: [{
+            type: "string_too_short",
+            loc: ["body", "history", 0, "text"],
+            msg: "String should have at least 1 character",
+          }],
+        }), { status: 422, headers: { "Content-Type": "application/json" } }),
+      ),
+    );
+
+    await expect(request("/api/chat", {}, parseLocalChatResponse)).rejects.toMatchObject({
+      message: "Некорректное поле history.0.text: значение не должно быть пустым.",
+      status: 422,
+    });
+  });
 });

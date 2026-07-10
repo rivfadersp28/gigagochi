@@ -41,6 +41,8 @@ export { API_URL, ApiError } from "./apiTransport";
 
 const ENABLE_TMA_DEV_FALLBACK = process.env.NEXT_PUBLIC_ENABLE_TMA_DEV_FALLBACK === "true";
 const MAX_CHAT_INPUT_LENGTH = 1000;
+const MAX_CHAT_HISTORY_ITEMS = 12;
+const MAX_CHAT_HISTORY_TEXT_LENGTH = 8000;
 
 type LocalChatOptions = {
   includeDebug?: boolean;
@@ -83,6 +85,88 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function cleanApiText(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const clean = value.trim().slice(0, maxLength);
+  return clean || undefined;
+}
+
+function chatHistoryForApi(
+  history: Pick<LocalChatMessage, "role" | "text">[],
+  limit = MAX_CHAT_HISTORY_ITEMS,
+) {
+  return history
+    .flatMap((item) => {
+      const text = cleanApiText(item.text, MAX_CHAT_HISTORY_TEXT_LENGTH);
+      return text ? [{ role: item.role, text }] : [];
+    })
+    .slice(-limit);
+}
+
+function memoryContextForApi(
+  memoryContext: LocalPetMemoryContext | undefined,
+): LocalPetMemoryContext | undefined {
+  if (!memoryContext) {
+    return undefined;
+  }
+
+  const relevantMemories = memoryContext.relevantMemories
+    .flatMap((item) => {
+      const id = cleanApiText(item.id, 120);
+      const text = cleanApiText(item.text, 500);
+      if (!id || !text) {
+        return [];
+      }
+      return [{
+        id,
+        kind: item.kind,
+        text,
+        dueAt: cleanApiText(item.dueAt, 80),
+      }];
+    })
+    .slice(0, 5);
+  const episodes = (memoryContext.episodes ?? [])
+    .flatMap((episode) => {
+      const id = cleanApiText(episode.id, 160);
+      const messages = episode.messages
+        .flatMap((message) => {
+          const text = cleanApiText(message.text, MAX_CHAT_HISTORY_TEXT_LENGTH);
+          return text
+            ? [{
+                role: message.role,
+                text,
+                createdAt: cleanApiText(message.createdAt, 80),
+              }]
+            : [];
+        })
+        .slice(-8);
+      return id && messages.length ? [{ id, messages }] : [];
+    })
+    .slice(0, 3);
+  const proactiveCandidate = memoryContext.proactiveCandidate;
+  const proactiveReason = cleanApiText(proactiveCandidate?.reason, 280);
+
+  return {
+    summary: cleanApiText(memoryContext.summary, 1000),
+    userProfile: cleanApiText(memoryContext.userProfile, 1000),
+    relevantMemories,
+    episodes,
+    proactiveCandidate: proactiveCandidate && proactiveReason
+      ? {
+          memoryIds: (proactiveCandidate.memoryIds ?? [])
+            .flatMap((id) => cleanApiText(id, 120) ?? [])
+            .slice(0, 5),
+          episodeIds: (proactiveCandidate.episodeIds ?? [])
+            .flatMap((id) => cleanApiText(id, 160) ?? [])
+            .slice(0, 5),
+          reason: proactiveReason,
+        }
+      : undefined,
+  };
+}
+
 export function characterBibleForApi(pet: LocalPetState): Record<string, unknown> | undefined {
   const template = isRecord(pet.assetSet?.characterTemplate)
     ? pet.assetSet.characterTemplate
@@ -113,7 +197,7 @@ export function characterBibleForApi(pet: LocalPetState): Record<string, unknown
 function petContextForApi(pet: LocalPetState) {
   return {
     name: petNameForApi(pet),
-    description: pet.description,
+    description: cleanApiText(pet.description, 300) ?? "Персонаж",
     characterBible: characterBibleForApi(pet),
     stage: pet.stage,
     mood: pet.mood,
@@ -409,14 +493,11 @@ export async function sendLocalChatMessage(
     body: {
       message: message.slice(0, MAX_CHAT_INPUT_LENGTH),
       includeDebug: options.includeDebug ?? false,
-      memoryContext: options.memoryContext,
+      memoryContext: memoryContextForApi(options.memoryContext),
       replyMaxChars: options.replyMaxChars,
       visibleContext: options.visibleContext,
       pet: petContextForApi(pet),
-      history: history.slice(-12).map((item) => ({
-        role: item.role,
-        text: item.text,
-      })),
+      history: chatHistoryForApi(history),
     },
   }, parseLocalChatResponse);
 }
@@ -439,12 +520,9 @@ export async function extractLocalUserMemory(
       nowIso: new Date().toISOString(),
       timezone: browserTimezone(),
       existingMemoryBrief: buildExistingMemoryBrief(memory),
-      memoryContext: options.memoryContext,
+      memoryContext: memoryContextForApi(options.memoryContext),
       pet: petContextForApi(pet),
-      history: history.slice(-12).map((item) => ({
-        role: item.role,
-        text: item.text,
-      })),
+      history: chatHistoryForApi(history),
     },
   }, parseMemoryExtractionResponse);
 }
@@ -480,7 +558,7 @@ export async function generateLocalProactiveMessage(
       includeDebug: options.includeDebug ?? false,
       nowIso: new Date().toISOString(),
       timezone: browserTimezone(),
-      memoryContext,
+      memoryContext: memoryContextForApi(memoryContext),
       pet: petContextForApi(pet),
     },
   }, parseLocalChatResponse);
@@ -506,11 +584,8 @@ export async function registerPetPushSnapshot(
         lastStatsTickAt: pet.lastStatsTickAt,
         lastStatTickAt: pet.lastStatTickAt,
         timezone: browserTimezone(),
-        memoryContext,
-        history: (options.history ?? []).slice(-12).map((item) => ({
-          role: item.role,
-          text: item.text,
-        })),
+        memoryContext: memoryContextForApi(memoryContext),
+        history: chatHistoryForApi(options.history ?? []),
         recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-10),
         pet: {
           ...petContextForApi(pet),
@@ -537,16 +612,13 @@ export async function generateLocalAmbientMessage(
     headers: tmaAuthHeaders(),
     body: {
       includeDebug: options.includeDebug ?? false,
-      memoryContext: options.memoryContext,
+      memoryContext: memoryContextForApi(options.memoryContext),
       replyMaxChars: options.replyMaxChars,
       nowIso: new Date().toISOString(),
       timezone: browserTimezone(),
       recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-10),
       pet: petContextForApi(pet),
-      history: (options.history ?? []).slice(-12).map((item) => ({
-        role: item.role,
-        text: item.text,
-      })),
+      history: chatHistoryForApi(options.history ?? []),
     },
   }, parseLocalChatResponse);
 }
@@ -566,10 +638,7 @@ export async function extractLocalLiteFacts(
       reply,
       includeDebug: options.includeDebug ?? false,
       pet: petContextForApi(pet),
-      history: history.slice(-12).map((item) => ({
-        role: item.role,
-        text: item.text,
-      })),
+      history: chatHistoryForApi(history),
     },
   }, parseLiteFactExtractionResponse);
 }
