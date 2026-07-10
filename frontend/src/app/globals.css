@@ -282,8 +282,16 @@ body {
   top: 0;
   left: 0;
   width: 100%;
-  background: var(--main-scene-bg);
   color: var(--main-scene-ink);
+}
+
+.main-shell,
+.main-mobile-scene {
+  background-color: var(--main-scene-bg);
+  background-image: url("/figma/main-scene-underlay.webp");
+  background-position: center center;
+  background-repeat: no-repeat;
+  background-size: cover;
 }
 
 .main-mobile-scene {
@@ -291,8 +299,6 @@ body {
   --conversation-keyboard-motion-easing: cubic-bezier(0.645, 0.045, 0.355, 1);
 
   isolation: isolate;
-  background: var(--main-scene-bg) url("/figma/main-scene-underlay.webp") center / cover
-    no-repeat;
   color: var(--main-scene-ink);
   font-family: var(--font-sans);
 }
@@ -313,12 +319,8 @@ body {
   user-select: none;
 }
 
-.main-mobile-scene--chat .main-scene-media {
-  transform: translate3d(
-    0,
-    clamp(-240px, var(--conversation-input-offset-y, 0px), 0px),
-    0
-  );
+.main-mobile-scene--chat:has(.conversation-input:focus) .main-scene-media {
+  transform: translate3d(0, -240px, 0);
 }
 
 .main-scene-background {
