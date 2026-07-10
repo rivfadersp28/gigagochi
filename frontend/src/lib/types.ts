@@ -4,6 +4,11 @@ export type PetLifeStage = "baby" | "teen" | "adult";
 export type PetMood = "idle" | "happy" | "hungry" | "sad";
 export type PetStatKey = "hunger" | "happiness" | "energy";
 export type PetStatTickMap = Record<PetStatKey, string>;
+export type PetBackgroundGenerationStatus = "running" | "succeeded" | "failed";
+export type PetBackgroundGenerationPhase =
+  | "generating_sad_image"
+  | "generating_sad_video"
+  | "completed";
 export type PetStatsPatch = {
   stats?: Partial<Record<PetStatKey, number>>;
   lastStatsTickAt?: string | null;
@@ -21,6 +26,12 @@ export type LocalPetAssetSet = {
     adult: Record<PetMood, string>;
   };
   videoUrl?: string;
+  sadVideoUrl?: string;
+  generationJobId?: string;
+  backgroundGenerationStatus?: PetBackgroundGenerationStatus;
+  backgroundGenerationPhase?: PetBackgroundGenerationPhase;
+  backgroundGenerationError?: string;
+  backgroundGenerationUpdatedAt?: string;
   blinkImageUrl?: string;
   spriteSheetUrl?: string;
 };
@@ -83,6 +94,12 @@ export type GeneratePetResponse = {
   characterBible?: Record<string, unknown>;
   images: LocalPetAssetSet["images"];
   videoUrl?: string;
+  sadVideoUrl?: string;
+  generationJobId?: string;
+  backgroundGenerationStatus?: PetBackgroundGenerationStatus;
+  backgroundGenerationPhase?: PetBackgroundGenerationPhase;
+  backgroundGenerationError?: string;
+  backgroundGenerationUpdatedAt?: string;
   blinkImageUrl?: string;
   spriteSheetUrl?: string;
 };

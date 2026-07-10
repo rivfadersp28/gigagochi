@@ -18,8 +18,11 @@ logger = logging.getLogger(__name__)
 
 GenerateImages = Callable[[str], Any]
 GenerateVideo = Callable[[Any], Any]
-BuildResponse = Callable[[Any, Any], dict[str, Any]]
+GenerateBackgroundImage = Callable[[Any], Any]
+GenerateBackgroundVideo = Callable[[Any, Any], Any]
+BuildResponse = Callable[[Any, Any, Any | None, Any | None], dict[str, Any]]
 BuildFailure = Callable[[str, str, Exception], dict[str, object]]
+_UNSET = object()
 
 
 class GenerationJobNotFoundError(LookupError):
@@ -42,12 +45,16 @@ class GenerationJobService:
         video_workers: int,
         generate_images: GenerateImages,
         generate_video: GenerateVideo,
+        generate_background_image: GenerateBackgroundImage,
+        generate_background_video: GenerateBackgroundVideo,
         build_response: BuildResponse,
         build_failure: BuildFailure,
         job_ttl: timedelta = timedelta(hours=1),
     ) -> None:
         self._generate_images = generate_images
         self._generate_video = generate_video
+        self._generate_background_image = generate_background_image
+        self._generate_background_video = generate_background_video
         self._build_response = build_response
         self._build_failure = build_failure
         self._job_ttl = job_ttl
@@ -131,8 +138,9 @@ class GenerationJobService:
         *,
         status_value: str,
         phase: str | None = None,
-        result: GeneratePetAssetResponse | None = None,
-        error: dict[str, object] | None = None,
+        result: GeneratePetAssetResponse | None | object = _UNSET,
+        error: dict[str, object] | None | object = _UNSET,
+        background_error: dict[str, object] | None | object = _UNSET,
     ) -> None:
         with self._lock:
             record = self._jobs.get(job_id)
@@ -141,9 +149,13 @@ class GenerationJobService:
             updates: dict[str, object] = {
                 "status": status_value,
                 "updatedAt": self._now(),
-                "result": result,
-                "error": error,
             }
+            if result is not _UNSET:
+                updates["result"] = result
+            if error is not _UNSET:
+                updates["error"] = error
+            if background_error is not _UNSET:
+                updates["backgroundError"] = background_error
             if phase is not None:
                 updates["phase"] = phase
             record.response = record.response.model_copy(update=updates)
@@ -151,6 +163,21 @@ class GenerationJobService:
     def _fail(self, job_id: str, exc: Exception, *, phase: str) -> None:
         detail = self._build_failure(job_id, phase, exc)
         self._update(job_id, status_value="failed", phase=phase, error=detail)
+
+    def _finish_background_failure(self, job_id: str, exc: Exception, *, phase: str) -> None:
+        detail = self._build_failure(job_id, phase, exc)
+        logger.warning(
+            "pet_background_generation_failed jobId=%s phase=%s errorType=%s",
+            job_id,
+            phase,
+            type(exc).__name__,
+        )
+        self._update(
+            job_id,
+            status_value="succeeded",
+            phase="completed",
+            background_error=detail,
+        )
 
     def _prompt_context(self, job_id: str) -> Any:
         return set_prompt_log_context(
@@ -197,7 +224,7 @@ class GenerationJobService:
         try:
             video_path = self._generate_video(image_set)
             result = GeneratePetAssetResponse.model_validate(
-                self._build_response(image_set, video_path)
+                self._build_response(image_set, video_path, None, None)
             )
         except Exception as exc:
             self._fail(job_id, exc, phase="generating_video")
@@ -206,7 +233,95 @@ class GenerationJobService:
             reset_prompt_log_context(prompt_log_token)
 
         logger.info(
-            "pet_generation_stage_completed jobId=%s phase=generating_video "
+            "pet_generation_foreground_ready jobId=%s phase=generating_video "
+            "durationSeconds=%.3f assetSetId=%s",
+            job_id,
+            time.monotonic() - started_at,
+            image_set.asset_set_id,
+        )
+        self._update(
+            job_id,
+            status_value="running",
+            phase="generating_sad_image",
+            result=result,
+        )
+        try:
+            self._image_executor.submit(
+                self._run_background_image_job,
+                job_id,
+                image_set,
+                video_path,
+            )
+        except Exception as exc:
+            self._finish_background_failure(job_id, exc, phase="generating_sad_image")
+
+    def _run_background_image_job(self, job_id: str, image_set: Any, video_path: Any) -> None:
+        started_at = time.monotonic()
+        logger.info(
+            "pet_generation_stage_started jobId=%s phase=generating_sad_image assetSetId=%s",
+            job_id,
+            image_set.asset_set_id,
+        )
+        prompt_log_token = self._prompt_context(job_id)
+        try:
+            sad_scene_path = self._generate_background_image(image_set)
+        except Exception as exc:
+            self._finish_background_failure(job_id, exc, phase="generating_sad_image")
+            return
+        finally:
+            reset_prompt_log_context(prompt_log_token)
+
+        logger.info(
+            "pet_generation_stage_completed jobId=%s phase=generating_sad_image "
+            "durationSeconds=%.3f assetSetId=%s",
+            job_id,
+            time.monotonic() - started_at,
+            image_set.asset_set_id,
+        )
+        self._update(job_id, status_value="running", phase="generating_sad_video")
+        try:
+            self._video_executor.submit(
+                self._run_background_video_job,
+                job_id,
+                image_set,
+                video_path,
+                sad_scene_path,
+            )
+        except Exception as exc:
+            self._finish_background_failure(job_id, exc, phase="generating_sad_video")
+
+    def _run_background_video_job(
+        self,
+        job_id: str,
+        image_set: Any,
+        video_path: Any,
+        sad_scene_path: Any,
+    ) -> None:
+        started_at = time.monotonic()
+        logger.info(
+            "pet_generation_stage_started jobId=%s phase=generating_sad_video assetSetId=%s",
+            job_id,
+            image_set.asset_set_id,
+        )
+        prompt_log_token = self._prompt_context(job_id)
+        try:
+            sad_video_path = self._generate_background_video(image_set, sad_scene_path)
+            result = GeneratePetAssetResponse.model_validate(
+                self._build_response(
+                    image_set,
+                    video_path,
+                    sad_scene_path,
+                    sad_video_path,
+                )
+            )
+        except Exception as exc:
+            self._finish_background_failure(job_id, exc, phase="generating_sad_video")
+            return
+        finally:
+            reset_prompt_log_context(prompt_log_token)
+
+        logger.info(
+            "pet_generation_stage_completed jobId=%s phase=generating_sad_video "
             "durationSeconds=%.3f assetSetId=%s",
             job_id,
             time.monotonic() - started_at,
@@ -217,4 +332,5 @@ class GenerationJobService:
             status_value="succeeded",
             phase="completed",
             result=result,
+            background_error=None,
         )

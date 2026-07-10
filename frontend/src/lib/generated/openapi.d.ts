@@ -430,6 +430,8 @@ export interface components {
              */
             readonly generatedAt: string;
             readonly images: components["schemas"]["GeneratedPetImages"];
+            /** Sadvideourl */
+            readonly sadVideoUrl?: string | null;
             /** Spritesheeturl */
             readonly spriteSheetUrl?: string | null;
             /** Videourl */
@@ -437,6 +439,10 @@ export interface components {
         };
         /** GeneratePetJobResponse */
         readonly GeneratePetJobResponse: {
+            /** Backgrounderror */
+            readonly backgroundError?: {
+                readonly [key: string]: unknown;
+            } | null;
             /**
              * Createdat
              * Format: date-time
@@ -453,7 +459,7 @@ export interface components {
              * @default queued
              * @enum {string}
              */
-            readonly phase: "queued" | "generating_images" | "generating_video" | "completed";
+            readonly phase: "queued" | "generating_images" | "generating_video" | "generating_sad_image" | "generating_sad_video" | "completed";
             readonly result?: components["schemas"]["GeneratePetAssetResponse"] | null;
             /**
              * Status

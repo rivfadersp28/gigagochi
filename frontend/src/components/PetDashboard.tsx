@@ -56,10 +56,13 @@ import { DraggableFoodToken, type FoodAsset } from "./pet-dashboard/DraggableFoo
 import { PetCharacterMessage, type PetReplyMessage } from "./pet-dashboard/PetCharacterMessage";
 import { TravelStoryOverlay } from "./pet-dashboard/TravelStoryOverlay";
 import { useConversationKeyboardOffset } from "./pet-dashboard/useConversationKeyboardOffset";
+import { usePetBackgroundAssets } from "./pet-dashboard/usePetBackgroundAssets";
 import { usePetPushSnapshotSync } from "./pet-dashboard/usePetPushSnapshotSync";
 import {
   generatedSceneVideoUrl,
   generatedSpriteUrl,
+  hasGeneratedSadAssets,
+  isPetInRedZone,
   stageLabels,
   stateLabels,
 } from "./pet-dashboard/petSprite";
@@ -230,6 +233,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const localPet = useLocalPetState();
   const [isFeeding, setIsFeeding] = useState(false);
   const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
+  const [isSadAssetForced, setIsSadAssetForced] = useState(false);
   const [confirmationAction, setConfirmationAction] = useState<ConfirmationAction | null>(null);
   const [isChatMode, setIsChatMode] = useState(false);
   const [isFeedMode, setIsFeedMode] = useState(false);
@@ -257,11 +261,19 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const isSendingChatRef = useRef(false);
   const isTravelGeneratingRef = useRef(false);
   const pet = localPet.pet;
+  const hasSadAssets = pet ? hasGeneratedSadAssets(pet) : false;
+  const isAnyStatRed = pet ? isPetInRedZone(pet) : false;
+  const shouldUseSadAssets = hasSadAssets && (isSadAssetForced || isAnyStatRed);
   const sceneBackgroundSrc = pet
-    ? generatedSpriteUrl(pet, pet.stage, pet.mood) ?? mainSceneBackgroundSrc
+    ? generatedSpriteUrl(pet, pet.stage, shouldUseSadAssets ? "sad" : pet.mood)
+      ?? mainSceneBackgroundSrc
     : null;
-  const sceneVideoSrc = pet ? generatedSceneVideoUrl(pet) : null;
+  const sceneVideoSrc = pet ? generatedSceneVideoUrl(pet, shouldUseSadAssets) : null;
   const conversationInputOffsetY = useConversationKeyboardOffset(isChatMode, sceneRef);
+  usePetBackgroundAssets({
+    assetSet: pet?.assetSet,
+    applyGeneratedAssets: localPet.applyGeneratedAssets,
+  });
   usePetPushSnapshotSync({
     status: localPet.status,
     pet,
@@ -850,6 +862,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           onResetPet={handleResetPet}
           onResetPetStats={handleResetPetStats}
           onOpenTestPet={handleOpenTestPet}
+          canShowSadAsset={hasSadAssets}
+          isSadAssetForced={isSadAssetForced}
+          onToggleSadAsset={() => setIsSadAssetForced((forced) => !forced)}
         />
 
         <div className="sr-only" aria-live="polite">

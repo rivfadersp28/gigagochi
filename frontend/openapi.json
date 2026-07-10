@@ -564,6 +564,17 @@
           "images": {
             "$ref": "#/components/schemas/GeneratedPetImages"
           },
+          "sadVideoUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sadvideourl"
+          },
           "spriteSheetUrl": {
             "anyOf": [
               {
@@ -597,6 +608,18 @@
       },
       "GeneratePetJobResponse": {
         "properties": {
+          "backgroundError": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backgrounderror"
+          },
           "createdAt": {
             "format": "date-time",
             "title": "Createdat",
@@ -624,6 +647,8 @@
               "queued",
               "generating_images",
               "generating_video",
+              "generating_sad_image",
+              "generating_sad_video",
               "completed"
             ],
             "title": "Phase",

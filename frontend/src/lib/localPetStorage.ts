@@ -142,6 +142,29 @@ function normalizeAssetSet(value: unknown): LocalPetAssetSet | undefined {
     characterBible: isRecord(value.characterBible) ? value.characterBible : undefined,
     images: normalizedImages,
     videoUrl: typeof value.videoUrl === "string" ? value.videoUrl : undefined,
+    sadVideoUrl: typeof value.sadVideoUrl === "string" ? value.sadVideoUrl : undefined,
+    generationJobId:
+      typeof value.generationJobId === "string" ? value.generationJobId : undefined,
+    backgroundGenerationStatus:
+      value.backgroundGenerationStatus === "running"
+      || value.backgroundGenerationStatus === "succeeded"
+      || value.backgroundGenerationStatus === "failed"
+        ? value.backgroundGenerationStatus
+        : undefined,
+    backgroundGenerationPhase:
+      value.backgroundGenerationPhase === "generating_sad_image"
+      || value.backgroundGenerationPhase === "generating_sad_video"
+      || value.backgroundGenerationPhase === "completed"
+        ? value.backgroundGenerationPhase
+        : undefined,
+    backgroundGenerationError:
+      typeof value.backgroundGenerationError === "string"
+        ? value.backgroundGenerationError
+        : undefined,
+    backgroundGenerationUpdatedAt:
+      isIsoDate(value.backgroundGenerationUpdatedAt)
+        ? value.backgroundGenerationUpdatedAt
+        : undefined,
     blinkImageUrl: typeof value.blinkImageUrl === "string" ? value.blinkImageUrl : undefined,
     spriteSheetUrl: typeof value.spriteSheetUrl === "string" ? value.spriteSheetUrl : undefined,
   });

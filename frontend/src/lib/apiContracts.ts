@@ -54,6 +54,8 @@ const JOB_PHASES = new Set([
   "queued",
   "generating_images",
   "generating_video",
+  "generating_sad_image",
+  "generating_sad_video",
   "completed",
 ]);
 const MEMORY_KINDS = new Set<UserMemoryKind>([
@@ -152,6 +154,7 @@ function parseGeneratedPetAsset(value: unknown, path: string): GeneratePetApiRes
     }
   }
   optionalString(payload.videoUrl, `${path}.videoUrl`);
+  optionalString(payload.sadVideoUrl, `${path}.sadVideoUrl`);
   optionalString(payload.blinkImageUrl, `${path}.blinkImageUrl`);
   optionalString(payload.spriteSheetUrl, `${path}.spriteSheetUrl`);
   optionalRecord(payload.characterBible, `${path}.characterBible`);
@@ -169,6 +172,7 @@ export function parseGeneratePetJobResponse(value: unknown): GeneratePetJobRespo
     parseGeneratedPetAsset(payload.result, "generatePetJob.result");
   }
   optionalRecord(payload.error, "generatePetJob.error");
+  optionalRecord(payload.backgroundError, "generatePetJob.backgroundError");
   return payload as GeneratePetJobResponse;
 }
 

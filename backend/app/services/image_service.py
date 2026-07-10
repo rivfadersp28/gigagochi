@@ -244,6 +244,21 @@ PET_SCENE_VIDEO_PROMPT = (
     "additional effects. Preserve every pixel of the original image except for the eyelids "
     "during the blink."
 )
+PET_SAD_SCENE_IMAGE_PROMPT = (
+    "пусть персонаж сидит на земле и грустно плачет\nбольше ничего не меняй"
+)
+PET_SAD_SCENE_VIDEO_PROMPT = (
+    "Static locked camera. The character remains perfectly still in the exact same pose, "
+    "position, scale, composition, lighting, colors, clothing, props, background, focus, "
+    "depth of field and camera angle. Do not move the head, body, ears, tail, mouth, nose, "
+    "hands, clothing or any object. Do not change the environment or framing. The only "
+    "animation is gentle crying: clear tears naturally well up in the eyes, slowly roll "
+    "down the cheeks, and continue flowing in a subtle loop. The eyes remain sorrowful with "
+    "occasional slight eyelid trembling caused by crying. No eye movement, no pupil movement, "
+    "no head movement, no body movement, no camera motion, no lighting changes, no color "
+    "shifts, no additional effects. Preserve every pixel of the original image except for "
+    "the eyes and the animated tears."
+)
 PET_SCENE_VIDEO_SIZE = "720x1280"
 PET_SCENE_VIDEO_RESOLUTION = "720p"
 PET_SCENE_VIDEO_ASPECT_RATIO = "9:16"
@@ -1087,9 +1102,7 @@ def _internal_reference_image_url(image_url: str) -> str:
             getattr(settings, "backend_public_url", None),
             getattr(settings, "webapp_url", None),
         )
-        if (parsed := urlsplit(_clean_setting_string(value)))
-        and parsed.scheme
-        and parsed.netloc
+        if (parsed := urlsplit(_clean_setting_string(value))) and parsed.scheme and parsed.netloc
     }
     if (source.scheme.lower(), source.netloc.lower()) not in public_origins:
         return image_url
@@ -1669,12 +1682,13 @@ def generate_openrouter_video_bytes(
     source_path: Path,
     *,
     label: str,
+    prompt: str = PET_SCENE_VIDEO_PROMPT,
 ) -> bytes:
     settings = get_settings()
     model = get_openrouter_video_model(settings)
     payload = {
         "model": model,
-        "prompt": PET_SCENE_VIDEO_PROMPT,
+        "prompt": prompt,
         "duration": PET_SCENE_VIDEO_DURATION_SECONDS,
         "resolution": PET_SCENE_VIDEO_RESOLUTION,
         "aspect_ratio": PET_SCENE_VIDEO_ASPECT_RATIO,
@@ -1825,8 +1839,13 @@ def generate_pet_scene_image_bytes(character_path: Path) -> bytes:
     )
 
 
-def generate_pet_scene_video_bytes(scene_path: Path) -> bytes:
-    return generate_openrouter_video_bytes(scene_path, label="pet_creation/scene_video")
+def generate_pet_scene_video_bytes(
+    scene_path: Path,
+    *,
+    prompt: str = PET_SCENE_VIDEO_PROMPT,
+    label: str = "pet_creation/scene_video",
+) -> bytes:
+    return generate_openrouter_video_bytes(scene_path, label=label, prompt=prompt)
 
 
 def generate_individual_sprite_paths(
@@ -1888,6 +1907,31 @@ def generate_individual_sprite_image_paths(
 def generate_pet_scene_video_path(asset_id: uuid.UUID, scene_path: Path) -> Path:
     video_bytes = generate_pet_scene_video_bytes(scene_path)
     video_path = generated_dir_for(asset_id) / f"{FAST_GENERATION_STAGE}-idle.mp4"
+    video_path.write_bytes(video_bytes)
+    return video_path
+
+
+def generate_pet_sad_scene_path(image_set: PetAssetImageSet) -> Path:
+    sad_scene_bytes = generate_image_edit_bytes(
+        PET_SAD_SCENE_IMAGE_PROMPT,
+        image_set.scene_path,
+        label="pet_creation/sad_scene",
+    )
+    sad_scene_path = generated_dir_for(image_set.asset_set_id) / f"{FAST_GENERATION_STAGE}-sad.png"
+    sad_scene_path.write_bytes(normalize_pet_scene_video_frame_bytes(sad_scene_bytes))
+    return sad_scene_path
+
+
+def generate_pet_sad_video_for_image_asset_set(
+    image_set: PetAssetImageSet,
+    sad_scene_path: Path,
+) -> Path:
+    video_bytes = generate_pet_scene_video_bytes(
+        sad_scene_path,
+        prompt=PET_SAD_SCENE_VIDEO_PROMPT,
+        label="pet_creation/sad_scene_video",
+    )
+    video_path = generated_dir_for(image_set.asset_set_id) / f"{FAST_GENERATION_STAGE}-sad.mp4"
     video_path.write_bytes(video_bytes)
     return video_path
 
@@ -1964,6 +2008,8 @@ def generate_pet_video_for_image_asset_set(image_set: PetAssetImageSet) -> Path:
 def build_pet_asset_set_response(
     image_set: PetAssetImageSet,
     video_path: Path,
+    sad_scene_path: Path | None = None,
+    sad_video_path: Path | None = None,
 ) -> dict[str, Any]:
     asset_set_id = image_set.asset_set_id
     generated_paths = image_set.generated_paths
@@ -1973,17 +2019,30 @@ def build_pet_asset_set_response(
         key: f"/static/generated/{asset_set_id}/{path.name}?v={version}"
         for key, (path, _prompt) in generated_paths.items()
     }
+    sad_assets_ready = sad_scene_path is not None and sad_video_path is not None
+    sad_scene_url = (
+        f"/static/generated/{asset_set_id}/{sad_scene_path.name}?v={version}"
+        if sad_assets_ready
+        else None
+    )
     images: dict[str, dict[str, str]] = {stage: {} for stage in STAGE_ROWS}
     for stage in STAGE_ROWS:
         for state in STATE_COLUMNS:
             source_key = FAST_GENERATION_STATE_FALLBACKS[state]
             images[stage][state] = generated_urls[source_key]
+        if sad_scene_url:
+            images[stage]["sad"] = sad_scene_url
 
     return {
         "assetSetId": str(asset_set_id),
         "generatedAt": image_set.generated_at,
         "images": images,
         "videoUrl": f"/static/generated/{asset_set_id}/{video_path.name}?v={version}",
+        "sadVideoUrl": (
+            f"/static/generated/{asset_set_id}/{sad_video_path.name}?v={version}"
+            if sad_assets_ready
+            else None
+        ),
         "blinkImageUrl": generated_urls.get((FAST_GENERATION_STAGE, "blink")),
         "spriteSheetUrl": None,
         "characterBible": None,

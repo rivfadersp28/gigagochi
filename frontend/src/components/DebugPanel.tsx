@@ -1,7 +1,17 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { Bug, Database, FlaskConical, MessageSquareText, RotateCcw, Trash2, X } from "lucide-react";
+import {
+  Bug,
+  Database,
+  FlaskConical,
+  Frown,
+  MessageSquareText,
+  RotateCcw,
+  Smile,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 import {
@@ -13,6 +23,7 @@ import {
 import { readLocalPetMemory } from "@/lib/localPetMemoryStorage";
 import type { LocalPetMemoryStateV1 } from "@/lib/localPetMemoryTypes";
 import type { LocalPetState } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 type DebugPanelProps = {
   pet: LocalPetState;
@@ -21,6 +32,9 @@ type DebugPanelProps = {
   onResetPet?: () => void;
   onResetPetStats?: () => void;
   onOpenTestPet?: () => void;
+  canShowSadAsset?: boolean;
+  isSadAssetForced?: boolean;
+  onToggleSadAsset?: () => void;
 };
 
 type DebugTab = "feed" | "prompts" | "character";
@@ -188,6 +202,61 @@ function CharacterInfo({ pet, memory }: { pet: LocalPetState; memory: LocalPetMe
   );
 }
 
+function BackgroundGenerationProgress({ pet }: { pet: LocalPetState }) {
+  const assetSet = pet.assetSet;
+  const status = assetSet?.backgroundGenerationStatus;
+  const phase = assetSet?.backgroundGenerationPhase;
+  const progress = status === "succeeded"
+    ? 2
+    : phase === "generating_sad_video"
+      ? 1
+      : 0;
+  const label = status === "succeeded"
+    ? "Готово"
+    : status === "failed"
+      ? "Ошибка"
+      : phase === "generating_sad_video"
+        ? "Генерируется грустное видео"
+        : phase === "generating_sad_image"
+          ? "Генерируется грустная картинка"
+          : assetSet?.generationJobId
+            ? "Ожидание фоновой генерации"
+            : "Фоновая генерация не запускалась";
+
+  return (
+    <section className="mt-4 rounded-lg bg-black/[0.035] p-3" aria-label="Фоновая генерация">
+      <div className="flex items-center justify-between gap-3 text-[12px] leading-[16px]">
+        <span className="text-pretty font-medium text-black/62">{label}</span>
+        <span className="shrink-0 tabular-nums text-black/42">{progress}/2</span>
+      </div>
+      <div
+        className="mt-2 grid grid-cols-2 gap-1"
+        role="progressbar"
+        aria-label={`${label}: ${progress} из 2`}
+        aria-valuemin={0}
+        aria-valuemax={2}
+        aria-valuenow={progress}
+      >
+        {[1, 2].map((step) => (
+          <span
+            key={step}
+            className={cn(
+              "h-1.5 rounded-full",
+              step <= progress ? "bg-black/60" : "bg-black/10",
+            )}
+            aria-hidden="true"
+          />
+        ))}
+      </div>
+      {assetSet?.backgroundGenerationError ? (
+        <p className="mt-2 text-pretty text-[11px] leading-[15px] text-red-700">
+          {assetSet.backgroundGenerationError}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 export function DebugPanel({
   pet,
   isOpen,
@@ -195,6 +264,9 @@ export function DebugPanel({
   onResetPet,
   onResetPetStats,
   onOpenTestPet,
+  canShowSadAsset = false,
+  isSadAssetForced = false,
+  onToggleSadAsset,
 }: DebugPanelProps) {
   const [activeTab, setActiveTab] = useState<DebugTab>("feed");
   const [events, setEvents] = useState<DebugPanelEvent[]>(() =>
@@ -280,7 +352,7 @@ export function DebugPanel({
             </div>
           </div>
 
-          {onResetPetStats || onOpenTestPet ? (
+          {onResetPetStats || onOpenTestPet || onToggleSadAsset ? (
             <div className="mt-4 grid gap-2">
               {onOpenTestPet ? (
                 <button
@@ -302,8 +374,26 @@ export function DebugPanel({
                   <span>Сбросить параметры персонажа</span>
                 </button>
               ) : null}
+              {onToggleSadAsset ? (
+                <button
+                  type="button"
+                  aria-pressed={isSadAssetForced}
+                  disabled={!canShowSadAsset}
+                  onClick={onToggleSadAsset}
+                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-black/[0.055] px-3 text-[12px] font-medium leading-none text-black/62 transition-colors hover:bg-black/[0.085] hover:text-black/78 focus:outline-none focus:ring-2 focus:ring-black/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {isSadAssetForced ? (
+                    <Smile className="size-3.5" aria-hidden="true" />
+                  ) : (
+                    <Frown className="size-3.5" aria-hidden="true" />
+                  )}
+                  <span>{isSadAssetForced ? "Вернуть обычный ассет" : "Сделать грустным"}</span>
+                </button>
+              ) : null}
             </div>
           ) : null}
+
+          <BackgroundGenerationProgress pet={pet} />
 
           <div className="mt-4 grid grid-cols-3 gap-1 rounded-[8px] bg-black/[0.035] p-1">
             {tabs.map((tab) => {

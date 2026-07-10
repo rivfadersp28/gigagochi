@@ -25,6 +25,21 @@ export function generatedSpriteUrl(pet: LocalPetState, stage: PetStage, state: P
   return assetSetForPet(pet)?.images[stage]?.[state] || null;
 }
 
-export function generatedSceneVideoUrl(pet: LocalPetState) {
-  return assetSetForPet(pet)?.videoUrl || null;
+export function generatedSceneVideoUrl(pet: LocalPetState, sad = false) {
+  const assetSet = assetSetForPet(pet);
+  return (sad ? assetSet?.sadVideoUrl : assetSet?.videoUrl) || null;
+}
+
+export function isPetInRedZone(pet: LocalPetState) {
+  return pet.stats.hunger < 30 || pet.stats.happiness < 30 || pet.stats.energy < 30;
+}
+
+export function hasGeneratedSadAssets(pet: LocalPetState) {
+  const assetSet = assetSetForPet(pet);
+  const sadImageUrl = assetSet?.images[pet.stage]?.sad;
+  return Boolean(
+    assetSet?.sadVideoUrl
+    && sadImageUrl
+    && sadImageUrl !== assetSet.images[pet.stage].idle,
+  );
 }

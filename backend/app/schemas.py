@@ -13,6 +13,8 @@ GeneratePetJobPhaseValue = Literal[
     "queued",
     "generating_images",
     "generating_video",
+    "generating_sad_image",
+    "generating_sad_video",
     "completed",
 ]
 UserMemoryKind = Literal[
@@ -50,6 +52,7 @@ class GeneratePetAssetResponse(BaseModel):
     generatedAt: datetime
     images: GeneratedPetImages
     videoUrl: str | None = None
+    sadVideoUrl: str | None = None
     blinkImageUrl: str | None = None
     spriteSheetUrl: str | None = None
     characterBible: dict[str, Any] | None = None
@@ -72,6 +75,7 @@ class GeneratePetJobResponse(BaseModel):
     updatedAt: datetime
     result: GeneratePetAssetResponse | None = None
     error: dict[str, Any] | None = None
+    backgroundError: dict[str, Any] | None = None
 
 
 class LocalPetStats(BaseModel):

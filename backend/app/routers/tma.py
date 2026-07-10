@@ -46,6 +46,8 @@ from app.services.generation_job_service import (
 from app.services.image_service import (
     build_pet_asset_set_response,
     generate_pet_image_asset_set,
+    generate_pet_sad_scene_path,
+    generate_pet_sad_video_for_image_asset_set,
     generate_pet_video_for_image_asset_set,
     generation_error_code,
 )
@@ -161,9 +163,17 @@ def _generation_job_service() -> GenerationJobService:
             video_workers=getattr(settings, "generation_video_workers", 4),
             generate_images=lambda description: generate_pet_image_asset_set(description),
             generate_video=lambda image_set: generate_pet_video_for_image_asset_set(image_set),
-            build_response=lambda image_set, video_path: build_pet_asset_set_response(
-                image_set,
-                video_path,
+            generate_background_image=lambda image_set: generate_pet_sad_scene_path(image_set),
+            generate_background_video=lambda image_set, sad_scene_path: (
+                generate_pet_sad_video_for_image_asset_set(image_set, sad_scene_path)
+            ),
+            build_response=lambda image_set, video_path, sad_scene_path, sad_video_path: (
+                build_pet_asset_set_response(
+                    image_set,
+                    video_path,
+                    sad_scene_path,
+                    sad_video_path,
+                )
             ),
             build_failure=_build_generation_failure,
         )

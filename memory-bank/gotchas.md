@@ -31,7 +31,9 @@
   for now. Do not change `FAST_GENERATION_STATE_FALLBACKS` unless the visual
   staging decision changes explicitly. The active path generates only
   `teen-idle-character.png` as an intermediate and `teen-idle.png` as the final
-  composed scene, then maps happy/sad/hungry to that same scene.
+  composed base scene, then maps happy/sad/hungry to that scene until both
+  background-generated sad assets are ready. Publish the sad image and video
+  atomically so the dashboard never combines a sad poster with the idle video.
 - The dashboard background is now the generated composed pet scene. Do not add
   a separate centered pet sprite, shadow, blink overlay, tap animation, or
   background-removal step unless the visual pipeline is intentionally changed.
@@ -46,12 +48,13 @@
   attribute and call `play()` immediately after the initial seek: gating play on
   `seeked`, or seeking without resuming, can stall in Telegram WebView when
   mobile preload is deferred.
-- Pet creation waits for an OpenRouter video job after image composition and
-  returns `assetSet.videoUrl`; video failure fails the pet job. Keep image and
-  video work in separate executors: video polling may consume the full
-  `OPENROUTER_VIDEO_TIMEOUT_SECONDS` and must not occupy an image worker. The
-  frontend generation timeout must cover queue wait, both image calls and the
-  video timeout, otherwise the UI can fail while the backend is still running.
+- Pet creation waits only for the required OpenRouter idle video after image
+  composition. Its failure still fails creation, but sad image/video failures
+  are best-effort and must keep the base `result`. Keep each image stage in the
+  image executor and each video-polling stage in the video executor: polling may
+  consume the full `OPENROUTER_VIDEO_TIMEOUT_SECONDS` and must not occupy an
+  image worker. Frontend creation should return when a running job first exposes
+  `result`, then persist and poll its job id for sad-asset progress.
 - Do not recreate generation executors or the in-memory job registry in the
   TMA router. `GenerationJobService` owns them and FastAPI lifespan shutdown
   must call `tma.shutdown_generation_jobs()` so queued futures are cancelled

@@ -158,8 +158,19 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
         lambda _image_set: SimpleNamespace(name="teen-idle.mp4"),
     )
     monkeypatch.setattr(
+        "app.routers.tma.generate_pet_sad_scene_path",
+        lambda _image_set: SimpleNamespace(name="teen-sad.png"),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.generate_pet_sad_video_for_image_asset_set",
+        lambda _image_set, _sad_scene_path: SimpleNamespace(name="teen-sad.mp4"),
+    )
+    monkeypatch.setattr(
         "app.routers.tma.build_pet_asset_set_response",
-        lambda _image_set, _video_path: generated_response,
+        lambda _image_set, _video_path, _sad_scene_path, _sad_video_path: {
+            **generated_response,
+            "sadVideoUrl": ("/static/generated/asset-1/teen-sad.mp4" if _sad_video_path else None),
+        },
     )
     client = tma_client()
 
@@ -177,6 +188,7 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
     assert result["characterBible"]["species"] == "small dragon mascot"
     assert captured["description"] == "маленький дракон"
     assert captured["kwargs"] == {}
+    assert result["sadVideoUrl"] == "/static/generated/asset-1/teen-sad.mp4"
     for stage in ("baby", "teen", "adult"):
         assert set(result["images"][stage]) == {"idle", "happy", "hungry", "sad"}
 

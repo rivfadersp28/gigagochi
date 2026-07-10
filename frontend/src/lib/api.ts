@@ -243,6 +243,52 @@ function completeGeneratedImages(response: GeneratePetApiResponse): GeneratePetR
   };
 }
 
+function backgroundGenerationState(job: GeneratePetJobResponse) {
+  const hasBackgroundError = Boolean(job.backgroundError);
+  const hasSadAssets = Boolean(job.result?.sadVideoUrl);
+  const status = hasBackgroundError || job.status === "failed"
+    ? "failed"
+    : job.status === "succeeded" && hasSadAssets
+      ? "succeeded"
+      : "running";
+  const errorDetail = job.backgroundError ?? (job.status === "failed" ? job.error : undefined);
+  const error = errorDetail ? apiErrorFromDetail(errorDetail).message : undefined;
+  const phase = job.phase === "generating_sad_image"
+    || job.phase === "generating_sad_video"
+    || job.phase === "completed"
+    ? job.phase
+    : undefined;
+
+  return {
+    generationJobId: job.jobId,
+    backgroundGenerationStatus: status,
+    backgroundGenerationPhase: phase,
+    backgroundGenerationError: error,
+    backgroundGenerationUpdatedAt: job.updatedAt,
+  } as const;
+}
+
+function generatedPetResponseFromJob(job: GeneratePetJobResponse): GeneratePetResponse {
+  const response = job.result;
+  if (!response) {
+    throw new ApiError(
+      "Генерация завершилась без результата. Попробуйте снова.",
+      "GENERATION_RESULT_MISSING",
+    );
+  }
+
+  return {
+    ...response,
+    ...backgroundGenerationState(job),
+    characterBible: response.characterBible ?? undefined,
+    images: completeGeneratedImages(response),
+    videoUrl: response.videoUrl ? publicImageUrl(response.videoUrl) : undefined,
+    sadVideoUrl: response.sadVideoUrl ? publicImageUrl(response.sadVideoUrl) : undefined,
+    blinkImageUrl: response.blinkImageUrl ? publicImageUrl(response.blinkImageUrl) : undefined,
+    spriteSheetUrl: response.spriteSheetUrl ? publicImageUrl(response.spriteSheetUrl) : undefined,
+  };
+}
+
 export async function generatePetAssets(description: string): Promise<GeneratePetResponse> {
   const job = await request(
     "/api/generate-pet",
@@ -258,15 +304,29 @@ export async function generatePetAssets(description: string): Promise<GeneratePe
     },
     parseGeneratePetJobResponse,
   );
-  const response = await waitForGeneratedPet(job);
+  return generatedPetResponseFromJob(await waitForGeneratedPet(job));
+}
 
+export async function refreshPetBackgroundAssets(
+  assetSet: LocalPetAssetSet,
+): Promise<LocalPetAssetSet> {
+  if (!assetSet.generationJobId) {
+    return assetSet;
+  }
+  const job = await request(
+    `/api/generate-pet/jobs/${encodeURIComponent(assetSet.generationJobId)}`,
+    { headers: tmaAuthHeaders() },
+    parseGeneratePetJobResponse,
+  );
+  if (!job.result) {
+    return {
+      ...assetSet,
+      ...backgroundGenerationState(job),
+    };
+  }
   return {
-    ...response,
-    characterBible: response.characterBible ?? undefined,
-    images: completeGeneratedImages(response),
-    videoUrl: response.videoUrl ? publicImageUrl(response.videoUrl) : undefined,
-    blinkImageUrl: response.blinkImageUrl ? publicImageUrl(response.blinkImageUrl) : undefined,
-    spriteSheetUrl: response.spriteSheetUrl ? publicImageUrl(response.spriteSheetUrl) : undefined,
+    ...assetSet,
+    ...generatedPetResponseFromJob(job),
   };
 }
 
@@ -299,19 +359,15 @@ export async function generatePetTravel(
   };
 }
 
-async function waitForGeneratedPet(initialJob: GeneratePetJobResponse): Promise<GeneratePetApiResponse> {
+async function waitForGeneratedPet(
+  initialJob: GeneratePetJobResponse,
+): Promise<GeneratePetJobResponse> {
   let job = initialJob;
   const deadline = Date.now() + MAX_GENERATION_POLL_MS;
 
   while (true) {
-    if (job.status === "succeeded") {
-      if (!job.result) {
-        throw new ApiError(
-          "Генерация завершилась без результата. Попробуйте снова.",
-          "GENERATION_RESULT_MISSING",
-        );
-      }
-      return job.result;
+    if (job.result) {
+      return job;
     }
 
     if (job.status === "failed") {

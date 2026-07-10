@@ -251,12 +251,25 @@
   `resolution=720p`, `aspect_ratio=9:16`, `duration=4`, `generate_audio=false`,
   and a locked-camera blink-only prompt. The saved public `assetSet.images` point
   to the normalized scene PNG and `assetSet.videoUrl` points to the generated
-  mp4. Pet jobs remain `running` until that mp4 is saved. Image generation and
-  video polling use separate configurable thread pools (defaults: three image
-  workers and four video workers), so a slow video does not block creation of
-  the next users' PNG assets. The dashboard renders the mp4 as the full-height background with the same
+  mp4. As soon as that required MP4 is saved, the running job exposes its base
+  `result` and the frontend creates the pet and enters the dashboard. The same
+  job then generates `teen-sad.png` from the exact composed idle scene and
+  `teen-sad.mp4` from that sad frame in the background, moving through
+  `generating_sad_image` and `generating_sad_video`. The job id and background
+  phase are persisted with the frontend asset set, polled after navigation, and
+  merged atomically only when both sad assets are ready. Background failure is
+  recorded without failing or removing the already usable pet. Image generation
+  and video polling use separate configurable thread pools (defaults: three image
+  workers and four video workers), so slow video polling does not occupy an image
+  worker. The dashboard renders the selected mp4 as the full-height background with the same
   normalized image as poster/fallback; there is no separate centered pet sprite,
   blink overlay, tap animation, or background removal step on the active path.
+  If any of hunger, happiness, or energy is strictly below 30, the dashboard uses
+  the sad image/video pair when available. Debug UI can force that visual pair
+  without mutating stats or mood and shows the two-stage background progress.
+  Legacy asset sets without a generation job probe deterministic sibling files
+  `teen-sad.png` and `teen-sad.mp4` once on dashboard mount; this lets one-off
+  production backfills become visible without rewriting browser localStorage.
   Per-pet story events stay in
   `characterBible.extensions.recent_story_events` for old pets when present, but
   chat canon should come from history/memory rather than `lite_overlay`.

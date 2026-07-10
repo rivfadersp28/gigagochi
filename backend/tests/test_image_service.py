@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import uuid
+from datetime import UTC, datetime
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -16,10 +17,14 @@ from app.prompts.pet_image_prompts import (
 )
 from app.services.image_service import (
     CHARACTER_BIBLE_SCHEMA,
+    PET_SAD_SCENE_IMAGE_PROMPT,
+    PET_SAD_SCENE_VIDEO_PROMPT,
+    PetAssetImageSet,
     _character_reasoning_effort_kwargs,
     _internal_reference_image_url,
     _reference_image_bytes,
     align_sprite_to_reference_canvas,
+    build_pet_asset_set_response,
     character_bible_quality_issues,
     create_character_bible,
     extract_sprite_cells,
@@ -32,6 +37,8 @@ from app.services.image_service import (
     generate_openrouter_image_bytes,
     generate_openrouter_video_bytes,
     generate_pet_asset_set,
+    generate_pet_sad_scene_path,
+    generate_pet_sad_video_for_image_asset_set,
     generation_error_code,
     normalize_pet_scene_video_frame_bytes,
 )
@@ -357,12 +364,16 @@ def test_internal_reference_url_rewrites_only_own_public_origin(monkeypatch) -> 
         ),
     )
 
-    assert _internal_reference_image_url(
-        "https://gigagochi.serega.works/static/generated/pet/idle.png?v=42"
-    ) == "http://backend:8000/static/generated/pet/idle.png?v=42"
-    assert _internal_reference_image_url(
-        "https://cdn.example.test/static/generated/pet/idle.png?v=42"
-    ) == "https://cdn.example.test/static/generated/pet/idle.png?v=42"
+    assert (
+        _internal_reference_image_url(
+            "https://gigagochi.serega.works/static/generated/pet/idle.png?v=42"
+        )
+        == "http://backend:8000/static/generated/pet/idle.png?v=42"
+    )
+    assert (
+        _internal_reference_image_url("https://cdn.example.test/static/generated/pet/idle.png?v=42")
+        == "https://cdn.example.test/static/generated/pet/idle.png?v=42"
+    )
 
 
 def test_reference_download_falls_back_to_public_url(monkeypatch) -> None:
@@ -970,6 +981,80 @@ def test_generate_pet_asset_set_generates_idle_scene(monkeypatch, tmp_path) -> N
         assert images[stage]["idle"] == images[stage]["sad"]
         assert images[stage]["idle"] == images[stage]["hungry"]
         assert "/teen-idle.png" in images[stage]["idle"]
+
+
+def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, tmp_path) -> None:
+    asset_id = uuid.uuid4()
+    output_dir = tmp_path / str(asset_id)
+    output_dir.mkdir()
+    idle_scene_path = output_dir / "teen-idle.png"
+    idle_scene_path.write_bytes(png_bytes(Image.new("RGB", (720, 1280), (30, 40, 50))))
+    image_set = PetAssetImageSet(
+        asset_set_id=asset_id,
+        generated_paths={("teen", "idle"): (idle_scene_path, "scene")},
+        scene_path=idle_scene_path,
+        version=1,
+        generated_at=datetime.now(UTC),
+    )
+    image_calls: list[tuple[str, str, str]] = []
+    video_calls: list[tuple[str, str, str]] = []
+
+    monkeypatch.setattr(
+        "app.services.image_service.generated_dir_for",
+        lambda _asset_id: output_dir,
+    )
+
+    def fake_image_edit(prompt, source_path, *, label):
+        image_calls.append((prompt, source_path.name, label))
+        return png_bytes(Image.new("RGB", (1024, 1536), (60, 70, 80)))
+
+    def fake_video_bytes(scene_path, *, prompt, label):
+        video_calls.append((scene_path.name, prompt, label))
+        return b"sad-video"
+
+    monkeypatch.setattr("app.services.image_service.generate_image_edit_bytes", fake_image_edit)
+    monkeypatch.setattr(
+        "app.services.image_service.generate_pet_scene_video_bytes",
+        fake_video_bytes,
+    )
+
+    sad_scene_path = generate_pet_sad_scene_path(image_set)
+    sad_video_path = generate_pet_sad_video_for_image_asset_set(image_set, sad_scene_path)
+
+    assert image_calls == [(PET_SAD_SCENE_IMAGE_PROMPT, "teen-idle.png", "pet_creation/sad_scene")]
+    assert video_calls == [
+        ("teen-sad.png", PET_SAD_SCENE_VIDEO_PROMPT, "pet_creation/sad_scene_video")
+    ]
+    assert Image.open(sad_scene_path).size == (720, 1280)
+    assert sad_video_path.read_bytes() == b"sad-video"
+
+
+def test_asset_response_switches_sad_urls_only_when_both_sad_assets_are_ready(tmp_path) -> None:
+    asset_id = uuid.uuid4()
+    idle_path = tmp_path / "teen-idle.png"
+    idle_video_path = tmp_path / "teen-idle.mp4"
+    sad_path = tmp_path / "teen-sad.png"
+    sad_video_path = tmp_path / "teen-sad.mp4"
+    image_set = PetAssetImageSet(
+        asset_set_id=asset_id,
+        generated_paths={("teen", "idle"): (idle_path, "scene")},
+        scene_path=idle_path,
+        version=7,
+        generated_at=datetime.now(UTC),
+    )
+
+    pending = build_pet_asset_set_response(image_set, idle_video_path, sad_path, None)
+    ready = build_pet_asset_set_response(
+        image_set,
+        idle_video_path,
+        sad_path,
+        sad_video_path,
+    )
+
+    assert pending["sadVideoUrl"] is None
+    assert pending["images"]["teen"]["sad"] == pending["images"]["teen"]["idle"]
+    assert ready["sadVideoUrl"].endswith("teen-sad.mp4?v=7")
+    assert ready["images"]["teen"]["sad"].endswith("teen-sad.png?v=7")
 
 
 def test_state_strip_prompt_omits_lore_only_do_not_change() -> None:
