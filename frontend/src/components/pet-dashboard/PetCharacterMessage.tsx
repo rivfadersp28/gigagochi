@@ -4,6 +4,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { playPetSpeechAudioSequence } from "@/lib/petSpeechAudio";
+import { hapticImpact } from "@/lib/telegram";
 
 import { finishAnimation, shouldReduceMotion } from "./motion";
 import styles from "./PetCharacterMessage.module.css";
@@ -273,6 +274,12 @@ function PetMessageText({
       playSpeechAudio && units.length > 0
         ? playPetSpeechAudioSequence(trimmedSpeechDurationMs)
         : null;
+    const hapticTimeoutIds = units.map((_, index) =>
+      window.setTimeout(
+        () => hapticImpact("rigid"),
+        index * PET_CHARACTER_RISE_STAGGER_MS,
+      ),
+    );
 
     const animations = units.map((unit, index) => {
       finishAnimation(unit, {
@@ -317,6 +324,7 @@ function PetMessageText({
 
     return () => {
       stopSpeechAudio?.();
+      hapticTimeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
       animations.forEach((animation) => animation.cancel());
     };
   }, [playSpeechAudio, speechEndTrimMs, text, translateY]);

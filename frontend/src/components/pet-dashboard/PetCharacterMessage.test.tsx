@@ -3,6 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PetCharacterMessage } from "./PetCharacterMessage";
 
+const hapticImpactMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/telegram", () => ({
+  hapticImpact: hapticImpactMock,
+}));
+
 const longMessage = "Это длинное предложение, которое должно остаться в одной порции.";
 
 describe("PetCharacterMessage", () => {
@@ -15,7 +21,55 @@ describe("PetCharacterMessage", () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
+    hapticImpactMock.mockReset();
+  });
+
+  it("plays rigid haptic feedback as each animated character appears", () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: false }),
+    });
+    const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "animate");
+    Object.defineProperty(HTMLElement.prototype, "animate", {
+      configurable: true,
+      value: vi.fn().mockImplementation(
+        () =>
+          ({
+            cancel: vi.fn(),
+            finished: new Promise<Animation>(() => undefined),
+          }) as unknown as Animation,
+      ),
+    });
+
+    try {
+      render(
+        <PetCharacterMessage
+          message={{ id: 1, text: "А Б", playSpeechAudio: false, hasNextPortion: false }}
+          textTranslateY={0}
+          speechEndTrimMs={0}
+        />,
+      );
+
+      vi.advanceTimersByTime(0);
+      expect(hapticImpactMock).toHaveBeenCalledTimes(1);
+      expect(hapticImpactMock).toHaveBeenLastCalledWith("rigid");
+
+      vi.advanceTimersByTime(23);
+      expect(hapticImpactMock).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(1);
+      expect(hapticImpactMock).toHaveBeenCalledTimes(2);
+      expect(hapticImpactMock).toHaveBeenLastCalledWith("rigid");
+    } finally {
+      if (originalAnimate) {
+        Object.defineProperty(HTMLElement.prototype, "animate", originalAnimate);
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+      }
+    }
   });
 
   it("reduces the font in one-pixel steps until the sentence fits two lines", () => {
