@@ -611,6 +611,7 @@ function normalizePetState(value: unknown): LocalPetStateV2 | null {
   return {
     version: 2,
     petId: value.petId,
+    ...(value.introductionPending === true ? { introductionPending: true as const } : {}),
     name:
       typeof value.name === "string" && value.name.trim()
         ? value.name
@@ -681,6 +682,7 @@ export function createLocalPetState(
   return {
     version: 2,
     petId: createLocalId("pet"),
+    introductionPending: true,
     name: characterNameFromAssetSet(characterAssetSet),
     description: description.trim(),
     createdAt: now,

@@ -43,6 +43,7 @@ import {
   appendRecentAmbientReply,
   readRecentAmbientReplies,
 } from "@/lib/localPetAmbientMemory";
+import { claimPetIntroduction } from "@/lib/localPetIntroduction";
 import {
   splitPetReplyPortions,
   splitPetReplySentences,
@@ -968,6 +969,19 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
     proactiveAttemptedRef.current = true;
+
+    const introduction = claimPetIntroduction(pet);
+    if (introduction) {
+      window.queueMicrotask(() => {
+        showPetReplyMessage(introduction, true, {
+          dialogueHook: true,
+          voiceMode: "generated",
+          maxPortions: IDLE_REPLY_MAX_PORTIONS,
+          autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
+        });
+      });
+      return;
+    }
 
     const memory = readLocalPetMemory(pet.petId);
     const history = readLocalChatHistory().messages;

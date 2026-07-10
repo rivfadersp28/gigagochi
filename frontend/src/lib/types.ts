@@ -62,6 +62,7 @@ export type LocalPetStateV1 = {
 export type LocalPetStateV2 = {
   version: 2;
   petId: string;
+  introductionPending?: true;
   name?: string;
   description: string;
   createdAt: string;

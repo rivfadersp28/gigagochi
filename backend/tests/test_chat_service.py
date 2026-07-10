@@ -1566,6 +1566,29 @@ def test_ambient_identity_falls_back_to_pet_description_when_name_is_missing() -
     assert "Ты без имени." not in system_message
 
 
+def test_default_ambient_prompt_forbids_reintroducing_the_character() -> None:
+    payload = LocalAmbientRequest.model_validate(
+        {
+            "pet": {
+                "name": "Листик",
+                "description": "лесной зверёк",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": {"hunger": 80, "happiness": 80, "energy": 80},
+                "characterBible": {"identity": {"name": "Листик"}},
+            },
+            "replyMaxChars": 120,
+        }
+    )
+
+    system_message = build_ambient_messages(payload)[0]["content"]
+
+    assert "Вы уже знакомы: не представляйся" in system_message
+    assert "Привет, я [имя]" in system_message
+    assert "можешь естественно употребить его" in system_message
+    assert "но не обязан это делать" in system_message
+
+
 def test_ambient_anti_repeat_groups_russian_word_forms() -> None:
     payload = LocalAmbientRequest.model_validate(
         {
