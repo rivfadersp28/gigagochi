@@ -947,14 +947,14 @@
             "items": {
               "type": "string"
             },
-            "maxItems": 6,
+            "maxItems": 10,
             "title": "Recentambientreplies",
             "type": "array"
           },
           "replyMaxChars": {
             "anyOf": [
               {
-                "maximum": 260.0,
+                "maximum": 300.0,
                 "minimum": 1.0,
                 "type": "integer"
               },
@@ -1660,7 +1660,7 @@
             "items": {
               "type": "string"
             },
-            "maxItems": 6,
+            "maxItems": 10,
             "title": "Recentambientreplies",
             "type": "array"
           },

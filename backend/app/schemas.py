@@ -273,7 +273,7 @@ class LocalAmbientRequest(BaseModel):
     history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
     recentAmbientReplies: list[str] = Field(default_factory=list, max_length=10)
     memoryContext: LocalPetMemoryContext | None = None
-    replyMaxChars: int | None = Field(default=None, ge=1, le=260)
+    replyMaxChars: int | None = Field(default=None, ge=1, le=300)
     nowIso: str | None = Field(default=None, max_length=80)
     timezone: str | None = Field(default=None, max_length=80)
     includeDebug: bool = False

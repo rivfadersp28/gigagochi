@@ -263,7 +263,8 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert request["reasoning_effort"] == "high"
     assert system_message.startswith(
         "Ты Громм. Сейчас ты взрослый, сформировавшийся представитель такого существа. "
-        "Говори от первого лица одной короткой, простой и конкретной репликой."
+        "Говори от первого лица связно, просто и конкретно. Если мысль требует, "
+        "используй несколько коротких предложений."
     )
     assert "гигантский земляной великан" in system_message
     assert "КАНОН ПЕРСОНАЖА:" in system_message
@@ -279,7 +280,7 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert request["response_format"]["json_schema"]["name"] == "visible_pet_reply"
     assert request["response_format"]["json_schema"]["schema"]["properties"]["reply"][
         "maxLength"
-    ] == 120
+    ] == 300
     assert "tools" not in request
     assert "STORY_LIBRARY" not in system_message
 
@@ -518,8 +519,8 @@ def test_speech_runtime_rejects_state_params_auto() -> None:
 def test_visible_reply_limit_uses_runtime_cap_and_honors_lower_request() -> None:
     assert speech_runtime.visible_reply_model() == "gpt-5.4-mini"
     assert speech_runtime.visible_reply_reasoning_effort() == "high"
-    assert speech_runtime.visible_reply_limit() == 120
-    assert speech_runtime.visible_reply_limit(220) == 120
+    assert speech_runtime.visible_reply_limit() == 300
+    assert speech_runtime.visible_reply_limit(220) == 220
     assert speech_runtime.visible_reply_limit(40) == 40
 
 
@@ -577,8 +578,8 @@ def test_lite_prompt_includes_compact_character_voice_without_raw_controls() -> 
     system_message = build_lite_chat_messages(payload)[0]["content"]
 
     assert (
-        "Ты маленький Пончик. Говори от первого лица одной короткой, простой и конкретной "
-        "репликой."
+        "Ты маленький Пончик. Говори от первого лица связно, просто и конкретно. "
+        "Если мысль требует, используй несколько коротких предложений."
         in system_message
     )
     assert "кремовый котенок-компаньон" in system_message
@@ -725,8 +726,8 @@ def test_chat_small_talk_keeps_core_character_but_suppresses_overlay_noise() -> 
     )[0]["content"]
 
     assert (
-        "Ты Пипс. Сейчас ты подросток такого существа. Говори от первого лица одной "
-        "короткой, простой и конкретной репликой."
+        "Ты Пипс. Сейчас ты подросток такого существа. Говори от первого лица связно, "
+        "просто и конкретно. Если мысль требует, используй несколько коротких предложений."
         in system_message
     )
     assert "Персонаж:" not in system_message
@@ -1057,7 +1058,7 @@ def test_lite_clamps_reply_to_runtime_limit() -> None:
 
     response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
 
-    assert len(response.reply) <= 120
+    assert len(response.reply) <= 300
     assert response.reply.endswith("…")
 
 

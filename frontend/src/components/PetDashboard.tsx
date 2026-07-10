@@ -43,6 +43,7 @@ import {
   appendRecentAmbientReply,
   readRecentAmbientReplies,
 } from "@/lib/localPetAmbientMemory";
+import { splitPetReplySentences } from "@/lib/petReplySentences";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
 import { TEST_PET_ASSET_SET, TEST_PET_DESCRIPTION } from "@/lib/testPetFixture";
@@ -101,7 +102,7 @@ const confirmationCopy: Record<
 };
 
 const INITIAL_PET_REPLY_FALLBACK = "…";
-const DASHBOARD_CHAT_REPLY_MAX_CHARS = 220;
+const DASHBOARD_REPLY_MAX_CHARS = 300;
 const UNNAMED_STATUS_NAME = "Без имени";
 const ACTION_ICON_CACHE_VERSION = "20260709-figma-117-1029-3";
 const VIDEO_FILTER_CACHE_VERSION = "20260709-video-filter-normal-2";
@@ -195,6 +196,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const ambientRequestIdRef = useRef(0);
   const ambientReplyHistoryRef = useRef<string[]>([]);
   const petReplyMessageRef = useRef<PetReplyMessage | null>(null);
+  const petReplySentenceQueueRef = useRef<string[]>([]);
   const activeDialogueHookRef = useRef<string | null>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const sceneRef = useRef<HTMLElement>(null);
@@ -225,11 +227,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     const voicedText = applyPetVoice(text, pet, {
       mode: options.voiceMode ?? "generated",
     });
+    const sentences = splitPetReplySentences(voicedText);
     const nextMessage = {
       id: (petReplyMessageRef.current?.id ?? 0) + 1,
-      text: voicedText,
+      text: sentences[0] ?? voicedText,
       playSpeechAudio,
     };
+    petReplySentenceQueueRef.current = sentences.slice(1);
     petReplyMessageRef.current = nextMessage;
     activeDialogueHookRef.current = options.dialogueHook ? voicedText : null;
     setPetReplyMessage(nextMessage);
@@ -237,6 +241,29 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       setConversationReplyMessageId(nextMessage.id);
     }
   }, [pet]);
+
+  const advancePetReplySentence = useCallback(() => {
+    const currentMessage = petReplyMessageRef.current;
+    const [nextSentence, ...remainingSentences] = petReplySentenceQueueRef.current;
+    if (!currentMessage || !nextSentence) {
+      return false;
+    }
+
+    const nextMessage = {
+      ...currentMessage,
+      id: currentMessage.id + 1,
+      text: nextSentence,
+    };
+    petReplySentenceQueueRef.current = remainingSentences;
+    petReplyMessageRef.current = nextMessage;
+    setPetReplyMessage(nextMessage);
+    setConversationReplyMessageId((currentConversationMessageId) =>
+      currentConversationMessageId === currentMessage.id
+        ? nextMessage.id
+        : currentConversationMessageId,
+    );
+    return true;
+  }, []);
 
   const requestAmbientReply = useCallback(() => {
     if (!pet) {
@@ -253,7 +280,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       memoryContext,
       history,
       recentAmbientReplies: ambientReplyHistoryRef.current,
-      replyMaxChars: 160,
+      replyMaxChars: DASHBOARD_REPLY_MAX_CHARS,
     })
       .then((response) => {
         if (ambientRequestIdRef.current !== requestId) {
@@ -468,7 +495,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         pet,
         message,
         includePromptDebug,
-        replyMaxChars: DASHBOARD_CHAT_REPLY_MAX_CHARS,
+        replyMaxChars: DASHBOARD_REPLY_MAX_CHARS,
         dialogueHookMessage,
         logLabel: "dashboard quick chat",
         onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
@@ -505,6 +532,18 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   function handleSendButtonClick(event: MouseEvent<HTMLButtonElement>) {
     event.preventDefault();
     void submitChatMessage({ dismissKeyboard: true });
+  }
+
+  function handleSceneClickCapture(event: MouseEvent<HTMLElement>) {
+    if (travelResult || isDebugPanelOpen || confirmationAction) {
+      return;
+    }
+    if (!advancePetReplySentence()) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   function handleResetPet() {
@@ -627,7 +666,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   };
 
   return (
-    <main className="main-shell tma-screen overflow-clip">
+    <main
+      className="main-shell tma-screen overflow-clip"
+      onClickCapture={handleSceneClickCapture}
+    >
       {localPet.error ? (
         <div className="fixed left-5 right-5 top-[max(20px,calc(var(--tma-safe-top)+12px))] z-20 rounded-[8px] border border-[var(--danger-line)] bg-white px-4 py-3 text-sm text-[var(--danger)] sm:left-8 sm:right-auto sm:max-w-sm">
           {localPet.error}
