@@ -7,6 +7,7 @@ from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
@@ -52,6 +53,10 @@ STORY_STAT_MAX_TOTAL_DAMAGE = 35
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_DAILY_PUSH_HOURS = (9, 15, 21)
+DEFAULT_DAILY_PUSH_WINDOW_MINUTES = 120
+DEFAULT_PUSH_TIMEZONE = "Europe/Moscow"
+
 
 class TelegramPushError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
@@ -84,6 +89,69 @@ def _latest_time(*values: Any) -> datetime | None:
     parsed_values = [_parse_iso(value) for value in values]
     valid_values = [value for value in parsed_values if value is not None]
     return max(valid_values) if valid_values else None
+
+
+def _daily_push_hours(settings: Any) -> tuple[int, ...]:
+    raw_hours = getattr(settings, "telegram_daily_push_hours", DEFAULT_DAILY_PUSH_HOURS)
+    if not isinstance(raw_hours, (list, tuple, set)):
+        raw_hours = DEFAULT_DAILY_PUSH_HOURS
+    hours: set[int] = set()
+    for raw_hour in raw_hours:
+        try:
+            hour = int(raw_hour)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= hour <= 23:
+            hours.add(hour)
+    return tuple(sorted(hours))[:3] or DEFAULT_DAILY_PUSH_HOURS
+
+
+def _push_timezone(record: dict[str, Any], settings: Any) -> ZoneInfo:
+    fallback_name = str(
+        getattr(settings, "telegram_daily_push_default_timezone", DEFAULT_PUSH_TIMEZONE)
+    )
+    timezone_name = record.get("timezone")
+    if not isinstance(timezone_name, str) or not timezone_name.strip():
+        timezone_name = fallback_name
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        try:
+            return ZoneInfo(fallback_name)
+        except ZoneInfoNotFoundError:
+            return ZoneInfo("UTC")
+
+
+def _scheduled_push_slot(record: dict[str, Any], now: datetime) -> datetime | None:
+    settings = get_settings()
+    timezone = _push_timezone(record, settings)
+    local_now = now.astimezone(timezone)
+    window_minutes = max(
+        5,
+        min(
+            180,
+            int(
+                getattr(
+                    settings,
+                    "telegram_daily_push_window_minutes",
+                    DEFAULT_DAILY_PUSH_WINDOW_MINUTES,
+                )
+            ),
+        ),
+    )
+    eligible_after = _latest_time(
+        record.get("registeredAt"),
+        record.get("chatStartedAt"),
+        record.get("lastPushAt"),
+        record.get("lastPushAttemptAt"),
+    )
+    for hour in reversed(_daily_push_hours(settings)):
+        local_slot = local_now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if not (local_slot <= local_now < local_slot + timedelta(minutes=window_minutes)):
+            continue
+        slot = local_slot.astimezone(UTC)
+        return slot if eligible_after is None or slot > eligible_after else None
+    return None
 
 
 def _store_path() -> Path:
@@ -719,6 +787,45 @@ def _record_recent_replies(record: dict[str, Any]) -> list[str]:
     return replies
 
 
+def _push_reason_for_record(record: dict[str, Any], now: datetime) -> str:
+    pet = _current_pet_record(record, now)
+    stats = pet.get("stats") if isinstance(pet.get("stats"), dict) else {}
+    needs = sorted(
+        (
+            (
+                _clamp_stat(stats.get("hunger")),
+                "Скажи, что проголодался и хочешь кушать; мягко позови владельца.",
+            ),
+            (
+                _clamp_stat(stats.get("happiness")),
+                "Скажи, что у тебя плохое настроение и хочется внимания владельца.",
+            ),
+            (
+                _clamp_stat(stats.get("energy")),
+                "Скажи, что ты плохо себя чувствуешь и хочешь, чтобы владелец заглянул.",
+            ),
+        ),
+        key=lambda item: item[0],
+    )
+    if needs[0][0] <= 35:
+        return needs[0][1]
+
+    recent_events = _record_recent_story_events(record)
+    settings = get_settings()
+    local_now = now.astimezone(_push_timezone(record, settings))
+    hours = _daily_push_hours(settings)
+    slot_index = max(0, sum(1 for hour in hours if hour <= local_now.hour) - 1)
+    if recent_events and (local_now.date().toordinal() + slot_index) % 3 == 0:
+        summary = _compact_event_text(recent_events[-1].get("summary"), limit=280)
+        if summary:
+            return (
+                "Коротко расскажи владельцу о недавнем событии, не добавляя новых фактов: "
+                f"{summary}"
+            )
+
+    return "Скажи, что скучаешь по владельцу и хочешь, чтобы он заглянул."
+
+
 def _send_push_record(
     record: dict[str, Any],
     *,
@@ -882,7 +989,7 @@ def send_manual_push(
     record = _record_by_telegram_id(telegram_id)
     return _send_push_record(
         record,
-        reason=reason or MANUAL_PUSH_REASON,
+        reason=reason or _push_reason_for_record(record, _now()),
         manual=True,
         include_debug=include_debug,
     )
@@ -1200,16 +1307,7 @@ def send_manual_push_to_reachable(
     }
 
 
-def _daily_push_min_interval(settings: Any) -> timedelta:
-    min_interval_seconds = getattr(settings, "telegram_daily_push_min_interval_seconds", None)
-    if min_interval_seconds is not None:
-        return timedelta(seconds=max(0, int(min_interval_seconds)))
-    return timedelta(hours=settings.telegram_daily_push_min_interval_hours)
-
-
 def _due_records(now: datetime) -> list[dict[str, Any]]:
-    settings = get_settings()
-    cutoff = now - _daily_push_min_interval(settings)
     records = _read_store().get("records", {})
     due: list[dict[str, Any]] = []
     for record in records.values():
@@ -1217,10 +1315,7 @@ def _due_records(now: datetime) -> list[dict[str, Any]]:
             continue
         if not _has_snapshot(record) or record.get("chatReachable") is not True:
             continue
-        base_time = _latest_time(record.get("lastPushAt"), record.get("lastPushAttemptAt"))
-        if base_time is None:
-            base_time = _parse_iso(record.get("registeredAt"))
-        if base_time and base_time <= cutoff:
+        if _scheduled_push_slot(record, now) is not None:
             due.append(record)
     return due
 
@@ -1229,13 +1324,14 @@ def send_due_pushes() -> list[dict[str, Any]]:
     settings = get_settings()
     if not settings.telegram_daily_push_enabled:
         return []
+    now = _now()
     results: list[dict[str, Any]] = []
-    for record in _due_records(_now()):
+    for record in _due_records(now):
         try:
             results.append(
                 _send_push_record(
                     record,
-                    reason=DAILY_PUSH_REASON,
+                    reason=_push_reason_for_record(record, now),
                     manual=False,
                     include_debug=False,
                 )

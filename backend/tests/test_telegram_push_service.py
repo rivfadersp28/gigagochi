@@ -539,7 +539,9 @@ def test_failed_daily_attempt_delays_next_due_push(monkeypatch, tmp_path) -> Non
         webapp_url="https://example.com/app",
         telegram_push_store_path=str(tmp_path / "push.json"),
         telegram_daily_push_enabled=True,
-        telegram_daily_push_min_interval_hours=24,
+        telegram_daily_push_hours=[9, 15, 21],
+        telegram_daily_push_window_minutes=120,
+        telegram_daily_push_default_timezone="Europe/Moscow",
     )
     monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
     monkeypatch.setattr(telegram_push_service, "_now", lambda: now)
@@ -572,6 +574,7 @@ def test_failed_daily_attempt_delays_next_due_push(monkeypatch, tmp_path) -> Non
     store = telegram_push_service._read_store()
     record = store["records"][str(TEST_TELEGRAM_ID)]
     record["registeredAt"] = (now - timedelta(hours=25)).isoformat().replace("+00:00", "Z")
+    record["chatStartedAt"] = (now - timedelta(hours=25)).isoformat().replace("+00:00", "Z")
     telegram_push_service._save_record(record)
 
     assert telegram_push_service.send_due_pushes() == []
@@ -582,56 +585,54 @@ def test_failed_daily_attempt_delays_next_due_push(monkeypatch, tmp_path) -> Non
     assert telegram_push_service._due_records(now) == []
 
 
-def test_due_push_can_use_seconds_interval(monkeypatch, tmp_path) -> None:
+def test_due_push_uses_three_local_daily_windows(monkeypatch, tmp_path) -> None:
     now = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
     settings = SimpleNamespace(
         telegram_push_store_path=str(tmp_path / "push.json"),
-        telegram_daily_push_min_interval_hours=24,
-        telegram_daily_push_min_interval_seconds=120,
+        telegram_daily_push_hours=[9, 15, 21],
+        telegram_daily_push_window_minutes=120,
+        telegram_daily_push_default_timezone="Europe/Moscow",
     )
     monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
 
     telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
     telegram_push_service.mark_chat_started(chat_id=TEST_TELEGRAM_ID)
-    telegram_push_service.register_push_snapshot(
-        _user_with_id(380566596, username="dendimitrov"),
-        _snapshot_payload(),
-    )
-    telegram_push_service.mark_chat_started(chat_id=380566596)
     store = telegram_push_service._read_store()
     record = store["records"][str(TEST_TELEGRAM_ID)]
-    record["registeredAt"] = (
-        (now - timedelta(seconds=119))
-        .isoformat()
-        .replace(
-            "+00:00",
-            "Z",
-        )
-    )
+    record["registeredAt"] = (now - timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    record["chatStartedAt"] = (now - timedelta(days=1)).isoformat().replace("+00:00", "Z")
     telegram_push_service._save_record(record)
-    non_target = store["records"]["380566596"]
-    non_target["registeredAt"] = (
-        (now - timedelta(seconds=120))
-        .isoformat()
-        .replace(
-            "+00:00",
-            "Z",
-        )
-    )
-    telegram_push_service._save_record(non_target)
 
     due = telegram_push_service._due_records(now)
     assert len(due) == 1
-    assert due[0]["telegramId"] == 380566596
+    assert due[0]["telegramId"] == TEST_TELEGRAM_ID
 
-    record["registeredAt"] = (
-        (now - timedelta(seconds=120))
-        .isoformat()
-        .replace(
-            "+00:00",
-            "Z",
-        )
-    )
+    record["lastPushAt"] = now.isoformat().replace("+00:00", "Z")
     telegram_push_service._save_record(record)
+    assert telegram_push_service._due_records(now) == []
 
-    assert len(telegram_push_service._due_records(now)) == 2
+    evening = datetime(2026, 7, 8, 18, 0, tzinfo=UTC)
+    assert len(telegram_push_service._due_records(evening)) == 1
+
+    after_evening_window = datetime(2026, 7, 8, 20, 0, tzinfo=UTC)
+    assert telegram_push_service._due_records(after_evening_window) == []
+
+
+def test_daily_push_reason_uses_actual_low_pet_stat(monkeypatch) -> None:
+    now = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
+    settings = SimpleNamespace(
+        telegram_daily_push_hours=[9, 15, 21],
+        telegram_daily_push_default_timezone="Europe/Moscow",
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    record = {
+        "timezone": "Europe/Moscow",
+        "lastStatsTickAt": now.isoformat().replace("+00:00", "Z"),
+        "pet": {
+            "stats": {"hunger": 12, "happiness": 80, "energy": 70},
+        },
+    }
+
+    reason = telegram_push_service._push_reason_for_record(record, now)
+
+    assert "хочешь кушать" in reason

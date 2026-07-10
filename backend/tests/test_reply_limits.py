@@ -1,3 +1,4 @@
+from app.services.pet_reply_engine.lite_generator import _limit_push_reply_sentences
 from app.services.pet_reply_engine.reply_limits import clamp_reply_text
 
 
@@ -33,3 +34,12 @@ def test_clamp_reply_text_removes_period_at_natural_truncation_break() -> None:
     result = clamp_reply_text(reply, 220)
 
     assert result.endswith("конец")
+
+
+def test_push_reply_keeps_at_most_two_short_sentences() -> None:
+    result = _limit_push_reply_sentences(
+        "Я скучаю. Загляни ко мне? Я уже подготовил новую историю!"
+    )
+
+    assert result == "Я скучаю. Загляни ко мне?"
+    assert len(result) <= 120

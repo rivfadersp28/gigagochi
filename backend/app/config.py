@@ -28,8 +28,9 @@ class Settings(BaseSettings):
     telegram_init_data_max_age_seconds: int = 60 * 60 * 24
     telegram_daily_push_enabled: bool = False
     telegram_daily_push_interval_seconds: int = 300
-    telegram_daily_push_min_interval_seconds: int | None = None
-    telegram_daily_push_min_interval_hours: int = 6
+    telegram_daily_push_hours: list[int] = Field(default_factory=lambda: [9, 15, 21])
+    telegram_daily_push_window_minutes: int = Field(default=120, ge=5, le=180)
+    telegram_daily_push_default_timezone: str = "Europe/Moscow"
     background_story_enabled: bool = True
     background_story_interval_seconds: int = 300
     background_story_min_interval_seconds: int | None = None

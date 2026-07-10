@@ -26,7 +26,10 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      TELEGRAM_DAILY_PUSH_ENABLED: "false"
+      TELEGRAM_DAILY_PUSH_ENABLED: "true"
+      TELEGRAM_DAILY_PUSH_HOURS: "[9,15,21]"
+      TELEGRAM_DAILY_PUSH_WINDOW_MINUTES: "120"
+      TELEGRAM_DAILY_PUSH_DEFAULT_TIMEZONE: "Europe/Moscow"
       BACKGROUND_STORY_ENABLED: "true"
       BACKGROUND_STORY_MIN_INTERVAL_HOURS: "6"
       BACKEND_INTERNAL_URL: http://backend:8000

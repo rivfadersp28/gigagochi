@@ -22,6 +22,54 @@ def _story_update() -> dict:
     }
 
 
+def _push_update() -> dict:
+    return {
+        "message": {
+            "chat": {"id": TEST_TELEGRAM_ID},
+            "from": {"first_name": "Serge"},
+            "text": "/push",
+        }
+    }
+
+
+def test_push_command_generates_for_requesting_user(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        bot,
+        "get_settings",
+        lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_manual_push",
+        lambda **kwargs: calls.append(kwargs) or {"sent": True},
+    )
+
+    bot.handle_update(httpx.Client(), _push_update())
+
+    assert calls == [{"telegram_id": TEST_TELEGRAM_ID, "include_debug": False}]
+
+
+def test_push_command_can_be_submitted_without_blocking_polling(monkeypatch) -> None:
+    submitted: list[tuple[int, dict]] = []
+    monkeypatch.setattr(
+        bot,
+        "get_settings",
+        lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
+    )
+
+    bot.handle_update(
+        httpx.Client(),
+        _push_update(),
+        submit_push=lambda chat_id, keyboard: submitted.append((chat_id, keyboard)),
+    )
+
+    assert submitted[0][0] == TEST_TELEGRAM_ID
+    assert submitted[0][1]["inline_keyboard"][0][0]["web_app"]["url"] == (
+        "https://example.com/app"
+    )
+
+
 def test_story_command_sends_generated_image_as_photo(monkeypatch) -> None:
     sent: dict[str, object] = {}
     monkeypatch.setattr(

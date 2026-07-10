@@ -81,11 +81,36 @@ def _story_worker(chat_id: int, keyboard: dict[str, Any]) -> None:
         _send_story_response(client, chat_id, keyboard)
 
 
+def _send_push_response(
+    client: httpx.Client,
+    chat_id: int,
+    keyboard: dict[str, Any],
+) -> None:
+    from app.services.openai_service import MissingOpenAIAPIKey
+    from app.services.telegram_push_service import TelegramPushError, send_manual_push
+
+    try:
+        send_manual_push(telegram_id=chat_id, include_debug=False)
+    except TelegramPushError as exc:
+        send_message(client, chat_id, exc.message, keyboard)
+    except MissingOpenAIAPIKey:
+        send_message(client, chat_id, "На сервере не настроен AI API key.", keyboard)
+    except Exception:
+        logger.exception("Telegram /push generation failed")
+        send_message(client, chat_id, "Не удалось сгенерировать push. Попробуй позже.", keyboard)
+
+
+def _push_worker(chat_id: int, keyboard: dict[str, Any]) -> None:
+    with httpx.Client() as client:
+        _send_push_response(client, chat_id, keyboard)
+
+
 def handle_update(
     client: httpx.Client,
     update: dict[str, Any],
     *,
     submit_story: Callable[[int, dict[str, Any]], None] | None = None,
+    submit_push: Callable[[int, dict[str, Any]], None] | None = None,
 ) -> None:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
@@ -115,6 +140,13 @@ def handle_update(
             _send_story_response(client, chat_id, keyboard)
         return
 
+    if command == "/push":
+        if submit_push is not None:
+            submit_push(chat_id, keyboard)
+        else:
+            _send_push_response(client, chat_id, keyboard)
+        return
+
     if command in {"/start", "/app"}:
         from app.services.telegram_push_service import mark_chat_started
 
@@ -142,12 +174,15 @@ def run_bot() -> None:
         httpx.Client() as client,
         ThreadPoolExecutor(
             max_workers=settings.bot_story_workers,
-            thread_name_prefix="telegram-story",
-        ) as story_executor,
+            thread_name_prefix="telegram-command",
+        ) as command_executor,
     ):
 
         def submit_story(chat_id: int, keyboard: dict[str, Any]) -> None:
-            story_executor.submit(_story_worker, chat_id, keyboard)
+            command_executor.submit(_story_worker, chat_id, keyboard)
+
+        def submit_push(chat_id: int, keyboard: dict[str, Any]) -> None:
+            command_executor.submit(_push_worker, chat_id, keyboard)
 
         while True:
             try:
@@ -162,7 +197,12 @@ def run_bot() -> None:
                     update_id = update.get("update_id")
                     if isinstance(update_id, int):
                         offset = update_id + 1
-                    handle_update(client, update, submit_story=submit_story)
+                    handle_update(
+                        client,
+                        update,
+                        submit_story=submit_story,
+                        submit_push=submit_push,
+                    )
             except Exception:
                 logger.exception("Telegram bot polling failed")
                 time.sleep(5)

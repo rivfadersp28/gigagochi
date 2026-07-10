@@ -131,9 +131,14 @@
   stat changes sync back through `/api/push/snapshot` partial `statsPatch`.
 - Telegram Bot API transport is isolated in
   `backend/app/services/telegram_client.py`; neither push orchestration nor the
-  polling loop owns HTTP request formatting. Runtime `/story` work is submitted
-  by `app.bot` to a bounded worker pool so long AI/image generation does not
-  block `getUpdates` polling.
+  polling loop owns HTTP request formatting. Automatic pet pushes use at most
+  three local-time windows per user (09:00, 15:00, 21:00), with a bounded
+  delivery window so missed jobs are not replayed at night. Their reason comes
+  from the current decayed stats, missing the owner, or the latest stored story;
+  visible output is capped at 120 characters and two sentences. `/push` runs
+  the same generation path manually without consuming an automatic window.
+  Runtime `/story` and `/push` work is submitted by `app.bot` to a bounded worker
+  pool so AI/image generation does not block `getUpdates` polling.
 - The MVP push registry remains JSON-backed, but all reads and mutations go
   through `backend/app/services/telegram_push_store.py`. It uses an advisory
   file lock shared by backend and bot processes, unique temporary files plus

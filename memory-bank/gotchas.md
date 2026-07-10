@@ -264,9 +264,10 @@
   `JsonTelegramPushStore.update_record()` so the cross-process file lock and
   atomic write are preserved. Corrupt registry JSON is an operational error,
   not an empty store.
-- Do not run `/story` generation inline in the Telegram `getUpdates` loop.
-  `app.bot` submits it to the bounded `telegram-story` executor; worker tasks
-  create their own `httpx.Client` rather than sharing the polling client.
+- Do not run `/story` or `/push` generation inline in the Telegram `getUpdates`
+  loop. `app.bot` submits both to the bounded `telegram-command` executor;
+  worker tasks create their own `httpx.Client` rather than sharing the polling
+  client.
 - Main-screen speech bubble must stretch from the bubble container, not from an
   absolutely positioned `<img>` SVG. Percentage height on that replaced element
   can stay at the intrinsic SVG height while animated text grows; use the SVG

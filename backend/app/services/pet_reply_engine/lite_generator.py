@@ -96,6 +96,11 @@ VISIBLE_REPLY_FALLBACKS: dict[PhraseSurface, str] = {
     "proactive": "Я рядом и хочу услышать тебя.",
     "push": "Я рядом. Загляни ко мне?",
 }
+PUSH_REPLY_MAX_CHARS = 120
+PUSH_SENTENCE_RE = re.compile(
+    r".*?(?:[.!?…]+(?:[\"'»”’\)\]\}]*)?(?=\s|$)|$)",
+    re.DOTALL,
+)
 MAX_MEMORY_CONTEXT_ITEMS = 5
 MAX_RECENT_AMBIENT_REPLIES = 10
 MAX_RECENT_HISTORY_MESSAGES = 8
@@ -454,6 +459,16 @@ def _normalized_visible_reply(value: Any, reply_limit: int) -> str | None:
     ):
         return None
     return clamp_reply_text(text, reply_limit)
+
+
+def _limit_push_reply_sentences(value: str) -> str:
+    sentences = [
+        match.group(0).strip()
+        for match in PUSH_SENTENCE_RE.finditer(value.strip())
+        if match.group(0).strip()
+    ]
+    limited = " ".join(sentences[:2]) if sentences else value.strip()
+    return clamp_reply_text(limited, PUSH_REPLY_MAX_CHARS)
 
 
 def _fallback_visible_reply_result(
@@ -2384,7 +2399,7 @@ def build_push_messages(
             payload=payload,
             context_routing=context_plan,
         )
-    reply_limit = visible_reply_limit()
+    reply_limit = min(PUSH_REPLY_MAX_CHARS, visible_reply_limit())
     plan = PhrasePlan(
         surface="push",
         reply_limit=reply_limit,
@@ -2513,7 +2528,7 @@ def generate_push_pet_message(
         context_routing=context_plan,
     )
 
-    reply_limit = visible_reply_limit()
+    reply_limit = min(PUSH_REPLY_MAX_CHARS, visible_reply_limit())
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": build_push_messages(
@@ -2533,6 +2548,10 @@ def generate_push_pet_message(
         surface="push",
         reply_limit=reply_limit,
     )
+    push_reply = _limit_push_reply_sentences(structured_reply.reply)
+    if push_reply != structured_reply.reply:
+        structured_reply.validation_flags.append("push_sentence_limit_applied")
+        structured_reply.debug["normalizedResponse"]["reply"] = push_reply
     debug = None
     if payload.includeDebug:
         debug = LocalChatDebug(
@@ -2545,7 +2564,7 @@ def generate_push_pet_message(
             contextRoutingDebug=context_plan.debug,
         )
     return LocalProactiveResponse(
-        reply=structured_reply.reply,
+        reply=push_reply,
         moodHint=structured_reply.mood_hint,
         innerThought=None,
         faceHint=structured_reply.face_hint,
