@@ -249,6 +249,9 @@
 - User-facing "здоровье" still uses the legacy internal stat key `energy`.
   Keep API/storage compatibility and translate only at prompt/UI boundaries
   unless a deliberate migration is planned.
+- Dashboard status arcs must render from live pet stats through
+  `StatProgressRing`. The exported `status-*-new.svg` files contain baked arcs
+  and cannot visually reflect chat, feeding, story, or decay changes.
 - Server-generated story stat changes must sync back to Mini App through a
   partial `statsPatch`. Do not replace the whole stats object unless every
   `lastStatTickAt` key is also reset consistently; otherwise independent decay

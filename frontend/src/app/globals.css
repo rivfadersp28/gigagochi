@@ -563,9 +563,6 @@ body {
   stroke-linecap: round;
   transform: rotate(-90deg) scaleY(-1);
   transform-origin: 27px 27px;
-  transition:
-    stroke 160ms ease-out,
-    stroke-dashoffset 180ms ease-out;
 }
 
 .stat-progress-ring--low {

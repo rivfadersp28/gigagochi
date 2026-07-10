@@ -67,6 +67,7 @@ import {
   PET_THINKING_MIN_VISIBLE_MS,
   PetThinkingIndicator,
 } from "./pet-dashboard/PetThinkingIndicator";
+import { StatProgressRing } from "./pet-dashboard/StatProgressRing";
 import { TravelStoryOverlay } from "./pet-dashboard/TravelStoryOverlay";
 import { useConversationKeyboardOffset } from "./pet-dashboard/useConversationKeyboardOffset";
 import { usePetBackgroundAssets } from "./pet-dashboard/usePetBackgroundAssets";
@@ -137,11 +138,6 @@ const actionIconSrc = {
   chat: `/figma/action-chat-icon-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
   feed: `/figma/action-feed-icon-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
   travel: `/figma/action-travel-icon-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
-} as const;
-const statusIconSrc = {
-  hunger: `/figma/status-hunger-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
-  mood: `/figma/status-mood-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
-  energy: `/figma/status-energy-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
 } as const;
 const speechBubbleSrc = `/figma/speech-bubble-new.svg?v=${ACTION_ICON_CACHE_VERSION}`;
 const conversationSendIconSrc = `/figma/conversation-send-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`;
@@ -238,7 +234,6 @@ const feedFoodAssets = [
 const dashboardStaticImageSources = [
   videoFilterSrc,
   ...Object.values(actionIconSrc),
-  ...Object.values(statusIconSrc),
   speechBubbleSrc,
   conversationSendIconSrc,
   ...PET_THINKING_FRAME_SOURCES,
@@ -1136,9 +1131,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           className="top-status-strip conversation-fade-target"
           aria-label={`Голод ${roundedHungerPercent} из 100, настроение ${roundedMoodPercent} из 100, здоровье ${roundedHealthPercent} из 100`}
         >
-          <img src={statusIconSrc.hunger} alt="" aria-hidden="true" draggable={false} />
-          <img src={statusIconSrc.mood} alt="" aria-hidden="true" draggable={false} />
-          <img src={statusIconSrc.energy} alt="" aria-hidden="true" draggable={false} />
+          <StatProgressRing value={hungerPercent} kind="hunger" />
+          <StatProgressRing value={moodPercent} kind="mood" />
+          <StatProgressRing value={healthPercent} kind="energy" />
         </div>
 
         <div
