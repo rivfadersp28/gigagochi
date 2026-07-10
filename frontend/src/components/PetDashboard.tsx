@@ -138,6 +138,47 @@ function restartSceneVideo(video: HTMLVideoElement) {
   void video.play().catch(() => undefined);
 }
 
+function preloadImage(src: string) {
+  return new Promise<void>((resolve, reject) => {
+    const image = new Image();
+
+    image.onload = () => {
+      if (typeof image.decode !== "function") {
+        resolve();
+        return;
+      }
+
+      image.decode().then(resolve, reject);
+    };
+    image.onerror = () => reject(new Error(`Failed to load image: ${src}`));
+    image.src = src;
+  });
+}
+
+function preloadVideo(src: string) {
+  return new Promise<void>((resolve, reject) => {
+    const video = document.createElement("video");
+    const cleanup = () => {
+      video.onloadeddata = null;
+      video.onerror = null;
+    };
+
+    video.preload = "auto";
+    video.muted = true;
+    video.playsInline = true;
+    video.onloadeddata = () => {
+      cleanup();
+      resolve();
+    };
+    video.onerror = () => {
+      cleanup();
+      reject(new Error(`Failed to load video: ${src}`));
+    };
+    video.src = src;
+    video.load();
+  });
+}
+
 const feedFoodAssets = [
   {
     id: "berry-bowl",
@@ -164,6 +205,16 @@ const feedFoodAssets = [
     rotation: 6,
   },
 ] satisfies FoodAsset[];
+
+const dashboardStaticImageSources = [
+  videoFilterSrc,
+  ...Object.values(actionIconSrc),
+  ...Object.values(statusIconSrc),
+  speechBubbleSrc,
+  "/figma/speech-bubble-mask.svg",
+  conversationSendIconSrc,
+  ...feedFoodAssets.map((food) => food.src),
+];
 
 function isPointNearRect(clientX: number, clientY: number, rect: DOMRect, padding: number) {
   return (
@@ -192,6 +243,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [feedSuccessId, setFeedSuccessId] = useState(0);
   const [includePromptDebug] = useState(() => readLocalPetSettings().includePromptDebug);
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
+  const [assetsReadyForPetId, setAssetsReadyForPetId] = useState<string | null>(null);
+  const [assetLoadErrorForPetId, setAssetLoadErrorForPetId] = useState<string | null>(null);
   const proactiveAttemptedRef = useRef(false);
   const ambientRequestIdRef = useRef(0);
   const ambientReplyHistoryRef = useRef<string[]>([]);
@@ -204,6 +257,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const isSendingChatRef = useRef(false);
   const isTravelGeneratingRef = useRef(false);
   const pet = localPet.pet;
+  const sceneBackgroundSrc = pet
+    ? generatedSpriteUrl(pet, pet.stage, pet.mood) ?? mainSceneBackgroundSrc
+    : null;
+  const sceneVideoSrc = pet ? generatedSceneVideoUrl(pet) : null;
   const conversationInputOffsetY = useConversationKeyboardOffset(isChatMode, sceneRef);
   usePetPushSnapshotSync({
     status: localPet.status,
@@ -218,6 +275,47 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   useEffect(() => {
     ambientReplyHistoryRef.current = readRecentAmbientReplies(petId);
   }, [petId]);
+
+  useEffect(() => {
+    if (
+      localPet.status !== "ready"
+      || !pet
+      || pet.petId !== petId
+      || !sceneBackgroundSrc
+      || assetsReadyForPetId === petId
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const fontReady = document.fonts?.ready ?? Promise.resolve();
+    const imageReady = [sceneBackgroundSrc, ...dashboardStaticImageSources].map(preloadImage);
+    const videoReady = sceneVideoSrc ? [preloadVideo(sceneVideoSrc)] : [];
+
+    void Promise.all([fontReady, ...imageReady, ...videoReady])
+      .then(() => {
+        if (!cancelled) {
+          setAssetsReadyForPetId(petId);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAssetLoadErrorForPetId(petId);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    assetsReadyForPetId,
+    localPet.status,
+    pet,
+    petId,
+    sceneBackgroundSrc,
+    sceneVideoSrc,
+  ]);
 
   const showPetReplyMessage = useCallback((
     text: string,
@@ -645,8 +743,26 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     return null;
   }
 
-  const sceneBackgroundSrc = generatedSpriteUrl(pet, pet.stage, pet.mood) ?? mainSceneBackgroundSrc;
-  const sceneVideoSrc = generatedSceneVideoUrl(pet);
+  if (assetLoadErrorForPetId === petId) {
+    return (
+      <main className="tma-screen grid place-items-center bg-[var(--paper)] px-6 text-center text-sm text-[var(--ink-muted)]">
+        Не удалось загрузить интерфейс. Откройте приложение ещё раз.
+      </main>
+    );
+  }
+
+  if (assetsReadyForPetId !== petId) {
+    return (
+      <main className="tma-screen grid place-items-center bg-[var(--paper)] px-6">
+        <Loader2 className="size-6 animate-spin text-[var(--ink-muted)]" aria-label="Loading" />
+      </main>
+    );
+  }
+
+  if (!sceneBackgroundSrc) {
+    return null;
+  }
+
   const displayedReply = petReplyMessage ?? {
     id: 0,
     text: INITIAL_PET_REPLY_FALLBACK,
