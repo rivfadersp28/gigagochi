@@ -36,6 +36,7 @@ from app.services.pet_reply_engine.speech_runtime import (
     background_story_default_event_type,
     background_story_max_rag_chars,
     background_story_max_story_chars,
+    background_story_reasoning_effort,
     background_story_source_flags,
     background_story_system_prompt,
     background_story_user_prompt,
@@ -61,30 +62,6 @@ STORY_STAT_KEYS = {"hunger", "happiness", "energy"}
 STORY_STAT_MAX_ITEMS = 2
 STORY_STAT_MAX_SINGLE_DAMAGE = 25
 STORY_STAT_MAX_TOTAL_DAMAGE = 35
-STORY_STAT_NO_LOSS_RE = re.compile(
-    r"\b("
-    r"без\s+потерь|без\s+ущерба|не\s+пострадал\w*|"
-    r"никто\s+не\s+пострадал\w*|ничего\s+не\s+потерял\w*|"
-    r"ничего\s+не\s+случил\w*|без\s+последствий"
-    r")\b",
-    re.IGNORECASE,
-)
-STORY_STAT_NEGATIVE_EVIDENCE_RE = re.compile(
-    r"\b("
-    r"потерял\w*|потерян\w*|украл\w*|украден\w*|утащил\w*|"
-    r"не\s+смог\w*|устал\w*|выдох\w*|ранен\w*|травм\w*|"
-    r"повред\w*|груст\w*|испуг\w*|голод\w*|лишил\w*|сломал\w*"
-    r")\b",
-    re.IGNORECASE,
-)
-STORY_STAT_POSITIVE_EVIDENCE_RE = re.compile(
-    r"\b("
-    r"восстанов\w*|исцел\w*|зажил\w*|подлеч\w*|отдохн\w*|выспал\w*|"
-    r"подкреп\w*|поел\w*|наел\w*|утолил\w*|ободрил\w*|обрадовал\w*|"
-    r"повеселел\w*|набрал\w*\s+сил\w*|вернул\w*\s+сил\w*"
-    r")\b",
-    re.IGNORECASE,
-)
 LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS = 5600
 BACKGROUND_STORY_IMAGE_SCENE_STORY_MAX_CHARS = 2400
@@ -98,6 +75,17 @@ BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
+        "causalPlan": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "setup": {"type": "string", "maxLength": 240},
+                "problem": {"type": "string", "maxLength": 240},
+                "action": {"type": "string", "maxLength": 240},
+                "consequence": {"type": "string", "maxLength": 240},
+            },
+            "required": ["setup", "problem", "action", "consequence"],
+        },
         "title": {"type": "string", "maxLength": 120},
         "summary": {"type": "string", "maxLength": 360},
         "storyText": {"type": "string", "maxLength": 2000},
@@ -135,6 +123,7 @@ BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
         "ragText": {"type": "string", "maxLength": 900},
     },
     "required": [
+        "causalPlan",
         "title",
         "summary",
         "storyText",
@@ -672,30 +661,9 @@ def _story_event_briefs(recent_story_events: list[dict[str, Any]] | None) -> lis
         title = _text_value(item.get("title"), limit=120)
         if title:
             parts.append(f"название: {title}")
-        event_type = _text_value(item.get("eventType"), limit=60)
-        if event_type:
-            parts.append(f"тип: {event_type}")
-        valence = _text_value(item.get("valence"), limit=40)
-        if valence:
-            parts.append(f"тон исхода: {_valence_label(valence)}")
-        participants = _string_list(item.get("participants"), limit=4)
-        if participants:
-            parts.append(f"участники: {', '.join(participants)}")
         tags = _string_list(item.get("tags"), limit=6)
         if tags:
             parts.append(f"ключевые мотивы: {', '.join(tags)}")
-        actions = _string_list(item.get("actions"), limit=3)
-        if actions:
-            parts.append(f"действия: {', '.join(actions)}")
-        objects = _string_list(item.get("objects"), limit=4)
-        if objects:
-            parts.append(f"предметы: {', '.join(objects)}")
-        location = _text_value(item.get("location"), limit=120)
-        if location:
-            parts.append(f"место: {location}")
-        outcome = _text_value(item.get("outcome"), limit=180)
-        if outcome:
-            parts.append(f"развязка: {outcome}")
         brief = "; ".join(parts)
         if brief:
             briefs.append(brief)
@@ -712,9 +680,8 @@ def _anti_repeat_block(recent_story_events: list[dict[str, Any]] | None) -> str:
         "Используй список только как запрет на повтор, "
         "не как источник новых деталей сюжета. "
         "Не повторяй центральные слова, образы и мотивы из названий и тегов, "
-        "даже с другим прилагательным или в другой словоформе. Не повторяй по сути "
-        "тот же конфликт, действие, предмет, место или способ развязки. "
-        "Новая история должна заметно отличаться сразу по нескольким признакам.\n"
+        "даже с другим прилагательным или в другой словоформе. "
+        "Не развивай и не комбинируй детали из этого списка; придумай независимое событие.\n"
         f"{lines}"
     )
 
@@ -727,9 +694,10 @@ def _state_params_brief(pet: LocalPetChatContext) -> dict[str, Any]:
     )
     return {
         "usageRule": state_param_usage_rule(),
-        "голод": labels["hunger"],
-        "настроение": labels["happiness"],
-        "здоровье": labels["energy"],
+        "scale": "0–100; больше — лучше",
+        "голод": {"value": pet.stats.hunger, "label": labels["hunger"]},
+        "настроение": {"value": pet.stats.happiness, "label": labels["happiness"]},
+        "здоровье": {"value": pet.stats.energy, "label": labels["energy"]},
     }
 
 
@@ -791,7 +759,6 @@ def _background_routing_payload(
     payload = {
         "surface": "backgroundStory",
         "task": "generate_background_story",
-        "eventType": background_story_default_event_type(),
         "now": now_iso or _now_iso(),
         "timezone": timezone,
         "pet": pet_payload,
@@ -1143,44 +1110,6 @@ def _normalize_story_stat_impacts(
     return tuple(result)
 
 
-def _validate_story_stat_impacts_against_text(
-    stat_impacts: tuple[dict[str, Any], ...],
-    *,
-    summary: str,
-    story_text: str,
-) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
-    validation = {
-        "dropped": False,
-        "reason": "",
-    }
-    if not stat_impacts:
-        return stat_impacts, validation
-    combined_text = f"{summary}\n{story_text}"
-    negative_allowed = not (
-        STORY_STAT_NO_LOSS_RE.search(combined_text)
-        and not STORY_STAT_NEGATIVE_EVIDENCE_RE.search(combined_text)
-    )
-    positive_allowed = bool(STORY_STAT_POSITIVE_EVIDENCE_RE.search(combined_text))
-    filtered = tuple(
-        impact
-        for impact in stat_impacts
-        if (impact.get("amount", 0) < 0 and negative_allowed)
-        or (impact.get("amount", 0) > 0 and positive_allowed)
-    )
-    if len(filtered) != len(stat_impacts):
-        reasons: list[str] = []
-        if not negative_allowed and any(item.get("amount", 0) < 0 for item in stat_impacts):
-            reasons.append("explicit_no_loss_text_without_negative_evidence")
-        if not positive_allowed and any(item.get("amount", 0) > 0 for item in stat_impacts):
-            reasons.append("positive_change_without_recovery_evidence")
-        validation = {
-            "dropped": True,
-            "reason": ",".join(reasons),
-        }
-        logger.debug("background_story_stat_impacts_dropped: %s", validation["reason"])
-    return filtered, validation
-
-
 def _normalize_story_payload(payload: dict[str, Any]) -> BackgroundStoryResult:
     max_story_chars = max(200, background_story_max_story_chars())
     max_rag_chars = max(120, background_story_max_rag_chars())
@@ -1207,11 +1136,7 @@ def _normalize_story_payload(payload: dict[str, Any]) -> BackgroundStoryResult:
         legacy=payload.get("statImpact"),
         valence=valence,
     )
-    stat_impacts, stat_validation = _validate_story_stat_impacts_against_text(
-        stat_impacts,
-        summary=summary,
-        story_text=story_text,
-    )
+    stat_validation = {"dropped": False, "reason": ""}
 
     return BackgroundStoryResult(
         title=title,
@@ -1492,7 +1417,6 @@ def generate_background_story(
     user_content = background_story_user_prompt(
         {
             "character": character,
-            "event_type": background_story_default_event_type(),
         }
     )
     anti_repeat = _anti_repeat_block(recent_story_events)
@@ -1516,7 +1440,7 @@ def generate_background_story(
             },
         },
         "timeout": timeout,
-        **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
+        **chat_reasoning_effort_kwargs(background_story_reasoning_effort()),
     }
     prompt_debug = [item for item in (routing_debug,) if item is not None]
     prompt_debug.append(log_chat_completion_prompt("background_story/generate", request_kwargs))
@@ -1525,6 +1449,12 @@ def generate_background_story(
     content = completion.choices[0].message.content or "{}"
     raw_story_payload = _json_record_from_text(content)
     result = _normalize_story_payload(raw_story_payload)
+    prompt_debug.append(
+        {
+            "event": "background_story_causal_plan",
+            "plan": raw_story_payload.get("causalPlan"),
+        }
+    )
     prompt_debug.append(
         {
             "event": "background_story_stat_impacts",

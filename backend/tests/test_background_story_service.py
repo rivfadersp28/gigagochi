@@ -8,6 +8,13 @@ import pytest
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
 from app.services import background_story_service
 
+TEST_CAUSAL_PLAN = {
+    "setup": "Олег находится у лесной тропы.",
+    "problem": "На тропе возникает одна проблема.",
+    "action": "Олег отвечает одним действием.",
+    "consequence": "Действие приводит к прямому последствию.",
+}
+
 
 class FakeBackgroundStoryCompletions:
     def __init__(self, content: str | list[str]) -> None:
@@ -271,6 +278,7 @@ def test_generate_background_story_stores_recent_event_without_lite_patch(monkey
     )
     content = json.dumps(
         {
+            "causalPlan": TEST_CAUSAL_PLAN,
             "title": "Налет стеклянных улиток",
             "summary": ("На Олега напали стеклянные улитки у лесной миски."),
             "storyText": (
@@ -326,6 +334,15 @@ def test_generate_background_story_stores_recent_event_without_lite_patch(monkey
     )
     request = _call_by_schema(completions, "background_story")
     assert request["response_format"]["json_schema"]["name"] == "background_story"
+    assert request["reasoning_effort"] == "medium"
+    story_schema = request["response_format"]["json_schema"]["schema"]
+    assert "causalPlan" in story_schema["required"]
+    assert story_schema["properties"]["causalPlan"]["required"] == [
+        "setup",
+        "problem",
+        "action",
+        "consequence",
+    ]
     prompt = request["messages"][1]["content"]
     assert "наевшийся" in prompt
     assert "счастливый" in prompt
@@ -333,6 +350,9 @@ def test_generate_background_story_stores_recent_event_without_lite_patch(monkey
     assert '"stats"' not in prompt
     assert '"голод"' in prompt
     assert '"здоровье"' in prompt
+    assert '"value": 96' in prompt
+    assert '"value": 100' in prompt
+    assert '"value": 71' in prompt
     assert "Листики выпускают запахи-сигналы опасности." not in prompt
     assert len(completions.calls) == 3
     assert _call_by_schema(completions, "background_story_aftermath_extraction")
@@ -365,6 +385,34 @@ def test_background_story_accepts_explicit_recovery_stat_change() -> None:
             "reason": "Отдых восстановил силы Олега.",
         },
     )
+
+
+def test_background_story_keeps_stat_impacts_without_lexical_filter() -> None:
+    result = background_story_service._normalize_story_payload(
+        {
+            "title": "Еда у теплой решетки",
+            "summary": "Кошка съела несколько крекеров и перестала чувствовать себя одинокой.",
+            "storyText": (
+                "Кошка съела несколько крекеров, согрелась у решетки "
+                "и почувствовала себя спокойнее."
+            ),
+            "eventType": "recovery",
+            "valence": "positive",
+            "tags": ["еда", "отдых"],
+            "statImpacts": [
+                {"stat": "hunger", "amount": 8, "reason": "Кошка съела крекеры."},
+                {
+                    "stat": "happiness",
+                    "amount": 5,
+                    "reason": "Тепло и отдых успокоили кошку.",
+                },
+            ],
+            "ragText": "Кошка поела и успокоилась.",
+        }
+    )
+
+    assert [impact["stat"] for impact in result.stat_impacts] == ["hunger", "happiness"]
+    assert result.stat_validation == {"dropped": False, "reason": ""}
 
 
 def test_background_story_profile_toggle_controls_description() -> None:
@@ -401,6 +449,7 @@ def test_background_story_profile_toggle_controls_description() -> None:
 def test_background_story_context_sources_policy_controls_dossier(monkeypatch) -> None:
     content = json.dumps(
         {
+            "causalPlan": TEST_CAUSAL_PLAN,
             "title": "Тихий налет",
             "summary": "На Олега напали.",
             "storyText": "На Олега напали у миски.",
@@ -476,6 +525,7 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     )
     story_content = json.dumps(
         {
+            "causalPlan": TEST_CAUSAL_PLAN,
             "title": "Световая капля",
             "summary": "На Олега напала световая капля.",
             "storyText": "На Олега напала световая капля у тропы.",
@@ -565,6 +615,8 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     assert completions.calls[2]["response_format"]["json_schema"]["name"] == (
         "background_story_aftermath_extraction"
     )
+    routing_payload = json.loads(completions.calls[0]["messages"][1]["content"])
+    assert "eventType" not in routing_payload
     prompt = _call_by_schema(completions, "background_story")["messages"][1]["content"]
     assert captured_story_queries == ["лор мира"]
     assert "Кристаллическая капля" in prompt
@@ -577,6 +629,7 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
 def test_background_story_never_uses_previous_generated_stories(monkeypatch) -> None:
     content = json.dumps(
         {
+            "causalPlan": TEST_CAUSAL_PLAN,
             "title": "Новая история",
             "summary": "На Олега напали у миски.",
             "storyText": "На Олега напали у миски.",
@@ -622,6 +675,7 @@ def test_background_story_never_uses_previous_generated_stories(monkeypatch) -> 
 def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) -> None:
     content = json.dumps(
         {
+            "causalPlan": TEST_CAUSAL_PLAN,
             "title": "Новая случайность",
             "summary": "Олег споткнулся у миски.",
             "storyText": "Олег споткнулся у миски и поднялся.",
@@ -675,16 +729,26 @@ def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) ->
     assert "GENERATION_PROFILE" not in system_prompt
     assert "не задают детский литературный тон" in system_prompt
     assert "может попасть в серьезную, опасную или мрачную ситуацию" in system_prompt
+    assert "Сначала заполни causalPlan" in system_prompt
+    assert "storyText только по этому плану" in system_prompt
+    assert "не более чем один необычный или магический эффект" in system_prompt
+    assert "среди древних лесов и чащ" in system_prompt
+    assert "Это примеры диапазона, а не конечный список" in system_prompt
+    assert "Находка должна быть конкретной и материальной" in system_prompt
+    assert "не повторяй тип местности из недавних событий" in prompt
+    assert "низкий параметр не требует снова строить сюжет вокруг его восстановления" in prompt
+    assert "центральная потребность, проблема и способ разрешения должны отличаться" in prompt
+    assert "центральное происшествие должно завершиться внутри эпизода" in prompt
     assert "ANTI_REPEAT" in prompt
     assert "Используй список только как запрет на повтор" in prompt
     assert "название: Искра у миски" in prompt
     assert "ключевые мотивы: искра, падение" in prompt
-    assert "тип: accident" in prompt
-    assert "тон исхода: смешанный" in prompt
-    assert "предметы: мягкий камень" in prompt
+    assert "тип: accident" not in prompt
+    assert "тон исхода: смешанный" not in prompt
+    assert "предметы: мягкий камень" not in prompt
     assert "Олег уже споткнулся о мягкий камень" not in prompt
-    assert "действия: споткнулся" in prompt
-    assert "развязка: поднялся сам" in prompt
+    assert "действия: споткнулся" not in prompt
+    assert "развязка: поднялся сам" not in prompt
 
 
 def test_background_story_aftermath_keeps_episode_but_ignores_ephemeral_lite_fact(
@@ -692,6 +756,7 @@ def test_background_story_aftermath_keeps_episode_but_ignores_ephemeral_lite_fac
 ) -> None:
     story_content = json.dumps(
         {
+            "causalPlan": TEST_CAUSAL_PLAN,
             "title": "Меловая тень",
             "summary": "На Олега напала меловая тень.",
             "storyText": "На Олега напала меловая тень и исчезла.",
@@ -765,6 +830,7 @@ def test_background_story_aftermath_persists_acquired_item_and_relationship(
 ) -> None:
     story_content = json.dumps(
         {
+            "causalPlan": TEST_CAUSAL_PLAN,
             "title": "Искра фонарщика",
             "summary": "Олег помог фонарщику и получил теплую искру.",
             "storyText": (
@@ -848,6 +914,7 @@ def test_background_story_uses_snapshot_history_when_story_toggles_allow(
 ) -> None:
     content = json.dumps(
         {
+            "causalPlan": TEST_CAUSAL_PLAN,
             "title": "Налет из прошлой темы",
             "summary": "На Олега напали после разговора о тропе.",
             "storyText": "На Олега напали у тропы после старого разговора.",

@@ -157,6 +157,14 @@ def validate_speech_runtime_config(config: Any) -> None:
     _required_int(config, ("stateLayer", "thresholds", "energyHighMin"))
     _required_int(config, ("backgroundStory", "maxStoryChars"))
     _required_int(config, ("backgroundStory", "maxRagChars"))
+    background_reasoning_effort = _required_string(
+        config,
+        ("backgroundStory", "reasoningEffort"),
+    )
+    if background_reasoning_effort not in {"none", "low", "medium", "high"}:
+        raise ValueError(
+            "backgroundStory.reasoningEffort must be one of none, low, medium, high"
+        )
     background_template = _required_string(config, ("backgroundStory", "userTemplate"))
     if "{character}" not in background_template:
         raise ValueError("backgroundStory.userTemplate must include {character}")
@@ -457,6 +465,10 @@ def background_story_max_story_chars() -> int:
 
 def background_story_max_rag_chars() -> int:
     return _required_int(speech_runtime_config(), ("backgroundStory", "maxRagChars"))
+
+
+def background_story_reasoning_effort() -> str:
+    return _required_string(speech_runtime_config(), ("backgroundStory", "reasoningEffort"))
 
 
 def background_story_source_flags() -> dict[str, bool]:
