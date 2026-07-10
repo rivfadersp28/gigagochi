@@ -1210,6 +1210,10 @@ def test_character_bible_schema_is_compact() -> None:
     assert "lore" not in CHARACTER_BIBLE_SCHEMA["required"]
     assert "dialogue_moves" not in CHARACTER_BIBLE_SCHEMA["required"]
     assert "provenance" not in CHARACTER_BIBLE_SCHEMA["required"]
+    name_schema = CHARACTER_BIBLE_SCHEMA["properties"]["identity"]["properties"]["name"]
+    assert name_schema["minLength"] == 1
+    assert name_schema["maxLength"] == 32
+    assert "Preserve a name explicitly supplied by the user" in name_schema["description"]
 
 
 def test_character_bible_prompt_requests_species_specific_lore() -> None:
@@ -1233,6 +1237,10 @@ def test_character_bible_prompt_requests_species_specific_lore() -> None:
     assert "high-quality character card" not in prompt
     assert "voice.sample_replies: 5-8 short Russian replies" in prompt
     assert "lorebook_entries: 3-5 triggerable facts" in prompt
+    assert "If the user explicitly gave the creature a name, preserve that name" in prompt
+    assert "Otherwise invent a distinctive, pronounceable display name" in prompt
+    assert "Never use a fixed default name or a generic placeholder" in prompt
+    assert "identity.name must always contain the creature's final display name" in prompt
     assert "Do not default to the same" not in prompt
     assert "storybook logic" not in prompt
     assert "короткие просьбы" not in prompt

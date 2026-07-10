@@ -99,7 +99,7 @@ const confirmationCopy: Record<
 
 const INITIAL_PET_REPLY_FALLBACK = "…";
 const DASHBOARD_CHAT_REPLY_MAX_CHARS = 220;
-const DEFAULT_STATUS_NAME = "Челепиздрик";
+const UNNAMED_STATUS_NAME = "Без имени";
 const ACTION_ICON_CACHE_VERSION = "20260709-figma-117-1029-3";
 const VIDEO_FILTER_CACHE_VERSION = "20260709-video-filter-normal-2";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
@@ -610,7 +610,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   };
   const shouldShowConversationReply =
     isChatMode && conversationReplyMessageId === displayedReply.id;
-  const displayedPetName = pet.name?.trim() || DEFAULT_STATUS_NAME;
+  const displayedPetName = pet.name?.trim() || UNNAMED_STATUS_NAME;
   const hungerPercent = Math.max(0, Math.min(100, pet.stats.hunger));
   const moodPercent = Math.max(0, Math.min(100, pet.stats.happiness));
   const healthPercent = Math.max(0, Math.min(100, pet.stats.energy));
