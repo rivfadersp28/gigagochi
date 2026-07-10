@@ -8,6 +8,7 @@ import type {
   CSSProperties,
   FormEvent,
   MouseEvent,
+  PointerEvent as ReactPointerEvent,
 } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -52,6 +53,7 @@ import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import {
   canUseDebugMenu,
   canUseDerivedPetAssets,
+  hapticImpact,
   hapticNotification,
   setTelegramBackgroundColor,
   useTelegramBackButton,
@@ -148,6 +150,14 @@ const ACTION_ICON_CACHE_VERSION = "20260710-figma-142-1509-1";
 const VIDEO_FILTER_CACHE_VERSION = "20260709-video-filter-normal-2";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
 const SCENE_VIDEO_START_OFFSET_SECONDS = 0.1;
+const TAP_REACTION_DURATION_MS = 180;
+const PET_SCENE_ASPECT_RATIO = 720 / 1280;
+const PET_TAP_REGION = {
+  left: 120 / 720,
+  top: 320 / 1280,
+  right: 600 / 720,
+  bottom: 1040 / 1280,
+} as const;
 const mainSceneBackgroundSrc = `/figma/main-screen-bg.png?v=${MAIN_SCENE_BACKGROUND_CACHE_VERSION}`;
 const emptySceneBackgroundSrc = "/figma/main-scene-underlay.webp";
 const videoFilterSrc = `/figma/video-filter-normal.png?v=${VIDEO_FILTER_CACHE_VERSION}`;
@@ -273,6 +283,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [feedReplyMessageId, setFeedReplyMessageId] = useState<number | null>(null);
   const [feedError, setFeedError] = useState<string | null>(null);
   const [feedSuccessId, setFeedSuccessId] = useState(0);
+  const [isTapReactionVisible, setIsTapReactionVisible] = useState(false);
   const [includePromptDebug] = useState(() => readLocalPetSettings().includePromptDebug);
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
   const [assetsReadyForPetId, setAssetsReadyForPetId] = useState<string | null>(null);
@@ -293,7 +304,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const activeDialogueHookRef = useRef<string | null>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const sceneRef = useRef<HTMLElement>(null);
+  const sceneVideoRef = useRef<HTMLVideoElement>(null);
   const feedDropTargetRef = useRef<HTMLDivElement>(null);
+  const tapReactionTimeoutRef = useRef<number | null>(null);
+  const tapReactionWasPlayingRef = useRef(false);
   const isFeedingRef = useRef(false);
   const isSendingChatRef = useRef(false);
   const cancelReplyAutoAdvance = useCallback(() => {
@@ -308,6 +322,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     ambientRequestIdRef.current += 1;
     idleThinkingRequestIdRef.current += 1;
     setIsGeneratingIdleReply(false);
+  }, []);
+  const finishTapReaction = useCallback(() => {
+    if (tapReactionTimeoutRef.current !== null) {
+      window.clearTimeout(tapReactionTimeoutRef.current);
+      tapReactionTimeoutRef.current = null;
+    }
+    setIsTapReactionVisible(false);
+    if (tapReactionWasPlayingRef.current) {
+      void sceneVideoRef.current?.play().catch(() => undefined);
+    }
+    tapReactionWasPlayingRef.current = false;
   }, []);
   const beginIdleThinking = useCallback(() => {
     const requestId = idleThinkingRequestIdRef.current + 1;
@@ -362,6 +387,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   useEffect(() => {
     ambientReplyHistoryRef.current = readRecentAmbientReplies(petId);
   }, [petId]);
+
+  useEffect(() => finishTapReaction, [finishTapReaction]);
 
   useEffect(() => {
     if (
@@ -653,6 +680,66 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     isChatMode,
     isDebugPanelOpen,
     isFeedMode,
+    isStoryHistoryOpen,
+  ]);
+
+  const handlePetReactionPointerDown = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    if (
+      isChatMode
+      || isFeedMode
+      || isDebugPanelOpen
+      || isStoryHistoryOpen
+      || confirmationAction
+      || isPetDead
+      || event.pointerType === "mouse" && event.button !== 0
+    ) {
+      return;
+    }
+
+    const target = event.target;
+    if (target instanceof Element && target.closest("button, input, textarea, a")) {
+      return;
+    }
+
+    const sceneRect = sceneRef.current?.getBoundingClientRect();
+    if (!sceneRect) {
+      return;
+    }
+
+    const mediaWidth = sceneRect.height * PET_SCENE_ASPECT_RATIO;
+    const mediaLeft = sceneRect.left + (sceneRect.width - mediaWidth) / 2;
+    const normalizedX = (event.clientX - mediaLeft) / mediaWidth;
+    const normalizedY = (event.clientY - sceneRect.top) / sceneRect.height;
+    if (
+      normalizedX < PET_TAP_REGION.left
+      || normalizedX > PET_TAP_REGION.right
+      || normalizedY < PET_TAP_REGION.top
+      || normalizedY > PET_TAP_REGION.bottom
+    ) {
+      return;
+    }
+
+    if (tapReactionTimeoutRef.current === null) {
+      const video = sceneVideoRef.current;
+      tapReactionWasPlayingRef.current = Boolean(video && !video.paused && !video.ended);
+      video?.pause();
+    } else {
+      window.clearTimeout(tapReactionTimeoutRef.current);
+    }
+
+    setIsTapReactionVisible(true);
+    hapticImpact("light");
+    tapReactionTimeoutRef.current = window.setTimeout(
+      finishTapReaction,
+      TAP_REACTION_DURATION_MS,
+    );
+  }, [
+    confirmationAction,
+    finishTapReaction,
+    isChatMode,
+    isDebugPanelOpen,
+    isFeedMode,
+    isPetDead,
     isStoryHistoryOpen,
   ]);
 
@@ -1206,6 +1293,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         }`}
         style={conversationSceneStyle}
         aria-label="AI Tamagotchi"
+        onPointerDown={handlePetReactionPointerDown}
       >
         <div className="conversation-appbar" aria-hidden={!isChatMode}>
           <div className="conversation-appbar__blur" aria-hidden="true" />
@@ -1220,6 +1308,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           />
           {sceneVideoSrc ? (
             <video
+              ref={sceneVideoRef}
               src={sceneVideoSrc}
               poster={sceneBackgroundSrc}
               className="main-scene-background"
@@ -1230,6 +1319,42 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               onLoadedMetadata={(event) => restartSceneVideo(event.currentTarget)}
               onEnded={(event) => restartSceneVideo(event.currentTarget)}
             />
+          ) : null}
+          {isTapReactionVisible ? (
+            <div className="pet-tap-reaction" aria-hidden="true">
+              <img
+                src={sceneBackgroundSrc}
+                alt=""
+                className="main-scene-background"
+                draggable={false}
+              />
+              <svg
+                className="pet-tap-reaction__hearts"
+                viewBox="0 0 720 1280"
+                role="presentation"
+              >
+                <g className="pet-tap-reaction__heart pet-tap-reaction__heart--one">
+                  <path d="M0 13C0 4 11 0 17 8C23 0 34 4 34 13C34 23 17 34 17 34C17 34 0 23 0 13Z" />
+                  <path className="pet-tap-reaction__shine" d="M8 10C10 7 13 7 15 9" />
+                </g>
+                <g className="pet-tap-reaction__heart pet-tap-reaction__heart--two">
+                  <path d="M0 13C0 4 11 0 17 8C23 0 34 4 34 13C34 23 17 34 17 34C17 34 0 23 0 13Z" />
+                  <path className="pet-tap-reaction__shine" d="M8 10C10 7 13 7 15 9" />
+                </g>
+                <g className="pet-tap-reaction__heart pet-tap-reaction__heart--three">
+                  <path d="M0 13C0 4 11 0 17 8C23 0 34 4 34 13C34 23 17 34 17 34C17 34 0 23 0 13Z" />
+                  <path className="pet-tap-reaction__shine" d="M8 10C10 7 13 7 15 9" />
+                </g>
+                <g className="pet-tap-reaction__heart pet-tap-reaction__heart--four">
+                  <path d="M0 13C0 4 11 0 17 8C23 0 34 4 34 13C34 23 17 34 17 34C17 34 0 23 0 13Z" />
+                  <path className="pet-tap-reaction__shine" d="M8 10C10 7 13 7 15 9" />
+                </g>
+                <g className="pet-tap-reaction__heart pet-tap-reaction__heart--five">
+                  <path d="M0 13C0 4 11 0 17 8C23 0 34 4 34 13C34 23 17 34 17 34C17 34 0 23 0 13Z" />
+                  <path className="pet-tap-reaction__shine" d="M8 10C10 7 13 7 15 9" />
+                </g>
+              </svg>
+            </div>
           ) : null}
           <img
             src={videoFilterSrc}

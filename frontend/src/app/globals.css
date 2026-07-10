@@ -349,7 +349,7 @@ body {
 .main-scene-filter-image {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 2;
   display: block;
   width: 100%;
   height: 100%;
@@ -360,10 +360,65 @@ body {
   user-select: none;
 }
 
+.pet-tap-reaction {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.pet-tap-reaction__hearts {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  display: block;
+  width: auto;
+  height: 100%;
+  max-width: none;
+  overflow: visible;
+  transform: translate3d(-50%, 0, 0);
+}
+
+.pet-tap-reaction__heart {
+  fill: #ff6b86;
+  stroke: #b72e51;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.pet-tap-reaction__heart--one {
+  transform: translate(238px, 418px) rotate(-12deg) scale(1.15);
+}
+
+.pet-tap-reaction__heart--two {
+  transform: translate(450px, 452px) rotate(10deg) scale(0.9);
+}
+
+.pet-tap-reaction__heart--three {
+  transform: translate(196px, 560px) rotate(-18deg) scale(0.72);
+}
+
+.pet-tap-reaction__heart--four {
+  transform: translate(500px, 590px) rotate(16deg) scale(1.05);
+}
+
+.pet-tap-reaction__heart--five {
+  transform: translate(402px, 352px) rotate(7deg) scale(0.66);
+}
+
+.pet-tap-reaction__shine {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.88);
+  stroke-linecap: round;
+  stroke-width: 3;
+}
+
 .feed-drop-target {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: 3;
   pointer-events: none;
 }
 
