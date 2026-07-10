@@ -5,6 +5,7 @@ from typing import Any
 
 from app.schemas import LocalChatRequest
 from app.services.pet_reply_engine.speech_runtime import context_source_mode
+from app.services.temporal_context import format_temporal_reference, temporal_age_days
 
 MAX_RECENT_EVENTS_CONTEXT_ITEMS = 3
 
@@ -24,7 +25,7 @@ def _text_value(value: Any) -> str:
 RECENT_EVENT_RECENT_RE = re.compile(
     r"\b("
     r"недавн\w*|последн\w*|сейчас|теперь|случил\w*|"
-    r"произош\w*|истори\w*"
+    r"произош\w*|истори\w*|помн\w*|вчера|позавчера|назад"
     r")\b",
     re.IGNORECASE,
 )
@@ -164,6 +165,8 @@ def _select_recent_events_for_text(
     events: list[dict[str, Any]],
     text: str,
     mode: str,
+    now_iso: str | None = None,
+    timezone: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     debug: dict[str, Any] = {
         "mode": mode,
@@ -188,6 +191,10 @@ def _select_recent_events_for_text(
     has_status_intent = bool(RECENT_EVENT_STATUS_RE.search(text))
     candidates: list[tuple[dict[str, Any], str]] = []
     for event in newest:
+        event_time = _text_value(event.get("generatedAt")) or _text_value(event.get("createdAt"))
+        age_days = temporal_age_days(event_time, now_iso=now_iso, timezone=timezone)
+        if age_days is not None and age_days > 30 and not has_recent_intent:
+            continue
         event_tokens = set().union(
             *(_recent_event_tokens(part) for part in _recent_event_text_parts(event))
         )
@@ -208,7 +215,12 @@ def _select_recent_events_for_text(
     return selected, debug
 
 
-def _format_recent_events_block(events: list[dict[str, Any]]) -> str | None:
+def _format_recent_events_block(
+    events: list[dict[str, Any]],
+    *,
+    now_iso: str | None = None,
+    timezone: str | None = None,
+) -> str | None:
     if not events:
         return None
     lines = [
@@ -220,6 +232,13 @@ def _format_recent_events_block(events: list[dict[str, Any]]) -> str | None:
         title = _text_value(event.get("title")) or f"Событие {index}"
         summary = _text_value(event.get("summary")) or _text_value(event.get("compactText"))
         lines.append(f"{index}. {title}")
+        temporal = format_temporal_reference(
+            _text_value(event.get("generatedAt")) or _text_value(event.get("createdAt")),
+            now_iso=now_iso,
+            timezone=timezone,
+        )
+        if temporal:
+            lines.append(f"Произошло: {temporal}")
         if summary:
             lines.append(f"Кратко: {summary}")
         raw_canonical_facts = event.get("canonicalFacts")
@@ -256,5 +275,11 @@ def _recent_events_context_for_chat(payload: LocalChatRequest) -> tuple[str | No
         events=events,
         text=payload.message,
         mode=mode,
+        now_iso=payload.nowIso,
+        timezone=payload.timezone,
     )
-    return _format_recent_events_block(selected), debug
+    return _format_recent_events_block(
+        selected,
+        now_iso=payload.nowIso,
+        timezone=payload.timezone,
+    ), debug

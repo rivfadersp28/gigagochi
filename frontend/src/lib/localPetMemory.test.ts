@@ -9,6 +9,7 @@ import {
 import {
   applyMemoryOperations,
   createEmptyLocalPetMemory,
+  localPetMemoryStorageKey,
   readLocalPetMemory,
   writeLocalPetMemory,
 } from "./localPetMemoryStorage";
@@ -138,5 +139,81 @@ describe("local pet memory", () => {
     expect(corrected.memories.map((item) => item.text)).toEqual([
       "Пользователь любит чай.",
     ]);
+  });
+
+  it("lazily migrates v1 memories without rebuilding the character", () => {
+    const petId = "legacy-pet";
+    window.localStorage.setItem(localPetMemoryStorageKey(petId), JSON.stringify({
+      version: 1,
+      petId,
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      learnings: [],
+      proactiveLog: [],
+      memories: [{
+        id: "legacy-name",
+        kind: "user_fact",
+        text: "Пользователя зовут Сергей.",
+        normalizedKey: "user-name",
+        confidence: 1,
+        importance: 1,
+        createdAt: "2025-01-01T00:00:00.000Z",
+        updatedAt: "2025-01-01T00:00:00.000Z",
+        mentionCount: 0,
+        sourceLearningIds: [],
+        tags: [],
+      }],
+    }));
+
+    const migrated = readLocalPetMemory(petId);
+
+    expect(migrated.version).toBe(2);
+    expect(migrated.memories[0]).toMatchObject({
+      memoryClass: "core",
+      recordedAt: "2025-01-01T00:00:00.000Z",
+    });
+    expect(migrated.memories[0]?.occurredAt).toBeUndefined();
+  });
+
+  it("does not recall an old episode spontaneously but keeps explicit recall", () => {
+    const memory = applyMemoryOperations(createEmptyLocalPetMemory("pet-1"), [{
+      type: "remember_user_fact",
+      kind: "event",
+      text: "Питомец нашёл медный ключ у башни.",
+      normalizedKey: "tower-key-event",
+      confidence: 1,
+      importance: 0.8,
+      occurredAt: "2025-01-01T12:00:00.000Z",
+    }]);
+    const now = new Date("2026-07-10T12:00:00.000Z");
+
+    expect(buildMemoryContextForMessage([], "Расскажи про медный ключ", now, memory)
+      .relevantMemories).toEqual([]);
+    expect(buildMemoryContextForMessage([], "Помнишь медный ключ?", now, memory)
+      .relevantMemories.map((item) => item.id)).toEqual([memory.memories[0]?.id]);
+  });
+
+  it("recalls an episode from the requested relative day", () => {
+    const memory = applyMemoryOperations(createEmptyLocalPetMemory("pet-1"), [{
+      type: "remember_user_fact",
+      kind: "event",
+      text: "Питомец ходил к старой башне.",
+      normalizedKey: "old-tower-event",
+      confidence: 1,
+      importance: 0.8,
+      occurredAt: "2026-07-08T10:00:00.000Z",
+    }]);
+
+    const context = buildMemoryContextForMessage(
+      [],
+      "Что ты делал позавчера?",
+      new Date("2026-07-10T12:00:00.000Z"),
+      memory,
+    );
+
+    expect(context.relevantMemories[0]).toMatchObject({
+      memoryClass: "episode",
+      occurredAt: "2026-07-08T10:00:00.000Z",
+    });
   });
 });

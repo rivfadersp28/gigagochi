@@ -1,6 +1,7 @@
 import type {
   LocalPetLearning,
   LocalPetLearningStatus,
+  LocalPetMemoryClass,
   LocalPetMemoryStateV1,
   LocalPetProactiveLogItem,
   LocalPetUserMemory,
@@ -27,6 +28,7 @@ const USER_MEMORY_KINDS: UserMemoryKind[] = [
   "emotion",
   "boundary",
 ];
+const CORE_MEMORY_KEYS = new Set(["user-name", "pet-nickname"]);
 
 function storage() {
   if (typeof window === "undefined") {
@@ -100,7 +102,7 @@ export function localPetMemoryStorageKey(petId: string) {
 export function createEmptyLocalPetMemory(petId: string): LocalPetMemoryStateV1 {
   const now = nowIso();
   return {
-    version: 1,
+    version: 2,
     petId,
     createdAt: now,
     updatedAt: now,
@@ -108,6 +110,29 @@ export function createEmptyLocalPetMemory(petId: string): LocalPetMemoryStateV1 
     memories: [],
     proactiveLog: [],
   };
+}
+
+function inferMemoryClass(
+  kind: UserMemoryKind,
+  normalizedKey: string,
+): LocalPetMemoryClass {
+  if (CORE_MEMORY_KEYS.has(normalizedKey) || kind === "boundary") {
+    return "core";
+  }
+  if (kind === "event" || kind === "emotion") {
+    return "episode";
+  }
+  return "fact";
+}
+
+function normalizeMemoryClass(
+  value: unknown,
+  kind: UserMemoryKind,
+  normalizedKey: string,
+): LocalPetMemoryClass {
+  return value === "core" || value === "fact" || value === "episode"
+    ? value
+    : inferMemoryClass(kind, normalizedKey);
 }
 
 function normalizeLearning(value: unknown): LocalPetLearning | null {
@@ -134,6 +159,7 @@ function normalizeLearning(value: unknown): LocalPetLearning | null {
     firstSeenAt: isIsoDate(value.firstSeenAt) ? value.firstSeenAt : now,
     lastSeenAt: isIsoDate(value.lastSeenAt) ? value.lastSeenAt : now,
     sourceMessageIds: normalizeStringArray(value.sourceMessageIds, 20),
+    occurredAt: isIsoDate(value.occurredAt) ? value.occurredAt : undefined,
     dueAt: isIsoDate(value.dueAt) ? value.dueAt : undefined,
   };
 }
@@ -147,14 +173,20 @@ function normalizeMemory(value: unknown): LocalPetUserMemory | null {
     return null;
   }
   const now = nowIso();
+  const kind = normalizeKind(value.kind);
+  const normalizedKey = normalizeKey(value.normalizedKey, text);
+  const createdAt = isIsoDate(value.createdAt) ? value.createdAt : now;
   return {
     id: value.id,
-    kind: normalizeKind(value.kind),
+    kind,
     text,
-    normalizedKey: normalizeKey(value.normalizedKey, text),
+    normalizedKey,
     confidence: clamp01(value.confidence, 0.5),
     importance: clamp01(value.importance, 0.5),
-    createdAt: isIsoDate(value.createdAt) ? value.createdAt : now,
+    memoryClass: normalizeMemoryClass(value.memoryClass, kind, normalizedKey),
+    recordedAt: isIsoDate(value.recordedAt) ? value.recordedAt : createdAt,
+    occurredAt: isIsoDate(value.occurredAt) ? value.occurredAt : undefined,
+    createdAt,
     updatedAt: isIsoDate(value.updatedAt) ? value.updatedAt : now,
     lastMentionedAt: isIsoDate(value.lastMentionedAt) ? value.lastMentionedAt : undefined,
     mentionCount:
@@ -211,12 +243,12 @@ function trimMemoryState(memory: LocalPetMemoryStateV1): LocalPetMemoryStateV1 {
 }
 
 function normalizeMemoryState(value: unknown, petId: string): LocalPetMemoryStateV1 {
-  if (!isRecord(value) || value.version !== 1 || value.petId !== petId) {
+  if (!isRecord(value) || (value.version !== 1 && value.version !== 2) || value.petId !== petId) {
     return createEmptyLocalPetMemory(petId);
   }
   const fallback = createEmptyLocalPetMemory(petId);
   return trimMemoryState({
-    version: 1,
+    version: 2,
     petId,
     createdAt: isIsoDate(value.createdAt) ? value.createdAt : fallback.createdAt,
     updatedAt: isIsoDate(value.updatedAt) ? value.updatedAt : fallback.updatedAt,
@@ -319,6 +351,9 @@ function applyCaptureLearning(
             recurrenceCount: item.recurrenceCount + 1,
             lastSeenAt: now,
             sourceMessageIds: Array.from(new Set([...item.sourceMessageIds, ...sourceMessageIds])),
+            occurredAt: isIsoDate(operation.occurredAt)
+              ? operation.occurredAt
+              : item.occurredAt,
             dueAt: isIsoDate(operation.dueAt) ? operation.dueAt : item.dueAt,
           }
         : item,
@@ -338,6 +373,7 @@ function applyCaptureLearning(
       firstSeenAt: now,
       lastSeenAt: now,
       sourceMessageIds,
+      occurredAt: isIsoDate(operation.occurredAt) ? operation.occurredAt : undefined,
       dueAt: isIsoDate(operation.dueAt) ? operation.dueAt : undefined,
     },
   ];
@@ -354,14 +390,17 @@ function upsertUserMemory(
     return memory.memories;
   }
   const normalizedKey = normalizeKey(fact.normalizedKey, text);
+  const kind = normalizeKind(fact.kind);
   const existingIndex = memory.memories.findIndex((item) => item.normalizedKey === normalizedKey);
   if (existingIndex >= 0) {
     return memory.memories.map((item, index) =>
       index === existingIndex
         ? {
             ...item,
-            kind: fact.kind ? normalizeKind(fact.kind, item.kind) : item.kind,
+            kind: fact.kind ? kind : item.kind,
             text,
+            memoryClass: inferMemoryClass(fact.kind ? kind : item.kind, normalizedKey),
+            occurredAt: isIsoDate(fact.occurredAt) ? fact.occurredAt : item.occurredAt,
             confidence: Math.max(item.confidence, clamp01(fact.confidence, item.confidence)),
             importance: Math.max(item.importance, clamp01(fact.importance, item.importance)),
             updatedAt: now,
@@ -380,11 +419,14 @@ function upsertUserMemory(
     ...memory.memories,
     {
       id: createMemoryId("memory"),
-      kind: normalizeKind(fact.kind),
+      kind,
       text,
       normalizedKey,
       confidence: clamp01(fact.confidence, 0.75),
       importance: clamp01(fact.importance, 0.7),
+      memoryClass: inferMemoryClass(kind, normalizedKey),
+      recordedAt: now,
+      occurredAt: isIsoDate(fact.occurredAt) ? fact.occurredAt : undefined,
       createdAt: now,
       updatedAt: now,
       mentionCount: 0,
@@ -497,7 +539,8 @@ export function buildExistingMemoryBrief(memory: LocalPetMemoryStateV1): string 
     lines.push(`Summary: ${memory.summary}`);
   }
   memory.memories.slice(0, 20).forEach((item) => {
-    lines.push(`- [${item.kind}] ${item.text}`);
+    const occurred = item.occurredAt ? `; произошло ${item.occurredAt}` : "";
+    lines.push(`- [${item.kind}/${item.memoryClass}${occurred}] ${item.text}`);
   });
   memory.learnings
     .filter((item) => item.status === "pending")

@@ -12,6 +12,8 @@ export type UserMemoryKind =
 
 export type LocalPetLearningStatus = "pending" | "promoted" | "pruned";
 
+export type LocalPetMemoryClass = "core" | "fact" | "episode";
+
 export type LocalPetLearning = {
   id: string;
   status: LocalPetLearningStatus;
@@ -24,6 +26,7 @@ export type LocalPetLearning = {
   firstSeenAt: string;
   lastSeenAt: string;
   sourceMessageIds: string[];
+  occurredAt?: string;
   dueAt?: string;
 };
 
@@ -34,6 +37,9 @@ export type LocalPetUserMemory = {
   normalizedKey: string;
   confidence: number;
   importance: number;
+  memoryClass: LocalPetMemoryClass;
+  recordedAt: string;
+  occurredAt?: string;
   createdAt: string;
   updatedAt: string;
   lastMentionedAt?: string;
@@ -62,7 +68,7 @@ export type LocalChatMemoryEpisode = {
 };
 
 export type LocalPetMemoryStateV1 = {
-  version: 1;
+  version: 2;
   petId: string;
   createdAt: string;
   updatedAt: string;
@@ -84,6 +90,7 @@ export type MemoryOperation =
       kind?: UserMemoryKind;
       confidence: number;
       importance: number;
+      occurredAt?: string;
       dueAt?: string;
     }
   | {
@@ -93,6 +100,7 @@ export type MemoryOperation =
       normalizedKey: string;
       confidence: number;
       importance: number;
+      occurredAt?: string;
       dueAt?: string;
       expiresAt?: string;
       tags?: string[];
@@ -104,6 +112,7 @@ export type MemoryOperation =
       normalizedKey: string;
       confidence: number;
       importance: number;
+      occurredAt?: string;
       dueAt?: string;
       expiresAt?: string;
       tags?: string[];
@@ -141,6 +150,10 @@ export type LocalPetMemoryContext = {
     id: string;
     kind: UserMemoryKind;
     text: string;
+    memoryClass?: LocalPetMemoryClass;
+    recordedAt?: string;
+    occurredAt?: string;
+    lastMentionedAt?: string;
     dueAt?: string;
   }[];
   episodes?: LocalChatMemoryEpisode[];

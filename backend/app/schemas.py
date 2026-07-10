@@ -109,6 +109,7 @@ class LocalPetChatContext(BaseModel):
 class LocalChatHistoryItem(BaseModel):
     role: Literal["user", "pet"]
     text: str = Field(min_length=1, max_length=8000)
+    createdAt: str | None = Field(default=None, max_length=80)
 
 
 class LocalVisibleContext(BaseModel):
@@ -119,6 +120,10 @@ class LocalPetMemoryContextItem(BaseModel):
     id: str = Field(min_length=1, max_length=120)
     kind: UserMemoryKind
     text: str = Field(min_length=1, max_length=500)
+    memoryClass: Literal["core", "fact", "episode"] = "fact"
+    recordedAt: str | None = Field(default=None, max_length=80)
+    occurredAt: str | None = Field(default=None, max_length=80)
+    lastMentionedAt: str | None = Field(default=None, max_length=80)
     dueAt: str | None = Field(default=None, max_length=80)
 
 
@@ -154,6 +159,8 @@ class LocalChatRequest(BaseModel):
     complimentHistory: list[ComplimentKeyValue] = Field(default_factory=list, max_length=500)
     visibleContext: LocalVisibleContext | None = None
     memoryContext: LocalPetMemoryContext | None = None
+    nowIso: str | None = Field(default=None, max_length=80)
+    timezone: str | None = Field(default=None, max_length=80)
     replyMaxChars: int | None = Field(default=None, ge=1, le=300)
     includeDebug: bool = False
 

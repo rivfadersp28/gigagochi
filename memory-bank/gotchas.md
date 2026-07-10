@@ -116,6 +116,15 @@
   is only for durable consequences that remain true after the episode. Store
   the episode itself in `recentStoryEvents` / `extensions.recent_story_events`
   and pass it to `/story` only as `ANTI_REPEAT`.
+- Do not use memory `updatedAt` as the event time. `recordedAt` is storage time,
+  `occurredAt` is factual event time, and legacy facts without reliable event
+  time must keep `occurredAt` absent.
+- Do not expand the ten full `recentStoryEvents` records to solve year-scale
+  anti-repeat; full stories and images inflate push snapshots. Keep long-lived
+  compact title/tag signatures in server-side `storyNoveltyHistory` instead.
+- User-memory v2 is still frontend localStorage-backed. Lazy migration preserves
+  existing local characters, but it does not provide cross-device or cleared-
+  WebView durability; that requires an authoritative server memory store.
 - Do not canonize a new ability/title/profession from one generated chat reply.
   The lite-fact extractor must validate such facts against the character capsule.
 - `runLocalPetChatTurn` is also used for synthetic food-reaction prompts. Do not

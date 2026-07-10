@@ -1165,6 +1165,18 @@
       },
       "LocalChatHistoryItem": {
         "properties": {
+          "createdAt": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdat"
+          },
           "role": {
             "enum": [
               "user",
@@ -1251,6 +1263,18 @@
             "title": "Message",
             "type": "string"
           },
+          "nowIso": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nowiso"
+          },
           "pet": {
             "$ref": "#/components/schemas/LocalPetChatContext"
           },
@@ -1266,6 +1290,18 @@
               }
             ],
             "title": "Replymaxchars"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
           },
           "visibleContext": {
             "anyOf": [
@@ -1591,6 +1627,52 @@
             ],
             "title": "Kind",
             "type": "string"
+          },
+          "lastMentionedAt": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastmentionedat"
+          },
+          "memoryClass": {
+            "default": "fact",
+            "enum": [
+              "core",
+              "fact",
+              "episode"
+            ],
+            "title": "Memoryclass",
+            "type": "string"
+          },
+          "occurredAt": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurredat"
+          },
+          "recordedAt": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recordedat"
           },
           "text": {
             "maxLength": 500,

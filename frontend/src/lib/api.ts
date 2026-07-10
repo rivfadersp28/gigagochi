@@ -94,14 +94,24 @@ function cleanApiText(value: unknown, maxLength: number): string | undefined {
   return clean || undefined;
 }
 
+function cleanApiDate(value: unknown): string | undefined {
+  const text = cleanApiText(value, 80);
+  return text && !Number.isNaN(Date.parse(text)) ? text : undefined;
+}
+
 function chatHistoryForApi(
-  history: Pick<LocalChatMessage, "role" | "text">[],
+  history: (Pick<LocalChatMessage, "role" | "text"> & Partial<Pick<LocalChatMessage, "createdAt">>)[],
   limit = MAX_CHAT_HISTORY_ITEMS,
 ) {
   return history
     .flatMap((item) => {
       const text = cleanApiText(item.text, MAX_CHAT_HISTORY_TEXT_LENGTH);
-      return text ? [{ role: item.role, text }] : [];
+      const createdAt = cleanApiDate(item.createdAt);
+      return text ? [{
+        role: item.role,
+        text,
+        ...(createdAt ? { createdAt } : {}),
+      }] : [];
     })
     .slice(-limit);
 }
@@ -120,10 +130,17 @@ function memoryContextForApi(
       if (!id || !text) {
         return [];
       }
+      const recordedAt = cleanApiDate(item.recordedAt);
+      const occurredAt = cleanApiDate(item.occurredAt);
+      const lastMentionedAt = cleanApiDate(item.lastMentionedAt);
       return [{
         id,
         kind: item.kind,
         text,
+        ...(item.memoryClass ? { memoryClass: item.memoryClass } : {}),
+        ...(recordedAt ? { recordedAt } : {}),
+        ...(occurredAt ? { occurredAt } : {}),
+        ...(lastMentionedAt ? { lastMentionedAt } : {}),
         dueAt: cleanApiText(item.dueAt, 80),
       }];
     })
@@ -134,11 +151,12 @@ function memoryContextForApi(
       const messages = episode.messages
         .flatMap((message) => {
           const text = cleanApiText(message.text, MAX_CHAT_HISTORY_TEXT_LENGTH);
+          const createdAt = cleanApiDate(message.createdAt);
           return text
             ? [{
                 role: message.role,
                 text,
-                createdAt: cleanApiText(message.createdAt, 80),
+                ...(createdAt ? { createdAt } : {}),
               }]
             : [];
         })
@@ -494,6 +512,8 @@ export async function sendLocalChatMessage(
     body: {
       message: message.slice(0, MAX_CHAT_INPUT_LENGTH),
       includeDebug: options.includeDebug ?? false,
+      nowIso: new Date().toISOString(),
+      timezone: browserTimezone(),
       memoryContext: memoryContextForApi(options.memoryContext),
       complimentHistory: (options.complimentHistory ?? [])
         .flatMap((value) => cleanApiText(value, 120) ?? [])

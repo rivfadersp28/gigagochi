@@ -12,6 +12,8 @@ const HOUR_MS = 3_600_000;
 const RECENT_DIRECT_HISTORY_MESSAGES = 12;
 const MAX_RECALL_EPISODES = 3;
 const MAX_RELEVANT_MEMORIES = 5;
+const EPISODE_SPONTANEOUS_MAX_AGE_DAYS = 30;
+const EPISODE_MENTION_COOLDOWN_DAYS = 14;
 const AMBIENT_MEMORY_KINDS = new Set<UserMemoryKind>([
   "user_fact",
   "preference",
@@ -56,6 +58,7 @@ const STOP_WORDS = new Set([
   "with",
 ]);
 const MEMORY_RECALL_RE = /(помнишь|запомнил|как меня зовут|как я тебя зову|что я люблю|что мне нравится|что я просил|что ты обещал)/iu;
+const TEMPORAL_RECALL_RE = /(сегодня|вчера|позавчера|на прошлой неделе|\d+\s+(?:день|дня|дней)\s+назад)/iu;
 const PREFERENCE_RECALL_RE = /(что я люблю|что мне нравится|мои предпочтения|чего я не люблю)/iu;
 const GOAL_RECALL_RE = /(моя цель|чего я хочу|что я планировал|мои планы)/iu;
 const STYLE_PREFERENCE_QUERY_RE = /(расскажи|скажи|ответь|повесели|развесели|придумай)/iu;
@@ -189,13 +192,64 @@ function isMemoryRecallQuestion(text: string) {
   return compact.length <= 200 && MEMORY_RECALL_RE.test(compact);
 }
 
-function memoryTime(memory: LocalPetUserMemory) {
-  const updatedAt = Date.parse(memory.updatedAt);
-  if (!Number.isNaN(updatedAt)) {
-    return updatedAt;
+function isExplicitRecallQuestion(text: string) {
+  return isMemoryRecallQuestion(text)
+    || isIdentityDialogueQuestion(text)
+    || TEMPORAL_RECALL_RE.test(text);
+}
+
+function relativeDayOffset(text: string): number | null {
+  if (/позавчера/iu.test(text)) {
+    return 2;
   }
-  const createdAt = Date.parse(memory.createdAt);
-  return Number.isNaN(createdAt) ? 0 : createdAt;
+  if (/вчера/iu.test(text)) {
+    return 1;
+  }
+  if (/сегодня/iu.test(text)) {
+    return 0;
+  }
+  const match = text.match(/(\d+)\s+(?:день|дня|дней)\s+назад/iu);
+  return match ? Number(match[1]) : null;
+}
+
+function temporalQueryRange(text: string, now: Date): { start: number; end: number } | null {
+  const dayOffset = relativeDayOffset(text);
+  if (dayOffset !== null) {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - dayOffset);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    return { start: start.getTime(), end: end.getTime() };
+  }
+  if (/на прошлой неделе/iu.test(text)) {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    const mondayOffset = (start.getDay() + 6) % 7;
+    start.setDate(start.getDate() - mondayOffset - 7);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    return { start: start.getTime(), end: end.getTime() };
+  }
+  return null;
+}
+
+function isInRange(value: string | undefined, range: { start: number; end: number } | null) {
+  if (!value || !range) {
+    return false;
+  }
+  const timestamp = Date.parse(value);
+  return !Number.isNaN(timestamp) && timestamp >= range.start && timestamp < range.end;
+}
+
+function memoryTime(memory: LocalPetUserMemory) {
+  for (const value of [memory.occurredAt, memory.recordedAt, memory.createdAt]) {
+    const timestamp = value ? Date.parse(value) : Number.NaN;
+    if (!Number.isNaN(timestamp)) {
+      return timestamp;
+    }
+  }
+  return 0;
 }
 
 function isMemoryActive(memory: LocalPetUserMemory, now: Date) {
@@ -206,7 +260,11 @@ function memorySelectionScore(
   memory: LocalPetUserMemory,
   message: string,
   queryTokens: Set<string>,
+  temporalRange: { start: number; end: number } | null,
 ) {
+  if (isInRange(memory.occurredAt, temporalRange)) {
+    return 4 + memory.importance;
+  }
   const overlap = tokenOverlapScore(memory.text, queryTokens);
   if (overlap > 0) {
     return overlap + memory.importance;
@@ -237,6 +295,36 @@ function memorySelectionScore(
   return 0;
 }
 
+function canRecallMemorySpontaneously(
+  memory: LocalPetUserMemory,
+  message: string,
+  now: Date,
+) {
+  if (memory.memoryClass !== "episode" || isExplicitRecallQuestion(message)) {
+    return true;
+  }
+  const ageDays = Math.max(0, (now.getTime() - memoryTime(memory)) / DAY_MS);
+  if (ageDays > EPISODE_SPONTANEOUS_MAX_AGE_DAYS) {
+    return false;
+  }
+  const lastMentionedAt = memory.lastMentionedAt ? Date.parse(memory.lastMentionedAt) : Number.NaN;
+  return Number.isNaN(lastMentionedAt)
+    || now.getTime() - lastMentionedAt >= EPISODE_MENTION_COOLDOWN_DAYS * DAY_MS;
+}
+
+function memoryContextItem(item: LocalPetUserMemory) {
+  return {
+    id: item.id,
+    kind: item.kind,
+    text: item.text,
+    memoryClass: item.memoryClass,
+    recordedAt: item.recordedAt,
+    occurredAt: item.occurredAt,
+    lastMentionedAt: item.lastMentionedAt,
+    dueAt: item.dueAt,
+  };
+}
+
 function selectRelevantMemories(
   memory: LocalPetMemoryStateV1 | undefined,
   message: string,
@@ -246,21 +334,17 @@ function selectRelevantMemories(
   if (!memory?.memories.length) {
     return [];
   }
+  const temporalRange = temporalQueryRange(message, now);
   return memory.memories
-    .filter((item) => isMemoryActive(item, now))
+    .filter((item) => isMemoryActive(item, now) && canRecallMemorySpontaneously(item, message, now))
     .map((item) => ({
       item,
-      score: memorySelectionScore(item, message, queryTokens),
+      score: memorySelectionScore(item, message, queryTokens, temporalRange),
     }))
     .filter(({ score }) => score > 0)
     .sort((left, right) => right.score - left.score || memoryTime(right.item) - memoryTime(left.item))
     .slice(0, MAX_RELEVANT_MEMORIES)
-    .map(({ item }) => ({
-      id: item.id,
-      kind: item.kind,
-      text: item.text,
-      dueAt: item.dueAt,
-    }));
+    .map(({ item }) => memoryContextItem(item));
 }
 
 function mergeWindows(
@@ -319,17 +403,23 @@ export function buildMemoryContextForMessage(
   }
 
   const searchableCount = Math.max(0, history.length - RECENT_DIRECT_HISTORY_MESSAGES);
+  const temporalRange = temporalQueryRange(message, now);
+  const explicitRecall = isExplicitRecallQuestion(message);
   const windows = history.slice(0, searchableCount).flatMap((historyMessage, index) => {
     const overlap = tokenOverlapScore(historyMessage.text, queryTokens);
-    if (overlap <= 0) {
+    const temporalMatch = isInRange(historyMessage.createdAt, temporalRange);
+    if (overlap <= 0 && !temporalMatch) {
       return [];
     }
     const ageDays = Math.max(0, (now.getTime() - messageTime(historyMessage)) / DAY_MS);
+    if (ageDays > EPISODE_SPONTANEOUS_MAX_AGE_DAYS && !explicitRecall) {
+      return [];
+    }
     const recencyBoost = Math.max(0, 4 - ageDays) * 0.1;
     return [{
       start: Math.max(0, index - EPISODE_CONTEXT_RADIUS),
       end: Math.min(history.length, index + EPISODE_CONTEXT_RADIUS + 1),
-      score: overlap + recencyBoost,
+      score: overlap + (temporalMatch ? 4 : 0) + recencyBoost,
       latestAt: messageTime(historyMessage),
     }];
   });
@@ -355,12 +445,7 @@ export function buildMemorySnapshotContext(
     relevantMemories: memory.memories
       .filter((item) => isMemoryActive(item, now))
       .slice(0, MAX_RELEVANT_MEMORIES)
-      .map((item) => ({
-        id: item.id,
-        kind: item.kind,
-        text: item.text,
-        dueAt: item.dueAt,
-      })),
+      .map(memoryContextItem),
   };
 }
 
@@ -370,7 +455,11 @@ export function buildAmbientMemoryContext(
 ): LocalPetMemoryContext {
   return {
     relevantMemories: memory.memories
-      .filter((item) => isMemoryActive(item, now) && AMBIENT_MEMORY_KINDS.has(item.kind))
+      .filter((item) => (
+        isMemoryActive(item, now)
+        && item.memoryClass !== "episode"
+        && AMBIENT_MEMORY_KINDS.has(item.kind)
+      ))
       .sort((left, right) => {
         const leftIsName = left.normalizedKey === "user-name" ? 1 : 0;
         const rightIsName = right.normalizedKey === "user-name" ? 1 : 0;
@@ -381,12 +470,7 @@ export function buildAmbientMemoryContext(
         );
       })
       .slice(0, MAX_RELEVANT_MEMORIES)
-      .map((item) => ({
-        id: item.id,
-        kind: item.kind,
-        text: item.text,
-        dueAt: item.dueAt,
-      })),
+      .map(memoryContextItem),
   };
 }
 

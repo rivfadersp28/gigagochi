@@ -681,3 +681,36 @@ def test_daily_push_reason_uses_actual_low_pet_stat(monkeypatch) -> None:
     reason = telegram_push_service._push_reason_for_record(record, now)
 
     assert "хочешь кушать" in reason
+
+
+def test_story_novelty_history_keeps_compact_long_term_entries() -> None:
+    record = {
+        "recentStoryEvents": [
+            {
+                "id": "event-1",
+                "title": "Медный ключ",
+                "summary": "Очень длинная история, которая не нужна novelty archive.",
+                "storyText": "Полный текст истории.",
+                "tags": ["ключ", "башня"],
+                "createdAt": "2026-01-01T12:00:00Z",
+            }
+        ]
+    }
+
+    history = telegram_push_service._record_story_novelty_history(record)
+
+    assert history == [
+        {
+            "id": "event-1",
+            "title": "Медный ключ",
+            "tags": ["ключ", "башня"],
+            "createdAt": "2026-01-01T12:00:00Z",
+        }
+    ]
+
+
+def test_story_novelty_detects_reused_title_and_tags() -> None:
+    story = SimpleNamespace(title="Медный ключ", tags=("ключ", "башня"))
+    history = [{"title": "Медный ключ", "tags": ["ключ", "руины"]}]
+
+    assert telegram_push_service._story_is_lexical_duplicate(story, history) is True

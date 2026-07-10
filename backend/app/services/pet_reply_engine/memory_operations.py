@@ -71,6 +71,7 @@ MEMORY_EXTRACTION_SCHEMA: dict[str, Any] = {
                     "normalizedKey": {"type": ["string", "null"], "maxLength": 160},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "importance": {"type": "number", "minimum": 0, "maximum": 1},
+                    "occurredAt": {"type": ["string", "null"], "maxLength": 80},
                     "dueAt": {"type": ["string", "null"], "maxLength": 80},
                     "expiresAt": {"type": ["string", "null"], "maxLength": 80},
                     "tags": {
@@ -88,6 +89,7 @@ MEMORY_EXTRACTION_SCHEMA: dict[str, Any] = {
                     "normalizedKey",
                     "confidence",
                     "importance",
+                    "occurredAt",
                     "dueAt",
                     "expiresAt",
                     "tags",
@@ -138,6 +140,7 @@ MEMORY_CONSOLIDATION_SCHEMA: dict[str, Any] = {
                                 "minimum": 0,
                                 "maximum": 1,
                             },
+                            "occurredAt": {"type": ["string", "null"], "maxLength": 80},
                             "dueAt": {"type": ["string", "null"], "maxLength": 80},
                             "expiresAt": {"type": ["string", "null"], "maxLength": 80},
                             "tags": {
@@ -152,6 +155,7 @@ MEMORY_CONSOLIDATION_SCHEMA: dict[str, Any] = {
                             "normalizedKey",
                             "confidence",
                             "importance",
+                            "occurredAt",
                             "dueAt",
                             "expiresAt",
                             "tags",
@@ -228,6 +232,9 @@ def _normalized_memory_operation(value: Any) -> dict[str, Any] | None:
         if pattern_key:
             operation["patternKey"] = _truncate_text(pattern_key, 120)
         operation["kind"] = kind
+        occurred_at = _optional_iso_text(value.get("occurredAt"))
+        if occurred_at:
+            operation["occurredAt"] = occurred_at
         due_at = _optional_iso_text(value.get("dueAt"))
         if due_at:
             operation["dueAt"] = due_at
@@ -253,7 +260,10 @@ def _normalized_memory_operation(value: Any) -> dict[str, Any] | None:
             ],
         }
         due_at = _optional_iso_text(value.get("dueAt"))
+        occurred_at = _optional_iso_text(value.get("occurredAt"))
         expires_at = _optional_iso_text(value.get("expiresAt"))
+        if occurred_at:
+            operation["occurredAt"] = occurred_at
         if due_at:
             operation["dueAt"] = due_at
         if expires_at:

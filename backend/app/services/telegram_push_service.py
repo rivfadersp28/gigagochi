@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
@@ -49,6 +50,7 @@ PET_DEATH_AFTER_ZERO = timedelta(hours=24)
 DAILY_PUSH_REASON = "Ежедневный короткий пуш владельцу от питомца."
 MANUAL_PUSH_REASON = "Ручной debug-триггер из админки."
 MAX_RECENT_STORY_EVENTS = 10
+MAX_STORY_NOVELTY_HISTORY = 400
 STORY_STAT_MAX_ITEMS = 2
 STORY_STAT_MAX_SINGLE_DAMAGE = 25
 STORY_STAT_MAX_TOTAL_DAMAGE = 35
@@ -408,6 +410,79 @@ def _append_recent_story_event(
         if normalized_event:
             events.append(normalized_event)
     return events[-MAX_RECENT_STORY_EVENTS:]
+
+
+def _compact_story_novelty_item(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    title = _compact_event_text(value.get("title"), limit=120)
+    tags = _event_string_list(value.get("tags"), limit=8, item_limit=60)
+    if not title and not tags:
+        return None
+    return {
+        **({"id": str(value.get("id"))[:120]} if value.get("id") else {}),
+        "title": title,
+        "tags": tags,
+        "createdAt": _compact_event_text(
+            value.get("generatedAt") or value.get("createdAt"),
+            limit=80,
+        ) or _iso(),
+    }
+
+
+def _record_story_novelty_history(record: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(record, dict):
+        return []
+    raw_history = record.get("storyNoveltyHistory")
+    candidates = raw_history if isinstance(raw_history, list) else []
+    candidates = [*candidates, *_record_recent_story_events(record)]
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for value in candidates[-MAX_STORY_NOVELTY_HISTORY:]:
+        item = _compact_story_novelty_item(value)
+        if not item:
+            continue
+        key = str(item.get("id") or f"{item['createdAt']}:{item['title']}")
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result[-MAX_STORY_NOVELTY_HISTORY:]
+
+
+def _story_novelty_tokens(title: Any, tags: Any) -> set[str]:
+    text = " ".join(
+        [
+            _compact_event_text(title, limit=120),
+            *_event_string_list(tags, limit=8, item_limit=60),
+        ]
+    ).casefold()
+    return set(re.findall(r"[0-9a-zа-яё]{3,}", text, flags=re.IGNORECASE))
+
+
+def _story_is_lexical_duplicate(story: Any, history: list[dict[str, Any]]) -> bool:
+    title = _compact_event_text(getattr(story, "title", None), limit=120).casefold()
+    tokens = _story_novelty_tokens(title, getattr(story, "tags", ()))
+    for item in history:
+        previous_title = _compact_event_text(item.get("title"), limit=120).casefold()
+        if title and title == previous_title:
+            return True
+        previous_tokens = _story_novelty_tokens(previous_title, item.get("tags"))
+        union = tokens | previous_tokens
+        if len(union) >= 3 and len(tokens & previous_tokens) / len(union) >= 0.55:
+            return True
+    return False
+
+
+def _append_story_novelty_item(
+    record: dict[str, Any],
+    event: dict[str, Any],
+) -> list[dict[str, Any]]:
+    history = _record_story_novelty_history(record)
+    item = _compact_story_novelty_item(event)
+    if item:
+        history.append(item)
+    return history[-MAX_STORY_NOVELTY_HISTORY:]
 
 
 def _recent_story_events_patch(record: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1123,15 +1198,36 @@ def generate_story_for_telegram_user(
         reason="Фоновое событие питомца.",
         include_debug=include_debug,
     )
+    novelty_history = _record_story_novelty_history(record)
     result = generate_background_story(
         pet=payload.pet,
         memory_context=payload.memoryContext,
         history=_record_history(record),
         recent_replies=_record_recent_replies(record),
-        recent_story_events=_record_recent_story_events(record),
+        recent_story_events=novelty_history,
         now_iso=payload.nowIso,
         timezone=payload.timezone,
     )
+    if _story_is_lexical_duplicate(result, novelty_history):
+        rejected_candidate = {
+            "title": result.title,
+            "tags": list(result.tags),
+            "createdAt": payload.nowIso or _iso(),
+        }
+        result = generate_background_story(
+            pet=payload.pet,
+            memory_context=payload.memoryContext,
+            history=_record_history(record),
+            recent_replies=_record_recent_replies(record),
+            recent_story_events=[*novelty_history, rejected_candidate],
+            now_iso=payload.nowIso,
+            timezone=payload.timezone,
+        )
+        if _story_is_lexical_duplicate(result, novelty_history):
+            raise TelegramPushError(
+                "STORY_NOVELTY_EXHAUSTED",
+                "Не удалось придумать достаточно новое событие. Повтори позже.",
+            )
     now = _now()
     now_iso = _iso(now)
     recent_story_event = getattr(result, "recent_story_event", None)
@@ -1210,6 +1306,10 @@ def generate_story_for_telegram_user(
                 source_record,
                 history_event,
                 last_story=persisted_story,
+            ),
+            "storyNoveltyHistory": _append_story_novelty_item(
+                source_record,
+                history_event,
             ),
         }
         _merge_record_lite_overlay_patch(next_record, result.lite_overlay_patch)

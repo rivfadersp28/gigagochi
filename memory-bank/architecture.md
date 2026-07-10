@@ -60,11 +60,26 @@
 - Legacy LLM user-memory extraction and consolidation are isolated in
   `backend/app/services/pet_reply_engine/memory_operations.py`: JSON schemas,
   operation normalization, prompt assembly and provider calls live there.
+- Frontend user memory is schema v2 with lazy v1 migration. Each stored memory
+  has a `memoryClass` (`core` / `fact` / `episode`), independent `recordedAt`
+  and optional factual `occurredAt`; old records keep their original
+  `createdAt` as recording time and do not invent an occurrence time.
+- `/api/chat` carries `nowIso`, timezone, history message timestamps and memory
+  timestamps. Backend prompt assembly renders absolute local time plus a
+  deterministic relative label such as `вчера` or `позавчера`.
+- Episodic user memories and recalled chat windows older than 30 days are
+  excluded from spontaneous recall but remain available for explicit memory,
+  identity and temporal questions. Episodic memory selected within the last 14
+  days is suppressed by the spontaneous mention cooldown.
   `lite_generator.py` owns visible replies, context routing and lite/story facts.
 - Deterministic recent-story tokenization, Russian stemming, event selection
   and prompt-block formatting live in
   `backend/app/services/pet_reply_engine/recent_events.py`; the reply engine and
   lite-fact conflict filters consume that shared event policy.
+- Telegram background stories keep the ten full `recentStoryEvents` records for
+  UI/chat continuity and a separate compact `storyNoveltyHistory` of up to 400
+  title/tag signatures. A lexical duplicate candidate gets one regeneration;
+  the compact archive is anti-repeat data, not story source material.
 - Chat, proactive and ambient replies are assembled through the same `PhrasePlan`
   structure: identity, persona contract, optional dialogue-memory episodes and
   surface-specific rules.

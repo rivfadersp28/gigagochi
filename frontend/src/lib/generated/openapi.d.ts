@@ -630,6 +630,8 @@ export interface components {
         };
         /** LocalChatHistoryItem */
         readonly LocalChatHistoryItem: {
+            /** Createdat */
+            readonly createdAt?: string | null;
             /**
              * Role
              * @enum {string}
@@ -659,9 +661,13 @@ export interface components {
             readonly memoryContext?: components["schemas"]["LocalPetMemoryContext"] | null;
             /** Message */
             readonly message: string;
+            /** Nowiso */
+            readonly nowIso?: string | null;
             readonly pet: components["schemas"]["LocalPetChatContext"];
             /** Replymaxchars */
             readonly replyMaxChars?: number | null;
+            /** Timezone */
+            readonly timezone?: string | null;
             readonly visibleContext?: components["schemas"]["LocalVisibleContext"] | null;
         };
         /** LocalChatResponse */
@@ -740,6 +746,18 @@ export interface components {
              * @enum {string}
              */
             readonly kind: "user_fact" | "preference" | "event" | "deadline" | "relationship" | "routine" | "goal" | "promise" | "emotion" | "boundary";
+            /** Lastmentionedat */
+            readonly lastMentionedAt?: string | null;
+            /**
+             * Memoryclass
+             * @default fact
+             * @enum {string}
+             */
+            readonly memoryClass: "core" | "fact" | "episode";
+            /** Occurredat */
+            readonly occurredAt?: string | null;
+            /** Recordedat */
+            readonly recordedAt?: string | null;
             /** Text */
             readonly text: string;
         };

@@ -320,6 +320,7 @@ function parseMemoryFields(payload: JsonRecord, path: string) {
     normalizedKey: string(payload.normalizedKey, `${path}.normalizedKey`),
     confidence: number(payload.confidence, `${path}.confidence`),
     importance: number(payload.importance, `${path}.importance`),
+    occurredAt: optionalString(payload.occurredAt, `${path}.occurredAt`),
     dueAt: optionalString(payload.dueAt, `${path}.dueAt`),
     expiresAt: optionalString(payload.expiresAt, `${path}.expiresAt`),
     tags: optionalArray(payload.tags, `${path}.tags`).map((tag, index) =>
@@ -339,6 +340,7 @@ function parseMemoryOperation(value: unknown, path: string): MemoryOperation {
       kind: optionalMemoryKind(payload.kind, `${path}.kind`),
       confidence: number(payload.confidence, `${path}.confidence`),
       importance: number(payload.importance, `${path}.importance`),
+      occurredAt: optionalString(payload.occurredAt, `${path}.occurredAt`),
       dueAt: optionalString(payload.dueAt, `${path}.dueAt`),
     };
   }

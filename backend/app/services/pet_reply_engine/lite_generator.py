@@ -81,6 +81,7 @@ from app.services.prompt_debug import (
     log_chat_completion_prompt,
     log_chat_completion_response,
 )
+from app.services.temporal_context import format_current_time, format_temporal_reference
 from app.services.tone_runtime import tone_context_payload, tone_prompt_block
 
 MAX_LITE_TOOL_ROUNDS = 3
@@ -674,7 +675,12 @@ def _apply_chat_casual_context_guard(
     )
 
 
-def _memory_context_block(memory_context: LocalPetMemoryContext | None) -> str | None:
+def _memory_context_block(
+    memory_context: LocalPetMemoryContext | None,
+    *,
+    now_iso: str | None = None,
+    timezone: str | None = None,
+) -> str | None:
     if not memory_context:
         return None
 
@@ -689,7 +695,15 @@ def _memory_context_block(memory_context: LocalPetMemoryContext | None) -> str |
     for item in memory_context.relevantMemories[:MAX_MEMORY_CONTEXT_ITEMS]:
         text = _clean_optional_text(item.text, 300)
         if text:
-            memory_lines.append(f"- [{item.kind}] {text}")
+            temporal = format_temporal_reference(
+                item.occurredAt,
+                now_iso=now_iso,
+                timezone=timezone,
+            )
+            time_suffix = f"; произошло: {temporal}" if temporal else ""
+            memory_lines.append(
+                f"- [id={item.id}; {item.kind}; class={item.memoryClass}{time_suffix}] {text}"
+            )
     if memory_lines:
         lines.append("Выбранные факты памяти:")
         lines.extend(memory_lines)
@@ -700,7 +714,13 @@ def _memory_context_block(memory_context: LocalPetMemoryContext | None) -> str |
             text = _clean_optional_text(message.text, 500)
             if text:
                 role = "персонаж" if message.role == "pet" else "владелец"
-                episode_lines.append(f"{role}: {text}")
+                temporal = format_temporal_reference(
+                    message.createdAt,
+                    now_iso=now_iso,
+                    timezone=timezone,
+                )
+                time_prefix = f"[{temporal}] " if temporal else ""
+                episode_lines.append(f"{time_prefix}{role}: {text}")
         if episode_lines:
             lines.append(f"Память диалога {episode_index}:")
             lines.extend(episode_lines)
@@ -1334,7 +1354,17 @@ def _history_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     return [
         {
             "role": "assistant" if item.role == "pet" else "user",
-            "content": item.text,
+            "content": (
+                f"[{temporal}] {item.text}"
+                if (
+                    temporal := format_temporal_reference(
+                        item.createdAt,
+                        now_iso=payload.nowIso,
+                        timezone=payload.timezone,
+                    )
+                )
+                else item.text
+            ),
         }
         for item in _history_items_for_prompt(payload)
     ]
@@ -1426,7 +1456,11 @@ def _phrase_plan_for_chat(
         ),
         dialogue_block=_visible_context_block(payload),
         memory_block=(
-            _memory_context_block(payload.memoryContext)
+            _memory_context_block(
+                payload.memoryContext,
+                now_iso=payload.nowIso,
+                timezone=payload.timezone,
+            )
             if _source_enabled(
                 "chat",
                 "userMemory",
@@ -1440,6 +1474,7 @@ def _phrase_plan_for_chat(
         world_block=_visible_world_block(context_bundle),
         recent_ambient_block=None,
         extra_rules=(
+            format_current_time(payload.nowIso, timezone=payload.timezone),
             state_param_usage_rule(),
             _recent_event_truth_rule(payload, recent_events_block),
             transient_context_rule(),
