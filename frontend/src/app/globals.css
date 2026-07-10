@@ -307,7 +307,7 @@ body {
 .main-mobile-scene--chat .main-scene-media {
   transform: translate3d(
     0,
-    clamp(-280px, var(--conversation-input-offset-y, 0px), 0px),
+    clamp(-240px, var(--conversation-input-offset-y, 0px), 0px),
     0
   );
 }
