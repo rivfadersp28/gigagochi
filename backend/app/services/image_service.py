@@ -288,6 +288,18 @@ PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT = (
     "и лёгкую естественную закрытую улыбку. Не изменяй размер головы или глаз, не открывай рот, "
     "не показывай зубы и не меняй ничего больше."
 )
+PET_TAP_REACTION_IMAGE_PROMPT = (
+    "Это фиксированный crop области персонажа. Сохрани точные границы crop, положение, "
+    "масштаб, позу, силуэт, пропорции, одежду, аксессуары, предметы, фон, освещение и цвета. "
+    "Не центрируй, не сдвигай, не масштабируй и не приближай персонажа. Измени только глаза "
+    "и рот. Вместо обоих глаз персонажа нарисуй два выразительных глаза в форме сердец: "
+    "каждое сердце должно полностью занимать место соответствующего исходного глаза, быть "
+    "симметричным, хорошо читаемым и выполненным в той же стилистике, что персонаж. Исходных "
+    "глаз, зрачков и радужек не должно быть видно. Рот сделай открытым в радостном, восторженном "
+    "выражении, не меняя размер и положение головы. КРИТИЧЕСКИ ВАЖНО: никаких других сердец, "
+    "летающих сердечек, частиц, символов, украшений или новых предметов нигде в кадре. Сердца "
+    "разрешены только вместо двух глаз. Больше ничего не меняй."
+)
 PET_SAD_SCENE_VIDEO_PROMPT = (
     "Static locked camera. The character remains perfectly still in the exact same pose, "
     "position, scale, composition, lighting, colors, clothing, props, background, focus, "
@@ -1965,6 +1977,41 @@ def generate_pet_scene_video_bytes(
     return generate_openrouter_video_bytes(scene_path, label=label, prompt=prompt)
 
 
+def tap_reaction_path_for_asset(asset_id: uuid.UUID) -> Path:
+    return generated_dir_for(asset_id) / f"{FAST_GENERATION_STAGE}-tap.png"
+
+
+def generate_pet_tap_reaction_scene_path(asset_id: uuid.UUID, scene_path: Path) -> Path:
+    output_dir = generated_dir_for(asset_id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    source_region_path = output_dir / f"{FAST_GENERATION_STAGE}-tap-source-region.png"
+    source_region_bytes = extract_pet_character_region_bytes(scene_path)
+    source_region_path.write_bytes(source_region_bytes)
+    with Image.open(BytesIO(source_region_bytes)) as source_region:
+        region_size = source_region.size
+
+    try:
+        reaction_region_bytes = generate_image_edit_bytes(
+            PET_TAP_REACTION_IMAGE_PROMPT,
+            source_region_path,
+            label="pet_creation/tap_reaction",
+        )
+        normalized_region_bytes = normalize_pet_character_region_bytes(
+            reaction_region_bytes,
+            region_size,
+        )
+        reaction_scene_bytes = composite_pet_character_region_bytes(
+            scene_path,
+            normalized_region_bytes,
+        )
+    finally:
+        source_region_path.unlink(missing_ok=True)
+
+    reaction_path = tap_reaction_path_for_asset(asset_id)
+    reaction_path.write_bytes(reaction_scene_bytes)
+    return reaction_path
+
+
 def generate_individual_sprite_paths(
     asset_id: uuid.UUID,
     description: str,
@@ -2017,6 +2064,12 @@ def generate_individual_sprite_image_paths(
         scene_bytes = generate_pet_scene_image_bytes(character_path)
         path.write_bytes(normalize_pet_scene_video_frame_bytes(scene_bytes))
         output_paths[(stage, state)] = (path, PET_SCENE_COMPOSITION_PROMPT)
+
+    idle_scene_path = output_paths[(FAST_GENERATION_STAGE, "idle")][0]
+    try:
+        generate_pet_tap_reaction_scene_path(asset_id, idle_scene_path)
+    except Exception:
+        logger.exception("Optional pet tap reaction generation failed assetSetId=%s", asset_id)
 
     return output_paths
 
@@ -2212,6 +2265,12 @@ def build_pet_asset_set_response(
         if happy_assets_ready
         else None
     )
+    tap_reaction_path = tap_reaction_path_for_asset(asset_set_id)
+    tap_reaction_url = (
+        f"/static/generated/{asset_set_id}/{tap_reaction_path.name}?v={version}"
+        if tap_reaction_path.exists()
+        else None
+    )
     images: dict[str, dict[str, str]] = {stage: {} for stage in STAGE_ROWS}
     for stage in STAGE_ROWS:
         for state in STATE_COLUMNS:
@@ -2237,6 +2296,7 @@ def build_pet_asset_set_response(
             if happy_assets_ready
             else None
         ),
+        "tapReactionImageUrl": tap_reaction_url,
         "blinkImageUrl": generated_urls.get((FAST_GENERATION_STAGE, "blink")),
         "spriteSheetUrl": None,
         "characterBible": None,

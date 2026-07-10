@@ -6,6 +6,7 @@ import {
   automaticPetVisualMode,
   generatedSceneVideoUrl,
   generatedSpriteUrl,
+  generatedTapReactionImageUrl,
   hasGeneratedHappyAssets,
   hasGeneratedSadAssets,
   isPetInRedZone,
@@ -123,6 +124,26 @@ describe("sad pet assets", () => {
       videoUrl:
         "https://example.test/static/generated/asset-1/teen-happy.mp4?v=7&happy_asset_v=20260710-2",
     });
+  });
+
+  it("uses the explicit tap reaction asset when available", () => {
+    const state = pet();
+    state.assetSet!.tapReactionImageUrl =
+      "https://example.test/static/generated/asset-1/teen-tap.png?v=7";
+
+    expect(generatedTapReactionImageUrl(state)).toBe(
+      "https://example.test/static/generated/asset-1/teen-tap.png?v=7&tap_asset_v=20260710-1",
+    );
+  });
+
+  it("derives a legacy tap reaction URL from the idle scene", () => {
+    const state = pet();
+    state.assetSet!.images.teen.idle =
+      "https://example.test/static/generated/asset-1/teen-idle.png?v=7";
+
+    expect(generatedTapReactionImageUrl(state)).toBe(
+      "https://example.test/static/generated/asset-1/teen-tap.png?v=7&tap_asset_v=20260710-1",
+    );
   });
 
   it("cache-busts only rendered sad assets", () => {

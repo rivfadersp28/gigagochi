@@ -32,6 +32,7 @@ export type LocalPetAssetSet = {
   videoUrl?: string;
   sadVideoUrl?: string;
   happyVideoUrl?: string;
+  tapReactionImageUrl?: string;
   generationJobId?: string;
   backgroundGenerationStatus?: PetBackgroundGenerationStatus;
   backgroundGenerationPhase?: PetBackgroundGenerationPhase;
@@ -104,6 +105,7 @@ export type GeneratePetResponse = {
   videoUrl?: string;
   sadVideoUrl?: string;
   happyVideoUrl?: string;
+  tapReactionImageUrl?: string;
   generationJobId?: string;
   backgroundGenerationStatus?: PetBackgroundGenerationStatus;
   backgroundGenerationPhase?: PetBackgroundGenerationPhase;

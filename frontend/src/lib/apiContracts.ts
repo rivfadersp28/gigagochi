@@ -174,6 +174,7 @@ function parseGeneratedPetAsset(value: unknown, path: string): GeneratePetApiRes
   optionalString(payload.videoUrl, `${path}.videoUrl`);
   optionalString(payload.sadVideoUrl, `${path}.sadVideoUrl`);
   optionalString(payload.happyVideoUrl, `${path}.happyVideoUrl`);
+  optionalString(payload.tapReactionImageUrl, `${path}.tapReactionImageUrl`);
   optionalString(payload.blinkImageUrl, `${path}.blinkImageUrl`);
   optionalString(payload.spriteSheetUrl, `${path}.spriteSheetUrl`);
   optionalRecord(payload.characterBible, `${path}.characterBible`);

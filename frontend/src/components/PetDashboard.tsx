@@ -84,6 +84,7 @@ import { usePetBackgroundAssets } from "./pet-dashboard/usePetBackgroundAssets";
 import { usePetPushSnapshotSync } from "./pet-dashboard/usePetPushSnapshotSync";
 import {
   generatedSceneVideoUrl,
+  generatedTapReactionImageUrl,
   generatedVisualPosterUrl,
   hasGeneratedHappyAssets,
   hasGeneratedSadAssets,
@@ -284,6 +285,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [feedError, setFeedError] = useState<string | null>(null);
   const [feedSuccessId, setFeedSuccessId] = useState(0);
   const [isTapReactionVisible, setIsTapReactionVisible] = useState(false);
+  const [loadedTapReactionSrc, setLoadedTapReactionSrc] = useState<string | null>(null);
   const [includePromptDebug] = useState(() => readLocalPetSettings().includePromptDebug);
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
   const [assetsReadyForPetId, setAssetsReadyForPetId] = useState<string | null>(null);
@@ -368,6 +370,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const sceneVideoSrc = loadedSceneMedia?.petId === petId
     ? loadedSceneMedia.videoSrc
     : requestedSceneVideoSrc;
+  const requestedTapReactionSrc = pet && !isPetDead
+    ? generatedTapReactionImageUrl(pet)
+    : null;
+  const tapReactionSrc = loadedTapReactionSrc === requestedTapReactionSrc
+    ? loadedTapReactionSrc
+    : null;
   const conversationInputOffsetY = useConversationKeyboardOffset(isChatMode, sceneRef);
   usePetBackgroundAssets({
     assetSet: pet?.assetSet,
@@ -389,6 +397,28 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [petId]);
 
   useEffect(() => finishTapReaction, [finishTapReaction]);
+
+  useEffect(() => {
+    if (!requestedTapReactionSrc) {
+      return;
+    }
+
+    let cancelled = false;
+    void preloadImage(requestedTapReactionSrc)
+      .then(() => {
+        if (!cancelled) {
+          setLoadedTapReactionSrc(requestedTapReactionSrc);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoadedTapReactionSrc(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [requestedTapReactionSrc]);
 
   useEffect(() => {
     if (
@@ -691,6 +721,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       || isStoryHistoryOpen
       || confirmationAction
       || isPetDead
+      || !tapReactionSrc
       || event.pointerType === "mouse" && event.button !== 0
     ) {
       return;
@@ -741,6 +772,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     isFeedMode,
     isPetDead,
     isStoryHistoryOpen,
+    tapReactionSrc,
   ]);
 
   const handleTelegramBack = useCallback(() => {
@@ -1323,37 +1355,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           {isTapReactionVisible ? (
             <div className="pet-tap-reaction" aria-hidden="true">
               <img
-                src={sceneBackgroundSrc}
+                src={tapReactionSrc ?? sceneBackgroundSrc}
                 alt=""
                 className="main-scene-background"
                 draggable={false}
               />
-              <svg
-                className="pet-tap-reaction__hearts"
-                viewBox="0 0 720 1280"
-                role="presentation"
-              >
-                <g className="pet-tap-reaction__heart pet-tap-reaction__heart--one">
-                  <path d="M0 13C0 4 11 0 17 8C23 0 34 4 34 13C34 23 17 34 17 34C17 34 0 23 0 13Z" />
-                  <path className="pet-tap-reaction__shine" d="M8 10C10 7 13 7 15 9" />
-                </g>
-                <g className="pet-tap-reaction__heart pet-tap-reaction__heart--two">
-                  <path d="M0 13C0 4 11 0 17 8C23 0 34 4 34 13C34 23 17 34 17 34C17 34 0 23 0 13Z" />
-                  <path className="pet-tap-reaction__shine" d="M8 10C10 7 13 7 15 9" />
-                </g>
-                <g className="pet-tap-reaction__heart pet-tap-reaction__heart--three">
-                  <path d="M0 13C0 4 11 0 17 8C23 0 34 4 34 13C34 23 17 34 17 34C17 34 0 23 0 13Z" />
-                  <path className="pet-tap-reaction__shine" d="M8 10C10 7 13 7 15 9" />
-                </g>
-                <g className="pet-tap-reaction__heart pet-tap-reaction__heart--four">
-                  <path d="M0 13C0 4 11 0 17 8C23 0 34 4 34 13C34 23 17 34 17 34C17 34 0 23 0 13Z" />
-                  <path className="pet-tap-reaction__shine" d="M8 10C10 7 13 7 15 9" />
-                </g>
-                <g className="pet-tap-reaction__heart pet-tap-reaction__heart--five">
-                  <path d="M0 13C0 4 11 0 17 8C23 0 34 4 34 13C34 23 17 34 17 34C17 34 0 23 0 13Z" />
-                  <path className="pet-tap-reaction__shine" d="M8 10C10 7 13 7 15 9" />
-                </g>
-              </svg>
             </div>
           ) : null}
           <img
