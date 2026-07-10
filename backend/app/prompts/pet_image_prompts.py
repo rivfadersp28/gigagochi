@@ -6,6 +6,7 @@ from typing import Any
 
 from app.prompts.style_direction import VISUAL_STYLE_FRAME
 from app.services.character_bible_template import character_bible_prompt_config
+from app.services.lore_runtime import lore_prompt_block
 from app.services.tone_runtime import tone_context_payload, tone_visual_style
 
 PROMPT_MAX_LENGTH = 300
@@ -219,6 +220,8 @@ Use this only as a light lens for habitat, objects, voice and story hooks.
 Do not replace USER_CHARACTER_DESCRIPTION with the setting.
 - setting: {setting["setting"]}
 - tone: {setting["toneOfVoice"]}
+
+{lore_prompt_block("characterCreation")}
 
 GENERATION_RULE:
 {template["generationRule"]}

@@ -54,7 +54,12 @@ MEMORY_EXTRACTION_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "type": {
                         "type": "string",
-                        "enum": ["capture_learning", "remember_user_fact"],
+                        "enum": [
+                            "capture_learning",
+                            "remember_user_fact",
+                            "replace_user_fact",
+                            "forget_user_fact",
+                        ],
                     },
                     "observation": {"type": ["string", "null"], "maxLength": 500},
                     "patternKey": {"type": ["string", "null"], "maxLength": 120},
@@ -228,14 +233,14 @@ def _normalized_memory_operation(value: Any) -> dict[str, Any] | None:
             operation["dueAt"] = due_at
         return operation
 
-    if operation_type == "remember_user_fact":
+    if operation_type in {"remember_user_fact", "replace_user_fact"}:
         text = _compact_spaces(str(value.get("text") or ""))
         if not text:
             return None
         normalized_key = _compact_spaces(str(value.get("normalizedKey") or ""))
         tags = value.get("tags") if isinstance(value.get("tags"), list) else []
         operation = {
-            "type": "remember_user_fact",
+            "type": operation_type,
             "kind": kind,
             "text": _truncate_text(text, 500),
             "normalizedKey": _truncate_text(normalized_key or _memory_key_from_text(text), 160),
@@ -254,6 +259,21 @@ def _normalized_memory_operation(value: Any) -> dict[str, Any] | None:
         if expires_at:
             operation["expiresAt"] = expires_at
         return operation
+
+    if operation_type == "forget_user_fact":
+        normalized_key = _compact_spaces(str(value.get("normalizedKey") or ""))
+        match_text = _compact_spaces(str(value.get("text") or ""))
+        if not normalized_key and not match_text:
+            return None
+        return {
+            "type": "forget_user_fact",
+            **(
+                {"normalizedKey": _truncate_text(normalized_key, 160)}
+                if normalized_key
+                else {}
+            ),
+            **({"matchText": _truncate_text(match_text, 500)} if match_text else {}),
+        }
 
     return None
 

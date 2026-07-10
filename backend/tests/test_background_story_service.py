@@ -353,7 +353,7 @@ def test_generate_background_story_stores_recent_event_without_lite_patch(monkey
     assert '"value": 96' in prompt
     assert '"value": 100' in prompt
     assert '"value": 71' in prompt
-    assert "Листики выпускают запахи-сигналы опасности." not in prompt
+    assert "Листики выпускают запахи-сигналы опасности." in prompt
     assert len(completions.calls) == 3
     assert _call_by_schema(completions, "background_story_aftermath_extraction")
 
@@ -532,8 +532,8 @@ def test_background_story_context_sources_policy_controls_dossier(monkeypatch) -
     assert '"description": "чел с листом вместо лица"' not in prompt
     assert "params" not in prompt
     assert "наевшийся" not in prompt
-    assert "Лист на лице стук" not in prompt
-    assert "Листики выпускают запахи-сигналы опасности." not in prompt
+    assert "Лист на лице стук" in prompt
+    assert "Листики выпускают запахи-сигналы опасности." in prompt
     assert "стеклянный шорох" not in prompt
     assert "Сергей принес листовой амулет" not in prompt
     assert "Каменная тропа" not in prompt
@@ -651,8 +651,8 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     assert captured_story_queries == ["лор мира"]
     assert "Кристаллическая капля" in prompt
     assert "Каменная тропа" not in prompt
-    assert "Лист на лице стук" not in prompt
-    assert "Листики выпускают запахи-сигналы опасности." not in prompt
+    assert "Лист на лице стук" in prompt
+    assert "Листики выпускают запахи-сигналы опасности." in prompt
     assert "Сергей принес листовой амулет" not in prompt
 
 
@@ -762,8 +762,9 @@ def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) ->
     assert "Сначала заполни causalPlan" in system_prompt
     assert "storyText только по этому плану" in system_prompt
     assert "не более чем один необычный или магический эффект" in system_prompt
-    assert "среди древних лесов и чащ" in system_prompt
-    assert "Это примеры диапазона, а не конечный список" in system_prompt
+    assert "ОБЩАЯ БИБЛИЯ МИРА" in system_prompt
+    assert "древние леса, чащи и туманные луга" in system_prompt
+    assert "Современная бытовая инфраструктура не является фоном" in system_prompt
     assert "Находка должна быть конкретной и материальной" in system_prompt
     assert "не повторяй тип местности из недавних событий" in prompt
     assert "низкий параметр не требует снова строить сюжет вокруг его восстановления" in prompt

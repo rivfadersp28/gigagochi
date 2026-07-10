@@ -47,6 +47,8 @@ const STOP_WORDS = new Set([
   "with",
 ]);
 const MEMORY_RECALL_RE = /(помнишь|запомнил|как меня зовут|как я тебя зову|что я люблю|что мне нравится|что я просил|что ты обещал)/iu;
+const PREFERENCE_RECALL_RE = /(что я люблю|что мне нравится|мои предпочтения|чего я не люблю)/iu;
+const GOAL_RECALL_RE = /(моя цель|чего я хочу|что я планировал|мои планы)/iu;
 const STYLE_PREFERENCE_QUERY_RE = /(расскажи|скажи|ответь|повесели|развесели|придумай)/iu;
 const STYLE_PREFERENCE_MEMORY_RE = /(коротк|длинн|ответ|стиль|говори|общайся)/iu;
 const IDENTITY_DIALOGUE_RE = new RegExp(
@@ -201,6 +203,12 @@ function memorySelectionScore(
     return overlap + memory.importance;
   }
   if (isMemoryRecallQuestion(message)) {
+    if (PREFERENCE_RECALL_RE.test(message) && memory.kind === "preference") {
+      return 3 + memory.importance;
+    }
+    if (GOAL_RECALL_RE.test(message) && memory.kind === "goal") {
+      return 3 + memory.importance;
+    }
     if (
       memory.normalizedKey === "user-name"
       || memory.normalizedKey === "pet-nickname"
@@ -292,8 +300,13 @@ export function buildMemoryContextForMessage(
 ): LocalPetMemoryContext {
   const queryTokens = tokenize(message);
   const relevantMemories = selectRelevantMemories(memory, message, queryTokens, now);
+  const stableContext = {
+    summary: memory?.summary,
+    userProfile: memory?.userProfile,
+    relevantMemories,
+  };
   if (!queryTokens.size || history.length <= RECENT_DIRECT_HISTORY_MESSAGES) {
-    return { relevantMemories };
+    return stableContext;
   }
 
   const searchableCount = Math.max(0, history.length - RECENT_DIRECT_HISTORY_MESSAGES);
@@ -318,8 +331,27 @@ export function buildMemoryContextForMessage(
     .sort((left, right) => left.start - right.start);
 
   return {
-    relevantMemories,
+    ...stableContext,
     episodes: selectedWindows.map((window) => episodeFromWindow(history, window)),
+  };
+}
+
+export function buildMemorySnapshotContext(
+  memory: LocalPetMemoryStateV1,
+  now = new Date(),
+): LocalPetMemoryContext {
+  return {
+    summary: memory.summary,
+    userProfile: memory.userProfile,
+    relevantMemories: memory.memories
+      .filter((item) => isMemoryActive(item, now))
+      .slice(0, MAX_RELEVANT_MEMORIES)
+      .map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        text: item.text,
+        dueAt: item.dueAt,
+      })),
   };
 }
 
@@ -375,6 +407,8 @@ export function buildDailyProactiveMemoryContext(
   const episode = episodeFromWindow(history, { start, end });
 
   return {
+    summary: memory.summary,
+    userProfile: memory.userProfile,
     relevantMemories: [],
     episodes: [episode],
     proactiveCandidate: {

@@ -30,7 +30,12 @@ def _seed_admin_files(root) -> None:
         "world_descriptions/world_descriptions_dataset.json",
     ):
         (root / path).write_text('{"meta":{"version":1}}\n', encoding="utf-8")
-    for path in ("speech_runtime.json", "tone_runtime.json", "character_bible_template.json"):
+    for path in (
+        "speech_runtime.json",
+        "tone_runtime.json",
+        "lore_runtime.json",
+        "character_bible_template.json",
+    ):
         (root / path).write_text(
             (DATA_FIXTURE_ROOT / path).read_text(encoding="utf-8"),
             encoding="utf-8",

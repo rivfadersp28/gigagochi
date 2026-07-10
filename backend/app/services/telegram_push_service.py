@@ -517,7 +517,7 @@ def register_push_snapshot(
         "petId": payload.petId,
         "pet": payload.pet.model_dump(mode="json"),
         "history": [item.model_dump(mode="json") for item in payload.history[-12:]],
-        "recentAmbientReplies": payload.recentAmbientReplies[-6:],
+        "recentAmbientReplies": payload.recentAmbientReplies[-10:],
         "memoryContext": (
             payload.memoryContext.model_dump(mode="json") if payload.memoryContext else None
         ),
@@ -713,7 +713,7 @@ def _record_recent_replies(record: dict[str, Any]) -> list[str]:
     if not isinstance(raw_replies, list):
         return []
     replies: list[str] = []
-    for item in raw_replies[-6:]:
+    for item in raw_replies[-10:]:
         if isinstance(item, str) and item.strip():
             replies.append(item.strip()[:500])
     return replies

@@ -36,6 +36,10 @@ import {
 import { runLocalPetChatTurn } from "@/lib/localPetChatTurn";
 import { playPetFeedSound, primePetFeedSound } from "@/lib/petFeedAudio";
 import { applyPetVoice, type PetVoiceMode } from "@/lib/petVoice";
+import {
+  appendRecentAmbientReply,
+  readRecentAmbientReplies,
+} from "@/lib/localPetAmbientMemory";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import { hapticNotification, useTelegramBackButton } from "@/lib/telegram";
 import { TEST_PET_ASSET_SET, TEST_PET_DESCRIPTION } from "@/lib/testPetFixture";
@@ -207,7 +211,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     applyRecentStoryEventsPatch: localPet.applyRecentStoryEventsPatch,
   });
   useEffect(() => {
-    ambientReplyHistoryRef.current = [];
+    ambientReplyHistoryRef.current = readRecentAmbientReplies(petId);
   }, [petId]);
 
   const showPetReplyMessage = useCallback((
@@ -258,10 +262,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           dialogueHook: true,
           voiceMode: "generated",
         });
-        ambientReplyHistoryRef.current = [
-          ...ambientReplyHistoryRef.current,
-          response.reply,
-        ].slice(-5);
+        ambientReplyHistoryRef.current = appendRecentAmbientReply(pet.petId, response.reply);
         localPet.applyMoodHint(
           response.moodHint,
           response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,

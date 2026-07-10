@@ -56,8 +56,36 @@ export function extractDeterministicMemoryOperations(message: string): MemoryOpe
   }
 
   const operations: MemoryOperation[] = [];
+  const rawForgetText = safeValue(
+    text.match(/(?:^|\b)(?:забудь|не запоминай|больше не помни)(?:\s+про|\s+о|[:,])?\s*(.+)$/iu)?.[1]
+      ?? "",
+    140,
+  );
+  const forgetAll = /^(?:вс[её]\s+(?:обо\s+мне|про\s+меня)|всю\s+память\s+обо\s+мне)$/iu.test(
+    rawForgetText,
+  );
+  const forgetName = /^(?:мо[её]\s+имя|как\s+меня\s+зовут)$/iu.test(rawForgetText);
+  const forgetText = safeValue(
+    rawForgetText.replace(
+      /^(?:то,?\s+)?(?:что\s+)?(?:я\s+)?(?:больше\s+|теперь\s+)?(?:не\s+)?(?:люблю|предпочитаю|мне\s+нравится|мне\s+нравятся)\s+/iu,
+      "",
+    ),
+    140,
+  );
+  if (forgetAll) {
+    operations.push({ type: "forget_user_fact", normalizedKey: "*" });
+  } else if (forgetName) {
+    operations.push({ type: "forget_user_fact", normalizedKey: "user-name" });
+  } else if (forgetText) {
+    operations.push({
+      type: "forget_user_fact",
+      matchText: forgetText,
+    });
+  }
   const userName = firstName(
-    text.match(/(?:^|\b)(?:меня зовут|зови меня|можешь звать меня)\s+(.+)$/iu)?.[1] ?? "",
+    text.match(
+      /(?:^|\b)(?:меня\s+(?:теперь\s+|сейчас\s+)?зовут|зови меня|можешь звать меня)\s+(.+)$/iu,
+    )?.[1] ?? "",
   );
   if (userName) {
     remember(operations, "user_fact", `Пользователя зовут ${userName}.`, "user-name", 1);
@@ -77,27 +105,51 @@ export function extractDeterministicMemoryOperations(message: string): MemoryOpe
     );
   }
 
+  const preferenceCorrection = text.match(
+    /(?:раньше|до этого)\s+(?:я\s+)?(?:любил|любила|предпочитал|предпочитала)\s+(.+?)[,;]\s*(?:а\s+)?(?:теперь|сейчас)\s+(?:я\s+)?(?:люблю|предпочитаю)\s+(.+)$/iu,
+  );
+  const previousPreference = safeValue(preferenceCorrection?.[1] ?? "", 140);
+  const nextPreference = safeValue(preferenceCorrection?.[2] ?? "", 140);
+  if (previousPreference && nextPreference) {
+    operations.push({
+      type: "forget_user_fact",
+      matchText: previousPreference,
+    });
+    remember(
+      operations,
+      "preference",
+      `Пользователь любит ${nextPreference}.`,
+      `preference-${normalizedKey(nextPreference)}`,
+      0.85,
+    );
+  }
+
   const liked = safeValue(
-    text.match(/(?:^|\b)(?:я люблю|мне нравятся|мне нравится)\s+(.+)$/iu)?.[1] ?? "",
+    text.match(
+      /(?:^|\b)(?:(?:теперь|сейчас)\s+)?(?:я люблю|мне нравятся|мне нравится)\s+(.+)$/iu,
+    )?.[1] ?? "",
     140,
   );
-  if (liked) {
+  if (liked && !preferenceCorrection) {
     remember(
       operations,
       "preference",
       `Пользователь любит ${liked}.`,
-      `preference-like-${normalizedKey(liked)}`,
+      `preference-${normalizedKey(liked)}`,
       0.75,
     );
   }
 
-  const disliked = safeValue(text.match(/(?:^|\b)я не люблю\s+(.+)$/iu)?.[1] ?? "", 140);
+  const disliked = safeValue(
+    text.match(/(?:^|\b)я\s+(?:(?:больше|теперь|сейчас)\s+)?не люблю\s+(.+)$/iu)?.[1] ?? "",
+    140,
+  );
   if (disliked) {
     remember(
       operations,
       "preference",
       `Пользователь не любит ${disliked}.`,
-      `preference-dislike-${normalizedKey(disliked)}`,
+      `preference-${normalizedKey(disliked)}`,
       0.8,
     );
   }
@@ -144,7 +196,7 @@ export function extractDeterministicMemoryOperations(message: string): MemoryOpe
 
   const seenKeys = new Set<string>();
   return operations.filter((operation) => {
-    if (operation.type !== "remember_user_fact") {
+    if (operation.type !== "remember_user_fact" && operation.type !== "replace_user_fact") {
       return true;
     }
     if (seenKeys.has(operation.normalizedKey)) {

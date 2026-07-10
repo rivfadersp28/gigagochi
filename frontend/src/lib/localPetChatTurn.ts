@@ -213,20 +213,22 @@ export async function runLocalPetChatTurn({
     writeLocalPetMemory(nextMemory);
   }
 
-  void persistPostReplyMemory({
-    pet,
-    message,
-    reply: response.reply,
-    history: historyBeforeMessage,
-    memoryContext,
-    sourceMessageIds: [userMessage.id, assistantMessage.id],
-    includePromptDebug,
-    onLiteOverlayPatch,
-  }).catch((error: unknown) => {
+  try {
+    await persistPostReplyMemory({
+      pet,
+      message,
+      reply: response.reply,
+      history: historyBeforeMessage,
+      memoryContext,
+      sourceMessageIds: [userMessage.id, assistantMessage.id],
+      includePromptDebug,
+      onLiteOverlayPatch,
+    });
+  } catch (error: unknown) {
     if (includePromptDebug) {
       console.warn(`[memory-debug] ${logLabel} post-reply memory failed`, error);
     }
-  });
+  }
 
   return {
     response,

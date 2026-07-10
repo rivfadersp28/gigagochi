@@ -261,8 +261,9 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
         "Ты Громм. Сейчас ты взрослый, сформировавшийся представитель такого существа. "
         "Говори естественно от первого лица."
     )
-    assert "гигантский земляной великан" not in system_message
-    assert "Персонаж:" not in system_message
+    assert "гигантский земляной великан" in system_message
+    assert "КАНОН ПЕРСОНАЖА:" in system_message
+    assert "ОБЩАЯ БИБЛИЯ МИРА:" in system_message
     assert "используй update_pet_name" in system_message
     assert "Ответь владельцу на последнее сообщение как этот персонаж." in system_message
     assert "Верни только JSON" not in system_message
@@ -288,6 +289,15 @@ def test_chat_prompt_includes_matching_recent_events_before_world_context() -> N
     assert "Недавние события персонажа" in system_message
     assert "Громм не смог вернуть колокольчик" in system_message
     assert "колокольчик: lost" in system_message
+
+
+def test_chat_does_not_invent_recent_event_when_event_memory_is_empty() -> None:
+    system_message = build_lite_chat_messages(
+        lite_payload(message="Как дела, что интересного было за последнее время?")
+    )[0]["content"]
+
+    assert "нет подтверждённого недавнего события" in system_message
+    assert "Не выдумывай находку, встречу или приключение" in system_message
     if "Детали мира для этой реплики" in system_message:
         assert system_message.index("Недавние события персонажа") < system_message.index(
             "Детали мира для этой реплики"
@@ -430,7 +440,8 @@ def test_lite_prompt_includes_state_modifier() -> None:
         "Ты сейчас радостный, здоровый, полный сил."
         not in build_lite_chat_messages(happy)[0]["content"]
     )
-    assert "Ты сейчас голодный." in build_lite_chat_messages(hungry)[0]["content"]
+    assert "Настроение сейчас радостное" in build_lite_chat_messages(happy)[0]["content"]
+    assert "Голод сейчас низкий" in build_lite_chat_messages(hungry)[0]["content"]
 
 
 def test_context_sources_policy_disables_state_params(monkeypatch, tmp_path) -> None:
@@ -474,7 +485,7 @@ def test_speech_runtime_rejects_state_params_auto() -> None:
         raise AssertionError("stateParams=auto must be rejected")
 
 
-def test_lite_prompt_does_not_include_character_voice_control() -> None:
+def test_lite_prompt_includes_compact_character_voice_without_raw_controls() -> None:
     payload = lite_payload(
         pet={
             "name": "Пончик",
@@ -508,10 +519,10 @@ def test_lite_prompt_does_not_include_character_voice_control() -> None:
     system_message = build_lite_chat_messages(payload)[0]["content"]
 
     assert "Ты маленький Пончик. Говори естественно от первого лица." in system_message
-    assert "кремовый котенок-компаньон" not in system_message
+    assert "кремовый котенок-компаньон" in system_message
     assert "VOICE_CONTROL" not in system_message
     assert "нижний регулятор всех видимых реплик питомца" not in system_message
-    assert "говорит коротко и замечает запахи" not in system_message
+    assert "говорит коротко и замечает запахи" in system_message
     assert "нюх-нюх" not in system_message
     assert "Нюх-нюх... я проверю носом." not in system_message
     assert "я ассистент" not in system_message
@@ -606,7 +617,7 @@ def test_lite_prompt_ignores_character_profile_even_if_router_enables_it() -> No
         ),
     )[0]["content"]
 
-    assert "Персонаж:" in system_message
+    assert "КАНОН ПЕРСОНАЖА:" in system_message
     assert "CHARACTER_PROFILE" not in system_message
     assert "гурман-коллекционер" in system_message
     assert "Густую похлебку" in system_message
@@ -620,7 +631,7 @@ def test_lite_prompt_ignores_character_profile_even_if_router_enables_it() -> No
     assert "Do not invent new powers" not in system_message
 
 
-def test_chat_small_talk_suppresses_character_profile_even_if_router_enables_it() -> None:
+def test_chat_small_talk_keeps_core_character_but_suppresses_overlay_noise() -> None:
     system_message = build_lite_chat_messages(
         lite_payload(
             message="как дела?",
@@ -657,8 +668,8 @@ def test_chat_small_talk_suppresses_character_profile_even_if_router_enables_it(
     )
     assert "Персонаж:" not in system_message
     assert "CHARACTER_PROFILE" not in system_message
-    assert "мокрыми ушами" not in system_message
-    assert "нюхать батарейки" not in system_message
+    assert "мокрыми ушами" in system_message
+    assert "нюхать батарейки" in system_message
     assert "прислушивается к вывескам" not in system_message
 
 
@@ -984,7 +995,7 @@ def test_lite_clamps_reply_to_300_chars() -> None:
     response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
 
     assert len(response.reply) <= 300
-    assert not response.reply.endswith("…")
+    assert response.reply.endswith("…")
 
 
 def test_lite_reads_structured_face_and_mood_hints() -> None:
@@ -1080,7 +1091,7 @@ def test_lite_prompt_skips_preselected_world_context_when_story_library_disabled
     assert "search_story_library" not in system_message
 
 
-def test_proactive_prompt_does_not_include_character_voice_control() -> None:
+def test_proactive_prompt_includes_compact_character_voice_without_catchphrases() -> None:
     payload = LocalProactiveRequest.model_validate(
         {
             "pet": {
@@ -1113,7 +1124,7 @@ def test_proactive_prompt_does_not_include_character_voice_control() -> None:
     system_message = build_proactive_messages(payload)[0]["content"]
 
     assert "VOICE_CONTROL" not in system_message
-    assert "говорит через маленькие бытовые детали" not in system_message
+    assert "говорит через маленькие бытовые детали" in system_message
     assert "нос подсказывает" not in system_message
     assert (
         "Напиши владельцу первым одну короткую живую реплику. "
@@ -1275,8 +1286,8 @@ def test_ambient_prompt_uses_idle_field_without_forced_world_context(
     assert "Спроси меня что-нибудь" not in system_message
     assert "пять минут" not in system_message
     assert "Привет, я Листик. Я просто рядом." in system_message
-    assert "Это только проверка на дословный повтор" in system_message
-    assert "Не повторяй заметные существительные" not in system_message
+    assert "Избегай не только дословного повтора" in system_message
+    assert "той же стартовой конструкции, действия, предмета и метафоры" in system_message
     assert "Есть ли в твоем мире монстры?" in system_message
     assert "Я нашел крошечный ключ от Врат Забвения." in system_message
     assert "ask_school_or_work_role" not in system_message
@@ -1317,6 +1328,30 @@ def test_ambient_identity_falls_back_to_pet_description_when_name_is_missing() -
 
     assert "Ты маленькая крыса." in system_message
     assert "Ты без имени." not in system_message
+
+
+def test_ambient_anti_repeat_groups_russian_word_forms() -> None:
+    payload = LocalAmbientRequest.model_validate(
+        {
+            "pet": {
+                "name": "Листик",
+                "description": "лесной зверёк",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": {"hunger": 80, "happiness": 80, "energy": 80},
+                "characterBible": {},
+            },
+            "history": [],
+            "recentAmbientReplies": [
+                "Я слушаю старую дорогу.",
+                "Я нашёл знак у древней дороги.",
+            ],
+        }
+    )
+
+    prompt = build_ambient_messages(payload)[0]["content"]
+
+    assert "Повторяющиеся смысловые маркеры: дорог" in prompt
 
 
 def test_ambient_prompt_skips_world_context_when_story_library_disabled() -> None:
@@ -1453,7 +1488,7 @@ def test_lite_story_library_context_is_disabled_without_story_tools() -> None:
     assert response.debug.storyLibraryDebug["injectedSpheres"] == []
 
 
-def test_lite_character_profile_is_not_injected_for_legacy_bible() -> None:
+def test_lite_character_profile_uses_core_but_not_unselected_durable_facts() -> None:
     client, completions = fake_lite_client(
         SimpleNamespace(content="Я Громм, каменный и спокойный.", tool_calls=None),
     )
@@ -1503,7 +1538,7 @@ def test_lite_character_profile_is_not_injected_for_legacy_bible() -> None:
     assert response.reply == "Я Громм, каменный и спокойный."
     system_message = completions.calls[0]["messages"][0]["content"]
     assert "CHARACTER_PROFILE" not in system_message
-    assert "каменный хранитель" not in system_message
+    assert "каменный хранитель" in system_message
     assert "Громм живет на теплом уступе." not in system_message
     assert "story_library_overlay" not in system_message
     assert "Тихий колокольный страж" not in system_message
@@ -1673,14 +1708,14 @@ def test_lite_fact_extraction_groups_facts_by_sphere() -> None:
                             "kind": "world_fact",
                             "text": "Мир Громма состоит из базальтовых гор и кристальных рощ.",
                             "pathHint": "lite_overlay.spheres.world",
-                            "source": "lite_post_reply_extractor",
+                            "source": "user_confirmed",
                         },
                         {
                             "sphere": "appearance",
                             "kind": "appearance_fact",
                             "text": "Громм слышит трещины в камне как голоса.",
                             "pathHint": "lite_overlay.spheres.appearance",
-                            "source": "lite_post_reply_extractor",
+                            "source": "user_confirmed",
                         },
                     ]
                 }
@@ -1692,7 +1727,10 @@ def test_lite_fact_extraction_groups_facts_by_sphere() -> None:
     patch, debug = extract_lite_overlay_patch_from_reply(
         LiteFactExtractionRequest.model_validate(
             {
-                "message": "расскажи о своем мире",
+                "message": (
+                    "Твой мир состоит из базальтовых гор и кристальных рощ, "
+                    "а ты слышишь трещины в камне как голоса."
+                ),
                 "reply": "Мой мир состоит из базальтовых гор и кристальных рощ.",
                 "pet": lite_payload().pet.model_dump(),
                 "history": [],
@@ -1724,7 +1762,7 @@ def test_lite_fact_extraction_filters_conflicting_recent_event_fact() -> None:
                             "kind": "world_fact",
                             "text": "Громм защитил колокольчик от хорька.",
                             "pathHint": "lite_overlay.spheres.world",
-                            "source": "lite_post_reply_extractor",
+                            "source": "user_confirmed",
                         }
                     ]
                 },
@@ -1737,7 +1775,7 @@ def test_lite_fact_extraction_filters_conflicting_recent_event_fact() -> None:
     patch, debug = extract_lite_overlay_patch_from_reply(
         LiteFactExtractionRequest.model_validate(
             {
-                "message": "ты защитил колокольчик?",
+                "message": "Ты защитил колокольчик от хорька, я это подтверждаю.",
                 "reply": "Да, я защитил колокольчик.",
                 "pet": pet_with_recent_story_event(),
                 "history": [],
@@ -1768,7 +1806,7 @@ def test_lite_fact_extraction_filters_new_canon_without_capsule_support() -> Non
                             "kind": "character_fact",
                             "text": "Грум умеет читать древние знания о котле.",
                             "pathHint": "lite_overlay.spheres.character",
-                            "source": "lite_post_reply_extractor",
+                            "source": "user_confirmed",
                         }
                     ]
                 },
@@ -1811,7 +1849,7 @@ def test_lite_fact_extraction_filters_new_canon_without_capsule_support() -> Non
     patch, debug = extract_lite_overlay_patch_from_reply(
         LiteFactExtractionRequest.model_validate(
             {
-                "message": "ты кто?",
+                "message": "Ты умеешь читать древние знания о котле.",
                 "reply": "Я Грум, умею читать древние знания о котле.",
                 "pet": pet,
                 "history": [],
@@ -1994,6 +2032,6 @@ def test_proactive_reply_is_clamped() -> None:
     )
 
     assert len(response.reply) <= 300
-    assert not response.reply.endswith("…")
+    assert response.reply.endswith("…")
     assert response.debug is not None
     assert response.debug.memoryDebug["selectedMemoryIds"] == ["m1"]

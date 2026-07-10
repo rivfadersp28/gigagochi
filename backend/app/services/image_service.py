@@ -99,6 +99,13 @@ WEAK_LIFE_LESSON_PATTERN = re.compile(
     r"учит\w*\s+(?:меня|его|её|нас)|быть\s+собой)",
     re.IGNORECASE,
 )
+CONCRETE_HOME_PATTERN = re.compile(
+    r"(?:\b(?:в|на|под|среди|у|между)\b|"
+    r"нор|лес|руин|пещ|дом|гнезд|берег|склон|долин|полян|болот|"
+    r"башн|храм|мост|дорог|ущел|луг|пустош|озер|рек|корн|дупл|"
+    r"убежищ|логов|приют|туннел|зал|остров|ниш)",
+    re.IGNORECASE,
+)
 
 CHARACTER_BIBLE_SCHEMA: dict[str, Any] = character_bible_schema()
 OPENROUTER_SEEDREAM_IMAGE_RESOLUTION = "4K"
@@ -157,6 +164,10 @@ def character_bible_quality_issues(
         issues.append("incoherent_physical_or_sensory_logic")
     if WEAK_LIFE_LESSON_PATTERN.search(text):
         issues.append("generic_life_lesson_or_user_behavior_preference")
+    world = character_bible.get("world")
+    home = world.get("home") if isinstance(world, dict) else None
+    if not isinstance(home, str) or not CONCRETE_HOME_PATTERN.search(home):
+        issues.append("home_is_not_a_concrete_location")
     return tuple(issues)
 
 
@@ -780,7 +791,7 @@ def create_character_bible(user_description: str) -> dict[str, Any]:
         "role": "system",
         "content": character_bible_system_prompt(),
     }
-    character_bible = _character_bible_completion(
+    compact_bible = _character_bible_completion(
         client,
         settings,
         "pet_creation/character_bible",
@@ -793,7 +804,7 @@ def create_character_bible(user_description: str) -> dict[str, Any]:
         ],
     )
     character_bible = expand_compact_character_bible(
-        character_bible,
+        compact_bible,
         raw_description=user_description,
     )
     character_bible = upgrade_character_bible_v2(
@@ -803,6 +814,32 @@ def create_character_bible(user_description: str) -> dict[str, Any]:
     issues = character_bible_quality_issues(user_description, character_bible)
     if issues:
         logger.info("Compact character bible quality flags: %s", issues)
+        compact_bible = _character_bible_completion(
+            client,
+            settings,
+            "pet_creation/character_bible_repair",
+            [
+                system_message,
+                {
+                    "role": "user",
+                    "content": (
+                        f"{build_character_bible_prompt(user_description)}\n\n"
+                        "Repair this character bible before returning the complete JSON. "
+                        f"Quality issues: {', '.join(issues)}. Preserve the user's core idea, "
+                        "but replace generic defaults and incoherent physical or sensory logic.\n\n"
+                        f"CURRENT_JSON:\n{json.dumps(compact_bible, ensure_ascii=False)}"
+                    ),
+                },
+            ],
+        )
+        character_bible = expand_compact_character_bible(
+            compact_bible,
+            raw_description=user_description,
+        )
+        character_bible = upgrade_character_bible_v2(
+            character_bible,
+            raw_description=user_description,
+        )
     return character_bible
 
 

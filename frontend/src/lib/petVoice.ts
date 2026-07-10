@@ -74,10 +74,18 @@ function hashText(value: string) {
 
 export function buildPetVoiceProfile(pet?: LocalPetState | null): PetVoiceProfile {
   const bible = isRecord(pet?.assetSet?.characterBible) ? pet.assetSet.characterBible : {};
-  const voice = recordAt(bible, "voice");
+  const template = isRecord(pet?.assetSet?.characterTemplate) ? pet.assetSet.characterTemplate : {};
+  const voice = {
+    ...recordAt(template, "voice"),
+    ...recordAt(bible, "voice"),
+  };
   const dialogueStyle = recordAt(bible, "dialogue_style");
   const lore = recordAt(bible, "lore");
-  const loreVoice = recordAt(lore, "voice");
+  const templateLore = recordAt(template, "lore");
+  const loreVoice = {
+    ...recordAt(templateLore, "voice"),
+    ...recordAt(lore, "voice"),
+  };
 
   return {
     stage: pet?.stage ?? "baby",

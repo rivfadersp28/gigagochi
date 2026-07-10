@@ -12,6 +12,7 @@ from app.services.character_bible_template import (
     character_bible_template_config,
     validate_character_bible_template_config,
 )
+from app.services.lore_runtime import lore_runtime_config, validate_lore_runtime_config
 from app.services.pet_reply_engine.age_message_examples import _dataset as age_speech_dataset
 from app.services.pet_reply_engine.speech_runtime import (
     speech_runtime_config,
@@ -57,6 +58,13 @@ MANAGED_FILES: tuple[ManagedFile, ...] = (
         "tone_runtime.json",
         "json",
         "Одна ручка setting / tone of voice / visual style для реплик, мира, историй и картинок.",
+    ),
+    ManagedFile(
+        "lore_runtime",
+        "Библия мира",
+        "lore_runtime.json",
+        "json",
+        "Единые правила мира для создания персонажей, диалогового лора и историй.",
     ),
     ManagedFile(
         "story_library",
@@ -156,6 +164,8 @@ def _validate_content(spec: ManagedFile, content: str) -> str:
             validate_speech_runtime_config(json.loads(normalized))
         if spec.file_id == "tone_runtime":
             validate_tone_runtime_config(json.loads(normalized))
+        if spec.file_id == "lore_runtime":
+            validate_lore_runtime_config(json.loads(normalized))
         if spec.file_id == "character_bible_template":
             validate_character_bible_template_config(json.loads(normalized))
         return normalized
@@ -222,6 +232,19 @@ def dialogue_influence_manifest() -> dict[str, Any]:
     surfaces = ["chat", "proactive", "ambient", "push"]
     return {
         "modifiers": [
+            {
+                "id": "lore_runtime",
+                "label": "Библия мира",
+                "surfaces": [*surfaces, "background_story", "creation"],
+                "source": "lore_runtime",
+                "editable": True,
+                "fileId": "lore_runtime",
+                "configPath": "world / surfaces",
+                "summary": (
+                    "Одна рамка пространства, материалов, технологий, необычного и "
+                    "непрерывности для создания персонажа и всех новых фактов лора."
+                ),
+            },
             {
                 "id": "tone_profile",
                 "label": "Generation profile",
@@ -578,6 +601,7 @@ def _clear_runtime_caches() -> None:
     tone_runtime_config.cache_clear()
     speech_runtime_config.cache_clear()
     character_bible_template_config.cache_clear()
+    lore_runtime_config.cache_clear()
 
 
 def clear_admin_runtime_caches() -> None:

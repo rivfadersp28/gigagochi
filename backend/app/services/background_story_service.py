@@ -11,12 +11,14 @@ from urllib.parse import urlparse
 from app.config import get_settings
 from app.prompts.style_direction import VISUAL_CHARACTER_STYLE
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
+from app.services.character_dossier import effective_character_data
 from app.services.image_service import generate_image_bytes
 from app.services.lite_overlay import (
     LITE_FACT_KINDS,
     LITE_FACT_SPHERES,
     overlay_patch_from_extracted_facts,
 )
+from app.services.lore_runtime import lore_prompt_block
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_chat_model,
@@ -628,7 +630,18 @@ def _memory_brief(memory_context: LocalPetMemoryContext | None) -> dict[str, Any
         ]
         if messages:
             episodes.append({"id": episode.id, "messages": messages})
-    result = {"episodes": episodes}
+    result = {
+        "profile": _text_value(memory_context.userProfile, limit=700),
+        "summary": _text_value(memory_context.summary, limit=700),
+        "facts": [
+            {
+                "kind": item.kind,
+                "text": _text_value(item.text, limit=360),
+            }
+            for item in memory_context.relevantMemories[:5]
+        ],
+        "episodes": episodes,
+    }
     return {key: value for key, value in result.items() if value not in ("", [], None)}
 
 
@@ -925,6 +938,7 @@ def character_dossier_for_background_story(
         "timezone": timezone,
         "identitySeed": _background_story_identity_seed(pet),
         "currentState": current_state,
+        "characterCanon": effective_character_data(pet),
     }
 
     if enabled("characterProfile"):
@@ -1437,7 +1451,10 @@ def generate_background_story(
         "messages": [
             {
                 "role": "system",
-                "content": background_story_system_prompt(),
+                "content": (
+                    f"{background_story_system_prompt()}\n\n"
+                    f"{lore_prompt_block('backgroundStory')}"
+                ),
             },
             {"role": "user", "content": user_content},
         ],

@@ -79,11 +79,42 @@ function petNameForApi(pet: LocalPetState): string | undefined {
   return explicitName || characterNameFromAssetSet(pet.assetSet);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function characterBibleForApi(pet: LocalPetState): Record<string, unknown> | undefined {
+  const template = isRecord(pet.assetSet?.characterTemplate)
+    ? pet.assetSet.characterTemplate
+    : {};
+  const instance = isRecord(pet.assetSet?.characterBible)
+    ? pet.assetSet.characterBible
+    : {};
+  if (!Object.keys(template).length && !Object.keys(instance).length) {
+    return undefined;
+  }
+  const result: Record<string, unknown> = {
+    ...template,
+    ...instance,
+  };
+  for (const key of new Set([...Object.keys(template), ...Object.keys(instance)])) {
+    const templateSection = template[key];
+    const instanceSection = instance[key];
+    if (isRecord(templateSection) || isRecord(instanceSection)) {
+      result[key] = {
+        ...(isRecord(templateSection) ? templateSection : {}),
+        ...(isRecord(instanceSection) ? instanceSection : {}),
+      };
+    }
+  }
+  return result;
+}
+
 function petContextForApi(pet: LocalPetState) {
   return {
     name: petNameForApi(pet),
     description: pet.description,
-    characterBible: pet.assetSet?.characterBible,
+    characterBible: characterBibleForApi(pet),
     stage: pet.stage,
     mood: pet.mood,
     stats: petStatsForApi(pet.stats),
@@ -420,7 +451,7 @@ export async function registerPetPushSnapshot(
           role: item.role,
           text: item.text,
         })),
-        recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-6),
+        recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-10),
         pet: {
           ...petContextForApi(pet),
           assetImages: publicAssetImagesForApi(pet.assetSet?.images),
@@ -450,7 +481,7 @@ export async function generateLocalAmbientMessage(
       replyMaxChars: options.replyMaxChars,
       nowIso: new Date().toISOString(),
       timezone: browserTimezone(),
-      recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-6),
+      recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-10),
       pet: petContextForApi(pet),
       history: (options.history ?? []).slice(-12).map((item) => ({
         role: item.role,

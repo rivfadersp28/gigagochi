@@ -38,6 +38,8 @@
       "The creature is real in its own world.",
       "Preserve the user's core idea.",
       "Make the fields concrete, internally coherent, and useful for chat.",
+      "world.home must be a concrete physical place where the creature can live, never its body material or a fragment copied from its appearance.",
+      "genesis.appetite must describe something the creature can physically consume or seek and must fit its body and habitat.",
       "roleplay_contract answers common identity questions in first person.",
       "voice.sample_replies: 5-8 short Russian replies that demonstrate its voice.",
       "lorebook_entries: 3-5 triggerable facts with keys/content only."

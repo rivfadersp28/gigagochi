@@ -19,6 +19,7 @@ from app.schemas import (
     LocalProactiveResponse,
     LocalPushRequest,
 )
+from app.services.character_dossier import build_character_capsule
 from app.services.context_assembler import (
     AssembledPetContext,
     assemble_pet_context,
@@ -29,6 +30,7 @@ from app.services.lite_overlay import (
     merge_lite_overlay_patch,
     overlay_patch_from_extracted_facts,
 )
+from app.services.lore_runtime import lore_prompt_block
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_chat_model,
@@ -63,6 +65,7 @@ from app.services.pet_reply_engine.speech_runtime import (
     memory_usage_rule,
     speech_template,
     state_layer_surface_flags,
+    state_param_usage_rule,
     surface_prompt,
     transient_context_rule,
     world_seed_system_prompt,
@@ -88,8 +91,47 @@ VISIBLE_REPLY_FALLBACKS: dict[PhraseSurface, str] = {
     "push": "Я рядом. Загляни ко мне?",
 }
 MAX_MEMORY_CONTEXT_ITEMS = 5
-MAX_RECENT_AMBIENT_REPLIES = 5
+MAX_RECENT_AMBIENT_REPLIES = 10
 MAX_RECENT_HISTORY_MESSAGES = 8
+RECENT_EVENT_QUESTION_RE = re.compile(
+    r"(?:недавно|за последнее время|что интересного было|что случилось|что произошло)",
+    re.IGNORECASE,
+)
+RUSSIAN_REPEAT_SUFFIXES = (
+    "иями",
+    "ями",
+    "ами",
+    "ового",
+    "евого",
+    "овыми",
+    "евыми",
+    "овый",
+    "евый",
+    "ого",
+    "ому",
+    "ыми",
+    "ими",
+    "ая",
+    "яя",
+    "ое",
+    "ее",
+    "ые",
+    "ие",
+    "ой",
+    "ей",
+    "ах",
+    "ях",
+    "ом",
+    "ем",
+    "ую",
+    "юю",
+    "ы",
+    "и",
+    "а",
+    "я",
+    "у",
+    "ю",
+)
 
 
 @dataclass(frozen=True)
@@ -106,7 +148,7 @@ class PhrasePlan:
     world_block: str | None = None
     recent_ambient_block: str | None = None
     dialogue_block: str | None = None
-    extra_rules: tuple[str, ...] = field(default_factory=tuple)
+    extra_rules: tuple[str | None, ...] = field(default_factory=tuple)
 
     def system_content(self) -> str:
         sections = [
@@ -119,7 +161,7 @@ class PhrasePlan:
             self.memory_block,
             self.recent_ambient_block,
             self.dialogue_block,
-            "\n".join(self.extra_rules),
+            "\n".join(rule for rule in self.extra_rules if rule),
             self.persona_contract,
         ]
         return "\n\n".join(section for section in sections if section)
@@ -600,10 +642,50 @@ def _recent_reply_lines(replies: list[str], *, limit: int, item_limit: int) -> l
 def _anti_repeat_block(lines: list[str]) -> str | None:
     if not lines:
         return None
+    token_counts: dict[str, int] = {}
+    ignored = {
+        "который",
+        "которая",
+        "которые",
+        "сейчас",
+        "только",
+        "очень",
+        "тебя",
+        "тебе",
+        "меня",
+        "рядом",
+    }
+    for line in lines:
+        for token in re.findall(r"[А-Яа-яЁё-]{5,}", line.casefold()):
+            if token in ignored:
+                continue
+            token = next(
+                (
+                    token[: -len(suffix)]
+                    for suffix in RUSSIAN_REPEAT_SUFFIXES
+                    if token.endswith(suffix) and len(token) - len(suffix) >= 4
+                ),
+                token,
+            )
+            token_counts[token] = token_counts.get(token, 0) + 1
+    repeated_markers = [
+        token
+        for token, count in sorted(token_counts.items(), key=lambda item: (-item[1], item[0]))
+        if count >= 2
+    ][:10]
+    marker_rule = (
+        "\nПовторяющиеся смысловые маркеры: "
+        + ", ".join(repeated_markers)
+        + ". Не строй новую реплику вокруг них."
+        if repeated_markers
+        else ""
+    )
     return (
         "Недавние реплики персонажа, уже показанные владельцу:\n"
         + "\n".join(f"- {line}" for line in lines)
-        + "\nЭто только проверка на дословный повтор, а не источник фактов."
+        + "\nИзбегай не только дословного повтора, но и той же стартовой конструкции, "
+        "действия, предмета и метафоры. Это не источник фактов."
+        + marker_rule
     )
 
 
@@ -924,7 +1006,11 @@ def _character_block_for_surface(
     routing: ContextRoutingDecision | ContextPlan | None,
 ) -> str | None:
     return _combine_character_blocks(
-        _character_capsule_block(pet),
+        _character_capsule_block(
+            pet,
+            include_durable_facts=surface != "chat",
+            include_lore_frame=True,
+        ),
         _character_context_block(pet, surface, routing),
     )
 
@@ -1012,68 +1098,21 @@ def _join_labeled_line(label: str, *values: Any, limit: int = 320) -> str | None
     return f"{label}: {'; '.join(parts)}"
 
 
-def _character_capsule_block(pet: Any) -> str | None:
-    bible = _sanitized_character_bible(getattr(pet, "characterBible", None))
-    identity = _record_at(bible, "identity")
-    genesis = _record_at(bible, "genesis")
-    roleplay_contract = _record_at(bible, "roleplay_contract")
-
-    name = _clean_optional_text(getattr(pet, "name", None), 80)
-    species = _clean_optional_text(identity.get("species"), 140)
-    role = _clean_optional_text(identity.get("role"), 160)
-    one_liner = _clean_optional_text(identity.get("one_liner"), 220)
-    description = _clean_optional_text(getattr(pet, "description", None), 180)
-
-    lines = [
-        "Персонаж:",
-        (
-            "Короткая опора для голоса, привычек и ответов о себе. Не пересказывай "
-            "все подряд; бери только то, что помогает текущей реплике."
-        ),
-    ]
-    identity_line = _join_labeled_line(
-        "Кто я",
-        ", ".join(part for part in (name, species or description) if part),
-        role,
-        one_liner,
-        limit=360,
+def _character_capsule_block(
+    pet: Any,
+    *,
+    include_durable_facts: bool = True,
+    include_lore_frame: bool = False,
+) -> str | None:
+    capsule = build_character_capsule(
+        pet,
+        include_durable_facts=include_durable_facts,
     )
-    if identity_line:
-        lines.append(identity_line)
-
-    for label, keys in (
-        ("Описание", ("description", "core_reading")),
-        ("Характер", ("character_trait", "central_trait")),
-        ("Еда и желания", ("appetite", "safe_adaptation", "pet_safe_adaptation")),
-        ("Внутреннее напряжение", ("conflict", "inner_conflict")),
-        ("Что со мной обычно происходит", ("story_engine", "daily_life_hook", "daily_care_hook")),
-    ):
-        value = next((genesis.get(key) for key in keys if genesis.get(key)), None)
-        line = _join_labeled_line(label, value, limit=300)
-        if line:
-            lines.append(line)
-
-    likes = _text_list(genesis.get("likes"), limit=6, item_limit=140)
-    if likes:
-        lines.append("Люблю: " + "; ".join(likes))
-    does = _text_list(genesis.get("does"), limit=6, item_limit=160)
-    if does:
-        lines.append("Обычно делаю: " + "; ".join(does))
-
-    for label, key in (
-        ("Если спрашивают, кто я", "how_to_answer_who_are_you"),
-        ("Если спрашивают, что я ем", "how_to_answer_what_do_you_eat"),
-        ("Если спрашивают, где я живу", "how_to_answer_where_do_you_live"),
-    ):
-        line = _join_labeled_line(label, roleplay_contract.get(key), limit=260)
-        if line:
-            lines.append(line)
-
-    voice_rules = _text_list(roleplay_contract.get("voice_rules"), limit=5, item_limit=160)
-    if voice_rules:
-        lines.append("Манера речи: " + "; ".join(voice_rules))
-
-    return "\n".join(lines) if len(lines) > 3 else None
+    if not capsule:
+        return None
+    if include_lore_frame:
+        return f"{capsule}\n\n{lore_prompt_block('dialogueLore')}"
+    return capsule
 
 
 def _combine_character_blocks(*blocks: str | None) -> str | None:
@@ -1282,6 +1321,8 @@ def _phrase_plan_for_chat(
         world_block=context_bundle.prompt_block or None,
         recent_ambient_block=None,
         extra_rules=(
+            state_param_usage_rule(),
+            _recent_event_truth_rule(payload, recent_events_block),
             transient_context_rule(),
             _structured_reply_contract_rule(),
         ),
@@ -1428,7 +1469,11 @@ def _world_seed_messages(payload: LocalChatRequest) -> list[dict[str, str]]:
     return [
         {
             "role": "system",
-            "content": (f"{world_seed_system_prompt()}\n\n{tone_prompt_block('worldContext')}"),
+            "content": (
+                f"{world_seed_system_prompt()}\n\n"
+                f"{lore_prompt_block('worldSeed')}\n\n"
+                f"{tone_prompt_block('worldContext')}"
+            ),
         },
         {
             "role": "user",
@@ -1618,7 +1663,13 @@ def _parse_lite_fact_extraction_payload(raw_content: str) -> dict[str, Any] | No
         return None
     if not _is_record(parsed):
         return None
-    return overlay_patch_from_extracted_facts(parsed.get("facts"))
+    raw_facts = parsed.get("facts") if isinstance(parsed.get("facts"), list) else []
+    confirmed_facts = [
+        fact
+        for fact in raw_facts
+        if _is_record(fact) and str(fact.get("source") or "").strip() == "user_confirmed"
+    ]
+    return overlay_patch_from_extracted_facts(confirmed_facts)
 
 
 def _lite_extraction_context(payload: LiteFactExtractionRequest) -> str:
@@ -1756,6 +1807,24 @@ def _lite_fact_conflict_reason(
     if LITE_FACT_RECOVERY_RE.search(fact_text) and not LITE_FACT_UNRESOLVED_RE.search(fact_text):
         return "recovery_fact_contradicts_unresolved_recent_event"
     return None
+
+
+def _recent_event_truth_rule(
+    payload: LocalChatRequest,
+    recent_events_block: str | None,
+) -> str | None:
+    if not RECENT_EVENT_QUESTION_RE.search(payload.message):
+        return None
+    if recent_events_block:
+        return (
+            "На вопрос о недавнем опирайся только на блок недавних событий; "
+            "не добавляй ещё одно свершившееся событие."
+        )
+    return (
+        "В доступной памяти нет подтверждённого недавнего события. Не выдумывай "
+        "находку, встречу или приключение как уже случившийся факт; честно опиши "
+        "текущее состояние или маленький момент прямо сейчас."
+    )
 
 
 def _filter_lite_overlay_patch_against_recent_events(
@@ -2202,6 +2271,7 @@ def build_proactive_messages(
         character_block=_character_block_for_surface(payload.pet, "proactive", context_plan),
         memory_block=memory_block,
         extra_rules=(
+            state_param_usage_rule(),
             transient_context_rule(),
             _structured_reply_contract_rule(),
         ),
@@ -2257,6 +2327,7 @@ def build_push_messages(
         character_block=_character_block_for_surface(payload.pet, "push", context_plan),
         memory_block=memory_block,
         extra_rules=(
+            state_param_usage_rule(),
             transient_context_rule(),
             _structured_reply_contract_rule(),
         ),
@@ -2469,6 +2540,7 @@ def build_ambient_messages(
         recent_ambient_block=recent_ambient_block,
         dialogue_block=recent_conversation_block,
         extra_rules=(
+            state_param_usage_rule(),
             transient_context_rule(),
             _structured_reply_contract_rule(),
         ),

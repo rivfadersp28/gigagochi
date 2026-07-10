@@ -1264,6 +1264,20 @@ def test_character_bible_quality_flags_overused_defaults_and_bad_physics() -> No
     assert "incoherent_physical_or_sensory_logic" in plant_issues
 
 
+def test_character_bible_quality_requires_concrete_home_location() -> None:
+    invalid = {"world": {"home": "потемневшая меди"}}
+    valid = {"world": {"home": "в сухой нише под древней каменной дорогой"}}
+
+    assert "home_is_not_a_concrete_location" in character_bible_quality_issues(
+        "медный зверёк",
+        invalid,
+    )
+    assert "home_is_not_a_concrete_location" not in character_bible_quality_issues(
+        "медный зверёк",
+        valid,
+    )
+
+
 def test_create_character_bible_does_not_run_repair_or_initial_overlay(monkeypatch) -> None:
     compact_bible = {
         "schema_version": 2,

@@ -354,6 +354,8 @@ def dialogue_state_modifier(
         return modifier("happyLowEnergy")
     if include_mood and mood == "sad":
         return modifier("sad")
+    if include_mood and mood == "happy":
+        return modifier("happy")
     if include_energy and energy is not None and energy <= energy_low_max:
         return modifier("lowEnergy")
     return None

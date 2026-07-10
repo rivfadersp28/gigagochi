@@ -314,8 +314,15 @@ function parseMemoryOperation(value: unknown, path: string): MemoryOperation {
       dueAt: optionalString(payload.dueAt, `${path}.dueAt`),
     };
   }
-  if (type === "remember_user_fact") {
+  if (type === "remember_user_fact" || type === "replace_user_fact") {
     return { type, ...parseMemoryFields(payload, path) };
+  }
+  if (type === "forget_user_fact") {
+    return {
+      type,
+      normalizedKey: optionalString(payload.normalizedKey, `${path}.normalizedKey`),
+      matchText: optionalString(payload.matchText ?? payload.text, `${path}.matchText`),
+    };
   }
   return fail(`${path}.type`, "known memory operation");
 }

@@ -3,6 +3,8 @@
 import { useEffect, useRef, type RefObject } from "react";
 
 import { canUseTmaApi, registerPetPushSnapshot } from "@/lib/api";
+import { buildMemorySnapshotContext } from "@/lib/localPetMemoryRecall";
+import { readLocalPetMemory } from "@/lib/localPetMemoryStorage";
 import { readLocalChatHistory } from "@/lib/localPetStorage";
 import type { LocalPetState, PetStatsPatch } from "@/lib/types";
 
@@ -56,10 +58,14 @@ export function usePetPushSnapshotSync({
       updatedAt: pet.updatedAt,
     };
 
-    void registerPetPushSnapshot(pet, undefined, {
+    void registerPetPushSnapshot(
+      pet,
+      buildMemorySnapshotContext(readLocalPetMemory(pet.petId)),
+      {
       history: readLocalChatHistory().messages,
       recentAmbientReplies: recentAmbientRepliesRef.current,
-    })
+      },
+    )
       .then((response) => {
         applyStatsPatch(response.statsPatch ?? undefined);
         applyLiteOverlayPatch(response.liteOverlayPatch ?? undefined);

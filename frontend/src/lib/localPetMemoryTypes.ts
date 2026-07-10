@@ -96,6 +96,22 @@ export type MemoryOperation =
       dueAt?: string;
       expiresAt?: string;
       tags?: string[];
+    }
+  | {
+      type: "replace_user_fact";
+      kind: UserMemoryKind;
+      text: string;
+      normalizedKey: string;
+      confidence: number;
+      importance: number;
+      dueAt?: string;
+      expiresAt?: string;
+      tags?: string[];
+    }
+  | {
+      type: "forget_user_fact";
+      normalizedKey?: string;
+      matchText?: string;
     };
 
 export type MemoryConsolidationOperation =

@@ -42,7 +42,6 @@ function cleanTemplateBible(value: Record<string, unknown>): Record<string, unkn
 
 function stripPromptScaffolding(value: Record<string, unknown>): Record<string, unknown> {
   const bible = cloneRecord(value);
-  delete bible.voice;
   delete bible.dialogue_style;
 
   if (isRecord(bible.lore)) {
@@ -82,7 +81,7 @@ function withInstanceMeta(
       recentStoryEvents: "extensions.recent_story_events",
     },
     promptModelVersion: PROMPT_MODEL_SCHEMA_VERSION,
-    disabledPromptSections: ["characterBible.voice", "characterBible.dialogue_style", "lore.voice"],
+    disabledPromptSections: ["characterBible.dialogue_style", "lore.voice"],
   };
 
   return {

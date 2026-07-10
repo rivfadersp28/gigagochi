@@ -361,7 +361,7 @@ function upsertUserMemory(
         ? {
             ...item,
             kind: fact.kind ? normalizeKind(fact.kind, item.kind) : item.kind,
-            text: fact.confidence >= item.confidence ? text : item.text,
+            text,
             confidence: Math.max(item.confidence, clamp01(fact.confidence, item.confidence)),
             importance: Math.max(item.importance, clamp01(fact.importance, item.importance)),
             updatedAt: now,
@@ -424,6 +424,23 @@ export function applyMemoryOperations(
       nextMemory = {
         ...nextMemory,
         memories: upsertUserMemory(nextMemory, operation, [], now),
+      };
+    } else if (operation.type === "replace_user_fact") {
+      nextMemory = {
+        ...nextMemory,
+        memories: upsertUserMemory(nextMemory, operation, [], now),
+      };
+    } else if (operation.type === "forget_user_fact") {
+      const key = normalizeText(operation.normalizedKey, 160).toLowerCase();
+      const matchText = normalizeText(operation.matchText, 180).toLowerCase();
+      nextMemory = {
+        ...nextMemory,
+        memories: key === "*" ? [] : nextMemory.memories.filter((item) => {
+          if (key && item.normalizedKey === key) {
+            return false;
+          }
+          return !matchText || !item.text.toLowerCase().includes(matchText);
+        }),
       };
     }
   }

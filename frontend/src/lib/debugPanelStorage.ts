@@ -300,8 +300,14 @@ export function recordMemoryOperationsDebug(operations: MemoryOperation[]) {
   }
   const lines = operations
     .map((operation) => {
-      if (operation.type === "remember_user_fact") {
+      if (
+        operation.type === "remember_user_fact"
+        || operation.type === "replace_user_fact"
+      ) {
         return `- [${operation.kind}] ${operation.text}`;
+      }
+      if (operation.type === "forget_user_fact") {
+        return `- [forget] ${operation.normalizedKey ?? operation.matchText ?? "all"}`;
       }
       return `- [learning/${operation.kind ?? "user_fact"}] ${operation.observation}`;
     })
