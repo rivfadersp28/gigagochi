@@ -276,7 +276,7 @@ function PetMessageText({
         : null;
     const hapticTimeoutIds = units.map((_, index) =>
       window.setTimeout(
-        () => hapticImpact("rigid"),
+        () => hapticImpact("light"),
         index * PET_CHARACTER_RISE_STAGGER_MS,
       ),
     );

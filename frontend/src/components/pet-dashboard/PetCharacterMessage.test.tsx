@@ -26,7 +26,7 @@ describe("PetCharacterMessage", () => {
     hapticImpactMock.mockReset();
   });
 
-  it("plays rigid haptic feedback as each animated character appears", () => {
+  it("plays light haptic feedback as each animated character appears", () => {
     vi.useFakeTimers();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -55,14 +55,14 @@ describe("PetCharacterMessage", () => {
 
       vi.advanceTimersByTime(0);
       expect(hapticImpactMock).toHaveBeenCalledTimes(1);
-      expect(hapticImpactMock).toHaveBeenLastCalledWith("rigid");
+      expect(hapticImpactMock).toHaveBeenLastCalledWith("light");
 
       vi.advanceTimersByTime(23);
       expect(hapticImpactMock).toHaveBeenCalledTimes(1);
 
       vi.advanceTimersByTime(1);
       expect(hapticImpactMock).toHaveBeenCalledTimes(2);
-      expect(hapticImpactMock).toHaveBeenLastCalledWith("rigid");
+      expect(hapticImpactMock).toHaveBeenLastCalledWith("light");
     } finally {
       if (originalAnimate) {
         Object.defineProperty(HTMLElement.prototype, "animate", originalAnimate);
