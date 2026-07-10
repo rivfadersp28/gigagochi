@@ -254,7 +254,7 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
 
     response = chat_with_local_pet(lite_payload())
 
-    assert response.reply == "Я стою и слушаю. Говори."
+    assert response.reply == "Я стою и слушаю. Говори"
     assert response.debug is not None
     assert len(completions.calls) == 1
     request = completions.calls[0]
@@ -936,7 +936,7 @@ def test_chat_history_auto_uses_deterministic_context_plan(monkeypatch, tmp_path
     finally:
         speech_runtime.speech_runtime_config.cache_clear()
 
-    assert response.reply == "Я тут."
+    assert response.reply == "Я тут"
     assert len(completions.calls) == 1
     assert response.debug is not None
     assert response.debug.contextRoutingDebug is not None
@@ -981,7 +981,7 @@ def test_visible_context_router_is_skipped_without_auto_sources(monkeypatch, tmp
     finally:
         speech_runtime.speech_runtime_config.cache_clear()
 
-    assert response.reply == "Без лишнего контекста."
+    assert response.reply == "Без лишнего контекста"
     assert len(completions.calls) == 1
     assert completions.calls[0]["messages"][0]["content"].startswith("Ты Громм.")
     assert response.debug is not None
@@ -1079,7 +1079,7 @@ def test_lite_reads_structured_face_and_mood_hints() -> None:
 
     response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
 
-    assert response.reply == "Я рядом, слышу тебя."
+    assert response.reply == "Я рядом, слышу тебя"
     assert response.innerThought is None
     assert response.faceHint == "content"
     assert response.moodHint == "happy"
@@ -1097,7 +1097,7 @@ def test_lite_uses_safe_fallback_for_invalid_structured_reply() -> None:
 
     response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
 
-    assert response.reply == "Я рядом."
+    assert response.reply == "Я рядом"
     assert response.debug is not None
     assert response.debug.usedFallback is True
     assert response.debug.validationFlags == ["structured_reply_invalid_json"]
@@ -1115,7 +1115,7 @@ def test_lite_omits_debug_when_not_requested() -> None:
         timeout=10,
     )
 
-    assert response.reply == "Я рядом."
+    assert response.reply == "Я рядом"
     assert response.debug is None
 
 
@@ -1532,7 +1532,7 @@ def test_ambient_generation_returns_story_context_debug() -> None:
     )
 
     assert len(completions.calls) == 1
-    assert response.reply == "Лист шепчет: крошка сегодня светится."
+    assert response.reply == "Лист шепчет: крошка сегодня светится"
     assert response.debug is not None
     assert response.debug.storyLibraryDebug is not None
     assert response.debug.storyLibraryDebug["mode"] == "ambient"
@@ -1554,7 +1554,7 @@ def test_lite_tools_do_not_expose_character_json() -> None:
         timeout=10,
     )
 
-    assert response.reply == "Я ем мокрую глину после дождя."
+    assert response.reply == "Я ем мокрую глину после дождя"
     assert len(completions.calls) == 1
     assert "tools" not in completions.calls[0]
     assert completions.calls[0]["reasoning_effort"] == "high"
@@ -1576,7 +1576,7 @@ def test_lite_story_library_context_is_disabled_without_story_tools() -> None:
     )
 
     assert len(completions.calls) == 1
-    assert response.reply == "Да, но они чаще странные, чем злые."
+    assert response.reply == "Да, но они чаще странные, чем злые"
     request = completions.calls[0]
     system_message = request["messages"][0]["content"]
     assert "WORLD_CONTEXT" not in system_message
@@ -1635,7 +1635,7 @@ def test_lite_character_profile_uses_core_but_not_unselected_durable_facts() -> 
         timeout=10,
     )
 
-    assert response.reply == "Я Громм, каменный и спокойный."
+    assert response.reply == "Я Громм, каменный и спокойный"
     system_message = completions.calls[0]["messages"][0]["content"]
     assert "CHARACTER_PROFILE" not in system_message
     assert "каменный хранитель" in system_message
@@ -1734,7 +1734,7 @@ def test_lite_tool_updates_pet_name() -> None:
     )
 
     assert len(completions.calls) == 2
-    assert response.reply == "Дружок звучит тепло."
+    assert response.reply == "Дружок звучит тепло"
     assert response.petPatch is not None
     assert response.petPatch.name == "Дружок"
     assert response.debug is not None
@@ -1791,7 +1791,7 @@ def test_lite_world_tool_bootstrap_is_disabled() -> None:
         timeout=10,
     )
 
-    assert response.reply == "Я сам решу, где мой дом."
+    assert response.reply == "Я сам решу, где мой дом"
     assert response.debug is not None
     assert response.debug.liteToolCalls == []
     assert response.debug.liteOverlayPatch is None

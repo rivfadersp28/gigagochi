@@ -12,5 +12,24 @@ def test_clamp_reply_text_does_not_keep_schema_truncation_mid_word() -> None:
     assert result.endswith("звон…")
 
 
-def test_clamp_reply_text_preserves_short_reply() -> None:
-    assert clamp_reply_text("Я рядом.", 300) == "Я рядом."
+def test_clamp_reply_text_removes_terminal_period() -> None:
+    assert clamp_reply_text("Я рядом.", 300) == "Я рядом"
+
+
+def test_clamp_reply_text_keeps_internal_periods_and_other_endings() -> None:
+    assert clamp_reply_text("Я рядом. Я слушаю.", 300) == "Я рядом. Я слушаю"
+    assert clamp_reply_text("Ты рядом?", 300) == "Ты рядом?"
+    assert clamp_reply_text("Я думаю…", 300) == "Я думаю…"
+    assert clamp_reply_text("Я думаю...", 300) == "Я думаю..."
+
+
+def test_clamp_reply_text_removes_period_before_closing_quote() -> None:
+    assert clamp_reply_text("«Я рядом.»", 300) == "«Я рядом»"
+
+
+def test_clamp_reply_text_removes_period_at_natural_truncation_break() -> None:
+    reply = f"{'слово ' * 30}конец. {'хвост ' * 30}"
+
+    result = clamp_reply_text(reply, 220)
+
+    assert result.endswith("конец")
