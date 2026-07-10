@@ -5,9 +5,9 @@ import styles from "./PetThinkingIndicator.module.css";
 export const PET_THINKING_MIN_VISIBLE_MS = 1_000;
 
 export const PET_THINKING_FRAME_SOURCES = [
-  "/figma/thinking-frame-1.svg",
-  "/figma/thinking-frame-2.svg",
-  "/figma/thinking-frame-3.svg",
+  "/figma/thinking-frame-1.svg?v=20260710-figma-142-1653-1",
+  "/figma/thinking-frame-2.svg?v=20260710-figma-142-1654-1",
+  "/figma/thinking-frame-3.svg?v=20260710-figma-142-1655-1",
 ] as const;
 
 export function PetThinkingIndicator() {

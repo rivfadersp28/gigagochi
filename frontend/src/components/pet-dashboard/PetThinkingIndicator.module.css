@@ -14,12 +14,11 @@
 
 .indicator {
   position: absolute;
-  top: calc(22.3112% + 20px);
+  top: calc(22.3112% + 40px);
   left: 50%;
   z-index: 30;
-  width: auto;
-  height: 9.7379%;
-  aspect-ratio: 80 / 85.109;
+  width: 19.9005%;
+  height: 6.3482%;
   transform: translate3d(-50%, 0, 0);
   pointer-events: none;
 }
@@ -35,27 +34,25 @@
 }
 
 .image1 {
-  top: -2.52%;
-  left: -2.68%;
-  width: 105.36%;
-  height: 105.94%;
+  top: -3.55%;
+  left: -2.46%;
+  width: 104.93%;
+  height: 105.06%;
 }
 
 .image2 {
-  top: -2.52%;
-  left: -2.68%;
-  width: 105.36%;
-  height: 102.52%;
-  transform: scaleX(-1);
+  top: -2.62%;
+  left: -3.3%;
+  width: 105.98%;
+  height: 91.64%;
   animation-delay: 200ms;
 }
 
 .image3 {
-  top: -2.52%;
-  left: -3.27%;
-  width: 105.95%;
-  height: 102.52%;
-  transform: scale(-1, -1);
+  top: -3.6%;
+  left: -3%;
+  width: 105.58%;
+  height: 107.94%;
   animation-delay: 400ms;
 }
 

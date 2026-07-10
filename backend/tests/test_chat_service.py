@@ -278,9 +278,10 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert "Ответь на последнее сообщение как этот персонаж." in system_message
     assert "Верни только JSON" not in system_message
     assert request["response_format"]["json_schema"]["name"] == "visible_pet_reply"
-    assert request["response_format"]["json_schema"]["schema"]["properties"]["reply"][
-        "maxLength"
-    ] == 300
+    assert (
+        request["response_format"]["json_schema"]["schema"]["properties"]["reply"]["maxLength"]
+        == 300
+    )
     assert "tools" not in request
     assert "STORY_LIBRARY" not in system_message
 
@@ -579,8 +580,7 @@ def test_lite_prompt_includes_compact_character_voice_without_raw_controls() -> 
 
     assert (
         "Ты маленький Пончик. Говори от первого лица связно, просто и конкретно. "
-        "Если мысль требует, используй несколько коротких предложений."
-        in system_message
+        "Если мысль требует, используй несколько коротких предложений." in system_message
     )
     assert "кремовый котенок-компаньон" in system_message
     assert "VOICE_CONTROL" not in system_message
@@ -1190,10 +1190,7 @@ def test_proactive_prompt_includes_compact_character_voice_without_catchphrases(
     assert "VOICE_CONTROL" not in system_message
     assert "говорит через маленькие бытовые детали" in system_message
     assert "нос подсказывает" not in system_message
-    assert (
-        "Напиши первым. Повод: пользователь обещал вернуться вечером"
-        in system_message
-    )
+    assert "Напиши первым. Повод: пользователь обещал вернуться вечером" in system_message
     assert "Ты сам решил написать пользователю первым" not in system_message
     assert "Напиши одну живую реплику" not in system_message
     assert "автоматическое сообщение" not in system_message
@@ -1286,9 +1283,11 @@ def test_ambient_prompt_receives_one_selected_dialogue_impulse(monkeypatch) -> N
 
     assert (
         "Разговорный импульс этой реплики: поделись внезапной мыслью или вопросом, "
-        "который тебя занимает."
-        in prompt
+        "который тебя занимает." in prompt
     )
+    assert "1–3 законченных коротких предложений" in prompt
+    assert "Каждое предложение — не длиннее 40 символов." in prompt
+    assert "Не обрывай мысль многоточием." in prompt
     assert "поприветствуй и прояви интерес к собеседнику" not in prompt
 
 

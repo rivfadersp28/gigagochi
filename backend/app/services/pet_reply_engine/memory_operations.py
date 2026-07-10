@@ -267,11 +267,7 @@ def _normalized_memory_operation(value: Any) -> dict[str, Any] | None:
             return None
         return {
             "type": "forget_user_fact",
-            **(
-                {"normalizedKey": _truncate_text(normalized_key, 160)}
-                if normalized_key
-                else {}
-            ),
+            **({"normalizedKey": _truncate_text(normalized_key, 160)} if normalized_key else {}),
             **({"matchText": _truncate_text(match_text, 500)} if match_text else {}),
         }
 

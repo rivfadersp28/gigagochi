@@ -119,7 +119,7 @@ const INITIAL_PET_REPLY_FALLBACK = "…";
 const CHAT_REPLY_MAX_CHARS = 300;
 const IDLE_REPLY_MAX_CHARS = 120;
 const IDLE_REPLY_MAX_PORTIONS = 3;
-const IDLE_REPLY_AUTO_ADVANCE_MS = 4_000;
+const REPLY_AUTO_ADVANCE_MS = 3_000;
 const UNNAMED_STATUS_NAME = "Без имени";
 const ACTION_ICON_CACHE_VERSION = "20260710-figma-142-1509-1";
 const VIDEO_FILTER_CACHE_VERSION = "20260709-video-filter-normal-2";
@@ -261,6 +261,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [chatError, setChatError] = useState<string | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
   const [isGeneratingIdleReply, setIsGeneratingIdleReply] = useState(false);
+  const [isIdleSpeechBubbleDismissed, setIsIdleSpeechBubbleDismissed] = useState(false);
   const [isTravelGenerating, setIsTravelGenerating] = useState(false);
   const [travelResult, setTravelResult] = useState<GenerateTravelResponse | null>(null);
   const [travelError, setTravelError] = useState<string | null>(null);
@@ -268,7 +269,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [feedSuccessId, setFeedSuccessId] = useState(0);
   const [includePromptDebug] = useState(() => readLocalPetSettings().includePromptDebug);
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
-  const [hasNextReplySentence, setHasNextReplySentence] = useState(false);
   const [assetsReadyForPetId, setAssetsReadyForPetId] = useState<string | null>(null);
   const [assetLoadErrorForPetId, setAssetLoadErrorForPetId] = useState<string | null>(null);
   const proactiveAttemptedRef = useRef(false);
@@ -285,6 +285,19 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const feedDropTargetRef = useRef<HTMLDivElement>(null);
   const isSendingChatRef = useRef(false);
   const isTravelGeneratingRef = useRef(false);
+  const cancelReplyAutoAdvance = useCallback(() => {
+    if (replyAutoAdvanceTimeoutRef.current !== null) {
+      window.clearTimeout(replyAutoAdvanceTimeoutRef.current);
+      replyAutoAdvanceTimeoutRef.current = null;
+    }
+    replyAutoAdvanceRef.current = null;
+    petReplySentenceQueueRef.current = [];
+  }, []);
+  const cancelIdleReplyGeneration = useCallback(() => {
+    ambientRequestIdRef.current += 1;
+    idleThinkingRequestIdRef.current += 1;
+    setIsGeneratingIdleReply(false);
+  }, []);
   const beginIdleThinking = useCallback(() => {
     const requestId = idleThinkingRequestIdRef.current + 1;
     idleThinkingRequestIdRef.current = requestId;
@@ -380,19 +393,20 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           maxPortions: options.maxPortions,
         })
       : splitPetReplySentences(voicedText);
+    const remainingSentences = sentences.slice(1);
     const nextMessage = {
       id: (petReplyMessageRef.current?.id ?? 0) + 1,
       text: sentences[0] ?? voicedText,
       playSpeechAudio,
+      hasNextPortion: remainingSentences.length > 0,
     };
-    const remainingSentences = sentences.slice(1);
     petReplySentenceQueueRef.current = remainingSentences;
     replyAutoAdvanceRef.current = remainingSentences.length > 0 && options.autoAdvanceDelayMs
       ? { messageId: nextMessage.id, delayMs: options.autoAdvanceDelayMs }
       : null;
-    setHasNextReplySentence(remainingSentences.length > 0);
     petReplyMessageRef.current = nextMessage;
     activeDialogueHookRef.current = options.dialogueHook ? voicedText : null;
+    setIsIdleSpeechBubbleDismissed(false);
     setPetReplyMessage(nextMessage);
     if (options.showInConversation) {
       setConversationReplyMessageId(nextMessage.id);
@@ -410,9 +424,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       ...currentMessage,
       id: currentMessage.id + 1,
       text: nextSentence,
+      hasNextPortion: remainingSentences.length > 0,
     };
     petReplySentenceQueueRef.current = remainingSentences;
-    setHasNextReplySentence(remainingSentences.length > 0);
     petReplyMessageRef.current = nextMessage;
     setPetReplyMessage(nextMessage);
     setConversationReplyMessageId((currentConversationMessageId) =>
@@ -497,7 +511,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           dialogueHook: true,
           voiceMode: "generated",
           maxPortions: IDLE_REPLY_MAX_PORTIONS,
-          autoAdvanceDelayMs: IDLE_REPLY_AUTO_ADVANCE_MS,
+          autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
         });
         ambientReplyHistoryRef.current = appendRecentAmbientReply(pet.petId, response.reply);
         localPet.applyMoodHint(
@@ -526,16 +540,44 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [beginIdleThinking, includePromptDebug, localPet, pet, showPetReplyMessage]);
 
   const closeChatMode = useCallback(() => {
+    cancelReplyAutoAdvance();
     setIsChatMode(false);
     setChatError(null);
     setConversationReplyMessageId(null);
     requestAmbientReply();
     chatInputRef.current?.blur();
-  }, [requestAmbientReply]);
+  }, [cancelReplyAutoAdvance, requestAmbientReply]);
 
   const closeFeedMode = useCallback(() => {
     setIsFeedMode(false);
   }, []);
+
+  const handleMainScreenTap = useCallback((event: MouseEvent<HTMLElement>) => {
+    if (
+      isChatMode
+      || isFeedMode
+      || isDebugPanelOpen
+      || travelResult
+      || confirmationAction
+    ) {
+      return;
+    }
+
+    const target = event.target;
+    if (target instanceof Element && target.closest("button")) {
+      return;
+    }
+
+    cancelReplyAutoAdvance();
+    setIsIdleSpeechBubbleDismissed(true);
+  }, [
+    cancelReplyAutoAdvance,
+    confirmationAction,
+    isChatMode,
+    isDebugPanelOpen,
+    isFeedMode,
+    travelResult,
+  ]);
 
   const handleTelegramBack = useCallback(() => {
     if (isFeedMode) {
@@ -664,13 +706,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }
 
   function handleOpenChatMode() {
-    if (replyAutoAdvanceTimeoutRef.current !== null) {
-      window.clearTimeout(replyAutoAdvanceTimeoutRef.current);
-      replyAutoAdvanceTimeoutRef.current = null;
-    }
-    replyAutoAdvanceRef.current = null;
-    petReplySentenceQueueRef.current = [];
-    setHasNextReplySentence(false);
+    cancelReplyAutoAdvance();
+    cancelIdleReplyGeneration();
     setIsFeedMode(false);
     setIsDebugPanelOpen(false);
     setChatError(null);
@@ -693,6 +730,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
 
+    cancelReplyAutoAdvance();
+    cancelIdleReplyGeneration();
     void primePetSpeechAudio();
     if (options.dismissKeyboard) {
       dismissChatKeyboard();
@@ -726,7 +765,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
       });
       await minimumThinkingTime;
-      showPetReplyMessage(response.reply, true, { showInConversation: true });
+      showPetReplyMessage(response.reply, true, {
+        showInConversation: true,
+        autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
+      });
       localPet.applyMoodHint(
         response.moodHint,
         response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
@@ -759,30 +801,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   function handleSendButtonClick(event: MouseEvent<HTMLButtonElement>) {
     event.preventDefault();
     void submitChatMessage({ dismissKeyboard: true });
-  }
-
-  function handleReplyNextButtonClick(event: MouseEvent<HTMLButtonElement>) {
-    event.preventDefault();
-    event.stopPropagation();
-    advancePetReplySentence();
-  }
-
-  function handleSceneClickCapture(event: MouseEvent<HTMLElement>) {
-    if (!isChatMode || travelResult || isDebugPanelOpen || confirmationAction) {
-      return;
-    }
-    if (
-      event.target instanceof Element &&
-      event.target.closest("[data-reply-next-button='true']")
-    ) {
-      return;
-    }
-    if (!advancePetReplySentence()) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
   }
 
   function handleResetPet() {
@@ -939,14 +957,16 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     id: 0,
     text: INITIAL_PET_REPLY_FALLBACK,
     playSpeechAudio: false,
+    hasNextPortion: false,
   };
   const shouldShowConversationReply =
     isChatMode && conversationReplyMessageId === displayedReply.id;
   const isIdleThinkingVisible =
     !isChatMode && !isFeedMode && isGeneratingIdleReply;
   const shouldShowSpeechBubble =
-    !isFeedMode && !isIdleThinkingVisible && (!isChatMode || shouldShowConversationReply);
-  const canAdvanceReply = isChatMode && hasNextReplySentence && !isSendingChat;
+    !isFeedMode
+    && !isIdleThinkingVisible
+    && (isChatMode ? shouldShowConversationReply : !isIdleSpeechBubbleDismissed);
   const displayedPetName = pet.name?.trim() || UNNAMED_STATUS_NAME;
   const hungerPercent = Math.max(0, Math.min(100, pet.stats.hunger));
   const moodPercent = Math.max(0, Math.min(100, pet.stats.happiness));
@@ -961,7 +981,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   return (
     <main
       className="main-shell tma-screen overflow-clip"
-      onClickCapture={handleSceneClickCapture}
+      onClick={handleMainScreenTap}
     >
       {localPet.error ? (
         <div className="fixed left-5 right-5 top-[max(20px,calc(var(--tma-safe-top)+12px))] z-20 rounded-[8px] border border-[var(--danger-line)] bg-white px-4 py-3 text-sm text-[var(--danger)] sm:left-8 sm:right-auto sm:max-w-sm">
@@ -1065,30 +1085,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           <PetSpeechBubble
             isVisible={shouldShowSpeechBubble}
             message={displayedReply}
-            scaleOrigin={isChatMode ? "bottom" : "top"}
+            scaleOrigin="bottom"
             shapeSrc={speechBubbleSrc}
           />
         </div>
-
-        {isChatMode ? (
-          <span className="conversation-next-control feed-fade-target">
-            <button
-              type="button"
-              className={`conversation-next-button ${
-                canAdvanceReply
-                  ? "conversation-next-button--visible"
-                  : ""
-              }`}
-              data-reply-next-button="true"
-              disabled={!canAdvanceReply}
-              aria-hidden={!canAdvanceReply}
-              tabIndex={canAdvanceReply ? 0 : -1}
-              onClick={handleReplyNextButtonClick}
-            >
-              Далее
-            </button>
-          </span>
-        ) : null}
 
         <form
           onSubmit={handleChatSubmit}

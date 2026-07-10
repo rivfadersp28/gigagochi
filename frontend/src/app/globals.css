@@ -350,8 +350,7 @@ body {
 }
 
 .main-mobile-scene:not(.main-mobile-scene--chat) .main-speech-bubble-anchor {
-  top: 192px;
-  bottom: auto;
+  bottom: calc(100% - 336px);
 }
 
 .main-speech-bubble {
@@ -398,63 +397,6 @@ body {
   transform-origin: 50% 100%;
   pointer-events: none;
   user-select: none;
-}
-
-.main-mobile-scene:not(.main-mobile-scene--chat) .main-speech-bubble__shape {
-  transform-origin: 50% 0%;
-}
-
-.conversation-next-control {
-  position: absolute;
-  right: 20px;
-  bottom: 142px;
-  z-index: 50;
-  display: block;
-  width: 110px;
-  height: 54px;
-  transform: translate3d(0, var(--conversation-input-offset-y, 0px), 0);
-  pointer-events: none;
-}
-
-.conversation-next-button {
-  display: flex;
-  box-sizing: border-box;
-  width: 110px;
-  height: 54px;
-  align-items: center;
-  justify-content: center;
-  padding: 14px 17px 16px;
-  border: 0;
-  border-radius: 22px;
-  background: #333333;
-  color: #ffffff;
-  font-family: "SF Pro Rounded", "SF Pro Display", var(--font-open-runde), ui-rounded,
-    system-ui, sans-serif;
-  font-size: 20px;
-  font-weight: 900;
-  line-height: normal;
-  opacity: 0;
-  transform: scale(0.96);
-  box-shadow:
-    inset 1px 2px 4px rgba(255, 255, 255, 0.2),
-    inset -4px -4px 4px rgba(0, 0, 0, 0.2);
-  -webkit-backdrop-filter: blur(18.5px);
-  backdrop-filter: blur(18.5px);
-  transition:
-    opacity 180ms ease-out,
-    transform 180ms ease-out;
-  pointer-events: none;
-}
-
-.conversation-next-button--visible {
-  opacity: 1;
-  transform: scale(1);
-  pointer-events: auto;
-}
-
-.conversation-next-button:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.92);
-  outline-offset: 3px;
 }
 
 .main-speech-bubble p {

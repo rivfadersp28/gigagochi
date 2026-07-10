@@ -189,9 +189,7 @@ def validate_speech_runtime_config(config: Any) -> None:
         ("backgroundStory", "reasoningEffort"),
     )
     if background_reasoning_effort not in {"none", "low", "medium", "high"}:
-        raise ValueError(
-            "backgroundStory.reasoningEffort must be one of none, low, medium, high"
-        )
+        raise ValueError("backgroundStory.reasoningEffort must be one of none, low, medium, high")
     background_template = _required_string(config, ("backgroundStory", "userTemplate"))
     if "{character}" not in background_template:
         raise ValueError("backgroundStory.userTemplate must include {character}")

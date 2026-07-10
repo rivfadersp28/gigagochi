@@ -1,0 +1,87 @@
+@keyframes continuation-dot-hop {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+
+  50% {
+    transform: translate3d(0, -5px, 0);
+  }
+}
+
+@keyframes continuation-dot-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, var(--pet-continuation-translate-y, 0), 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.continuationDots {
+  display: inline-flex;
+  width: 24.5833px;
+  height: 5.4167px;
+  align-items: center;
+  justify-content: space-between;
+  margin-inline-start: 8px;
+  transform: translate3d(0, 2px, 0);
+  vertical-align: 0.08em;
+  white-space: nowrap;
+}
+
+.continuationDotUnit {
+  display: block;
+  width: 5.4167px;
+  height: 5.4167px;
+  flex: 0 0 5.4167px;
+  opacity: 0;
+  transform: translate3d(0, var(--pet-continuation-translate-y, 0), 0);
+  animation: continuation-dot-enter var(--pet-continuation-enter-duration, 700ms)
+    var(--pet-continuation-enter-easing, ease-out)
+    var(--pet-continuation-enter-delay, 0ms) forwards;
+  will-change: transform, opacity;
+}
+
+.continuationDotUnitEntered {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  animation: none;
+  will-change: auto;
+}
+
+.continuationDot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: currentColor;
+  animation: continuation-dot-hop 600ms ease-in-out infinite both;
+  animation-delay: var(--pet-continuation-bounce-delay, 0ms);
+  will-change: transform;
+}
+
+.continuationDotUnit:nth-child(2) .continuationDot {
+  animation-delay: calc(var(--pet-continuation-bounce-delay, 0ms) + 200ms);
+}
+
+.continuationDotUnit:nth-child(3) .continuationDot {
+  animation-delay: calc(var(--pet-continuation-bounce-delay, 0ms) + 400ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .continuationDotUnit {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    animation: none;
+    will-change: auto;
+  }
+
+  .continuationDot {
+    animation: none;
+    will-change: auto;
+  }
+}

@@ -109,9 +109,7 @@ def effective_character_data(pet: Any) -> dict[str, Any]:
                 320,
             ),
             "habitat": _text(
-                world.get("habitat")
-                or lore_world.get("environment")
-                or lore_world.get("story"),
+                world.get("habitat") or lore_world.get("environment") or lore_world.get("story"),
                 320,
             ),
             "objects": _texts(
@@ -158,9 +156,7 @@ def effective_character_data(pet: Any) -> dict[str, Any]:
             }
         if isinstance(value, list):
             return [
-                cleaned
-                for item in value
-                if (cleaned := compact(item)) not in (None, "", [], {})
+                cleaned for item in value if (cleaned := compact(item)) not in (None, "", [], {})
             ]
         return value
 

@@ -1,9 +1,13 @@
 .scaleTransition {
+  opacity: 1;
   transform: scale(1);
-  transition: transform 180ms ease-out;
+  transition:
+    opacity 180ms ease-out,
+    transform 180ms ease-out;
 }
 
 .hidden {
+  opacity: 0;
   transform: scale(0.7);
 }
 

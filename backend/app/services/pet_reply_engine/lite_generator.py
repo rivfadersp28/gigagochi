@@ -528,9 +528,7 @@ _CHARACTER_DETAIL_REQUEST_RE = re.compile(
     r"прошл|истори|пита|\bешь\b|ед[ауеы]|батар|нюх|вывес)",
     re.IGNORECASE,
 )
-_CASUAL_CHARACTER_SUPPRESSED_SOURCES = frozenset(
-    {"characterProfile", "liteOverlay", "chatHistory"}
-)
+_CASUAL_CHARACTER_SUPPRESSED_SOURCES = frozenset({"characterProfile", "liteOverlay", "chatHistory"})
 
 
 def _is_casual_character_small_talk(message: str) -> bool:
@@ -642,8 +640,7 @@ def _ambient_memory_context_block(memory_context: LocalPetMemoryContext | None) 
     lines = [
         f"- [{item.kind}] {text}"
         for item in memory_context.relevantMemories[:MAX_MEMORY_CONTEXT_ITEMS]
-        if item.kind in AMBIENT_MEMORY_KINDS
-        and (text := _clean_optional_text(item.text, 300))
+        if item.kind in AMBIENT_MEMORY_KINDS and (text := _clean_optional_text(item.text, 300))
     ]
     if not lines:
         return None
@@ -715,8 +712,7 @@ def _anti_repeat_block(lines: list[str]) -> str | None:
         "Недавние реплики персонажа, уже показанные владельцу:\n"
         + "\n".join(f"- {line}" for line in lines)
         + "\nИзбегай не только дословного повтора, но и той же стартовой конструкции, "
-        "действия, предмета, метафоры и повода заговорить. Это не источник фактов."
-        + marker_rule
+        "действия, предмета, метафоры и повода заговорить. Это не источник фактов." + marker_rule
     )
 
 
@@ -2104,9 +2100,7 @@ def generate_lite_pet_reply(
             "messages": messages,
             "response_format": _visible_reply_response_format(reply_limit),
             "timeout": timeout,
-            **chat_reasoning_effort_kwargs(
-                "none" if tools else visible_reply_reasoning_effort()
-            ),
+            **chat_reasoning_effort_kwargs("none" if tools else visible_reply_reasoning_effort()),
         }
         if tools:
             request_kwargs["tools"] = tools

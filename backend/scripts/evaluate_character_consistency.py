@@ -27,8 +27,7 @@ from app.services.pet_reply_engine.lite_generator import (
 from app.services.pet_reply_engine.memory_operations import extract_user_memory_operations
 
 DEFAULT_DESCRIPTION = (
-    "небольшой шестилапый зверёк из потемневшей меди, "
-    "который слышит дождь через полые рога"
+    "небольшой шестилапый зверёк из потемневшей меди, который слышит дождь через полые рога"
 )
 MODERN_INTRUSIONS = (
     "смартфон",

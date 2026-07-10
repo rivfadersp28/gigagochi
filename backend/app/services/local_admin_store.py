@@ -345,9 +345,7 @@ def dialogue_influence_manifest() -> dict[str, Any]:
                 "editable": True,
                 "fileId": "speech_runtime",
                 "configPath": "identityTemplate",
-                "summary": (
-                    "Один шаблон identity/age/state строки для всех видимых реплик."
-                ),
+                "summary": ("Один шаблон identity/age/state строки для всех видимых реплик."),
             },
             {
                 "id": "visible_reply_runtime",

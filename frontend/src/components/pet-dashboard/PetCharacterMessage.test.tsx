@@ -29,7 +29,7 @@ describe("PetCharacterMessage", () => {
 
     render(
       <PetCharacterMessage
-        message={{ id: 1, text: longMessage, playSpeechAudio: false }}
+        message={{ id: 1, text: longMessage, playSpeechAudio: false, hasNextPortion: false }}
         textTranslateY={0}
         speechEndTrimMs={0}
         maxCurrentMessageLines={2}
@@ -49,7 +49,12 @@ describe("PetCharacterMessage", () => {
 
     render(
       <PetCharacterMessage
-        message={{ id: 1, text: "Короткая фраза.", playSpeechAudio: false }}
+        message={{
+          id: 1,
+          text: "Короткая фраза.",
+          playSpeechAudio: false,
+          hasNextPortion: false,
+        }}
         textTranslateY={0}
         speechEndTrimMs={0}
         maxCurrentMessageLines={2}
@@ -59,7 +64,7 @@ describe("PetCharacterMessage", () => {
     expect(screen.getByLabelText("Короткая фраза.")).toHaveStyle({ fontSize: "26px" });
   });
 
-  it("can reduce the font down to twelve pixels for a long sentence", () => {
+  it("never reduces the font below twelve pixels", () => {
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
       this: HTMLElement,
     ) {
@@ -69,7 +74,7 @@ describe("PetCharacterMessage", () => {
 
     render(
       <PetCharacterMessage
-        message={{ id: 1, text: longMessage, playSpeechAudio: false }}
+        message={{ id: 1, text: longMessage, playSpeechAudio: false, hasNextPortion: false }}
         textTranslateY={0}
         speechEndTrimMs={0}
         maxCurrentMessageLines={2}
@@ -77,5 +82,84 @@ describe("PetCharacterMessage", () => {
     );
 
     expect(screen.getByLabelText(longMessage)).toHaveStyle({ fontSize: "12px" });
+  });
+
+  it("reduces the font when the final word with dots overflows horizontally", () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const fontSize = Number.parseFloat(this.style.fontSize || "26");
+      return fontSize * 1.15 * 2;
+    });
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(270);
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const fontSize = Number.parseFloat(this.style.fontSize || "26");
+      return fontSize > 14 ? 280 : 260;
+    });
+
+    render(
+      <PetCharacterMessage
+        message={{
+          id: 1,
+          text: "Сверхдлинноепредыдущееслово",
+          playSpeechAudio: false,
+          hasNextPortion: true,
+        }}
+        textTranslateY={0}
+        speechEndTrimMs={0}
+        maxCurrentMessageLines={2}
+      />,
+    );
+
+    expect(screen.getByLabelText("Сверхдлинноепредыдущееслово")).toHaveStyle({
+      fontSize: "14px",
+    });
+  });
+
+  it("renders three continuation dots after a message portion", () => {
+    const { container } = render(
+      <PetCharacterMessage
+        message={{ id: 1, text: "Не знаю", playSpeechAudio: false, hasNextPortion: true }}
+        textTranslateY={0}
+        speechEndTrimMs={0}
+      />,
+    );
+
+    expect(
+      container.querySelectorAll("[data-pet-message-continuation-dot]"),
+    ).toHaveLength(3);
+    expect(
+      container.querySelector("[data-pet-message-continuation='true']"),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector("[data-pet-message-continuation='true']"),
+    ).toHaveAttribute("data-pet-message-continuation-delay", "220");
+    expect(
+      Array.from(
+        container.querySelectorAll("[data-pet-message-continuation-enter-delay]"),
+        (unit) => unit.getAttribute("data-pet-message-continuation-enter-delay"),
+      ),
+    ).toEqual(["220", "244", "268"]);
+  });
+
+  it("does not render continuation dots for the final portion", () => {
+    const { container } = render(
+      <PetCharacterMessage
+        message={{
+          id: 1,
+          text: "Это последняя порция",
+          playSpeechAudio: false,
+          hasNextPortion: false,
+        }}
+        textTranslateY={0}
+        speechEndTrimMs={0}
+      />,
+    );
+
+    expect(
+      container.querySelector("[data-pet-message-continuation='true']"),
+    ).not.toBeInTheDocument();
   });
 });

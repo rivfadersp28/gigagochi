@@ -6,11 +6,13 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { playPetSpeechAudioSequence } from "@/lib/petSpeechAudio";
 
 import { finishAnimation, shouldReduceMotion } from "./motion";
+import styles from "./PetCharacterMessage.module.css";
 
 export type PetReplyMessage = {
   id: number;
   text: string;
   playSpeechAudio: boolean;
+  hasNextPortion: boolean;
 };
 
 export type PetMessageLayout = {
@@ -25,9 +27,21 @@ const PET_REPLY_CROSS_EXIT_EASING = "cubic-bezier(0.2, 0, 0, 1)";
 const PET_CHARACTER_RISE_DURATION_MS = 700;
 const PET_CHARACTER_RISE_STAGGER_MS = 24;
 const PET_CHARACTER_RISE_EASING = "cubic-bezier(0.2, 0.8, 0.2, 1)";
+const PET_CONTINUATION_DOTS_DELAY_MS = -600;
 const PET_MESSAGE_MAX_FONT_SIZE_PX = 26;
 const PET_MESSAGE_MIN_FONT_SIZE_PX = 12;
 const PET_MESSAGE_LINE_HEIGHT = 1.15;
+
+type PetContinuationDotsStyle = CSSProperties & {
+  "--pet-continuation-bounce-delay": string;
+  "--pet-continuation-enter-duration": string;
+  "--pet-continuation-enter-easing": string;
+  "--pet-continuation-translate-y": string;
+};
+
+type PetContinuationDotUnitStyle = CSSProperties & {
+  "--pet-continuation-enter-delay": string;
+};
 
 const petMessageStackStyle: CSSProperties = {
   position: "relative",
@@ -63,6 +77,10 @@ function renderedMessageLineCount(layer: HTMLElement, fontSize: number) {
   return Math.max(1, Math.ceil(layer.offsetHeight / lineHeight - 0.05));
 }
 
+function renderedMessageOverflowsHorizontally(layer: HTMLElement) {
+  return layer.clientWidth > 0 && layer.scrollWidth - layer.clientWidth > 0.5;
+}
+
 const petMessageWordStyle: CSSProperties = {
   display: "inline-block",
   whiteSpace: "nowrap",
@@ -76,11 +94,90 @@ const petMessageUnitStyle: CSSProperties = {
   willChange: "transform, opacity",
 };
 
-function renderPetMessageUnits(text: string, translateY: number): ReactNode[] {
+function petMessageRevealDurationMs(text: string) {
+  const unitCount = Array.from(text).filter((character) => !/^\s$/u.test(character)).length;
+  return unitCount > 0
+    ? PET_CHARACTER_RISE_DURATION_MS +
+      (unitCount - 1) * PET_CHARACTER_RISE_STAGGER_MS +
+      PET_CONTINUATION_DOTS_DELAY_MS
+    : 0;
+}
+
+function PetMessageContinuationDots({
+  revealDelayMs,
+  translateY,
+  animateEntrance = true,
+}: {
+  revealDelayMs: number;
+  translateY: number;
+  animateEntrance?: boolean;
+}) {
+  const style: PetContinuationDotsStyle = {
+    "--pet-continuation-bounce-delay": `${
+      animateEntrance ? revealDelayMs : 0
+    }ms`,
+    "--pet-continuation-enter-duration": `${PET_CHARACTER_RISE_DURATION_MS}ms`,
+    "--pet-continuation-enter-easing": PET_CHARACTER_RISE_EASING,
+    "--pet-continuation-translate-y": `${translateY}px`,
+  };
+
+  return (
+    <span
+      className={styles.continuationDots}
+      data-pet-message-continuation="true"
+      data-pet-message-continuation-delay={revealDelayMs}
+      style={style}
+      aria-hidden="true"
+    >
+      {Array.from({ length: 3 }, (_, index) => {
+        const enterDelayMs = animateEntrance
+          ? revealDelayMs + index * PET_CHARACTER_RISE_STAGGER_MS
+          : 0;
+        const unitStyle: PetContinuationDotUnitStyle = {
+          "--pet-continuation-enter-delay": `${enterDelayMs}ms`,
+        };
+
+        return (
+          <span
+            key={index}
+            className={`${styles.continuationDotUnit} ${
+              animateEntrance ? "" : styles.continuationDotUnitEntered
+            }`}
+            data-pet-message-continuation-enter-delay={enterDelayMs}
+            style={unitStyle}
+          >
+            <span
+              className={styles.continuationDot}
+              data-pet-message-continuation-dot={index + 1}
+            />
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+function renderPetMessageUnits(
+  text: string,
+  translateY: number,
+  showContinuationDots: boolean,
+): ReactNode[] {
   const nodes: ReactNode[] = [];
   let unitIndex = 0;
+  const lines = text.split("\n");
+  let finalWordKey: string | null = null;
 
-  text.split("\n").forEach((line, lineIndex, lines) => {
+  if (showContinuationDots) {
+    lines.forEach((line, lineIndex) => {
+      line.split(/(\s+)/).forEach((part, partIndex) => {
+        if (part && !/^\s+$/.test(part)) {
+          finalWordKey = `${lineIndex}-${partIndex}`;
+        }
+      });
+    });
+  }
+
+  lines.forEach((line, lineIndex) => {
     line.split(/(\s+)/).forEach((part, partIndex) => {
       if (!part) {
         return;
@@ -114,6 +211,12 @@ function renderPetMessageUnits(text: string, translateY: number): ReactNode[] {
               </span>
             );
           })}
+          {finalWordKey === `${lineIndex}-${partIndex}` ? (
+            <PetMessageContinuationDots
+              revealDelayMs={petMessageRevealDurationMs(text)}
+              translateY={translateY}
+            />
+          ) : null}
         </span>,
       );
     });
@@ -131,11 +234,13 @@ function PetMessageText({
   translateY,
   speechEndTrimMs,
   playSpeechAudio,
+  showContinuationDots,
 }: {
   text: string;
   translateY: number;
   speechEndTrimMs: number;
   playSpeechAudio: boolean;
+  showContinuationDots: boolean;
 }) {
   const textRef = useRef<HTMLSpanElement>(null);
 
@@ -218,7 +323,7 @@ function PetMessageText({
 
   return (
     <span ref={textRef} aria-hidden="true">
-      {renderPetMessageUnits(text, translateY)}
+      {renderPetMessageUnits(text, translateY, showContinuationDots)}
     </span>
   );
 }
@@ -379,7 +484,8 @@ export function PetCharacterMessage({
 
     while (
       fittedFontSize > PET_MESSAGE_MIN_FONT_SIZE_PX &&
-      renderedMessageLineCount(currentLayer, fittedFontSize) > maxCurrentMessageLines
+      (renderedMessageLineCount(currentLayer, fittedFontSize) > maxCurrentMessageLines ||
+        renderedMessageOverflowsHorizontally(currentLayer))
     ) {
       fittedFontSize -= 1;
       currentLayer.style.fontSize = `${fittedFontSize}px`;
@@ -440,6 +546,13 @@ export function PetCharacterMessage({
           aria-hidden="true"
         >
           {previousMessage.text}
+          {previousMessage.hasNextPortion ? (
+            <PetMessageContinuationDots
+              revealDelayMs={0}
+              translateY={0}
+              animateEntrance={false}
+            />
+          ) : null}
         </p>
       ) : null}
       <p
@@ -460,6 +573,7 @@ export function PetCharacterMessage({
           translateY={textTranslateY}
           speechEndTrimMs={speechEndTrimMs}
           playSpeechAudio={currentMessage.playSpeechAudio}
+          showContinuationDots={currentMessage.hasNextPortion}
         />
       </p>
     </div>
