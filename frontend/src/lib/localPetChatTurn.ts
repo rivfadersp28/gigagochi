@@ -10,6 +10,7 @@ import {
   readLocalChatHistory,
 } from "./localPetStorage";
 import { extractDeterministicMemoryOperations } from "./localPetDeterministicMemory";
+import { readComplimentHistory, rememberCompliment } from "./localPetCompliments";
 import {
   applyMemoryConsolidationOperations,
   applyMemoryOperations,
@@ -186,9 +187,13 @@ export async function runLocalPetChatTurn({
 
   const response = await sendLocalChatMessage(message, pet, historyBeforeMessage, {
     includeDebug: includePromptDebug,
+    complimentHistory: readComplimentHistory(pet.petId),
     memoryContext,
     replyMaxChars,
   });
+  if (response.happinessDelta === 30 || response.happinessDelta === 100) {
+    rememberCompliment(pet.petId, response.complimentKey ?? message);
+  }
   if (includePromptDebug) {
     logBrowserPromptDebug(`${logLabel} reply`, response);
     recordReplyPromptDebug(response);

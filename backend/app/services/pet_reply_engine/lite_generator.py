@@ -187,6 +187,7 @@ class VisibleReplyResult:
     mood_hint: str | None
     face_hint: str | None
     happiness_delta: int
+    compliment_key: str | None
     used_fallback: bool
     validation_flags: list[str]
     debug: dict[str, Any]
@@ -401,7 +402,12 @@ def _visible_reply_response_format(
             "type": "integer",
             "enum": list(HAPPINESS_DELTA_VALUES),
         }
-        required.append("happinessDelta")
+        properties["complimentKey"] = {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 120,
+        }
+        required.extend(("happinessDelta", "complimentKey"))
     return {
         "type": "json_schema",
         "json_schema": {
@@ -428,13 +434,30 @@ def _conversation_happiness_rule() -> str:
     return (
         "Оцени, как ТЕКУЩЕЕ сообщение пользователя обращено к персонажу, и заполни "
         "happinessDelta. Игнорируй цитаты, пересказ, ролевую сцену, вопросы об угрозах и "
-        "предыдущую историю: они сами по себе нейтральны. Добрые слова, забота, поддержка, "
-        "благодарность или искренний комплимент: 20. Обычная нейтральная беседа: 0. "
+        "обычную предыдущую историю: они сами по себе нейтральны. Добрые слова, забота, "
+        "поддержка, благодарность или искренний обычный комплимент: 30. Исключительно "
+        "сильный, искренний и конкретный комплимент: 100, но только если в списке ранее "
+        "сказанных комплиментов нет того же смысла или близкого перефразирования. Пустой "
+        "список сам по себе не делает обычный комплимент исключительным. Повторный или "
+        "семантически похожий комплимент всегда даёт 30, даже если сформулирован сильнее. "
+        "Обычная нейтральная беседа: 0. "
         "Оскорбление, грубость или недоброжелательность: -20. Усиленное унижение или "
         "жестокое пожелание вреда: -40. Явная угроза причинить серьёзный вред: -60. "
         "Прямая угроза убийством, пыткой или уничтожением персонажа: -80. "
-        "Выбирай только одно из значений 20, 0, -20, -40, -60, -80."
+        "Выбирай только одно из значений 100, 30, 0, -20, -40, -60, -80. Если текущее "
+        "сообщение является комплиментом с оценкой 30 или 100, запиши в complimentKey "
+        "его короткий нейтральный смысл (3–12 слов), чтобы распознавать будущие повторы. "
+        "Для остальных сообщений верни complimentKey: null."
     )
+
+
+def _compliment_history_block(payload: LocalChatRequest) -> str:
+    keys = [
+        text for value in payload.complimentHistory if (text := _clean_optional_text(value, 120))
+    ]
+    if not keys:
+        return "Ранее сказанные владельцем комплименты: нет."
+    return "Ранее сказанные владельцем комплименты:\n" + "\n".join(f"- {text}" for text in keys)
 
 
 def _normalize_structured_hint(value: Any, allowed: tuple[str, ...]) -> str | None:
@@ -488,6 +511,7 @@ def _fallback_visible_reply_result(
             "faceHint": None,
             "moodHint": None,
             "happinessDelta": 0,
+            "complimentKey": None,
         },
         "usedFallback": True,
         "validationFlags": validation_flags,
@@ -497,6 +521,7 @@ def _fallback_visible_reply_result(
         mood_hint=None,
         face_hint=None,
         happiness_delta=0,
+        compliment_key=None,
         used_fallback=True,
         validation_flags=validation_flags,
         debug=debug,
@@ -536,6 +561,17 @@ def _parse_visible_reply_response(
         happiness_delta = 0
         validation_flags.append("structured_reply_invalid_happiness_delta")
 
+    raw_compliment_key = parsed.get("complimentKey")
+    compliment_key = (
+        _clean_optional_text(raw_compliment_key, 120)
+        if isinstance(raw_compliment_key, str)
+        else None
+    )
+    if happiness_delta not in (30, 100):
+        compliment_key = None
+    elif not compliment_key:
+        validation_flags.append("structured_reply_missing_compliment_key")
+
     if not reply:
         return _fallback_visible_reply_result(
             surface=surface,
@@ -553,6 +589,7 @@ def _parse_visible_reply_response(
             "faceHint": face_hint,
             "moodHint": mood_hint,
             "happinessDelta": happiness_delta,
+            "complimentKey": compliment_key,
         },
         "usedFallback": False,
         "validationFlags": validation_flags,
@@ -562,6 +599,7 @@ def _parse_visible_reply_response(
         mood_hint=mood_hint,
         face_hint=face_hint,
         happiness_delta=happiness_delta,
+        compliment_key=compliment_key,
         used_fallback=False,
         validation_flags=validation_flags,
         debug=debug,
@@ -1406,6 +1444,7 @@ def _phrase_plan_for_chat(
             _recent_event_truth_rule(payload, recent_events_block),
             transient_context_rule(),
             _structured_reply_contract_rule(),
+            _compliment_history_block(payload),
             _conversation_happiness_rule(),
         ),
     )
@@ -2143,6 +2182,7 @@ def generate_lite_pet_reply(
     mood_hint: str | None = None
     face_hint: str | None = None
     happiness_delta = 0
+    compliment_key: str | None = None
     structured_reply_debug: dict[str, Any] | None = None
     structured_reply_used_fallback = False
     structured_reply_validation_flags: list[str] = []
@@ -2180,6 +2220,7 @@ def generate_lite_pet_reply(
             mood_hint = structured_reply.mood_hint
             face_hint = structured_reply.face_hint
             happiness_delta = structured_reply.happiness_delta
+            compliment_key = structured_reply.compliment_key
             structured_reply_debug = structured_reply.debug
             structured_reply_used_fallback = structured_reply.used_fallback
             structured_reply_validation_flags = structured_reply.validation_flags
@@ -2212,6 +2253,7 @@ def generate_lite_pet_reply(
         mood_hint = structured_reply.mood_hint
         face_hint = structured_reply.face_hint
         happiness_delta = structured_reply.happiness_delta
+        compliment_key = structured_reply.compliment_key
         structured_reply_debug = structured_reply.debug
         structured_reply_used_fallback = structured_reply.used_fallback
         structured_reply_validation_flags = structured_reply.validation_flags
@@ -2241,6 +2283,7 @@ def generate_lite_pet_reply(
         reply=reply,
         moodHint=mood_hint,
         happinessDelta=happiness_delta,
+        complimentKey=compliment_key,
         innerThought=None,
         faceHint=face_hint,
         petPatch=pet_patch or None,

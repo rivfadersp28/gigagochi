@@ -1212,6 +1212,16 @@
       },
       "LocalChatRequest": {
         "properties": {
+          "complimentHistory": {
+            "items": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Complimenthistory",
+            "type": "array"
+          },
           "history": {
             "items": {
               "$ref": "#/components/schemas/LocalChatHistoryItem"
@@ -1277,6 +1287,19 @@
       },
       "LocalChatResponse": {
         "properties": {
+          "complimentKey": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Complimentkey"
+          },
           "debug": {
             "anyOf": [
               {
@@ -1314,7 +1337,8 @@
               -40,
               -20,
               0,
-              20
+              30,
+              100
             ],
             "title": "Happinessdelta",
             "type": "integer"

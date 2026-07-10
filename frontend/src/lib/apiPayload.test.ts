@@ -62,6 +62,7 @@ describe("API request payloads", () => {
     };
 
     await sendLocalChatMessage("Скажи, что голод отступает", petState(), history, {
+      complimentHistory: ["  редкая   смелость  ", " ", "x".repeat(140)],
       memoryContext,
       replyMaxChars: 120,
     });
@@ -71,6 +72,10 @@ describe("API request payloads", () => {
 
     expect(payload.pet.description).toHaveLength(300);
     expect(payload.history).toEqual([{ role: "pet", text: "Старая реплика" }]);
+    expect(payload.complimentHistory).toEqual([
+      "редкая   смелость",
+      "x".repeat(120),
+    ]);
     expect(payload.memoryContext.relevantMemories).toEqual([
       { id: "memory-1", kind: "preference", text: "любит сыр" },
     ]);

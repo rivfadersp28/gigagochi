@@ -647,6 +647,8 @@ export interface components {
         };
         /** LocalChatRequest */
         readonly LocalChatRequest: {
+            /** Complimenthistory */
+            readonly complimentHistory?: readonly string[];
             /** History */
             readonly history?: readonly components["schemas"]["LocalChatHistoryItem"][];
             /**
@@ -664,6 +666,8 @@ export interface components {
         };
         /** LocalChatResponse */
         readonly LocalChatResponse: {
+            /** Complimentkey */
+            readonly complimentKey?: string | null;
             readonly debug?: components["schemas"]["LocalChatDebug"] | null;
             /** Facehint */
             readonly faceHint?: ("happy" | "excited" | "curious" | "content" | "grumpy" | "sleepy") | null;
@@ -672,7 +676,7 @@ export interface components {
              * @default 0
              * @enum {integer}
              */
-            readonly happinessDelta: -80 | -60 | -40 | -20 | 0 | 20;
+            readonly happinessDelta: -80 | -60 | -40 | -20 | 0 | 30 | 100;
             /** Innerthought */
             readonly innerThought?: string | null;
             /** Moodhint */

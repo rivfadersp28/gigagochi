@@ -74,7 +74,7 @@ const MEMORY_KINDS = new Set<UserMemoryKind>([
   "boundary",
 ]);
 const PET_STAT_KEYS = ["hunger", "happiness", "energy"] as const satisfies readonly PetStatKey[];
-const HAPPINESS_DELTAS = new Set<ConversationHappinessDelta>([-80, -60, -40, -20, 0, 20]);
+const HAPPINESS_DELTAS = new Set<ConversationHappinessDelta>([-80, -60, -40, -20, 0, 30, 100]);
 
 function fail(path: string, expectation: string): never {
   throw new ApiContractError(`${path}: ожидалось ${expectation}`);
@@ -205,6 +205,7 @@ export function parseLocalChatResponse(value: unknown): LocalChatResponse {
       payload.happinessDelta,
       "localChat.happinessDelta",
     ),
+    complimentKey: optionalString(payload.complimentKey, "localChat.complimentKey"),
     innerThought: optionalString(payload.innerThought, "localChat.innerThought"),
     faceHint: optionalEnumValue(payload.faceHint, FACE_HINTS, "localChat.faceHint"),
     petPatch: petPatch

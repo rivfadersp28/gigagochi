@@ -86,7 +86,7 @@ def _visible_reply_message_for_call(message: SimpleNamespace, kwargs: dict) -> S
                     "faceHint": None,
                     "moodHint": None,
                     **(
-                        {"happinessDelta": 0}
+                        {"happinessDelta": 0, "complimentKey": None}
                         if "happinessDelta"
                         in kwargs["response_format"]["json_schema"]["schema"]["properties"]
                         else {}
@@ -292,7 +292,7 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     )
     assert request["response_format"]["json_schema"]["schema"]["properties"]["happinessDelta"][
         "enum"
-    ] == [-80, -60, -40, -20, 0, 20]
+    ] == [-80, -60, -40, -20, 0, 30, 100]
     assert "tools" not in request
     assert "STORY_LIBRARY" not in system_message
 
@@ -1081,7 +1081,8 @@ def test_lite_reads_structured_face_and_mood_hints() -> None:
                     "reply": "Я рядом, слышу тебя.",
                     "faceHint": "content",
                     "moodHint": "happy",
-                    "happinessDelta": 20,
+                    "happinessDelta": 30,
+                    "complimentKey": "надёжность и забота персонажа",
                 },
                 ensure_ascii=False,
             ),
@@ -1095,7 +1096,8 @@ def test_lite_reads_structured_face_and_mood_hints() -> None:
     assert response.innerThought is None
     assert response.faceHint == "content"
     assert response.moodHint == "happy"
-    assert response.happinessDelta == 20
+    assert response.happinessDelta == 30
+    assert response.complimentKey == "надёжность и забота персонажа"
     assert response.debug is not None
     assert response.debug.structuredReplyDebug["normalizedResponse"]["faceHint"] == "content"
 
@@ -1109,6 +1111,7 @@ def test_lite_reads_severe_threat_happiness_delta() -> None:
                     "faceHint": "grumpy",
                     "moodHint": "sad",
                     "happinessDelta": -80,
+                    "complimentKey": None,
                 },
                 ensure_ascii=False,
             ),
@@ -1119,6 +1122,37 @@ def test_lite_reads_severe_threat_happiness_delta() -> None:
     response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
 
     assert response.happinessDelta == -80
+
+
+def test_lite_reads_unique_exceptional_compliment_happiness_delta() -> None:
+    client, _completions = fake_lite_client(
+        SimpleNamespace(
+            content=json.dumps(
+                {
+                    "reply": "Я это навсегда запомню.",
+                    "faceHint": "excited",
+                    "moodHint": "happy",
+                    "happinessDelta": 100,
+                    "complimentKey": "редкая смелость и доброе сердце",
+                },
+                ensure_ascii=False,
+            ),
+            tool_calls=None,
+        )
+    )
+
+    response = generate_lite_pet_reply(
+        lite_payload(complimentHistory=["необычная красота персонажа"]),
+        client=client,
+        model="gpt-5.5",
+        timeout=10,
+    )
+
+    assert response.happinessDelta == 100
+    assert response.complimentKey == "редкая смелость и доброе сердце"
+    system_message = _completions.calls[-1]["messages"][0]["content"]
+    assert "необычная красота персонажа" in system_message
+    assert "семантически похожий комплимент всегда даёт 30" in system_message
 
 
 def test_lite_uses_safe_fallback_for_invalid_structured_reply() -> None:

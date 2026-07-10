@@ -47,6 +47,7 @@ const MAX_CHAT_HISTORY_TEXT_LENGTH = 8000;
 type LocalChatOptions = {
   includeDebug?: boolean;
   memoryContext?: LocalPetMemoryContext;
+  complimentHistory?: string[];
   replyMaxChars?: number;
   visibleContext?: {
     lastPetLine: string;
@@ -494,6 +495,9 @@ export async function sendLocalChatMessage(
       message: message.slice(0, MAX_CHAT_INPUT_LENGTH),
       includeDebug: options.includeDebug ?? false,
       memoryContext: memoryContextForApi(options.memoryContext),
+      complimentHistory: (options.complimentHistory ?? [])
+        .flatMap((value) => cleanApiText(value, 120) ?? [])
+        .slice(-500),
       replyMaxChars: options.replyMaxChars,
       visibleContext: options.visibleContext,
       pet: petContextForApi(pet),

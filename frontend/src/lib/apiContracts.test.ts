@@ -26,6 +26,7 @@ describe("API response contracts", () => {
       reply: "Я здесь",
       moodHint: undefined,
       happinessDelta: undefined,
+      complimentKey: undefined,
       innerThought: undefined,
       faceHint: undefined,
       petPatch: undefined,
@@ -37,6 +38,12 @@ describe("API response contracts", () => {
   it("accepts only supported conversation happiness deltas", () => {
     expect(parseLocalChatResponse({ reply: "Я здесь", happinessDelta: -80 }).happinessDelta)
       .toBe(-80);
+    expect(parseLocalChatResponse({ reply: "Спасибо", happinessDelta: 30 }).happinessDelta)
+      .toBe(30);
+    expect(parseLocalChatResponse({ reply: "Спасибо", happinessDelta: 100 }).happinessDelta)
+      .toBe(100);
+    expect(() => parseLocalChatResponse({ reply: "Я здесь", happinessDelta: 20 }))
+      .toThrow(ApiContractError);
     expect(() => parseLocalChatResponse({ reply: "Я здесь", happinessDelta: -10 }))
       .toThrow(ApiContractError);
   });

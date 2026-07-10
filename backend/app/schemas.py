@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -32,10 +32,11 @@ UserMemoryKind = Literal[
     "boundary",
 ]
 FaceHintValue = Literal["happy", "excited", "curious", "content", "grumpy", "sleepy"]
-HappinessDeltaValue = Literal[-80, -60, -40, -20, 0, 20]
+HappinessDeltaValue = Literal[-80, -60, -40, -20, 0, 30, 100]
+ComplimentKeyValue = Annotated[str, Field(min_length=1, max_length=120)]
 PET_STAGE_VALUES: tuple[PetStageValue, ...] = ("baby", "teen", "adult")
 PET_STATE_VALUES: tuple[PetStateValue, ...] = ("idle", "happy", "hungry", "sad")
-HAPPINESS_DELTA_VALUES: tuple[HappinessDeltaValue, ...] = (-80, -60, -40, -20, 0, 20)
+HAPPINESS_DELTA_VALUES: tuple[HappinessDeltaValue, ...] = (-80, -60, -40, -20, 0, 30, 100)
 
 
 class GeneratePetRequest(BaseModel):
@@ -150,6 +151,7 @@ class LocalChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=1000)
     pet: LocalPetChatContext
     history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
+    complimentHistory: list[ComplimentKeyValue] = Field(default_factory=list, max_length=500)
     visibleContext: LocalVisibleContext | None = None
     memoryContext: LocalPetMemoryContext | None = None
     replyMaxChars: int | None = Field(default=None, ge=1, le=300)
@@ -209,6 +211,7 @@ class LocalChatResponse(BaseModel):
     reply: str
     moodHint: PetStateValue | None = None
     happinessDelta: HappinessDeltaValue = 0
+    complimentKey: str | None = Field(default=None, min_length=1, max_length=120)
     innerThought: str | None = Field(default=None, max_length=80)
     faceHint: FaceHintValue | None = None
     petPatch: LocalPetPatch | None = None
