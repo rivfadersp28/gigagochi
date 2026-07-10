@@ -287,10 +287,17 @@ body {
 }
 
 .main-mobile-scene {
+  --conversation-keyboard-motion-duration: 180ms;
+  --conversation-keyboard-motion-easing: cubic-bezier(0.645, 0.045, 0.355, 1);
+
   isolation: isolate;
   background: var(--main-scene-bg);
   color: var(--main-scene-ink);
   font-family: var(--font-sans);
+}
+
+.main-mobile-scene:has(.conversation-input:focus) {
+  --conversation-keyboard-motion-duration: 500ms;
 }
 
 .main-scene-media {
@@ -300,6 +307,8 @@ body {
   overflow: hidden;
   pointer-events: none;
   transform: translate3d(0, 0, 0);
+  transition: transform var(--conversation-keyboard-motion-duration)
+    var(--conversation-keyboard-motion-easing);
   user-select: none;
 }
 
@@ -930,7 +939,9 @@ body {
     background-color 160ms ease-out,
     border-radius 160ms ease-out,
     box-shadow 160ms ease-out,
-    opacity 160ms ease-out;
+    opacity 160ms ease-out,
+    transform var(--conversation-keyboard-motion-duration)
+      var(--conversation-keyboard-motion-easing);
 }
 
 .main-action-button,
