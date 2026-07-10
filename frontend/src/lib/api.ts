@@ -16,6 +16,7 @@ import type {
   MemoryExtractionResponse,
 } from "./localPetMemoryTypes";
 import { buildExistingMemoryBrief } from "./localPetMemoryStorage";
+import { characterNameFromAssetSet } from "./localPetCharacter";
 import { getTelegramInitData } from "./telegram";
 import {
   parseGeneratePetJobResponse,
@@ -70,6 +71,22 @@ function petStatsForApi(stats: LocalPetState["stats"]) {
     hunger: statForApi(stats.hunger),
     happiness: statForApi(stats.happiness),
     energy: statForApi(stats.energy),
+  };
+}
+
+function petNameForApi(pet: LocalPetState): string | undefined {
+  const explicitName = pet.name?.trim();
+  return explicitName || characterNameFromAssetSet(pet.assetSet);
+}
+
+function petContextForApi(pet: LocalPetState) {
+  return {
+    name: petNameForApi(pet),
+    description: pet.description,
+    characterBible: pet.assetSet?.characterBible,
+    stage: pet.stage,
+    mood: pet.mood,
+    stats: petStatsForApi(pet.stats),
   };
 }
 
@@ -234,13 +251,8 @@ export async function generatePetTravel(
       body: {
         includeDebug: options.includeDebug ?? false,
         pet: {
-          name: pet.name,
-          description: pet.description,
-          characterBible: pet.assetSet?.characterBible,
+          ...petContextForApi(pet),
           assetImages: publicAssetImagesForApi(pet.assetSet?.images),
-          stage: pet.stage,
-          mood: pet.mood,
-          stats: petStatsForApi(pet.stats),
         },
       },
     },
@@ -309,14 +321,7 @@ export async function sendLocalChatMessage(
       memoryContext: options.memoryContext,
       replyMaxChars: options.replyMaxChars,
       visibleContext: options.visibleContext,
-      pet: {
-        name: pet.name,
-        description: pet.description,
-        characterBible: pet.assetSet?.characterBible,
-        stage: pet.stage,
-        mood: pet.mood,
-        stats: petStatsForApi(pet.stats),
-      },
+      pet: petContextForApi(pet),
       history: history.slice(-12).map((item) => ({
         role: item.role,
         text: item.text,
@@ -344,14 +349,7 @@ export async function extractLocalUserMemory(
       timezone: browserTimezone(),
       existingMemoryBrief: buildExistingMemoryBrief(memory),
       memoryContext: options.memoryContext,
-      pet: {
-        name: pet.name,
-        description: pet.description,
-        characterBible: pet.assetSet?.characterBible,
-        stage: pet.stage,
-        mood: pet.mood,
-        stats: petStatsForApi(pet.stats),
-      },
+      pet: petContextForApi(pet),
       history: history.slice(-12).map((item) => ({
         role: item.role,
         text: item.text,
@@ -392,14 +390,7 @@ export async function generateLocalProactiveMessage(
       nowIso: new Date().toISOString(),
       timezone: browserTimezone(),
       memoryContext,
-      pet: {
-        name: pet.name,
-        description: pet.description,
-        characterBible: pet.assetSet?.characterBible,
-        stage: pet.stage,
-        mood: pet.mood,
-        stats: petStatsForApi(pet.stats),
-      },
+      pet: petContextForApi(pet),
     },
   }, parseLocalChatResponse);
 }
@@ -431,13 +422,8 @@ export async function registerPetPushSnapshot(
         })),
         recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-6),
         pet: {
-          name: pet.name,
-          description: pet.description,
-          characterBible: pet.assetSet?.characterBible,
+          ...petContextForApi(pet),
           assetImages: publicAssetImagesForApi(pet.assetSet?.images),
-          stage: pet.stage,
-          mood: pet.mood,
-          stats: petStatsForApi(pet.stats),
         },
       },
     },
@@ -465,14 +451,7 @@ export async function generateLocalAmbientMessage(
       nowIso: new Date().toISOString(),
       timezone: browserTimezone(),
       recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-6),
-      pet: {
-        name: pet.name,
-        description: pet.description,
-        characterBible: pet.assetSet?.characterBible,
-        stage: pet.stage,
-        mood: pet.mood,
-        stats: petStatsForApi(pet.stats),
-      },
+      pet: petContextForApi(pet),
       history: (options.history ?? []).slice(-12).map((item) => ({
         role: item.role,
         text: item.text,
@@ -495,14 +474,7 @@ export async function extractLocalLiteFacts(
       message: message.slice(0, MAX_CHAT_INPUT_LENGTH),
       reply,
       includeDebug: options.includeDebug ?? false,
-      pet: {
-        name: pet.name,
-        description: pet.description,
-        characterBible: pet.assetSet?.characterBible,
-        stage: pet.stage,
-        mood: pet.mood,
-        stats: petStatsForApi(pet.stats),
-      },
+      pet: petContextForApi(pet),
       history: history.slice(-12).map((item) => ({
         role: item.role,
         text: item.text,

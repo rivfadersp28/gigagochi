@@ -110,8 +110,7 @@ export function normalizeCharacterAssetSet(
   };
 }
 
-export function characterNameFromAssetSet(assetSet?: LocalPetAssetSet): string | undefined {
-  const bible = assetSet?.characterBible ?? assetSet?.characterTemplate;
+function characterNameFromBible(bible: unknown): string | undefined {
   if (!isRecord(bible)) {
     return undefined;
   }
@@ -124,4 +123,11 @@ export function characterNameFromAssetSet(assetSet?: LocalPetAssetSet): string |
 
   const name = rawName.trim().replace(/\s+/g, " ").slice(0, 32);
   return name || undefined;
+}
+
+export function characterNameFromAssetSet(assetSet?: LocalPetAssetSet): string | undefined {
+  return (
+    characterNameFromBible(assetSet?.characterBible)
+    ?? characterNameFromBible(assetSet?.characterTemplate)
+  );
 }

@@ -588,7 +588,8 @@ def _global_story_briefs(
     query: str | None = None,
 ) -> list[dict[str, str]]:
     query_text = _compact_spaces(
-        query or " ".join([pet.name or "", pet.description, pet.stage, pet.mood])
+        query
+        or " ".join([_background_story_character_name(pet), pet.description, pet.stage, pet.mood])
     )
     result = search_story_library(
         query=query_text,
@@ -751,7 +752,7 @@ def _background_routing_payload(
     timezone: str | None,
 ) -> dict[str, Any]:
     pet_payload: dict[str, Any] = {
-        "name": pet.name,
+        "name": _background_story_character_name(pet) or None,
         "stage": pet.stage,
     }
     if context_source_enabled("backgroundStory", "stateParams", auto_default=True):
@@ -772,11 +773,20 @@ def _background_routing_payload(
 
 
 def _background_story_identity_seed(pet: LocalPetChatContext) -> str:
-    name = _text_value(pet.name, limit=80)
+    name = _background_story_character_name(pet)
     description = _text_value(pet.description, limit=220)
     if name and description:
         return f"{name}: {description}"
     return name or description
+
+
+def _background_story_character_name(pet: LocalPetChatContext) -> str:
+    explicit_name = _text_value(pet.name, limit=80)
+    if explicit_name:
+        return explicit_name
+    bible = pet.characterBible if _is_record(pet.characterBible) else {}
+    identity = bible.get("identity") if _is_record(bible.get("identity")) else {}
+    return _text_value(identity.get("name") or bible.get("name"), limit=80)
 
 
 def _parse_background_routing_payload(value: str) -> ContextRoutingDecision:
@@ -905,7 +915,7 @@ def character_dossier_for_background_story(
         return sources.get(source, True)
 
     current_state: dict[str, Any] = {
-        "name": pet.name,
+        "name": _background_story_character_name(pet) or None,
         "stage": pet.stage,
     }
     if enabled("stateParams"):
@@ -1169,11 +1179,11 @@ def _aftermath_character_context(pet: LocalPetChatContext) -> str:
     extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
     lore = bible.get("lore") if _is_record(bible.get("lore")) else {}
     payload = {
-        "name": pet.name,
+        "name": _background_story_character_name(pet) or None,
         "description": pet.description,
         "stage": pet.stage,
         "currentState": {
-            "name": pet.name,
+            "name": _background_story_character_name(pet) or None,
             "stage": pet.stage,
             "params": _state_params_brief(pet),
         },

@@ -446,6 +446,36 @@ def test_background_story_profile_toggle_controls_description() -> None:
     assert '"description": "чел с листом вместо лица"' in with_profile
 
 
+def test_background_story_resolves_name_from_character_identity() -> None:
+    pet = _pet().model_copy(
+        update={
+            "name": None,
+            "characterBible": {
+                "identity": {"name": "Луна", "species": "кошка-волшебница"},
+            },
+        }
+    )
+
+    dossier = background_story_service.character_dossier_for_background_story(
+        pet=pet,
+        source_flags={
+            "characterProfile": False,
+            "stateParams": True,
+            "liteOverlay": False,
+            "storyOverlay": False,
+            "userMemory": False,
+            "chatHistory": False,
+            "recentReplies": False,
+        },
+        include_story_library=False,
+        now_iso="2026-07-10T06:00:00Z",
+        timezone="Europe/Moscow",
+    )
+
+    assert '"identitySeed": "Луна: чел с листом вместо лица"' in dossier
+    assert '"name": "Луна"' in dossier
+
+
 def test_background_story_context_sources_policy_controls_dossier(monkeypatch) -> None:
     content = json.dumps(
         {
