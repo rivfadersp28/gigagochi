@@ -17,6 +17,8 @@ from app.prompts.pet_image_prompts import (
 from app.services.image_service import (
     CHARACTER_BIBLE_SCHEMA,
     _character_reasoning_effort_kwargs,
+    _internal_reference_image_url,
+    _reference_image_bytes,
     align_sprite_to_reference_canvas,
     character_bible_quality_issues,
     create_character_bible,
@@ -343,6 +345,58 @@ def test_generate_image_bytes_uses_openai_edit_for_input_reference(monkeypatch) 
     assert captured["prompt"] == "story prompt"
     assert captured["reference_name"] == "reference-1.png"
     assert captured["reference_bytes"] == reference_bytes
+
+
+def test_internal_reference_url_rewrites_only_own_public_origin(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            backend_internal_url="http://backend:8000",
+            backend_public_url="https://gigagochi.serega.works",
+            webapp_url="https://gigagochi.serega.works/app",
+        ),
+    )
+
+    assert _internal_reference_image_url(
+        "https://gigagochi.serega.works/static/generated/pet/idle.png?v=42"
+    ) == "http://backend:8000/static/generated/pet/idle.png?v=42"
+    assert _internal_reference_image_url(
+        "https://cdn.example.test/static/generated/pet/idle.png?v=42"
+    ) == "https://cdn.example.test/static/generated/pet/idle.png?v=42"
+
+
+def test_reference_download_falls_back_to_public_url(monkeypatch) -> None:
+    public_url = "https://gigagochi.serega.works/static/generated/pet/idle.png"
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            backend_internal_url="http://backend:8000",
+            backend_public_url="https://gigagochi.serega.works",
+            webapp_url="https://gigagochi.serega.works",
+        ),
+    )
+
+    class PublicResponse:
+        content = b"public-image"
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url: str, **_kwargs):
+        calls.append(url)
+        if url == "http://backend:8000/static/generated/pet/idle.png":
+            raise httpx.ConnectError("internal backend unavailable")
+        return PublicResponse()
+
+    monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+
+    assert _reference_image_bytes(public_url) == b"public-image"
+    assert calls == [
+        "http://backend:8000/static/generated/pet/idle.png",
+        public_url,
+    ]
 
 
 def test_generate_openrouter_image_bytes_uses_openrouter_with_openai_provider(

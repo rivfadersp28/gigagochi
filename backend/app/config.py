@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     bot_token: str | None = None
     webapp_url: str | None = None
     backend_public_url: str | None = None
+    backend_internal_url: str | None = None
     allow_dev_tma_auth: bool = False
     enable_in_memory_rate_limit: bool = True
     generation_rate_limit_per_day: int = 0

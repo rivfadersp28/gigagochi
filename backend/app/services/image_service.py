@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from openai import (
@@ -1017,9 +1017,47 @@ def _reference_image_bytes(image_url: str) -> bytes:
             return base64.b64decode(payload.replace("\n", "").replace("\r", "").strip())
         return payload.encode("utf-8")
 
+    fetch_url = _internal_reference_image_url(image_url)
+    try:
+        response = httpx.get(fetch_url, timeout=30)
+        response.raise_for_status()
+        return response.content
+    except httpx.HTTPError:
+        if fetch_url == image_url:
+            raise
+
     response = httpx.get(image_url, timeout=30)
     response.raise_for_status()
     return response.content
+
+
+def _internal_reference_image_url(image_url: str) -> str:
+    settings = get_settings()
+    internal_url = _clean_setting_string(getattr(settings, "backend_internal_url", None))
+    if not internal_url:
+        return image_url
+
+    source = urlsplit(image_url)
+    internal = urlsplit(internal_url)
+    if source.scheme not in {"http", "https"} or not source.netloc:
+        return image_url
+    if internal.scheme not in {"http", "https"} or not internal.netloc:
+        return image_url
+
+    public_origins = {
+        (parsed.scheme.lower(), parsed.netloc.lower())
+        for value in (
+            getattr(settings, "backend_public_url", None),
+            getattr(settings, "webapp_url", None),
+        )
+        if (parsed := urlsplit(_clean_setting_string(value)))
+        and parsed.scheme
+        and parsed.netloc
+    }
+    if (source.scheme.lower(), source.netloc.lower()) not in public_origins:
+        return image_url
+
+    return internal._replace(path=source.path, query=source.query, fragment="").geturl()
 
 
 def _openai_reference_image_files(

@@ -620,6 +620,10 @@ def _record_summary(record: dict[str, Any]) -> dict[str, Any]:
         "lastPushError": record.get("lastPushError"),
         "lastPushErrorCode": record.get("lastPushErrorCode"),
         "lastPushErrorAt": record.get("lastPushErrorAt"),
+        "lastStoryAt": record.get("lastStoryAt"),
+        "lastStoryImageStatus": record.get("lastStoryImageStatus"),
+        "lastStoryImageError": record.get("lastStoryImageError"),
+        "lastStoryImageErrorAt": record.get("lastStoryImageErrorAt"),
         "chatReachable": record.get("chatReachable") is True,
         "chatStartedAt": record.get("chatStartedAt"),
         "lastChatSeenAt": record.get("lastChatSeenAt"),
@@ -1039,6 +1043,26 @@ def generate_story_for_telegram_user(
     except Exception as exc:
         logger.exception("background_story_image_generation failed")
         story_image_error = exc.__class__.__name__
+
+    image_status_at = _iso()
+
+    def save_story_image_status(current: dict[str, Any] | None) -> dict[str, Any]:
+        source_record = current.copy() if isinstance(current, dict) else next_record.copy()
+        if source_record.get("petId") != record.get("petId"):
+            return source_record
+        if source_record.get("lastStoryAt") != now_iso:
+            return source_record
+        return {
+            **source_record,
+            "lastStoryImageStatus": "failed" if story_image_error else "generated",
+            "lastStoryImageError": story_image_error,
+            "lastStoryImageErrorAt": image_status_at if story_image_error else None,
+        }
+
+    next_record = _update_record(
+        _telegram_id_from_record(record),
+        save_story_image_status,
+    )
     return {
         "generated": True,
         "telegramId": record.get("telegramId"),

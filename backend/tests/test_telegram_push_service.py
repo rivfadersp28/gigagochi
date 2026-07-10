@@ -365,6 +365,9 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
         "happiness": -20,
         "energy": -15,
     }
+    assert store["records"][str(TEST_TELEGRAM_ID)]["lastStoryImageStatus"] == "generated"
+    assert store["records"][str(TEST_TELEGRAM_ID)]["lastStoryImageError"] is None
+    assert store["records"][str(TEST_TELEGRAM_ID)]["lastStoryImageErrorAt"] is None
     assert result["recentStoryEvent"]["eventType"] == "attack"
 
     response = telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
@@ -379,6 +382,57 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
         store["records"][str(TEST_TELEGRAM_ID)]["recentStoryEvents"][0]["summary"]
         == "На Громма напала меловая тень у каменного порога."
     )
+
+
+def test_background_story_image_error_is_saved(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_now",
+        lambda: datetime(2026, 7, 7, 12, 0, tzinfo=UTC),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_background_story",
+        lambda **_kwargs: SimpleNamespace(
+            title="Шёпот под мельницей",
+            summary="Громм услышал шёпот.",
+            story_text="Под мельницей раздался шёпот.",
+            event_type="mystery",
+            valence="neutral",
+            tags=("мельница",),
+            rag_text="Под мельницей раздался шёпот.",
+            story_library_patch=None,
+            lite_overlay_patch=None,
+            recent_story_event=None,
+            stat_impacts=(),
+            stat_impact=None,
+            prompt_debug=[],
+        ),
+    )
+
+    def fail_story_image(**_kwargs):
+        raise httpx.ConnectTimeout("timed out")
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_background_story_image_bytes",
+        fail_story_image,
+    )
+
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    result = telegram_push_service.generate_story_for_telegram_user(
+        telegram_id=TEST_TELEGRAM_ID,
+        include_debug=False,
+    )
+
+    assert result["storyImage"] is None
+    assert result["storyImageError"] == "ConnectTimeout"
+    latest = telegram_push_service.push_status()["latest"]
+    assert latest["lastStoryImageStatus"] == "failed"
+    assert latest["lastStoryImageError"] == "ConnectTimeout"
+    assert latest["lastStoryImageErrorAt"] == "2026-07-07T12:00:00Z"
 
 
 def test_background_story_can_restore_stats() -> None:

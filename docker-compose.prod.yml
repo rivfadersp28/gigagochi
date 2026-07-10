@@ -29,6 +29,7 @@ services:
       TELEGRAM_DAILY_PUSH_ENABLED: "false"
       BACKGROUND_STORY_ENABLED: "true"
       BACKGROUND_STORY_MIN_INTERVAL_HOURS: "6"
+      BACKEND_INTERNAL_URL: http://backend:8000
     ports:
       - "127.0.0.1:18080:8000"
     expose:
@@ -72,6 +73,8 @@ services:
       - backend
     env_file:
       - ./backend/.env
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:8000
     command: ["python", "-m", "app.bot"]
     volumes:
       - backend_logs:/app/logs
