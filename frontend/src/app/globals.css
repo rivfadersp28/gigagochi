@@ -604,7 +604,7 @@ body {
 }
 
 .stat-progress-ring__glyph {
-  fill: var(--main-scene-ink);
+  fill: var(--stat-ring-progress, #eeaa35);
 }
 
 .main-action-button > span,
