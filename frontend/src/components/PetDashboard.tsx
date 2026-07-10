@@ -1096,9 +1096,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       aria-expanded={isDebugPanelOpen}
       aria-label={isDebugPanelOpen ? "Скрыть debug-панель" : "Показать debug-панель"}
       onClick={() => setIsDebugPanelOpen(true)}
-      className={isPetDead
-        ? "main-debug-button absolute right-[max(16px,var(--tma-safe-right))] top-[max(16px,var(--tma-safe-top))] z-40"
-        : "main-debug-button feed-fade-target conversation-fade-target absolute left-[327px] top-[685px] z-40"}
+      className="main-debug-button feed-fade-target conversation-fade-target absolute left-[327px] top-[685px] z-40"
     >
       <Bug className="main-debug-button__fallback-icon" aria-hidden="true" />
       <span className="main-debug-button__symbol" aria-hidden="true">
