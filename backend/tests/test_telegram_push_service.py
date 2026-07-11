@@ -344,6 +344,13 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
 
     def fake_story_image_bytes(**kwargs):
         image_calls.append(kwargs)
+        kwargs["direction_output"].update(
+            {
+                "poseFamily": "defending_or_evading",
+                "heroPose": "Громм пригнулся и прикрыл голову лапой.",
+                "camera": "Низкий боковой план.",
+            }
+        )
         return b"story-png"
 
     monkeypatch.setattr(
@@ -389,6 +396,9 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     assert events[0]["summary"] == "На Громма напала меловая тень у каменного порога."
     assert events[0]["storyText"] == "На Громма напала меловая тень у каменного порога."
     assert events[0]["imageUrl"] == "/static/generated/pet-1/background-story.png?v=1"
+    assert events[0]["imagePoseFamily"] == "defending_or_evading"
+    assert events[0]["imageHeroPose"] == "Громм пригнулся и прикрыл голову лапой."
+    assert events[0]["imageCamera"] == "Низкий боковой план."
     assert events[0]["canonicalFacts"] == ["меловая тень напала на Громма"]
     assert events[0]["statImpacts"][1]["stat"] == "happiness"
     assert store["records"][str(TEST_TELEGRAM_ID)]["lastStory"]["statsDelta"] == {
@@ -399,6 +409,10 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     assert (
         store["records"][str(TEST_TELEGRAM_ID)]["lastStory"]["imageUrl"]
         == "/static/generated/pet-1/background-story.png?v=1"
+    )
+    assert (
+        store["records"][str(TEST_TELEGRAM_ID)]["lastStory"]["imagePoseFamily"]
+        == "defending_or_evading"
     )
     assert store["records"][str(TEST_TELEGRAM_ID)]["lastStoryImageStatus"] == "generated"
     assert store["records"][str(TEST_TELEGRAM_ID)]["lastStoryImageError"] is None

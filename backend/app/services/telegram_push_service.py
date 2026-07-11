@@ -1364,10 +1364,13 @@ def generate_story_for_telegram_user(
     story_image: dict[str, Any] | None = None
     story_image_error: str | None = None
     story_image_url: str | None = None
+    story_image_direction: dict[str, str] = {}
     try:
         image_bytes = generate_background_story_image_bytes(
             pet=payload.pet,
             story=result,
+            recent_story_events=_record_recent_story_events(record),
+            direction_output=story_image_direction,
         )
         story_image_url = _persist_background_story_image(
             record,
@@ -1402,9 +1405,15 @@ def generate_story_for_telegram_user(
             next_item = item.copy()
             if story_image_url and item.get("generatedAt") == now_iso:
                 next_item["imageUrl"] = story_image_url
+                next_item["imagePoseFamily"] = story_image_direction.get("poseFamily")
+                next_item["imageHeroPose"] = story_image_direction.get("heroPose")
+                next_item["imageCamera"] = story_image_direction.get("camera")
             recent_events.append(next_item)
         if story_image_url:
             last_story_record["imageUrl"] = story_image_url
+            last_story_record["imagePoseFamily"] = story_image_direction.get("poseFamily")
+            last_story_record["imageHeroPose"] = story_image_direction.get("heroPose")
+            last_story_record["imageCamera"] = story_image_direction.get("camera")
         return {
             **source_record,
             "lastStory": last_story_record,

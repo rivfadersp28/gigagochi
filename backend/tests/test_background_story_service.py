@@ -229,7 +229,13 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
                 "scene": (
                     "Олег стоит под древним дубом, лист на его лице светится, "
                     "а вокруг кружатся теплые золотые знаки."
-                )
+                ),
+                "poseFamily": "reaching_or_manipulating",
+                "heroPose": (
+                    "Олег наклоняет корпус к дубу, переносит вес на переднюю лапу "
+                    "и тянется второй лапой к светящемуся листу."
+                ),
+                "camera": "Низкая камера в три четверти, средний общий план.",
             }
         )
     )
@@ -332,7 +338,25 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
     assert "Avoid micro-detail everywhere" in prompt
     assert len(prompt) <= background_story_service.BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS
     assert "Листики выпускают запахи-сигналы опасности" not in prompt
+    assert "Pose family: reaching_or_manipulating" in prompt
+    assert "переносит вес на переднюю лапу" in prompt
+    assert "Низкая камера в три четверти" in prompt
     assert story.prompt_debug[0]["label"] == "background_story/image_scene"
+
+
+def test_background_story_image_pose_options_exclude_three_recent_families() -> None:
+    recent_events = [
+        {"imagePoseFamily": "locomotion"},
+        {"imagePoseFamily": "crouching_observation"},
+        {"imagePoseFamily": "reaching_or_manipulating"},
+    ]
+
+    available = background_story_service._available_background_story_pose_families(recent_events)
+
+    assert "locomotion" not in available
+    assert "crouching_observation" not in available
+    assert "reaching_or_manipulating" not in available
+    assert "physical_interaction" in available
 
 
 def test_background_story_image_passes_current_sprite_reference_to_image_helper(
@@ -429,12 +453,19 @@ def test_background_story_full_stop_motion_prompt_restylizes_whole_scene() -> No
     prompt = background_story_service.build_background_story_image_prompt(
         scene="Олег идёт по бумажному лесу.",
         mode="full_stop_motion",
+        pose_family="locomotion",
+        hero_pose="Олег шагает через ручей, балансируя с разведёнными лапами.",
+        camera="Боковой общий план на уровне воды.",
     )
 
     assert "TRANSLATE THE REFERENCE INTO THE SAME STOP-MOTION WORLD" in prompt
     assert "made by the same miniature workshop" in prompt
     assert "Avoid photoreal fur, skin, vegetation or stone" in prompt
     assert "VISUAL_CHARACTER_STYLE:" not in prompt
+    assert "Pose family: locomotion" in prompt
+    assert "балансируя с разведёнными лапами" in prompt
+    assert "Боковой общий план" in prompt
+    assert "reference stance must not survive" in prompt
 
 
 def test_background_story_image_prompt_rejects_unknown_mode() -> None:

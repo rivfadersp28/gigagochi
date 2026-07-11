@@ -72,6 +72,27 @@ LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS = 8400
 BACKGROUND_STORY_IMAGE_SCENE_STORY_MAX_CHARS = 2400
 BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS = 700
+BACKGROUND_STORY_IMAGE_HERO_POSE_MAX_CHARS = 240
+BACKGROUND_STORY_IMAGE_CAMERA_MAX_CHARS = 140
+BACKGROUND_STORY_IMAGE_POSE_HISTORY_LIMIT = 3
+BACKGROUND_STORY_IMAGE_POSE_FAMILIES = (
+    "locomotion",
+    "crouching_observation",
+    "reaching_or_manipulating",
+    "carrying_pushing_or_pulling",
+    "defending_or_evading",
+    "resting_or_recovering",
+    "physical_interaction",
+)
+BACKGROUND_STORY_IMAGE_POSE_GUIDANCE = {
+    "locomotion": "walking, running, climbing, balancing or crossing",
+    "crouching_observation": "crouching, kneeling, leaning close or looking underneath",
+    "reaching_or_manipulating": "reaching, lifting, opening, repairing or using an object",
+    "carrying_pushing_or_pulling": "carrying, dragging, pushing or pulling with visible effort",
+    "defending_or_evading": "bracing, shielding, dodging, hiding or escaping",
+    "resting_or_recovering": "sitting, lying, stretching, warming up or recovering",
+    "physical_interaction": "helping, greeting, holding, supporting or playing with another",
+}
 BackgroundStoryImagePromptMode = Literal[
     "baseline",
     "isolated_identity",
@@ -84,7 +105,12 @@ BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION = (
     "Сохрани указанный в истории вид каждого участника: человек остаётся человеком, дух — "
     "духом, животное — животным. Для второстепенных персонажей кратко укажи различимые "
     "силуэт, занятие и соответствующее моменту настроение; не копируй им автоматически "
-    "внешность или меланхоличное выражение главного героя."
+    "внешность или меланхоличное выражение главного героя. Референс главного героя фиксирует "
+    "только его личность и дизайн, но не исходную позу, положение головы, рук, ног или камеры. "
+    "Выбери для него сюжетно необходимую активную позу: опиши наклон корпуса, направление "
+    "взгляда, положение конечностей, перенос веса и контакт с землёй, предметом или другим "
+    "участником. Не используй нейтральное фронтальное стояние с опущенными руками, если оно "
+    "не является важной частью действия."
 )
 BACKGROUND_STORY_SCENE_STYLE = """
 ART DIRECTION FOR THE WHOLE SCENE:
@@ -148,6 +174,9 @@ BACKGROUND_STORY_FULL_STOP_MOTION_CHARACTER_STYLE = """
 MAIN CHARACTER — TRANSLATE THE REFERENCE INTO THE SAME STOP-MOTION WORLD:
 - Keep the referenced character unmistakably the same: preserve species, silhouette, face,
   proportions, palette, clothing, accessories and every signature detail.
+- The reference fixes identity only, not pose or camera. Re-articulate the puppet into the exact
+  story-driven hero pose specified above, with clear weight, balance, limb placement, gaze and
+  physical contact. Do not copy the neutral standing pose from the reference.
 - Rebuild the character as a handcrafted stop-motion puppet made from matte clay, painted wood,
   felt, stitched fabric, paper and small practical metal parts. Use simplified readable forms,
   restrained seams and selective handmade imperfections.
@@ -497,8 +526,20 @@ BACKGROUND_STORY_IMAGE_SCENE_SCHEMA: dict[str, Any] = {
             "type": "string",
             "maxLength": BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS,
         },
+        "poseFamily": {
+            "type": "string",
+            "enum": list(BACKGROUND_STORY_IMAGE_POSE_FAMILIES),
+        },
+        "heroPose": {
+            "type": "string",
+            "maxLength": BACKGROUND_STORY_IMAGE_HERO_POSE_MAX_CHARS,
+        },
+        "camera": {
+            "type": "string",
+            "maxLength": BACKGROUND_STORY_IMAGE_CAMERA_MAX_CHARS,
+        },
     },
-    "required": ["scene"],
+    "required": ["scene", "poseFamily", "heroPose", "camera"],
 }
 
 
@@ -727,6 +768,47 @@ def _background_story_text_for_image_scene(story: BackgroundStoryResult) -> str:
     )
 
 
+def _recent_background_story_pose_families(
+    recent_story_events: list[dict[str, Any]] | None,
+) -> list[str]:
+    families: list[str] = []
+    for item in reversed(recent_story_events or []):
+        if not isinstance(item, dict):
+            continue
+        family = _text_value(item.get("imagePoseFamily"), limit=80)
+        if family not in BACKGROUND_STORY_IMAGE_POSE_FAMILIES or family in families:
+            continue
+        families.append(family)
+        if len(families) >= BACKGROUND_STORY_IMAGE_POSE_HISTORY_LIMIT:
+            break
+    return families
+
+
+def _available_background_story_pose_families(
+    recent_story_events: list[dict[str, Any]] | None,
+) -> tuple[str, ...]:
+    blocked = set(_recent_background_story_pose_families(recent_story_events))
+    available = tuple(
+        family for family in BACKGROUND_STORY_IMAGE_POSE_FAMILIES if family not in blocked
+    )
+    return available or BACKGROUND_STORY_IMAGE_POSE_FAMILIES
+
+
+def _background_story_image_scene_schema(
+    pose_families: tuple[str, ...],
+) -> dict[str, Any]:
+    schema = copy.deepcopy(BACKGROUND_STORY_IMAGE_SCENE_SCHEMA)
+    schema["properties"]["poseFamily"]["enum"] = list(pose_families)
+    return schema
+
+
+def _background_story_pose_options_block(pose_families: tuple[str, ...]) -> str:
+    return "\n".join(
+        f"- {family}: {BACKGROUND_STORY_IMAGE_POSE_GUIDANCE[family]}"
+        for family in pose_families
+    )
+
+
 def extract_background_story_image_scene(
     story: BackgroundStoryResult,
     *,
@@ -734,11 +816,14 @@ def extract_background_story_image_scene(
     model: str | None = None,
     timeout: float | None = None,
     prompt_debug: list[dict[str, Any]] | None = None,
+    recent_story_events: list[dict[str, Any]] | None = None,
+    direction_output: dict[str, str] | None = None,
 ) -> str:
     settings = get_settings()
     openai_client = client or get_openai_client()
     model = model or get_chat_model(settings)
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
+    pose_families = _available_background_story_pose_families(recent_story_events)
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -755,6 +840,9 @@ def extract_background_story_image_scene(
                 "role": "user",
                 "content": (
                     f"{BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION}\n\n"
+                    "Выбери ровно одну допустимую poseFamily из списка ниже и не подменяй её "
+                    "нейтральным стоянием:\n"
+                    f"{_background_story_pose_options_block(pose_families)}\n\n"
                     f"Текст истории:\n{_background_story_text_for_image_scene(story)}"
                 ),
             },
@@ -763,7 +851,7 @@ def extract_background_story_image_scene(
             "type": "json_schema",
             "json_schema": {
                 "name": "background_story_image_scene",
-                "schema": BACKGROUND_STORY_IMAGE_SCENE_SCHEMA,
+                "schema": _background_story_image_scene_schema(pose_families),
                 "strict": True,
             },
         },
@@ -776,12 +864,26 @@ def extract_background_story_image_scene(
     completion = openai_client.chat.completions.create(**request_kwargs)
     log_chat_completion_response("background_story/image_scene", completion)
     content = completion.choices[0].message.content or "{}"
-    scene = _text_value(
-        _json_record_from_text(content).get("scene"),
-        limit=BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS,
-    )
+    payload = _json_record_from_text(content)
+    scene = _text_value(payload.get("scene"), limit=BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS)
     if not scene:
         raise RuntimeError("BACKGROUND_STORY_IMAGE_SCENE_EMPTY")
+    pose_family = _text_value(payload.get("poseFamily"), limit=80)
+    if pose_family not in pose_families:
+        pose_family = pose_families[0]
+    hero_pose = _text_value(
+        payload.get("heroPose"),
+        limit=BACKGROUND_STORY_IMAGE_HERO_POSE_MAX_CHARS,
+    )
+    camera = _text_value(payload.get("camera"), limit=BACKGROUND_STORY_IMAGE_CAMERA_MAX_CHARS)
+    if direction_output is not None:
+        direction_output.update(
+            {
+                "poseFamily": pose_family,
+                "heroPose": hero_pose,
+                "camera": camera,
+            }
+        )
     return scene
 
 
@@ -789,6 +891,9 @@ def build_background_story_image_prompt(
     *,
     scene: str,
     mode: BackgroundStoryImagePromptMode = "baseline",
+    pose_family: str = "",
+    hero_pose: str = "",
+    camera: str = "",
 ) -> str:
     if mode == "baseline":
         character_direction = (
@@ -808,9 +913,30 @@ def build_background_story_image_prompt(
     else:
         raise ValueError(f"Unsupported background story image prompt mode: {mode}")
 
+    pose_direction = ""
+    if hero_pose:
+        compact_hero_pose = _truncate_text(
+            hero_pose,
+            BACKGROUND_STORY_IMAGE_HERO_POSE_MAX_CHARS,
+        )
+        compact_camera = (
+            _truncate_text(camera, BACKGROUND_STORY_IMAGE_CAMERA_MAX_CHARS)
+            or "serve the action clearly"
+        )
+        pose_direction = f"""
+HERO POSE — REQUIRED, DO NOT COPY THE REFERENCE POSE:
+- Pose family: {pose_family or "story-driven action"}
+- Body mechanics: {compact_hero_pose}
+- Camera and framing: {compact_camera}
+- Make the changed pose unmistakable through the torso, head, limbs, weight distribution and
+  contact points. Identity details stay exact, but the reference stance must not survive.
+""".strip()
+
     prompt = f"""
 СЦЕНА:
 {_truncate_text(scene, BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS)}
+
+{pose_direction}
 
 {character_direction}
 
@@ -829,13 +955,29 @@ def generate_background_story_image_bytes(
     pet: LocalPetChatContext,
     story: BackgroundStoryResult,
     prompt_mode: BackgroundStoryImagePromptMode = "full_stop_motion",
+    recent_story_events: list[dict[str, Any]] | None = None,
+    direction_output: dict[str, str] | None = None,
 ) -> bytes:
     input_references = _asset_input_references_for_background_story(pet)
     if not input_references:
         raise RuntimeError("BACKGROUND_STORY_IMAGE_REFERENCE_MISSING")
-    scene = extract_background_story_image_scene(story, prompt_debug=story.prompt_debug)
+    image_direction: dict[str, str] = {}
+    scene = extract_background_story_image_scene(
+        story,
+        prompt_debug=story.prompt_debug,
+        recent_story_events=recent_story_events,
+        direction_output=image_direction,
+    )
+    if direction_output is not None:
+        direction_output.update(image_direction)
     return generate_image_bytes(
-        build_background_story_image_prompt(scene=scene, mode=prompt_mode),
+        build_background_story_image_prompt(
+            scene=scene,
+            mode=prompt_mode,
+            pose_family=image_direction.get("poseFamily", ""),
+            hero_pose=image_direction.get("heroPose", ""),
+            camera=image_direction.get("camera", ""),
+        ),
         label="background_story/image",
         input_references=input_references,
     )
