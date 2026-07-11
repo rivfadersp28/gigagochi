@@ -790,7 +790,7 @@ def test_background_story_retries_once_after_incoherent_verdict(monkeypatch) -> 
         if call["response_format"]["json_schema"]["name"] == "background_story"
     ]
     assert len(story_calls) == 2
-    assert "COHERENCE_RETRY" in story_calls[1]["messages"][1]["content"]
+    assert "QUALITY_RETRY" in story_calls[1]["messages"][1]["content"]
 
 
 def test_background_story_keeps_stat_impacts_without_lexical_filter() -> None:

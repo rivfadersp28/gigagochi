@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -21,6 +22,8 @@ from app.services.openai_service import (
 )
 from app.services.pet_reply_engine.speech_runtime import (
     background_story_reasoning_effort,
+    full_story_quality_check_system_prompt,
+    full_story_quality_check_user_prompt,
     full_story_system_prompt,
     full_story_user_prompt,
 )
@@ -30,6 +33,8 @@ STAT_KEYS = ("hunger", "happiness", "energy")
 PART_COUNT = 4
 MAX_PART_IMPACT = 25
 MAX_PART_TOTAL_IMPACT = 35
+
+logger = logging.getLogger(__name__)
 
 FULL_STORY_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -70,7 +75,7 @@ FULL_STORY_SCHEMA: dict[str, Any] = {
                     },
                     "statImpacts": {
                         "type": "array",
-                        "minItems": 1,
+                        "minItems": 0,
                         "maxItems": 2,
                         "items": {
                             "type": "object",
@@ -100,6 +105,21 @@ FULL_STORY_SCHEMA: dict[str, Any] = {
         },
     },
     "required": ["overallTitle", "arcPlan", "parts"],
+}
+
+FULL_STORY_QUALITY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "accepted": {"type": "boolean"},
+        "issues": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {"type": "string", "maxLength": 300},
+        },
+        "retryInstruction": {"type": "string", "maxLength": 800},
+    },
+    "required": ["accepted", "issues", "retryInstruction"],
 }
 
 
@@ -150,6 +170,7 @@ def _text(value: Any, limit: int) -> str:
 
 
 def _normalize_impacts(value: Any, *, valence: str) -> tuple[dict[str, Any], ...]:
+    del valence
     raw_items = value if isinstance(value, list) else []
     impacts: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -168,10 +189,6 @@ def _normalize_impacts(value: Any, *, valence: str) -> tuple[dict[str, Any], ...
         amount = max(-MAX_PART_IMPACT, min(MAX_PART_IMPACT, amount))
         if amount == 0:
             continue
-        if valence == "positive" and amount < 0:
-            continue
-        if valence == "negative" and amount > 0:
-            continue
         remaining = MAX_PART_TOTAL_IMPACT - total
         if remaining <= 0:
             break
@@ -185,11 +202,6 @@ def _normalize_impacts(value: Any, *, valence: str) -> tuple[dict[str, Any], ...
         )
         seen.add(stat)
         total += abs(amount)
-    if not impacts:
-        raise FullStoryGenerationError("FULL_STORY_PART_IMPACTS_MISSING")
-    signs = {1 if item["amount"] > 0 else -1 for item in impacts}
-    if valence == "mixed" and signs != {-1, 1}:
-        raise FullStoryGenerationError("FULL_STORY_MIXED_IMPACTS_INVALID")
     return tuple(impacts)
 
 
@@ -255,6 +267,75 @@ def _full_story_anti_repeat(history: list[dict[str, Any]] | None) -> str:
         "потребность, тип осложнения и способ развязки, заменив только декорации.\n- "
         + "\n- ".join(lines)
     )
+
+
+def _check_full_story_quality(
+    *,
+    story_payload: dict[str, Any],
+    story_direction: dict[str, str],
+    client: Any,
+    model: str,
+    timeout: float,
+    prompt_debug: list[dict[str, Any]],
+) -> tuple[bool, list[str], str]:
+    request_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": full_story_quality_check_system_prompt()},
+            {
+                "role": "user",
+                "content": full_story_quality_check_user_prompt(
+                    {
+                        "story_direction": story_direction_block(
+                            story_direction,
+                            enforce_single_valence=False,
+                        ),
+                        "story_payload": json.dumps(
+                            story_payload,
+                            ensure_ascii=False,
+                            indent=2,
+                            default=str,
+                        ),
+                    }
+                ),
+            },
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "full_story_quality_check",
+                "schema": FULL_STORY_QUALITY_SCHEMA,
+                "strict": True,
+            },
+        },
+        "timeout": timeout,
+        **chat_reasoning_effort_kwargs("low"),
+    }
+    prompt_debug.append(log_chat_completion_prompt("full_story/quality_check", request_kwargs))
+    completion = client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("full_story/quality_check", completion)
+    try:
+        parsed = json.loads(completion.choices[0].message.content or "{}")
+    except json.JSONDecodeError:
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    issues = [
+        _text(value, 300)
+        for value in (parsed.get("issues") if isinstance(parsed.get("issues"), list) else [])[:6]
+        if _text(value, 300)
+    ]
+    retry_instruction = _text(parsed.get("retryInstruction"), 800)
+    accepted = parsed.get("accepted") is not False
+    prompt_debug.append(
+        {
+            "event": "full_story_quality_result",
+            "accepted": accepted,
+            "issues": issues,
+            "retryInstruction": retry_instruction,
+        }
+    )
+    return accepted, issues, retry_instruction
 
 
 def generate_full_story(
@@ -338,6 +419,68 @@ def generate_full_story(
         raise FullStoryGenerationError("FULL_STORY_JSON_INVALID") from exc
     if not isinstance(payload, dict):
         raise FullStoryGenerationError("FULL_STORY_PAYLOAD_INVALID")
+    try:
+        accepted, issues, retry_instruction = _check_full_story_quality(
+            story_payload=payload,
+            story_direction=story_direction,
+            client=openai_client,
+            model=model,
+            timeout=timeout,
+            prompt_debug=prompt_debug,
+        )
+    except Exception as exc:
+        logger.exception("full_story_quality_check failed")
+        accepted = True
+        issues = []
+        retry_instruction = ""
+        prompt_debug.append(
+            {
+                "event": "full_story_quality_error",
+                "error": exc.__class__.__name__,
+                "acceptedByFallback": True,
+            }
+        )
+    if not accepted:
+        issue_lines = "\n".join(f"- {issue}" for issue in issues)
+        repair_instruction = retry_instruction or (
+            "Перепиши видимый текст от первого лица и замени абстрактные итоги "
+            "конкретными действиями, условиями и наблюдаемыми последствиями."
+        )
+        retry_user_content = (
+            f"{request_kwargs['messages'][1]['content']}\n\nQUALITY_RETRY: предыдущая версия "
+            "отклонена редактором. Верни новый полный JSON, сохрани общую причинную линию, "
+            "факты и объём, но исправь прозу. Не упоминай редактора или проверку.\n"
+            f"Замечания:\n{issue_lines or '- проза недостаточно конкретна'}\n"
+            f"Указание:\n{repair_instruction}"
+        )
+        retry_request_kwargs = {
+            **request_kwargs,
+            "messages": [
+                request_kwargs["messages"][0],
+                {"role": "user", "content": retry_user_content},
+            ],
+        }
+        prompt_debug.append(
+            log_chat_completion_prompt("full_story/generate_retry", retry_request_kwargs)
+        )
+        retry_completion = openai_client.chat.completions.create(**retry_request_kwargs)
+        log_chat_completion_response("full_story/generate_retry", retry_completion)
+        try:
+            payload = json.loads(retry_completion.choices[0].message.content or "{}")
+        except json.JSONDecodeError as exc:
+            raise FullStoryGenerationError("FULL_STORY_RETRY_JSON_INVALID") from exc
+        if not isinstance(payload, dict):
+            raise FullStoryGenerationError("FULL_STORY_RETRY_PAYLOAD_INVALID")
+        retry_accepted, _, _ = _check_full_story_quality(
+            story_payload=payload,
+            story_direction=story_direction,
+            client=openai_client,
+            model=model,
+            timeout=timeout,
+            prompt_debug=prompt_debug,
+        )
+        if not retry_accepted:
+            raise FullStoryGenerationError("FULL_STORY_QUALITY_REJECTED")
     overall_title, arc_plan, parts = _normalize_payload(payload)
     return FullStoryResult(
         overall_title=overall_title,

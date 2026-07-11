@@ -84,9 +84,12 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("backgroundStory", "userTemplate"),
     ("backgroundStory", "incidentRule"),
     ("backgroundStory", "characterInfluenceRule"),
+    ("backgroundStory", "storyProseRule"),
     ("backgroundStory", "eventfulnessCheckRule"),
     ("backgroundStory", "fullStorySystem"),
     ("backgroundStory", "fullStoryUserTemplate"),
+    ("backgroundStory", "fullStoryQualityCheckSystem"),
+    ("backgroundStory", "fullStoryQualityCheckUserTemplate"),
     ("backgroundStory", "coherenceCheckSystem"),
     ("backgroundStory", "coherenceCheckUserTemplate"),
     ("backgroundStory", "aftermathExtractionSystem"),
@@ -577,6 +580,7 @@ def background_story_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "systemPrompt")),
             _required_string(config, ("backgroundStory", "characterInfluenceRule")),
             _required_string(config, ("backgroundStory", "incidentRule")),
+            _required_string(config, ("backgroundStory", "storyProseRule")),
         ]
     )
 
@@ -598,6 +602,7 @@ def background_story_coherence_check_system_prompt() -> str:
         (
             _required_string(config, ("backgroundStory", "coherenceCheckSystem")),
             _required_string(config, ("backgroundStory", "eventfulnessCheckRule")),
+            _required_string(config, ("backgroundStory", "storyProseRule")),
         )
     )
 
@@ -617,6 +622,7 @@ def full_story_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "fullStorySystem")),
             _required_string(config, ("backgroundStory", "characterInfluenceRule")),
             _required_string(config, ("backgroundStory", "incidentRule")),
+            _required_string(config, ("backgroundStory", "storyProseRule")),
         ]
     )
 
@@ -625,6 +631,24 @@ def full_story_user_prompt(values: dict[str, str]) -> str:
     template = _required_string(
         speech_runtime_config(),
         ("backgroundStory", "fullStoryUserTemplate"),
+    )
+    return _template_replace(template, values)
+
+
+def full_story_quality_check_system_prompt() -> str:
+    config = speech_runtime_config()
+    return "\n\n".join(
+        [
+            _required_string(config, ("backgroundStory", "fullStoryQualityCheckSystem")),
+            _required_string(config, ("backgroundStory", "storyProseRule")),
+        ]
+    )
+
+
+def full_story_quality_check_user_prompt(values: dict[str, str]) -> str:
+    template = _required_string(
+        speech_runtime_config(),
+        ("backgroundStory", "fullStoryQualityCheckUserTemplate"),
     )
     return _template_replace(template, values)
 
