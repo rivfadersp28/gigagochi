@@ -31,6 +31,7 @@ def _plan_part(number: int, *, impacts: list[dict] | None = None) -> dict:
         },
         "readerHook": f"Что произойдёт после изменения {number}?",
         "carryForward": f"Новое положение {number} сохраняется.",
+        "stateChanges": [f"Предмет {number} остаётся у Мяу и не потрачен."],
         "valence": "mixed",
         "statImpacts": impacts or [],
     }
@@ -196,6 +197,12 @@ def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
     assert "прямо назови его текущую практическую цель" in completions.calls[0][
         "messages"
     ][0]["content"]
+    assert "образуют точный журнал состояния" in completions.calls[0]["messages"][0][
+        "content"
+    ]
+    assert "случайного повтора соседних слов" in completions.calls[2]["messages"][0][
+        "content"
+    ]
     assert completions.calls[0]["timeout"] == 150.0
     assert '"eventSvo"' in render_prompt
     assert "Рассказ ведёт питомец от первого лица" in completions.calls[2]["messages"][0][

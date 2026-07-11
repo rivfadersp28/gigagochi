@@ -123,6 +123,11 @@ FULL_STORY_PLAN_SCHEMA: dict[str, Any] = {
                     },
                     "readerHook": {"type": "string", "maxLength": 240},
                     "carryForward": {"type": "string", "maxLength": 300},
+                    "stateChanges": {
+                        "type": "array",
+                        "maxItems": 6,
+                        "items": {"type": "string", "maxLength": 220},
+                    },
                     "valence": {
                         "type": "string",
                         "enum": ["positive", "negative", "mixed"],
@@ -143,6 +148,7 @@ FULL_STORY_PLAN_SCHEMA: dict[str, Any] = {
                     "event",
                     "readerHook",
                     "carryForward",
+                    "stateChanges",
                     "valence",
                     "statImpacts",
                 ],
