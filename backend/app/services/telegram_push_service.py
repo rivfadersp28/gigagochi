@@ -54,6 +54,7 @@ MANUAL_PUSH_REASON = "Ручной debug-триггер из админки."
 MAX_RECENT_STORY_EVENTS = 10
 PUSH_STORY_MAX_AGE = timedelta(hours=12)
 MAX_STORY_NOVELTY_HISTORY = 400
+MAX_FULL_STORY_HISTORY = 8
 STORY_STAT_MAX_ITEMS = 2
 STORY_STAT_MAX_SINGLE_DAMAGE = 25
 STORY_STAT_MAX_TOTAL_DAMAGE = 35
@@ -557,6 +558,71 @@ def _append_story_novelty_item(
     if item:
         history.append(item)
     return history[-MAX_STORY_NOVELTY_HISTORY:]
+
+
+def _compact_full_story_history_item(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    title = _compact_event_text(value.get("overallTitle"), limit=120)
+    raw_plan = value.get("arcPlan") if isinstance(value.get("arcPlan"), dict) else {}
+    goal = _compact_event_text(value.get("goal") or raw_plan.get("goal"), limit=240)
+    raw_direction = (
+        value.get("storyDirection") if isinstance(value.get("storyDirection"), dict) else value
+    )
+    direction = {
+        field: _compact_event_text(raw_direction.get(field), limit=80)
+        for field in (
+            "plotMode",
+            "incidentClass",
+            "causalOrigin",
+            "eventScale",
+            "settingClass",
+            "oppositionClass",
+            "resolutionMode",
+            "resolutionFamily",
+            "valenceTarget",
+        )
+    }
+    if not title and not goal:
+        return None
+    return {
+        "overallTitle": title,
+        "goal": goal,
+        **{key: item for key, item in direction.items() if item},
+        "generatedAt": _compact_event_text(value.get("generatedAt"), limit=80) or _iso(),
+    }
+
+
+def _record_full_story_history(record: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(record, dict):
+        return []
+    raw_history = record.get("fullStoryHistory")
+    candidates = list(raw_history) if isinstance(raw_history, list) else []
+    if isinstance(record.get("lastFullStory"), dict):
+        candidates.append(record["lastFullStory"])
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for value in candidates[-(MAX_FULL_STORY_HISTORY + 1) :]:
+        item = _compact_full_story_history_item(value)
+        if not item:
+            continue
+        key = f"{item['generatedAt']}:{item['overallTitle']}"
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result[-MAX_FULL_STORY_HISTORY:]
+
+
+def _append_full_story_history(
+    record: dict[str, Any],
+    story: dict[str, Any],
+) -> list[dict[str, Any]]:
+    history = _record_full_story_history(record)
+    item = _compact_full_story_history_item(story)
+    if item:
+        history.append(item)
+    return history[-MAX_FULL_STORY_HISTORY:]
 
 
 def _recent_story_events_patch(record: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1520,7 +1586,8 @@ def generate_full_story_for_telegram_user(
     if _record_is_dead(record, now):
         raise TelegramPushError("PET_DEAD", "Питомец умер и больше не может путешествовать.")
     pet = LocalPetChatContext.model_validate(_current_pet_record(record, now))
-    result = generate_full_story(pet=pet)
+    full_story_history = _record_full_story_history(record)
+    result = generate_full_story(pet=pet, recent_full_stories=full_story_history)
     working_record = deepcopy(record)
     applied_parts: list[dict[str, Any]] = []
     aggregate_delta = {key: 0 for key in STAT_KEYS}
@@ -1546,6 +1613,7 @@ def generate_full_story_for_telegram_user(
     story_payload = {
         "overallTitle": result.overall_title,
         "arcPlan": result.arc_plan,
+        "storyDirection": result.story_direction,
         "parts": applied_parts,
         "generatedAt": generated_at,
         "statsDelta": aggregate_delta,
@@ -1566,6 +1634,10 @@ def generate_full_story_for_telegram_user(
             "lastStatTickAt": working_record.get("lastStatTickAt"),
             "lastFullStoryAt": generated_at,
             "lastFullStory": story_payload,
+            "fullStoryHistory": _append_full_story_history(
+                source,
+                story_payload,
+            ),
         }
 
     saved_record = _update_record(telegram_id, save_full_story)

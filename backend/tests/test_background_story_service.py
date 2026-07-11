@@ -62,6 +62,29 @@ def test_story_direction_block_forbids_fallback_to_trap_pattern() -> None:
     assert "Не упоминай автоматически каждую текущую травму" in block
 
 
+def test_full_story_direction_uses_overall_valence_without_empty_impacts_rule() -> None:
+    direction = {
+        "plotMode": "peaceful_change",
+        "incidentClass": "unexpected_opportunity",
+        "causalOrigin": "temporary_change",
+        "eventScale": "shared_situation",
+        "settingClass": "inhabited_place",
+        "oppositionClass": "none",
+        "resolutionMode": "celebration_or_rest",
+        "resolutionFamily": "social_resolution",
+        "valenceTarget": "neutral",
+    }
+
+    block = background_story_service.story_direction_block(
+        direction,
+        enforce_single_valence=False,
+    )
+
+    assert "плюсы и минусы арки уравновешены" in block
+    assert "statImpacts пуст" not in block
+    assert "отдельные части могут иметь разную valence" in block
+
+
 def test_story_direction_valence_distribution_keeps_neutral_rare() -> None:
     rng = random.Random(11)
     history: list[dict[str, str]] = []

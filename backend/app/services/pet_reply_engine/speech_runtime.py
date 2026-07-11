@@ -205,7 +205,12 @@ def validate_speech_runtime_config(config: Any) -> None:
         config,
         ("backgroundStory", "fullStoryUserTemplate"),
     )
-    for placeholder in ("{character}", "{current_state}"):
+    for placeholder in (
+        "{character}",
+        "{current_state}",
+        "{story_direction}",
+        "{anti_repeat}",
+    ):
         if placeholder not in full_story_template:
             raise ValueError(
                 f"backgroundStory.fullStoryUserTemplate must include {placeholder}"

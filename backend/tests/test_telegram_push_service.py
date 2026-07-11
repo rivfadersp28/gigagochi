@@ -587,6 +587,12 @@ def test_full_story_applies_each_parts_stat_impacts_sequentially(monkeypatch, tm
         lambda **_kwargs: SimpleNamespace(
             overall_title="Лекарство до снегопада",
             arc_plan={"goal": "Доставить лекарства."},
+            story_direction={
+                "plotMode": "rescue_or_help",
+                "incidentClass": "rescue_or_aid",
+                "settingClass": "remote_landscape",
+                "resolutionMode": "cooperation",
+            },
             parts=(
                 Part(1, [{"stat": "energy", "amount": -8}]),
                 Part(2, [{"stat": "hunger", "amount": -7}]),
@@ -612,7 +618,47 @@ def test_full_story_applies_each_parts_stat_impacts_sequentially(monkeypatch, tm
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
     saved = store["records"][str(TEST_TELEGRAM_ID)]
     assert saved["lastFullStory"]["overallTitle"] == "Лекарство до снегопада"
+    assert saved["lastFullStory"]["storyDirection"]["plotMode"] == "rescue_or_help"
+    assert saved["fullStoryHistory"] == [
+        {
+            "overallTitle": "Лекарство до снегопада",
+            "goal": "Доставить лекарства.",
+            "plotMode": "rescue_or_help",
+            "incidentClass": "rescue_or_aid",
+            "settingClass": "remote_landscape",
+            "resolutionMode": "cooperation",
+            "generatedAt": "2026-07-07T12:00:00Z",
+        }
+    ]
     assert saved["pet"]["stats"] == {"hunger": 88, "happiness": 78, "energy": 52}
+
+
+def test_full_story_history_includes_legacy_last_story_without_duplicates() -> None:
+    record = {
+        "fullStoryHistory": [
+            {
+                "overallTitle": "Старый спор",
+                "goal": "Договориться о воде.",
+                "plotMode": "social_event",
+                "generatedAt": "2026-07-06T12:00:00Z",
+            }
+        ],
+        "lastFullStory": {
+            "overallTitle": "Старый спор",
+            "arcPlan": {"goal": "Договориться о воде."},
+            "storyDirection": {"plotMode": "social_event"},
+            "generatedAt": "2026-07-06T12:00:00Z",
+        },
+    }
+
+    assert telegram_push_service._record_full_story_history(record) == [
+        {
+            "overallTitle": "Старый спор",
+            "goal": "Договориться о воде.",
+            "plotMode": "social_event",
+            "generatedAt": "2026-07-06T12:00:00Z",
+        }
+    ]
 
 
 def test_recent_story_events_fallback_uses_last_story_for_anti_repeat() -> None:

@@ -6,6 +6,10 @@ from typing import Any
 
 from app.config import get_settings
 from app.schemas import LocalPetChatContext
+from app.services.background_story_service import (
+    select_background_story_direction,
+    story_direction_block,
+)
 from app.services.character_dossier import story_character_data
 from app.services.lore_runtime import lore_prompt_block
 from app.services.openai_service import (
@@ -125,6 +129,7 @@ class FullStoryPart:
 class FullStoryResult:
     overall_title: str
     arc_plan: dict[str, str]
+    story_direction: dict[str, str]
     parts: tuple[FullStoryPart, ...]
     prompt_debug: list[dict[str, Any]]
 
@@ -132,6 +137,7 @@ class FullStoryResult:
         return {
             "overallTitle": self.overall_title,
             "arcPlan": self.arc_plan,
+            "storyDirection": self.story_direction,
             "parts": [part.model_dump() for part in self.parts],
             "promptDebug": self.prompt_debug,
         }
@@ -220,9 +226,39 @@ def _normalize_payload(
     return overall_title, arc_plan, tuple(parts)
 
 
+def _full_story_anti_repeat(history: list[dict[str, Any]] | None) -> str:
+    lines: list[str] = []
+    for item in (history or [])[-8:]:
+        if not isinstance(item, dict):
+            continue
+        title = _text(item.get("overallTitle") or item.get("title"), 120)
+        raw_plan = item.get("arcPlan") if isinstance(item.get("arcPlan"), dict) else {}
+        goal = _text(item.get("goal") or raw_plan.get("goal"), 240)
+        direction = (
+            item.get("storyDirection") if isinstance(item.get("storyDirection"), dict) else item
+        )
+        structure = ", ".join(
+            value
+            for key in ("plotMode", "incidentClass", "settingClass", "resolutionMode")
+            if (value := _text(direction.get(key), 80))
+        )
+        parts = [value for value in (title, goal, structure) if value]
+        if parts:
+            lines.append(" — ".join(parts))
+    if not lines:
+        return "ANTI_REPEAT: предыдущих полных историй пока нет."
+    return (
+        "ANTI_REPEAT: предыдущие полные истории перечислены только как запрет на повтор. "
+        "Не продолжай их и не заимствуй участников, предметы или места. Не повторяй главную "
+        "потребность, тип осложнения и способ развязки, заменив только декорации.\n- "
+        + "\n- ".join(lines)
+    )
+
+
 def generate_full_story(
     *,
     pet: LocalPetChatContext,
+    recent_full_stories: list[dict[str, Any]] | None = None,
     client: Any | None = None,
     model: str | None = None,
     timeout: float | None = None,
@@ -241,20 +277,31 @@ def generate_full_story(
         ensure_ascii=False,
         indent=2,
     )
+    story_direction = select_background_story_direction(
+        recent_full_stories,
+        current_stats=pet.stats.model_dump(mode="json"),
+    )
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
             {
                 "role": "system",
                 "content": (
-                    f"{full_story_system_prompt()}\n\n"
-                    f"{lore_prompt_block('backgroundStory')}"
+                    f"{full_story_system_prompt()}\n\n{lore_prompt_block('backgroundStory')}"
                 ),
             },
             {
                 "role": "user",
                 "content": full_story_user_prompt(
-                    {"character": character, "current_state": current_state}
+                    {
+                        "character": character,
+                        "current_state": current_state,
+                        "story_direction": story_direction_block(
+                            story_direction,
+                            enforce_single_valence=False,
+                        ),
+                        "anti_repeat": _full_story_anti_repeat(recent_full_stories),
+                    }
                 ),
             },
         ],
@@ -283,6 +330,7 @@ def generate_full_story(
     return FullStoryResult(
         overall_title=overall_title,
         arc_plan=arc_plan,
+        story_direction=story_direction,
         parts=parts,
         prompt_debug=prompt_debug,
     )

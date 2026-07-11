@@ -1449,7 +1449,11 @@ def select_background_story_direction(
     }
 
 
-def _story_direction_block(direction: dict[str, str]) -> str:
+def story_direction_block(
+    direction: dict[str, str],
+    *,
+    enforce_single_valence: bool = True,
+) -> str:
     plot_mode = direction["plotMode"]
     incident_class = direction["incidentClass"]
     causal_origin = direction["causalOrigin"]
@@ -1458,6 +1462,24 @@ def _story_direction_block(direction: dict[str, str]) -> str:
     opposition_class = direction["oppositionClass"]
     resolution_mode = direction["resolutionMode"]
     valence_target = direction["valenceTarget"]
+    valence_instruction = STORY_VALENCE_INSTRUCTIONS[valence_target]
+    valence_rules = (
+        "Значение valence в JSON должно точно совпасть с valenceTarget. Для положительного "
+        "события каждый statImpact положительный, для отрицательного — отрицательный, "
+        "для нейтрального statImpacts пуст. "
+        if enforce_single_valence
+        else (
+            "valenceTarget задаёт общий эмоциональный итог всей арки; отдельные части могут "
+            "иметь разную valence, если их последствия прямо показаны в тексте. "
+        )
+    )
+    if not enforce_single_valence:
+        valence_instruction = {
+            "positive": "общий итог арки заметно улучшает положение питомца",
+            "negative": "общий итог арки заметно ухудшает положение питомца",
+            "mixed": "общий итог арки сочетает содержательный выигрыш и цену",
+            "neutral": "плюсы и минусы арки уравновешены без доминирующего изменения",
+        }[valence_target]
     return (
         "STORY_DIRECTION: обязательное структурное направление этой истории. "
         "Это не готовый сюжет; конкретные события придумай самостоятельно.\n"
@@ -1472,10 +1494,8 @@ def _story_direction_block(direction: dict[str, str]) -> str:
         f"- resolutionMode={resolution_mode}: "
         f"{STORY_RESOLUTION_INSTRUCTIONS[resolution_mode]}.\n"
         f"- resolutionFamily={direction['resolutionFamily']}.\n"
-        f"- valenceTarget={valence_target}: {STORY_VALENCE_INSTRUCTIONS[valence_target]}.\n"
-        "Значение valence в JSON должно точно совпасть с valenceTarget. Для положительного "
-        "события каждый statImpact положительный, для отрицательного — отрицательный, "
-        "для нейтрального statImpacts пуст. Снижение hunger объясняй пропущенной едой, "
+        f"- valenceTarget={valence_target}: {valence_instruction}.\n"
+        f"{valence_rules}Снижение hunger объясняй пропущенной едой, "
         "потерей еды или долгой нагрузкой без возможности поесть; повышение hunger — едой. "
         "Energy меняется от травмы, болезни, лечения, отдыха или восстановления, happiness — "
         "от эмоционального результата. Не упоминай автоматически каждую текущую травму и "
@@ -1488,6 +1508,10 @@ def _story_direction_block(direction: dict[str, str]) -> str:
         "безопасность, ресурс или отношения участников. Незначительная находка, отметка, щель, "
         "рисунок, травинка, шёпот или маленький ритуал не могут быть центром истории."
     )
+
+
+def _story_direction_block(direction: dict[str, str]) -> str:
+    return story_direction_block(direction)
 
 
 def _background_story_schema_for_direction(direction: dict[str, str]) -> dict[str, Any]:
