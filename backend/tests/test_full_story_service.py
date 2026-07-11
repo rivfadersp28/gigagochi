@@ -92,7 +92,7 @@ def test_full_story_generates_four_linked_parts_with_impacts(monkeypatch) -> Non
                     "story_engine": "ритуалы с маленькими предметами",
                 },
                 "voice": {
-                    "voice_rules": ["говорит коротко и чуть насмешливо"],
+                    "voice_rules": ["вставляет загадочные рукодельные метафоры"],
                     "sentence_rhythm": "короткие фразы",
                 },
             },
@@ -116,7 +116,8 @@ def test_full_story_generates_four_linked_parts_with_impacts(monkeypatch) -> Non
     prompt = request["messages"][1]["content"]
     assert '"name": "Мяу"' in prompt
     assert "ритуалы с маленькими предметами" not in prompt
-    assert "говорит коротко и чуть насмешливо" in prompt
+    assert '"rhythm": "короткие фразы"' in prompt
+    assert "загадочные рукодельные метафоры" not in prompt
     assert (
         "весь видимый текст storyParagraphs рассказывает сам питомец от первого лица"
         in request["messages"][0]["content"]

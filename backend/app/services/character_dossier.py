@@ -168,7 +168,6 @@ def story_character_data(pet: Any) -> dict[str, Any]:
     data = effective_character_data(pet)
     identity = _record(data.get("identity"))
     genesis = _record(data.get("genesis"))
-    roleplay = _record(data.get("roleplay"))
     voice = _record(data.get("voice"))
     durable = data.get("durableFacts") if isinstance(data.get("durableFacts"), list) else []
     relevant_facts = [
@@ -183,9 +182,7 @@ def story_character_data(pet: Any) -> dict[str, Any]:
         },
         "temperament": genesis.get("characterTrait"),
         "narrationVoice": {
-            "rules": [*roleplay.get("voiceRules", []), *voice.get("rules", [])][:6],
             "rhythm": voice.get("rhythm"),
-            "avoid": voice.get("avoid", [])[:6],
         },
         "durableConstraints": [
             {"sphere": item.get("sphere"), "text": item.get("text")}
