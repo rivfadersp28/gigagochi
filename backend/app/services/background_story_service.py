@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
+import random
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -64,6 +66,8 @@ STORY_STAT_KEYS = {"hunger", "happiness", "energy"}
 STORY_STAT_MAX_ITEMS = 2
 STORY_STAT_MAX_SINGLE_DAMAGE = 25
 STORY_STAT_MAX_TOTAL_DAMAGE = 35
+STORY_DIRECTION_HISTORY_LIMIT = 12
+STORY_MODE_COOLDOWN = 3
 LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS = 5600
 BACKGROUND_STORY_IMAGE_SCENE_STORY_MAX_CHARS = 2400
@@ -73,6 +77,157 @@ BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION = (
     "одного кадра: действие, окружение и важные предметы. Не пересказывай всю историю, "
     "не добавляй название, жанр, теги, мораль или сведения, которых нет в сюжете."
 )
+STORY_DIRECTION_FIELDS = (
+    "plotMode",
+    "settingClass",
+    "oppositionClass",
+    "resolutionMode",
+    "valenceTarget",
+)
+STORY_VALENCE_WEIGHTS = {
+    "positive": 4,
+    "negative": 4,
+    "mixed": 1,
+    "neutral": 1,
+}
+STORY_VALENCE_INSTRUCTIONS = {
+    "positive": (
+        "чисто положительное событие: итог улучшает положение питомца без доминирующей "
+        "травмы, потери или испуга; верни 1–2 только положительных statImpacts"
+    ),
+    "negative": (
+        "чисто отрицательное событие: итог реально ухудшает положение питомца; "
+        "верни 1–2 только отрицательных statImpacts"
+    ),
+    "mixed": (
+        "смешанное событие: в результате есть одновременно выигрыш и цена; "
+        "statImpacts должны соответствовать явно показанным последствиям"
+    ),
+    "neutral": (
+        "нейтральное событие: оно содержательно и запоминаемо, но не улучшает и не ухудшает "
+        "параметры; statImpacts должен быть пустым"
+    ),
+}
+STORY_DIRECTION_SPECS: dict[str, dict[str, Any]] = {
+    "encounter": {
+        "instruction": (
+            "Центр истории — встреча с самостоятельным существом или группой. "
+            "У другой стороны есть собственная цель; сцена развивается через взаимодействие, "
+            "а не через случайную западню."
+        ),
+        "settings": ("wild_frontier", "inhabited_place", "ancient_site", "liminal_place"),
+        "oppositions": ("creature", "supernatural", "person_or_group"),
+        "resolutions": ("dialogue_or_bargain", "outwit", "cooperation", "contest"),
+    },
+    "exploration": {
+        "instruction": (
+            "Центр истории — исследование значимого места. Герой должен войти глубже, "
+            "сделать выбор маршрута или понять устройство места; не своди исследование "
+            "к плите, петле, обвалу или необходимости просто выбраться."
+        ),
+        "settings": ("castle_or_tower", "ancient_site", "underground", "remote_landscape"),
+        "oppositions": ("unknown_or_puzzle", "supernatural", "none"),
+        "resolutions": ("investigation", "discovery", "journey_or_relocation"),
+    },
+    "mystery": {
+        "instruction": (
+            "Центр истории — необъяснимое присутствие, знак или исчезновение. "
+            "Герой наблюдает, проверяет догадку и получает конкретный ответ или улику."
+        ),
+        "settings": ("liminal_place", "castle_or_tower", "wild_frontier", "inhabited_place"),
+        "oppositions": ("supernatural", "unknown_or_puzzle", "creature"),
+        "resolutions": ("investigation", "dialogue_or_bargain", "discovery"),
+    },
+    "social_event": {
+        "instruction": (
+            "Центр истории — просьба, спор, обмен, совместное дело, праздник или знакомство. "
+            "Решающее изменение происходит в отношениях или договорённости, "
+            "а не из-за физической аварии."
+        ),
+        "settings": ("inhabited_place", "road_or_crossing", "wild_frontier", "ancient_site"),
+        "oppositions": ("person_or_group", "creature", "none"),
+        "resolutions": ("dialogue_or_bargain", "cooperation", "celebration_or_rest"),
+    },
+    "pursuit_or_conflict": {
+        "instruction": (
+            "Центр истории — активное противостояние, преследование или защита цели "
+            "от существа, духа или разумного соперника. Противник действует намеренно."
+        ),
+        "settings": ("wild_frontier", "castle_or_tower", "road_or_crossing", "underground"),
+        "oppositions": ("creature", "supernatural", "person_or_group"),
+        "resolutions": ("outwit", "stealth_or_escape", "contest", "dialogue_or_bargain"),
+    },
+    "rescue_or_help": {
+        "instruction": (
+            "Центр истории — помощь конкретному участнику или месту. У спасаемого есть роль "
+            "в сцене, а герой меняет ситуацию осознанным поступком."
+        ),
+        "settings": ("wild_frontier", "inhabited_place", "ancient_site", "remote_landscape"),
+        "oppositions": ("environment", "creature", "supernatural", "person_or_group"),
+        "resolutions": ("cooperation", "craft_or_ability", "journey_or_relocation"),
+    },
+    "discovery": {
+        "instruction": (
+            "Центр истории — открытие знания, прохода, явления или свойства мира. "
+            "Находка не обязана быть переносимым предметом и не должна автоматически "
+            "становиться наградой."
+        ),
+        "settings": ("ancient_site", "liminal_place", "remote_landscape", "underground"),
+        "oppositions": ("unknown_or_puzzle", "supernatural", "none"),
+        "resolutions": ("discovery", "investigation", "journey_or_relocation"),
+    },
+    "environmental_event": {
+        "instruction": (
+            "Центр истории — крупное природное или пространственное событие. "
+            "Не используй маленькую скрытую ловушку и не заканчивай обязательной "
+            "травмой или потерей вещи."
+        ),
+        "settings": ("remote_landscape", "wild_frontier", "water_or_shore", "road_or_crossing"),
+        "oppositions": ("environment",),
+        "resolutions": ("craft_or_ability", "journey_or_relocation", "cooperation"),
+    },
+    "peaceful_change": {
+        "instruction": (
+            "Центр истории — тёплое, смешное, красивое или странное изменение "
+            "без обязательной угрозы. "
+            "Событие всё равно должно иметь развитие и запоминающийся результат."
+        ),
+        "settings": ("inhabited_place", "wild_frontier", "liminal_place", "water_or_shore"),
+        "oppositions": ("none", "creature", "person_or_group"),
+        "resolutions": ("celebration_or_rest", "cooperation", "dialogue_or_bargain", "discovery"),
+    },
+}
+STORY_SETTING_INSTRUCTIONS = {
+    "wild_frontier": "дикая природа или открытая граница обитаемого мира",
+    "inhabited_place": "обитаемое место, стоянка, поселение, рынок или мастерская",
+    "ancient_site": "древнее место со следами прежних обитателей",
+    "liminal_place": "странное пограничное место, где допустимо присутствие духа или привидения",
+    "castle_or_tower": "замок, башня или большая крепость, которую можно исследовать",
+    "underground": "пещера, подземный комплекс или скрытый зал",
+    "remote_landscape": "горы, пустошь, ущелье или иная дальняя местность",
+    "road_or_crossing": "дорога, переправа или место встречи путников",
+    "water_or_shore": "река, озеро, болото, побережье или остров",
+}
+STORY_OPPOSITION_INSTRUCTIONS = {
+    "creature": "самостоятельное живое существо или монстр",
+    "supernatural": "дух, привидение или локальное сверхъестественное явление",
+    "person_or_group": "разумный незнакомец, соперник или группа",
+    "unknown_or_puzzle": "тайна, неизвестный сигнал или задача для понимания",
+    "environment": "среда или природное событие",
+    "none": "без антагониста и без обязательной опасности",
+}
+STORY_RESOLUTION_INSTRUCTIONS = {
+    "dialogue_or_bargain": "разговор, договор или обмен",
+    "outwit": "хитрость и понимание чужой цели",
+    "cooperation": "совместное действие",
+    "contest": "открытое состязание или противостояние",
+    "investigation": "наблюдение и проверка догадки",
+    "discovery": "получение знания или открытие пути/явления",
+    "journey_or_relocation": "осмысленное продолжение пути или переход в новое место",
+    "celebration_or_rest": "праздник, игра, отдых или эмоциональное сближение",
+    "stealth_or_escape": "скрытность, отвлечение или уход от активного преследователя",
+    "craft_or_ability": "применение навыка, способности или созданного решения",
+}
 BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -278,6 +433,11 @@ class BackgroundStoryResult:
     stat_impacts: tuple[dict[str, Any], ...] = ()
     stat_impact: dict[str, Any] | None = None
     stat_validation: dict[str, Any] | None = None
+    plot_mode: str = ""
+    setting_class: str = ""
+    opposition_class: str = ""
+    resolution_mode: str = ""
+    valence_target: str = ""
 
     def model_dump(self) -> dict[str, Any]:
         stat_impacts = list(self.stat_impacts)
@@ -305,6 +465,11 @@ class BackgroundStoryResult:
             "statImpacts": stat_impacts,
             "statImpact": legacy_stat_impact,
             "statValidation": self.stat_validation,
+            "plotMode": self.plot_mode,
+            "settingClass": self.setting_class,
+            "oppositionClass": self.opposition_class,
+            "resolutionMode": self.resolution_mode,
+            "valenceTarget": self.valence_target,
         }
 
 
@@ -698,6 +863,164 @@ def _anti_repeat_block(recent_story_events: list[dict[str, Any]] | None) -> str:
         "Не развивай и не комбинируй детали из этого списка; придумай независимое событие.\n"
         f"{lines}"
     )
+
+
+def _recent_story_directions(
+    recent_story_events: list[dict[str, Any]] | None,
+) -> list[dict[str, str]]:
+    if not recent_story_events:
+        return []
+    result: list[dict[str, str]] = []
+    for item in recent_story_events[-STORY_DIRECTION_HISTORY_LIMIT:]:
+        if not _is_record(item):
+            continue
+        direction = {
+            field: _text_value(item.get(field), limit=80)
+            for field in STORY_DIRECTION_FIELDS
+        }
+        if any(direction.values()):
+            result.append(direction)
+    return result
+
+
+def _least_used_choice(
+    values: tuple[str, ...],
+    *,
+    history: list[dict[str, str]],
+    field: str,
+    rng: random.Random | random.SystemRandom,
+) -> str:
+    counts = {value: 0 for value in values}
+    for item in history:
+        value = item.get(field)
+        if value in counts:
+            counts[value] += 1
+    minimum = min(counts.values())
+    candidates = [value for value in values if counts[value] == minimum]
+    return rng.choice(candidates)
+
+
+def _weighted_least_used_choice(
+    values: tuple[str, ...],
+    *,
+    history: list[dict[str, str]],
+    field: str,
+    weights: dict[str, int],
+    rng: random.Random | random.SystemRandom,
+) -> str:
+    counts = {value: 0 for value in values}
+    for item in history:
+        value = item.get(field)
+        if value in counts:
+            counts[value] += 1
+    scores = {value: counts[value] / weights[value] for value in values}
+    minimum = min(scores.values())
+    candidates = [value for value in values if scores[value] == minimum]
+    return rng.choice(candidates)
+
+
+def select_background_story_direction(
+    recent_story_events: list[dict[str, Any]] | None,
+    *,
+    current_stats: dict[str, int] | None = None,
+    rng: random.Random | random.SystemRandom | None = None,
+) -> dict[str, str]:
+    history = _recent_story_directions(recent_story_events)
+    rng = rng or random.SystemRandom()
+    recent_modes = {
+        item.get("plotMode")
+        for item in history[-STORY_MODE_COOLDOWN:]
+        if item.get("plotMode")
+    }
+    available_modes = tuple(
+        mode for mode in STORY_DIRECTION_SPECS if mode not in recent_modes
+    ) or tuple(STORY_DIRECTION_SPECS)
+    plot_mode = _least_used_choice(
+        available_modes,
+        history=history,
+        field="plotMode",
+        rng=rng,
+    )
+    spec = STORY_DIRECTION_SPECS[plot_mode]
+    available_valences = tuple(STORY_VALENCE_WEIGHTS)
+    if current_stats:
+        if all(value >= 100 for value in current_stats.values()):
+            available_valences = tuple(
+                value for value in available_valences if value != "positive"
+            )
+        if all(value <= 0 for value in current_stats.values()):
+            available_valences = tuple(
+                value for value in available_valences if value != "negative"
+            )
+    return {
+        "plotMode": plot_mode,
+        "settingClass": _least_used_choice(
+            spec["settings"], history=history, field="settingClass", rng=rng
+        ),
+        "oppositionClass": _least_used_choice(
+            spec["oppositions"], history=history, field="oppositionClass", rng=rng
+        ),
+        "resolutionMode": _least_used_choice(
+            spec["resolutions"], history=history, field="resolutionMode", rng=rng
+        ),
+        "valenceTarget": _weighted_least_used_choice(
+            available_valences,
+            history=history,
+            field="valenceTarget",
+            weights=STORY_VALENCE_WEIGHTS,
+            rng=rng,
+        ),
+    }
+
+
+def _story_direction_block(direction: dict[str, str]) -> str:
+    plot_mode = direction["plotMode"]
+    setting_class = direction["settingClass"]
+    opposition_class = direction["oppositionClass"]
+    resolution_mode = direction["resolutionMode"]
+    valence_target = direction["valenceTarget"]
+    return (
+        "STORY_DIRECTION: обязательное структурное направление этой истории. "
+        "Это не готовый сюжет; конкретные события придумай самостоятельно.\n"
+        f"- plotMode={plot_mode}: {STORY_DIRECTION_SPECS[plot_mode]['instruction']}\n"
+        f"- settingClass={setting_class}: {STORY_SETTING_INSTRUCTIONS[setting_class]}.\n"
+        f"- oppositionClass={opposition_class}: "
+        f"{STORY_OPPOSITION_INSTRUCTIONS[opposition_class]}.\n"
+        f"- resolutionMode={resolution_mode}: "
+        f"{STORY_RESOLUTION_INSTRUCTIONS[resolution_mode]}.\n"
+        f"- valenceTarget={valence_target}: {STORY_VALENCE_INSTRUCTIONS[valence_target]}.\n"
+        "Значение valence в JSON должно точно совпасть с valenceTarget. Для положительного "
+        "события каждый statImpact положительный, для отрицательного — отрицательный, "
+        "для нейтрального statImpacts пуст. Снижение hunger объясняй пропущенной едой, "
+        "потерей еды или долгой нагрузкой без возможности поесть; повышение hunger — едой. "
+        "Energy меняется от травмы, болезни, лечения, отдыха или восстановления, happiness — "
+        "от эмоционального результата. Не упоминай автоматически каждую текущую травму и "
+        "каждый ранее полученный предмет. Существующую травму включай только если история "
+        "прямо посвящена её лечению либо она действительно меняет центральное решение или исход. "
+        "Используй не более одного старого предмета и только когда без него не работает "
+        "причинная линия.\n"
+        "Не заменяй выбранное направление привычной схемой «герой случайно попал в ловушку, "
+        "выбрался и потерял вещь/получил травму»."
+    )
+
+
+def _background_story_schema_for_direction(direction: dict[str, str]) -> dict[str, Any]:
+    schema = copy.deepcopy(BACKGROUND_STORY_SCHEMA)
+    valence_target = direction["valenceTarget"]
+    schema["properties"]["valence"]["enum"] = [valence_target]
+    stat_impacts = schema["properties"]["statImpacts"]
+    amount = stat_impacts["items"]["properties"]["amount"]
+    if valence_target == "positive":
+        stat_impacts["minItems"] = 1
+        amount["minimum"] = 1
+        amount["maximum"] = STORY_STAT_MAX_SINGLE_DAMAGE
+    elif valence_target == "negative":
+        stat_impacts["minItems"] = 1
+        amount["minimum"] = -STORY_STAT_MAX_SINGLE_DAMAGE
+        amount["maximum"] = -1
+    elif valence_target == "neutral":
+        stat_impacts["maxItems"] = 0
+    return schema
 
 
 def _state_params_brief(pet: LocalPetChatContext) -> dict[str, Any]:
@@ -1443,6 +1766,15 @@ def generate_background_story(
             "character": character,
         }
     )
+    story_direction = select_background_story_direction(
+        recent_story_events,
+        current_stats={
+            "hunger": pet.stats.hunger,
+            "happiness": pet.stats.happiness,
+            "energy": pet.stats.energy,
+        },
+    )
+    user_content = f"{user_content}\n\n{_story_direction_block(story_direction)}"
     anti_repeat = _anti_repeat_block(recent_story_events)
     if anti_repeat:
         user_content = f"{user_content}\n\n{anti_repeat}"
@@ -1461,7 +1793,7 @@ def generate_background_story(
             "type": "json_schema",
             "json_schema": {
                 "name": "background_story",
-                "schema": BACKGROUND_STORY_SCHEMA,
+                "schema": _background_story_schema_for_direction(story_direction),
                 "strict": True,
             },
         },
@@ -1469,6 +1801,12 @@ def generate_background_story(
         **chat_reasoning_effort_kwargs(background_story_reasoning_effort()),
     }
     prompt_debug = [item for item in (routing_debug,) if item is not None]
+    prompt_debug.append(
+        {
+            "event": "background_story_direction",
+            **story_direction,
+        }
+    )
     prompt_debug.append(log_chat_completion_prompt("background_story/generate", request_kwargs))
     completion = openai_client.chat.completions.create(**request_kwargs)
     log_chat_completion_response("background_story/generate", completion)
@@ -1525,4 +1863,9 @@ def generate_background_story(
         stat_impacts=result.stat_impacts,
         stat_impact=result.stat_impact,
         stat_validation=result.stat_validation,
+        plot_mode=story_direction["plotMode"],
+        setting_class=story_direction["settingClass"],
+        opposition_class=story_direction["oppositionClass"],
+        resolution_mode=story_direction["resolutionMode"],
+        valence_target=story_direction["valenceTarget"],
     )

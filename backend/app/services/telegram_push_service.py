@@ -439,10 +439,21 @@ def _compact_story_novelty_item(value: Any) -> dict[str, Any] | None:
     tags = _event_string_list(value.get("tags"), limit=8, item_limit=60)
     if not title and not tags:
         return None
+    structure = {
+        field: _compact_event_text(value.get(field), limit=80)
+        for field in (
+            "plotMode",
+            "settingClass",
+            "oppositionClass",
+            "resolutionMode",
+            "valenceTarget",
+        )
+    }
     return {
         **({"id": str(value.get("id"))[:120]} if value.get("id") else {}),
         "title": title,
         "tags": tags,
+        **{key: item for key, item in structure.items() if item},
         "createdAt": _compact_event_text(
             value.get("generatedAt") or value.get("createdAt"),
             limit=80,
@@ -1233,6 +1244,11 @@ def generate_story_for_telegram_user(
         rejected_candidate = {
             "title": result.title,
             "tags": list(result.tags),
+            "plotMode": getattr(result, "plot_mode", ""),
+            "settingClass": getattr(result, "setting_class", ""),
+            "oppositionClass": getattr(result, "opposition_class", ""),
+            "resolutionMode": getattr(result, "resolution_mode", ""),
+            "valenceTarget": getattr(result, "valence_target", ""),
             "createdAt": payload.nowIso or _iso(),
         }
         result = generate_background_story(
@@ -1258,6 +1274,11 @@ def generate_story_for_telegram_user(
         "eventType": result.event_type,
         "valence": result.valence,
         "tags": list(result.tags),
+        "plotMode": getattr(result, "plot_mode", ""),
+        "settingClass": getattr(result, "setting_class", ""),
+        "oppositionClass": getattr(result, "opposition_class", ""),
+        "resolutionMode": getattr(result, "resolution_mode", ""),
+        "valenceTarget": getattr(result, "valence_target", ""),
         **(recent_story_event if isinstance(recent_story_event, dict) else {}),
         "storyText": result.story_text,
         "generatedAt": now_iso,

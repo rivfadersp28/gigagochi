@@ -796,3 +796,26 @@ def test_story_novelty_detects_reused_title_and_tags() -> None:
     history = [{"title": "Медный ключ", "tags": ["ключ", "руины"]}]
 
     assert telegram_push_service._story_is_lexical_duplicate(story, history) is True
+
+
+def test_story_novelty_preserves_structural_signature() -> None:
+    history = telegram_push_service._record_story_novelty_history(
+        {
+            "storyNoveltyHistory": [
+                {
+                    "title": "Гость в башне",
+                    "tags": ["привидение"],
+                    "plotMode": "mystery",
+                    "settingClass": "castle_or_tower",
+                    "oppositionClass": "supernatural",
+                    "resolutionMode": "investigation",
+                    "createdAt": "2026-07-11T12:00:00Z",
+                }
+            ]
+        }
+    )
+
+    assert history[0]["plotMode"] == "mystery"
+    assert history[0]["settingClass"] == "castle_or_tower"
+    assert history[0]["oppositionClass"] == "supernatural"
+    assert history[0]["resolutionMode"] == "investigation"

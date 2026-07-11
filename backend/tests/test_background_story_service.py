@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,91 @@ TEST_CAUSAL_PLAN = {
     "action": "Олег отвечает одним действием.",
     "consequence": "Действие приводит к прямому последствию.",
 }
+
+
+def test_story_direction_uses_all_modes_before_repeating() -> None:
+    rng = random.Random(7)
+    history: list[dict[str, str]] = []
+
+    for _ in range(len(background_story_service.STORY_DIRECTION_SPECS)):
+        direction = background_story_service.select_background_story_direction(
+            history,
+            rng=rng,
+        )
+        assert direction["plotMode"] not in {
+            item["plotMode"]
+            for item in history[-background_story_service.STORY_MODE_COOLDOWN :]
+        }
+        history.append(direction)
+
+    assert {item["plotMode"] for item in history} == set(
+        background_story_service.STORY_DIRECTION_SPECS
+    )
+
+
+def test_story_direction_block_forbids_fallback_to_trap_pattern() -> None:
+    direction = {
+        "plotMode": "mystery",
+        "settingClass": "castle_or_tower",
+        "oppositionClass": "supernatural",
+        "resolutionMode": "investigation",
+        "valenceTarget": "positive",
+    }
+
+    block = background_story_service._story_direction_block(direction)
+
+    assert "замок, башня" in block
+    assert "дух, привидение" in block
+    assert "герой случайно попал в ловушку" in block
+    assert "каждый statImpact положительный" in block
+    assert "Не упоминай автоматически каждую текущую травму" in block
+
+
+def test_story_direction_valence_distribution_keeps_neutral_rare() -> None:
+    rng = random.Random(11)
+    history: list[dict[str, str]] = []
+
+    for _ in range(10):
+        direction = background_story_service.select_background_story_direction(
+            history,
+            current_stats={"hunger": 50, "happiness": 50, "energy": 50},
+            rng=rng,
+        )
+        history.append(direction)
+
+    counts = {
+        valence: sum(item["valenceTarget"] == valence for item in history)
+        for valence in background_story_service.STORY_VALENCE_WEIGHTS
+    }
+    assert counts == {"positive": 4, "negative": 4, "mixed": 1, "neutral": 1}
+
+
+@pytest.mark.parametrize(
+    ("valence", "minimum", "maximum", "min_items", "max_items"),
+    [
+        ("positive", 1, 25, 1, 2),
+        ("negative", -25, -1, 1, 2),
+        ("neutral", -25, 25, None, 0),
+    ],
+)
+def test_story_schema_enforces_valence_stat_contract(
+    valence: str,
+    minimum: int,
+    maximum: int,
+    min_items: int | None,
+    max_items: int,
+) -> None:
+    schema = background_story_service._background_story_schema_for_direction(
+        {"valenceTarget": valence}
+    )
+    stat_impacts = schema["properties"]["statImpacts"]
+    amount = stat_impacts["items"]["properties"]["amount"]
+
+    assert schema["properties"]["valence"]["enum"] == [valence]
+    assert amount["minimum"] == minimum
+    assert amount["maximum"] == maximum
+    assert stat_impacts.get("minItems") == min_items
+    assert stat_impacts["maxItems"] == max_items
 
 
 class FakeBackgroundStoryCompletions:
@@ -323,6 +409,14 @@ def test_generate_background_story_stores_recent_event_without_lite_patch(monkey
     assert result.story_library_patch is None
     assert result.lite_overlay_patch is None
     assert result.recent_story_event is not None
+    assert result.plot_mode in background_story_service.STORY_DIRECTION_SPECS
+    assert result.setting_class
+    assert result.opposition_class
+    assert result.resolution_mode
+    assert result.valence_target in background_story_service.STORY_VALENCE_WEIGHTS
+    assert any(
+        item.get("event") == "background_story_direction" for item in result.prompt_debug
+    )
     assert result.stat_impact == {
         "stat": "energy",
         "amount": -25,
@@ -343,6 +437,7 @@ def test_generate_background_story_stores_recent_event_without_lite_patch(monkey
         "action",
         "consequence",
     ]
+    assert story_schema["properties"]["valence"]["enum"] == [result.valence_target]
     prompt = request["messages"][1]["content"]
     assert "наевшийся" in prompt
     assert "счастливый" in prompt
@@ -757,19 +852,18 @@ def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) ->
     system_prompt = request["messages"][0]["content"]
     prompt = request["messages"][1]["content"]
     assert "GENERATION_PROFILE" not in system_prompt
-    assert "не задают детский литературный тон" in system_prompt
-    assert "может попасть в серьезную, опасную или мрачную ситуацию" in system_prompt
-    assert "Сначала заполни causalPlan" in system_prompt
+    assert "не задают детский тон" in system_prompt
+    assert "Заполни causalPlan" in system_prompt
     assert "storyText только по этому плану" in system_prompt
-    assert "не более чем один необычный или магический эффект" in system_prompt
+    assert "Не более одного нового магического эффекта" in system_prompt
     assert "ОБЩАЯ БИБЛИЯ МИРА" in system_prompt
     assert "древние леса, чащи и туманные луга" in system_prompt
     assert "Современная бытовая инфраструктура не является фоном" in system_prompt
-    assert "Находка должна быть конкретной и материальной" in system_prompt
-    assert "не повторяй тип местности из недавних событий" in prompt
-    assert "низкий параметр не требует снова строить сюжет вокруг его восстановления" in prompt
-    assert "центральная потребность, проблема и способ разрешения должны отличаться" in prompt
-    assert "центральное происшествие должно завершиться внутри эпизода" in prompt
+    assert "материальная потеря, предмет и травма не обязательны" in system_prompt
+    assert "STORY_DIRECTION" in prompt
+    assert "Не своди каждый сюжет к физической опасности" in prompt
+    assert "Сравни новую историю с ANTI_REPEAT" in prompt
+    assert "Центральное событие заверши внутри эпизода" in prompt
     assert "ANTI_REPEAT" in prompt
     assert "Используй список только как запрет на повтор" in prompt
     assert "название: Искра у миски" in prompt
