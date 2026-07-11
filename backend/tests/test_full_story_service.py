@@ -190,6 +190,7 @@ def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
     assert '"rhythm": "короткие фразы"' in plan_prompt
     assert "загадочные рукодельные метафоры" not in plan_prompt
     assert "Не пиши storyParagraphs" in plan_prompt
+    assert "каждое поле event — один факт" in plan_prompt
     assert "совпадение по времени не является причинностью" in completions.calls[0][
         "messages"
     ][0]["content"]
