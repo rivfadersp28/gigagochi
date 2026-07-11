@@ -173,9 +173,13 @@ FULL_STORY_RENDER_SCHEMA: dict[str, Any] = {
                     "partNumber": {"type": "integer", "minimum": 1, "maximum": PART_COUNT},
                     "storyParagraphs": {
                         "type": "array",
-                        "minItems": 3,
-                        "maxItems": 3,
-                        "items": {"type": "string", "maxLength": 320},
+                        "minItems": 1,
+                        "maxItems": 2,
+                        "items": {
+                            "type": "string",
+                            "maxLength": 220,
+                            "description": "Одно законченное короткое предложение.",
+                        },
                     },
                 },
                 "required": ["partNumber", "storyParagraphs"],
@@ -364,7 +368,7 @@ def _normalize_payload(
         ):
             raise FullStoryGenerationError("FULL_STORY_PART_ORDER_INVALID")
         paragraphs = raw_render_part.get("storyParagraphs")
-        if not isinstance(paragraphs, list) or len(paragraphs) != 3:
+        if not isinstance(paragraphs, list) or not 1 <= len(paragraphs) <= 2:
             raise FullStoryGenerationError("FULL_STORY_PARAGRAPHS_INVALID")
         valence = raw_plan_part.get("valence")
         if valence not in {"positive", "negative", "mixed"}:
@@ -377,7 +381,7 @@ def _normalize_payload(
                 part_number=expected_number,
                 title=_text(raw_plan_part.get("title"), 120) or f"Часть {expected_number}",
                 summary=_text(raw_plan_part.get("summary"), 360),
-                story_text="\n\n".join(_text(value, 320) for value in paragraphs),
+                story_text=" ".join(_text(value, 220) for value in paragraphs),
                 valence=valence,
                 stat_impacts=impacts,
             )

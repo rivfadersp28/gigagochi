@@ -205,6 +205,10 @@
   inciting part establishes commitment, the complication changes the plan, the
   turn creates an observable path to resolution, and only the finale must solve
   the overall goal.
+- Full-story rendering keeps that detailed hidden plan but exposes only one or
+  two short first-person sentences per part. The render schema represents each
+  sentence as a separate item, and normalization joins them into one compact
+  visible scene.
 - `/story` illustrations use `background_story_service.generate_background_story_image_bytes`.
   Before image generation, the service sends the generated story through a chat
   completion named `background_story_image_scene` with an artist-brief prompt

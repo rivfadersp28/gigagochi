@@ -68,8 +68,7 @@ def _render(prefix: str = "Я увидела") -> dict:
                 "partNumber": number,
                 "storyParagraphs": [
                     f"{prefix}, как началось событие {number}.",
-                    f"Мне помешали, и я сделала решающий выбор {number}.",
-                    f"Результат изменил положение {number} и остался важен дальше.",
+                    f"Мне помешали, но мой выбор сразу изменил положение {number}.",
                 ],
             }
             for number in range(1, 5)
@@ -203,11 +202,18 @@ def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
     assert "случайного повтора соседних слов" in completions.calls[2]["messages"][0][
         "content"
     ]
+    assert "1–2 недлинных законченных предложения" in completions.calls[2]["messages"][
+        0
+    ]["content"]
+    render_schema = completions.calls[2]["response_format"]["json_schema"]["schema"]
+    paragraph_schema = render_schema["properties"]["parts"]["items"]["properties"][
+        "storyParagraphs"
+    ]
+    assert paragraph_schema["minItems"] == 1
+    assert paragraph_schema["maxItems"] == 2
     assert completions.calls[0]["timeout"] == 240.0
     assert '"eventSvo"' in render_prompt
-    assert "Рассказ ведёт питомец от первого лица" in completions.calls[2]["messages"][0][
-        "content"
-    ]
+    assert "от первого лица" in completions.calls[2]["messages"][0]["content"]
 
 
 def test_full_story_retries_rejected_plan_before_rendering(monkeypatch) -> None:
