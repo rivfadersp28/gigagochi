@@ -199,6 +199,9 @@ def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
     assert "образуют точный журнал состояния" in completions.calls[0]["messages"][0][
         "content"
     ]
+    assert "нельзя запускать две или больше частей новым обвалом" in completions.calls[
+        0
+    ]["messages"][0]["content"]
     assert "случайного повтора соседних слов" in completions.calls[2]["messages"][0][
         "content"
     ]
