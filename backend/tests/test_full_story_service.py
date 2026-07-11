@@ -7,78 +7,104 @@ from app.schemas import LocalPetChatContext
 from app.services import full_story_service
 
 
-def _part(number: int, *, valence: str, impacts: list[dict]) -> dict:
+def _plan_part(number: int, *, impacts: list[dict] | None = None) -> dict:
+    functions = ("inciting_change", "complication", "turn", "resolution")
     return {
         "partNumber": number,
-        "title": f"Часть {number}",
-        "summary": f"Событие части {number}.",
-        "storyParagraphs": [
-            f"В части {number} начинается конкретное происшествие.",
-            "Герои действуют вместе и меняют ситуацию.",
-            "Результат прямо ведёт к следующей части.",
-        ],
-        "valence": valence,
-        "statImpacts": impacts,
+        "narrativeFunction": functions[number - 1],
+        "title": f"Событие {number}",
+        "summary": f"В части {number} положение заметно меняется.",
+        "eventSvo": {
+            "subject": "Мяу",
+            "verb": "меняет",
+            "object": f"положение {number}",
+        },
+        "event": {
+            "beforeState": f"До события {number} цель ещё недоступна.",
+            "trigger": f"Возникает препятствие {number}.",
+            "protagonistGoal": f"Добиться результата {number}.",
+            "opposition": f"Препятствие {number} мешает.",
+            "decisiveAction": f"Мяу принимает решение {number}.",
+            "result": f"Решение меняет ситуацию {number}.",
+            "afterState": f"После события {number} возникает новое положение.",
+        },
+        "readerHook": f"Что произойдёт после изменения {number}?",
+        "carryForward": f"Новое положение {number} сохраняется.",
+        "valence": "mixed",
+        "statImpacts": impacts or [],
     }
 
 
-def test_full_story_generates_four_linked_parts_with_impacts(monkeypatch) -> None:
-    payload = {
-        "overallTitle": "Лекарство до снегопада",
+def _story_plan(*, title: str = "Четыре события") -> dict:
+    return {
+        "overallTitle": title,
         "arcPlan": {
-            "goal": "Доставить лекарства.",
-            "stakes": "Перевал закроется ночью.",
-            "escalation": "Телега ломается, река поднимается, груз теряется.",
-            "finale": "Лекарства доставлены в посёлок.",
+            "goal": "Вернуть общий колокол до грозы.",
+            "stakes": "Без колокола жители не услышат предупреждение.",
+            "escalation": "Каждое событие меняет доступ к колоколу.",
+            "finale": "Мяу возвращает колокол и подаёт сигнал.",
         },
         "parts": [
-            _part(
+            _plan_part(
                 1,
-                valence="mixed",
-                impacts=[
-                    {"stat": "energy", "amount": -8, "reason": "Переносила груз."},
-                    {"stat": "happiness", "amount": 5, "reason": "Ей доверились."},
-                ],
+                impacts=[{"stat": "happiness", "amount": -4, "reason": "Колокол украли."}],
             ),
-            _part(
-                2,
-                valence="negative",
-                impacts=[{"stat": "hunger", "amount": -7, "reason": "Пропустила обед."}],
-            ),
-            _part(
-                3,
-                valence="mixed",
-                impacts=[
-                    {"stat": "energy", "amount": -11, "reason": "Поднялась по склону."},
-                    {"stat": "happiness", "amount": 8, "reason": "Спасла груз."},
-                ],
-            ),
-            _part(
+            _plan_part(2),
+            _plan_part(3),
+            _plan_part(
                 4,
-                valence="positive",
-                impacts=[{"stat": "hunger", "amount": 15, "reason": "Получила ужин."}],
+                impacts=[{"stat": "happiness", "amount": 7, "reason": "Сигнал подан."}],
             ),
         ],
     }
-    calls: list[dict] = []
 
-    class Completions:
-        def create(self, **kwargs):
-            calls.append(kwargs)
-            return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))],
-            )
 
-    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
-    monkeypatch.setattr(
-        full_story_service,
-        "get_settings",
-        lambda: SimpleNamespace(
-            openai_chat_timeout_seconds=30,
-            openai_chat_reasoning_effort=None,
-        ),
-    )
-    pet = LocalPetChatContext.model_validate(
+def _render(prefix: str = "Я увидела") -> dict:
+    return {
+        "parts": [
+            {
+                "partNumber": number,
+                "storyParagraphs": [
+                    f"{prefix}, как началось событие {number}.",
+                    f"Мне помешали, и я сделала решающий выбор {number}.",
+                    f"Результат изменил положение {number} и остался важен дальше.",
+                ],
+            }
+            for number in range(1, 5)
+        ]
+    }
+
+
+def _plan_verdict(accepted: bool, issue: str = "") -> dict:
+    return {
+        "accepted": accepted,
+        "parts": [
+            {
+                "partNumber": number,
+                "eventful": accepted,
+                "understandable": True,
+                "interesting": accepted,
+                "causal": True,
+                "distinct": True,
+                "issue": issue if number == 2 else "",
+            }
+            for number in range(1, 5)
+        ],
+        "issues": [issue] if issue else [],
+        "retryInstruction": "Замени вторую часть самостоятельным событием." if issue else "",
+    }
+
+
+def _quality_verdict(accepted: bool, issue: str = "") -> dict:
+    return {
+        "accepted": accepted,
+        "issues": [issue] if issue else [],
+        "retryInstruction": "Покажи центральное событие на сцене." if issue else "",
+    }
+
+
+def _pet() -> LocalPetChatContext:
+    return LocalPetChatContext.model_validate(
         {
             "name": "Мяу",
             "description": "кошка-волшебница",
@@ -99,194 +125,163 @@ def test_full_story_generates_four_linked_parts_with_impacts(monkeypatch) -> Non
         }
     )
 
+
+class SequenceCompletions:
+    def __init__(self, responses: list[dict]) -> None:
+        self.responses = responses
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=json.dumps(self.responses.pop(0), ensure_ascii=False)
+                    )
+                )
+            ]
+        )
+
+
+def _client(monkeypatch, responses: list[dict]):
+    completions = SequenceCompletions(responses)
+    monkeypatch.setattr(
+        full_story_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            openai_chat_timeout_seconds=30,
+            openai_chat_reasoning_effort=None,
+        ),
+    )
+    return SimpleNamespace(chat=SimpleNamespace(completions=completions)), completions
+
+
+def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
+    client, completions = _client(
+        monkeypatch,
+        [_story_plan(), _plan_verdict(True), _render(), _quality_verdict(True)],
+    )
+
     result = full_story_service.generate_full_story(
-        pet=pet,
+        pet=_pet(),
         client=client,
         model="test-model",
         timeout=30,
     )
 
-    assert result.overall_title == "Лекарство до снегопада"
+    assert result.overall_title == "Четыре события"
     assert len(result.parts) == 4
-    assert result.story_direction["plotMode"]
-    assert result.parts[0].stat_impacts[0]["amount"] == -8
-    assert sum(len(part.stat_impacts) for part in result.parts) == 3
-    assert result.parts[3].stat_impacts == ()
-    request = calls[0]
-    assert request["response_format"]["json_schema"]["name"] == "full_story"
-    prompt = request["messages"][1]["content"]
-    assert '"name": "Мяу"' in prompt
-    assert "ритуалы с маленькими предметами" not in prompt
-    assert '"rhythm": "короткие фразы"' in prompt
-    assert "загадочные рукодельные метафоры" not in prompt
-    assert (
-        "весь видимый текст storyParagraphs рассказывает сам питомец от первого лица"
-        in request["messages"][0]["content"]
-    )
-    assert "Центральное действие содержит не больше двух причинных шагов" in request[
-        "messages"
-    ][0]["content"]
-    assert '"hunger": 60' in prompt
-    assert "STORY_DIRECTION" in prompt
-    assert "ANTI_REPEAT" in prompt
+    assert result.parts[0].story_text.startswith("Я увидела")
+    assert result.parts[0].stat_impacts[0]["amount"] == -4
+    assert [
+        call["response_format"]["json_schema"]["name"] for call in completions.calls
+    ] == [
+        "full_story_plan",
+        "full_story_plan_quality_check",
+        "full_story_render",
+        "full_story_quality_check",
+    ]
+    plan_prompt = completions.calls[0]["messages"][1]["content"]
+    render_prompt = completions.calls[2]["messages"][1]["content"]
+    assert '"name": "Мяу"' in plan_prompt
+    assert "ритуалы с маленькими предметами" not in plan_prompt
+    assert '"rhythm": "короткие фразы"' in plan_prompt
+    assert "загадочные рукодельные метафоры" not in plan_prompt
+    assert "Не пиши storyParagraphs" in plan_prompt
+    assert '"eventSvo"' in render_prompt
+    assert "Рассказ ведёт питомец от первого лица" in completions.calls[2]["messages"][0][
+        "content"
+    ]
 
 
-def test_full_story_allows_empty_impacts_and_does_not_bind_sign_to_valence() -> None:
-    payload = {
-        "overallTitle": "Тихий день",
-        "arcPlan": {
-            "goal": "Переждать дождь.",
-            "stakes": "Тропа размыта.",
-            "escalation": "Вода подбирается к укрытию.",
-            "finale": "Дождь стихает.",
-        },
-        "parts": [
-            _part(number, valence="positive", impacts=[])
-            for number in range(1, 4)
-        ]
-        + [
-            _part(
-                4,
-                valence="positive",
-                impacts=[{"stat": "energy", "amount": -3, "reason": "Я долго гребла."}],
-            )
+def test_full_story_retries_rejected_plan_before_rendering(monkeypatch) -> None:
+    bad_plan = _story_plan(title="Четыре действия")
+    good_plan = _story_plan(title="Четыре события")
+    client, completions = _client(
+        monkeypatch,
+        [
+            bad_plan,
+            _plan_verdict(False, "Вторая часть описывает только переход к мосту."),
+            good_plan,
+            _plan_verdict(True),
+            _render(),
+            _quality_verdict(True),
         ],
-    }
+    )
 
-    _, _, parts = full_story_service._normalize_payload(payload)
+    result = full_story_service.generate_full_story(
+        pet=_pet(), client=client, model="test-model", timeout=30
+    )
 
-    assert parts[0].stat_impacts == ()
-    assert parts[3].stat_impacts[0]["amount"] == -3
-    stat_schema = full_story_service.FULL_STORY_SCHEMA["properties"]["parts"]["items"][
-        "properties"
-    ]["statImpacts"]
+    assert result.overall_title == "Четыре события"
+    assert completions.calls[2]["response_format"]["json_schema"]["name"] == (
+        "full_story_plan"
+    )
+    assert "PLAN_RETRY" in completions.calls[2]["messages"][1]["content"]
+
+
+def test_full_story_retries_prose_without_changing_plan(monkeypatch) -> None:
+    client, completions = _client(
+        monkeypatch,
+        [
+            _story_plan(),
+            _plan_verdict(True),
+            _render(prefix="Я долго шла"),
+            _quality_verdict(False, "Вторая часть пересказывает путь вместо события."),
+            _render(prefix="Я увидела"),
+            _quality_verdict(True),
+        ],
+    )
+
+    result = full_story_service.generate_full_story(
+        pet=_pet(), client=client, model="test-model", timeout=30
+    )
+
+    assert result.parts[0].story_text.startswith("Я увидела")
+    assert completions.calls[4]["response_format"]["json_schema"]["name"] == (
+        "full_story_render"
+    )
+    assert "RENDER_RETRY" in completions.calls[4]["messages"][1]["content"]
+    assert '"eventSvo"' in completions.calls[4]["messages"][1]["content"]
+
+
+def test_full_story_limits_and_normalizes_stat_impacts() -> None:
+    plan = _story_plan()
+    plan["parts"][0]["statImpacts"] = [
+        {"stat": "energy", "amount": -20, "reason": "Тяжёлый вред."},
+        {"stat": "happiness", "amount": 5, "reason": "Лишнее изменение."},
+    ]
+    plan["parts"][1]["statImpacts"] = [
+        {"stat": "hunger", "amount": -3, "reason": "Пропущена еда."}
+    ]
+    plan["parts"][2]["statImpacts"] = [
+        {"stat": "happiness", "amount": -4, "reason": "Сильная потеря."}
+    ]
+    plan["parts"][3]["statImpacts"] = [
+        {"stat": "happiness", "amount": 8, "reason": "Финальная радость."}
+    ]
+
+    _, _, parts = full_story_service._normalize_payload(plan, _render())
+
+    assert parts[0].stat_impacts[0]["amount"] == -15
+    assert sum(len(part.stat_impacts) for part in parts) == 3
+    assert parts[3].stat_impacts == ()
+    stat_schema = full_story_service.FULL_STORY_PLAN_SCHEMA["properties"]["parts"][
+        "items"
+    ]["properties"]["statImpacts"]
     assert stat_schema["minItems"] == 0
     assert stat_schema["maxItems"] == 1
 
 
-def test_full_story_retries_once_after_style_rejection(monkeypatch) -> None:
-    first = {
-        "overallTitle": "Испытание",
-        "arcPlan": {
-            "goal": "Пройти мост.",
-            "stakes": "Другого выхода нет.",
-            "escalation": "Начинается проверка.",
-            "finale": "Герой побеждает.",
-        },
-        "parts": [_part(number, valence="positive", impacts=[]) for number in range(1, 5)],
-    }
-    repaired = {
-        **first,
-        "overallTitle": "Мост после дождя",
-        "parts": [
-            {
-                **_part(number, valence="positive", impacts=[]),
-                "storyParagraphs": [
-                    "Я упёрлась лапами в мокрую доску.",
-                    "Я сдвинула её к целой балке и прижала камнем.",
-                    "Доска перестала качаться, и я перешла ручей.",
-                ],
-            }
-            for number in range(1, 5)
-        ],
-    }
-    responses = [
-        first,
-        {
-            "accepted": False,
-            "issues": ["Текст пересказывает проверку и победу вместо действий."],
-            "retryInstruction": "Покажи действия от первого лица.",
-        },
-        repaired,
-        {"accepted": True, "issues": [], "retryInstruction": ""},
-    ]
-    calls: list[dict] = []
-
-    class Completions:
-        def create(self, **kwargs):
-            calls.append(kwargs)
-            return SimpleNamespace(
-                choices=[
-                    SimpleNamespace(
-                        message=SimpleNamespace(
-                            content=json.dumps(responses.pop(0), ensure_ascii=False)
-                        )
-                    )
-                ]
-            )
-
-    monkeypatch.setattr(
-        full_story_service,
-        "get_settings",
-        lambda: SimpleNamespace(openai_chat_timeout_seconds=30),
-    )
-    pet = LocalPetChatContext.model_validate(
-        {
-            "name": "Мяу",
-            "description": "кошка",
-            "stage": "teen",
-            "mood": "idle",
-            "stats": {"hunger": 60, "happiness": 50, "energy": 70},
-        }
-    )
-
-    result = full_story_service.generate_full_story(
-        pet=pet,
-        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
-        model="test-model",
-        timeout=30,
-    )
-
-    assert result.overall_title == "Мост после дождя"
-    assert result.parts[0].story_text.startswith("Я упёрлась")
-    assert calls[2]["response_format"]["json_schema"]["name"] == "full_story"
-    assert "QUALITY_RETRY" in calls[2]["messages"][1]["content"]
-
-
-def test_full_story_prompt_forbids_reusing_previous_arc(monkeypatch) -> None:
-    captured: list[dict] = []
-    payload = {
-        "overallTitle": "Новый спор",
-        "arcPlan": {
-            "goal": "Уладить спор.",
-            "stakes": "Стороны разойдутся.",
-            "escalation": "Переговоры заходят в тупик.",
-            "finale": "Стороны договариваются.",
-        },
-        "parts": [
-            _part(
-                number,
-                valence="positive",
-                impacts=[{"stat": "happiness", "amount": 1, "reason": "Есть прогресс."}],
-            )
-            for number in range(1, 5)
-        ],
-    }
-
-    class Completions:
-        def create(self, **kwargs):
-            captured.append(kwargs)
-            return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))],
-            )
-
-    monkeypatch.setattr(
-        full_story_service,
-        "get_settings",
-        lambda: SimpleNamespace(openai_chat_timeout_seconds=30),
-    )
-    pet = LocalPetChatContext.model_validate(
-        {
-            "name": "Мяу",
-            "description": "кошка",
-            "stage": "teen",
-            "mood": "idle",
-            "stats": {"hunger": 60, "happiness": 50, "energy": 70},
-        }
+def test_full_story_plan_prompt_forbids_reusing_previous_arc(monkeypatch) -> None:
+    client, completions = _client(
+        monkeypatch,
+        [_story_plan(), _plan_verdict(True), _render(), _quality_verdict(True)],
     )
 
     full_story_service.generate_full_story(
-        pet=pet,
+        pet=_pet(),
         recent_full_stories=[
             {
                 "overallTitle": "Один день холодящего мёда",
@@ -308,12 +303,12 @@ def test_full_story_prompt_forbids_reusing_previous_arc(monkeypatch) -> None:
                 }
             ],
         },
-        client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+        client=client,
         model="test-model",
         timeout=30,
     )
 
-    prompt = captured[0]["messages"][1]["content"]
+    prompt = completions.calls[0]["messages"][1]["content"]
     assert "Один день холодящего мёда" in prompt
     assert "Доставить лекарство до заката" in prompt
     assert "только как запрет на повтор" in prompt

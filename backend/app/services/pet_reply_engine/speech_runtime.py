@@ -91,6 +91,10 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("backgroundStory", "eventfulnessCheckRule"),
     ("backgroundStory", "fullStorySystem"),
     ("backgroundStory", "fullStoryUserTemplate"),
+    ("backgroundStory", "fullStoryPlanQualitySystem"),
+    ("backgroundStory", "fullStoryPlanQualityUserTemplate"),
+    ("backgroundStory", "fullStoryRenderSystem"),
+    ("backgroundStory", "fullStoryRenderUserTemplate"),
     ("backgroundStory", "fullStoryQualityCheckSystem"),
     ("backgroundStory", "fullStoryQualityCheckUserTemplate"),
     ("backgroundStory", "coherenceCheckSystem"),
@@ -221,6 +225,25 @@ def validate_speech_runtime_config(config: Any) -> None:
         if placeholder not in full_story_template:
             raise ValueError(
                 f"backgroundStory.fullStoryUserTemplate must include {placeholder}"
+            )
+    plan_quality_template = _required_string(
+        config,
+        ("backgroundStory", "fullStoryPlanQualityUserTemplate"),
+    )
+    for placeholder in ("{story_direction}", "{story_plan}"):
+        if placeholder not in plan_quality_template:
+            raise ValueError(
+                "backgroundStory.fullStoryPlanQualityUserTemplate must include "
+                f"{placeholder}"
+            )
+    render_template = _required_string(
+        config,
+        ("backgroundStory", "fullStoryRenderUserTemplate"),
+    )
+    for placeholder in ("{character}", "{story_plan}"):
+        if placeholder not in render_template:
+            raise ValueError(
+                f"backgroundStory.fullStoryRenderUserTemplate must include {placeholder}"
             )
     coherence_template = _required_string(
         config,
@@ -629,7 +652,6 @@ def full_story_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "fullStorySystem")),
             _required_string(config, ("backgroundStory", "characterInfluenceRule")),
             _required_string(config, ("backgroundStory", "incidentRule")),
-            _required_string(config, ("backgroundStory", "storyProseRule")),
             _required_string(config, ("backgroundStory", "storySimplicityRule")),
             _required_string(config, ("backgroundStory", "storyDecisionRule")),
             _required_string(config, ("backgroundStory", "fullStoryStatsRule")),
@@ -641,6 +663,46 @@ def full_story_user_prompt(values: dict[str, str]) -> str:
     template = _required_string(
         speech_runtime_config(),
         ("backgroundStory", "fullStoryUserTemplate"),
+    )
+    return _template_replace(template, values)
+
+
+def full_story_plan_quality_system_prompt() -> str:
+    config = speech_runtime_config()
+    return "\n\n".join(
+        [
+            _required_string(config, ("backgroundStory", "fullStoryPlanQualitySystem")),
+            _required_string(config, ("backgroundStory", "storySimplicityRule")),
+            _required_string(config, ("backgroundStory", "storyDecisionRule")),
+            _required_string(config, ("backgroundStory", "fullStoryStatsRule")),
+        ]
+    )
+
+
+def full_story_plan_quality_user_prompt(values: dict[str, str]) -> str:
+    template = _required_string(
+        speech_runtime_config(),
+        ("backgroundStory", "fullStoryPlanQualityUserTemplate"),
+    )
+    return _template_replace(template, values)
+
+
+def full_story_render_system_prompt() -> str:
+    config = speech_runtime_config()
+    return "\n\n".join(
+        [
+            _required_string(config, ("backgroundStory", "fullStoryRenderSystem")),
+            _required_string(config, ("backgroundStory", "storyProseRule")),
+            _required_string(config, ("backgroundStory", "storySimplicityRule")),
+            _required_string(config, ("backgroundStory", "storyDecisionRule")),
+        ]
+    )
+
+
+def full_story_render_user_prompt(values: dict[str, str]) -> str:
+    template = _required_string(
+        speech_runtime_config(),
+        ("backgroundStory", "fullStoryRenderUserTemplate"),
     )
     return _template_replace(template, values)
 
