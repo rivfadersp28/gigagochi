@@ -23,6 +23,7 @@ def _plan_part(number: int, *, impacts: list[dict] | None = None) -> dict:
             "beforeState": f"До события {number} цель ещё недоступна.",
             "trigger": f"Возникает препятствие {number}.",
             "protagonistGoal": f"Добиться результата {number}.",
+            "oppositionGoal": f"Сохранить ресурс {number} для себя.",
             "opposition": f"Препятствие {number} мешает.",
             "decisiveAction": f"Мяу принимает решение {number}.",
             "result": f"Решение меняет ситуацию {number}.",
@@ -190,6 +191,9 @@ def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
     assert "загадочные рукодельные метафоры" not in plan_prompt
     assert "Не пиши storyParagraphs" in plan_prompt
     assert "совпадение по времени не является причинностью" in completions.calls[0][
+        "messages"
+    ][0]["content"]
+    assert "прямо назови его текущую практическую цель" in completions.calls[0][
         "messages"
     ][0]["content"]
     assert completions.calls[0]["timeout"] == 150.0
