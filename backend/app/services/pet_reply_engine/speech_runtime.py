@@ -87,6 +87,7 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("backgroundStory", "storyProseRule"),
     ("backgroundStory", "storySimplicityRule"),
     ("backgroundStory", "storyDecisionRule"),
+    ("backgroundStory", "storyCausalityRule"),
     ("backgroundStory", "fullStoryStatsRule"),
     ("backgroundStory", "eventfulnessCheckRule"),
     ("backgroundStory", "fullStorySystem"),
@@ -609,6 +610,7 @@ def background_story_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "storyProseRule")),
             _required_string(config, ("backgroundStory", "storySimplicityRule")),
             _required_string(config, ("backgroundStory", "storyDecisionRule")),
+            _required_string(config, ("backgroundStory", "storyCausalityRule")),
         ]
     )
 
@@ -633,6 +635,7 @@ def background_story_coherence_check_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "storyProseRule")),
             _required_string(config, ("backgroundStory", "storySimplicityRule")),
             _required_string(config, ("backgroundStory", "storyDecisionRule")),
+            _required_string(config, ("backgroundStory", "storyCausalityRule")),
         )
     )
 
@@ -654,6 +657,7 @@ def full_story_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "incidentRule")),
             _required_string(config, ("backgroundStory", "storySimplicityRule")),
             _required_string(config, ("backgroundStory", "storyDecisionRule")),
+            _required_string(config, ("backgroundStory", "storyCausalityRule")),
             _required_string(config, ("backgroundStory", "fullStoryStatsRule")),
         ]
     )
@@ -674,6 +678,7 @@ def full_story_plan_quality_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "fullStoryPlanQualitySystem")),
             _required_string(config, ("backgroundStory", "storySimplicityRule")),
             _required_string(config, ("backgroundStory", "storyDecisionRule")),
+            _required_string(config, ("backgroundStory", "storyCausalityRule")),
             _required_string(config, ("backgroundStory", "fullStoryStatsRule")),
         ]
     )
@@ -695,6 +700,7 @@ def full_story_render_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "storyProseRule")),
             _required_string(config, ("backgroundStory", "storySimplicityRule")),
             _required_string(config, ("backgroundStory", "storyDecisionRule")),
+            _required_string(config, ("backgroundStory", "storyCausalityRule")),
         ]
     )
 
@@ -715,6 +721,7 @@ def full_story_quality_check_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "storyProseRule")),
             _required_string(config, ("backgroundStory", "storySimplicityRule")),
             _required_string(config, ("backgroundStory", "storyDecisionRule")),
+            _required_string(config, ("backgroundStory", "storyCausalityRule")),
             _required_string(config, ("backgroundStory", "fullStoryStatsRule")),
         ]
     )

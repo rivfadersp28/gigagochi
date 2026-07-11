@@ -189,6 +189,10 @@ def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
     assert '"rhythm": "короткие фразы"' in plan_prompt
     assert "загадочные рукодельные метафоры" not in plan_prompt
     assert "Не пиши storyParagraphs" in plan_prompt
+    assert "совпадение по времени не является причинностью" in completions.calls[0][
+        "messages"
+    ][0]["content"]
+    assert completions.calls[0]["timeout"] == 150.0
     assert '"eventSvo"' in render_prompt
     assert "Рассказ ведёт питомец от первого лица" in completions.calls[2]["messages"][0][
         "content"

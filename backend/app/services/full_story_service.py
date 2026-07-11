@@ -38,6 +38,7 @@ MAX_PART_IMPACT = 15
 MAX_PART_TOTAL_IMPACT = 15
 MAX_PART_STAT_IMPACTS = 1
 MAX_STORY_STAT_IMPACTS = 3
+FULL_STORY_MIN_TIMEOUT_SECONDS = 150.0
 
 STAT_IMPACT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -589,7 +590,8 @@ def generate_full_story(
     settings = get_settings()
     openai_client = client or get_openai_client()
     model = model or get_chat_model(settings)
-    timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
+    configured_timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
+    timeout = max(float(configured_timeout), FULL_STORY_MIN_TIMEOUT_SECONDS)
     character = json.dumps(story_character_data(pet), ensure_ascii=False, indent=2)
     current_state = json.dumps(
         {
