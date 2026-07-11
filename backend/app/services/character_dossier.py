@@ -163,6 +163,45 @@ def effective_character_data(pet: Any) -> dict[str, Any]:
     return compact(result)
 
 
+def story_character_data(pet: Any) -> dict[str, Any]:
+    """Return identity constraints without using the bible as a plot generator."""
+    data = effective_character_data(pet)
+    identity = _record(data.get("identity"))
+    genesis = _record(data.get("genesis"))
+    durable = data.get("durableFacts") if isinstance(data.get("durableFacts"), list) else []
+    relevant_facts = [
+        item
+        for item in durable
+        if isinstance(item, dict) and item.get("sphere") in {"appearance", "relationship"}
+    ][-4:]
+    result = {
+        "identity": {
+            "name": identity.get("name"),
+            "species": identity.get("species"),
+        },
+        "temperament": genesis.get("characterTrait"),
+        "durableConstraints": [
+            {"sphere": item.get("sphere"), "text": item.get("text")}
+            for item in relevant_facts
+        ],
+    }
+
+    def compact(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: cleaned
+                for key, item in value.items()
+                if (cleaned := compact(item)) not in (None, "", [], {})
+            }
+        if isinstance(value, list):
+            return [
+                cleaned for item in value if (cleaned := compact(item)) not in (None, "", [], {})
+            ]
+        return value
+
+    return compact(result)
+
+
 def build_character_capsule(pet: Any, *, include_durable_facts: bool = True) -> str | None:
     data = effective_character_data(pet)
     if not data:

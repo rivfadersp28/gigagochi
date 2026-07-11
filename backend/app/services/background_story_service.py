@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from app.config import get_settings
 from app.prompts.style_direction import VISUAL_CHARACTER_STYLE
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
-from app.services.character_dossier import effective_character_data
+from app.services.character_dossier import story_character_data
 from app.services.image_service import generate_image_bytes
 from app.services.lite_overlay import (
     LITE_FACT_KINDS,
@@ -190,11 +190,146 @@ MAIN CHARACTER — TRANSLATE THE REFERENCE INTO THE SAME STOP-MOTION WORLD:
 """.strip()
 STORY_DIRECTION_FIELDS = (
     "plotMode",
+    "incidentClass",
+    "causalOrigin",
+    "eventScale",
     "settingClass",
     "oppositionClass",
     "resolutionMode",
+    "resolutionFamily",
     "valenceTarget",
 )
+STORY_INCIDENT_PUZZLE_COOLDOWN = 7
+STORY_INCIDENT_INSTRUCTIONS = {
+    "accident": "непреднамеренное происшествие с немедленным наблюдаемым последствием",
+    "plan_disrupted": "внешнее событие срывает конкретный план или занятие героя",
+    "other_agent_action": "чужой осознанный поступок заметно меняет положение героя",
+    "resource_loss_or_damage": (
+        "существенный запас, путь, укрытие или рабочая вещь теряется либо повреждается"
+    ),
+    "conflict_or_dispute": "цели двух сторон сталкиваются и требуют решения",
+    "rescue_or_aid": "конкретный участник оказывается в затруднении и получает деятельную помощь",
+    "competition_or_test": "участники соревнуются или проходят понятное практическое испытание",
+    "unexpected_opportunity": (
+        "внешняя возможность требует решения и приводит к заметному результату"
+    ),
+    "environmental_change": "погода, вода, огонь, грунт или пространство реально меняют условия",
+    "puzzle_discovery": "редкая загадка с заранее наблюдаемыми уликами и проверяемым ответом",
+}
+STORY_INCIDENTS_BY_MODE = {
+    "encounter": (
+        "other_agent_action",
+        "conflict_or_dispute",
+        "competition_or_test",
+        "unexpected_opportunity",
+    ),
+    "exploration": (
+        "accident",
+        "plan_disrupted",
+        "environmental_change",
+        "unexpected_opportunity",
+        "puzzle_discovery",
+    ),
+    "mystery": (
+        "other_agent_action",
+        "resource_loss_or_damage",
+        "plan_disrupted",
+        "puzzle_discovery",
+    ),
+    "social_event": (
+        "other_agent_action",
+        "conflict_or_dispute",
+        "competition_or_test",
+        "unexpected_opportunity",
+    ),
+    "pursuit_or_conflict": (
+        "other_agent_action",
+        "resource_loss_or_damage",
+        "conflict_or_dispute",
+        "rescue_or_aid",
+    ),
+    "rescue_or_help": (
+        "accident",
+        "plan_disrupted",
+        "rescue_or_aid",
+        "environmental_change",
+    ),
+    "discovery": (
+        "unexpected_opportunity",
+        "environmental_change",
+        "other_agent_action",
+        "puzzle_discovery",
+    ),
+    "environmental_event": (
+        "accident",
+        "plan_disrupted",
+        "resource_loss_or_damage",
+        "environmental_change",
+    ),
+    "peaceful_change": (
+        "plan_disrupted",
+        "other_agent_action",
+        "competition_or_test",
+        "unexpected_opportunity",
+    ),
+}
+STORY_CAUSAL_ORIGINS_BY_INCIDENT = {
+    "accident": ("hero_mistake", "equipment_failure", "terrain_failure", "other_agent_mistake"),
+    "plan_disrupted": ("weather", "other_agent", "material_failure", "animal_behavior"),
+    "other_agent_action": ("other_agent",),
+    "resource_loss_or_damage": ("theft", "weather", "collision", "material_failure"),
+    "conflict_or_dispute": ("incompatible_goals", "scarcity", "misunderstanding"),
+    "rescue_or_aid": ("accident", "weather", "pursuit", "exhaustion"),
+    "competition_or_test": ("shared_goal", "limited_time", "limited_resource"),
+    "unexpected_opportunity": ("arrival", "discovery", "invitation", "temporary_change"),
+    "environmental_change": ("weather", "water", "fire", "terrain_failure"),
+    "puzzle_discovery": ("unknown_cause",),
+}
+STORY_CAUSAL_ORIGIN_INSTRUCTIONS = {
+    "hero_mistake": "ошибка или неверная оценка самого героя",
+    "equipment_failure": "поломка работающего снаряжения или устройства",
+    "terrain_failure": "обрушение, просадка или изменение проходимости",
+    "other_agent_mistake": "непреднамеренная ошибка другого участника",
+    "weather": "резкая перемена погоды",
+    "other_agent": "осознанное действие другого участника",
+    "material_failure": "поломка конструкции, крепления или полезного предмета",
+    "animal_behavior": "обычное целенаправленное поведение живого существа",
+    "theft": "кража или попытка присвоения",
+    "collision": "столкновение или удар",
+    "incompatible_goals": "несовместимые цели сторон",
+    "scarcity": "нехватка места, времени или ресурса",
+    "misunderstanding": "конкретно показанное неверное понимание намерений",
+    "accident": "случайное происшествие с другим участником",
+    "pursuit": "преследование или активная угроза",
+    "exhaustion": "физическое истощение участника",
+    "shared_goal": "общая цель с разными способами её достичь",
+    "limited_time": "ясное ограничение времени",
+    "limited_resource": "ясно ограниченный полезный ресурс",
+    "arrival": "прибытие участника, груза или группы",
+    "discovery": "обнаружение реально существующей возможности",
+    "invitation": "предложение присоединиться к конкретному делу",
+    "temporary_change": "краткое изменение условий создаёт возможность",
+    "water": "подъём, спад или движение воды",
+    "fire": "возгорание, дым или распространение жара",
+    "unknown_cause": "неизвестная причина, раскрываемая проверкой наблюдаемых улик",
+}
+STORY_EVENT_SCALE_INSTRUCTIONS = {
+    "immediate_incident": "заметно меняется безопасность, запас, работа или положение участников",
+    "journey_disruption": "меняется маршрут, цель или возможность продолжать путь",
+    "shared_situation": "событие затрагивает несколько участников или обитаемое место",
+}
+STORY_RESOLUTION_FAMILIES = {
+    "dialogue_or_bargain": "negotiation",
+    "outwit": "strategic_choice",
+    "cooperation": "coordinated_action",
+    "contest": "direct_confrontation",
+    "investigation": "evidence_based_investigation",
+    "discovery": "evidence_based_investigation",
+    "journey_or_relocation": "relocation",
+    "celebration_or_rest": "social_resolution",
+    "stealth_or_escape": "evasion",
+    "craft_or_ability": "practical_intervention",
+}
 STORY_VALENCE_WEIGHTS = {
     "positive": 4,
     "negative": 4,
@@ -438,6 +573,17 @@ BACKGROUND_STORY_COHERENCE_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "properties": {
         "coherent": {"type": "boolean"},
+        "eventful": {"type": "boolean"},
+        "patternClass": {
+            "type": "string",
+            "enum": [
+                "concrete_incident",
+                "micro_clue_unlock",
+                "passive_observation",
+                "decorative_discovery",
+                "other_weak",
+            ],
+        },
         "issues": {
             "type": "array",
             "maxItems": 4,
@@ -445,7 +591,7 @@ BACKGROUND_STORY_COHERENCE_SCHEMA: dict[str, Any] = {
         },
         "retryInstruction": {"type": "string", "maxLength": 600},
     },
-    "required": ["coherent", "issues", "retryInstruction"],
+    "required": ["coherent", "eventful", "patternClass", "issues", "retryInstruction"],
 }
 BACKGROUND_STORY_AFTERMATH_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -577,9 +723,13 @@ class BackgroundStoryResult:
     stat_impact: dict[str, Any] | None = None
     stat_validation: dict[str, Any] | None = None
     plot_mode: str = ""
+    incident_class: str = ""
+    causal_origin: str = ""
+    event_scale: str = ""
     setting_class: str = ""
     opposition_class: str = ""
     resolution_mode: str = ""
+    resolution_family: str = ""
     valence_target: str = ""
 
     def model_dump(self) -> dict[str, Any]:
@@ -609,9 +759,13 @@ class BackgroundStoryResult:
             "statImpact": legacy_stat_impact,
             "statValidation": self.stat_validation,
             "plotMode": self.plot_mode,
+            "incidentClass": self.incident_class,
+            "causalOrigin": self.causal_origin,
+            "eventScale": self.event_scale,
             "settingClass": self.setting_class,
             "oppositionClass": self.opposition_class,
             "resolutionMode": self.resolution_mode,
+            "resolutionFamily": self.resolution_family,
             "valenceTarget": self.valence_target,
         }
 
@@ -1018,21 +1172,6 @@ def _clean_context_value(value: Any) -> Any:
     return value
 
 
-def _lite_overlay_facts(extensions: dict[str, Any]) -> list[str]:
-    overlay = extensions.get("lite_overlay") if _is_record(extensions.get("lite_overlay")) else {}
-    facts = overlay.get("facts") if _is_record(overlay) else []
-    if not isinstance(facts, list):
-        return []
-    result: list[str] = []
-    for fact in facts[-MAX_DOSSIER_LIST_ITEMS:]:
-        if not _is_record(fact):
-            continue
-        text = _text_value(fact.get("text"), limit=360)
-        if text:
-            result.append(text)
-    return result
-
-
 def _global_story_briefs(
     *,
     pet: LocalPetChatContext,
@@ -1127,6 +1266,18 @@ def _story_event_briefs(recent_story_events: list[dict[str, Any]] | None) -> lis
         tags = _string_list(item.get("tags"), limit=6)
         if tags:
             parts.append(f"ключевые мотивы: {', '.join(tags)}")
+        structure = [
+            _text_value(item.get(field), limit=80)
+            for field in (
+                "incidentClass",
+                "causalOrigin",
+                "eventScale",
+                "resolutionFamily",
+            )
+        ]
+        structure = [value for value in structure if value]
+        if structure:
+            parts.append(f"структурный каркас: {', '.join(structure)}")
         brief = "; ".join(parts)
         if brief:
             briefs.append(brief)
@@ -1142,7 +1293,8 @@ def _anti_repeat_block(recent_story_events: list[dict[str, Any]] | None) -> str:
         "ANTI_REPEAT: эти события уже происходили. "
         "Используй список только как запрет на повтор, "
         "не как источник новых деталей сюжета. "
-        "Не повторяй центральные слова, образы и мотивы из названий и тегов, "
+        "Не повторяй центральные слова, образы и мотивы из названий и тегов. "
+        "Не повторяй структурный каркас последних событий, "
         "даже с другим прилагательным или в другой словоформе. "
         "Не развивай и не комбинируй детали из этого списка; придумай независимое событие.\n"
         f"{lines}"
@@ -1229,6 +1381,37 @@ def select_background_story_direction(
     resolution_mode = _least_used_choice(
         spec["resolutions"], history=history, field="resolutionMode", rng=rng
     )
+    incident_candidates = STORY_INCIDENTS_BY_MODE[plot_mode]
+    classified_history = [item for item in history if item.get("incidentClass")]
+    recent_incidents = {
+        item.get("incidentClass")
+        for item in classified_history[-STORY_INCIDENT_PUZZLE_COOLDOWN:]
+    }
+    if (
+        len(classified_history) < STORY_INCIDENT_PUZZLE_COOLDOWN
+        or "puzzle_discovery" in recent_incidents
+    ):
+        incident_candidates = tuple(
+            value for value in incident_candidates if value != "puzzle_discovery"
+        )
+    incident_class = _least_used_choice(
+        incident_candidates,
+        history=history,
+        field="incidentClass",
+        rng=rng,
+    )
+    causal_origin = _least_used_choice(
+        STORY_CAUSAL_ORIGINS_BY_INCIDENT[incident_class],
+        history=history,
+        field="causalOrigin",
+        rng=rng,
+    )
+    event_scale = _least_used_choice(
+        tuple(STORY_EVENT_SCALE_INSTRUCTIONS),
+        history=history,
+        field="eventScale",
+        rng=rng,
+    )
     available_valences = tuple(STORY_VALENCE_WEIGHTS)
     if plot_mode == "peaceful_change" or resolution_mode == "celebration_or_rest":
         available_valences = tuple(
@@ -1245,6 +1428,9 @@ def select_background_story_direction(
             )
     return {
         "plotMode": plot_mode,
+        "incidentClass": incident_class,
+        "causalOrigin": causal_origin,
+        "eventScale": event_scale,
         "settingClass": _least_used_choice(
             spec["settings"], history=history, field="settingClass", rng=rng
         ),
@@ -1252,6 +1438,7 @@ def select_background_story_direction(
             spec["oppositions"], history=history, field="oppositionClass", rng=rng
         ),
         "resolutionMode": resolution_mode,
+        "resolutionFamily": STORY_RESOLUTION_FAMILIES[resolution_mode],
         "valenceTarget": _weighted_least_used_choice(
             available_valences,
             history=history,
@@ -1264,6 +1451,9 @@ def select_background_story_direction(
 
 def _story_direction_block(direction: dict[str, str]) -> str:
     plot_mode = direction["plotMode"]
+    incident_class = direction["incidentClass"]
+    causal_origin = direction["causalOrigin"]
+    event_scale = direction["eventScale"]
     setting_class = direction["settingClass"]
     opposition_class = direction["oppositionClass"]
     resolution_mode = direction["resolutionMode"]
@@ -1272,11 +1462,16 @@ def _story_direction_block(direction: dict[str, str]) -> str:
         "STORY_DIRECTION: обязательное структурное направление этой истории. "
         "Это не готовый сюжет; конкретные события придумай самостоятельно.\n"
         f"- plotMode={plot_mode}: {STORY_DIRECTION_SPECS[plot_mode]['instruction']}\n"
+        f"- incidentClass={incident_class}: {STORY_INCIDENT_INSTRUCTIONS[incident_class]}.\n"
+        f"- causalOrigin={causal_origin}: "
+        f"{STORY_CAUSAL_ORIGIN_INSTRUCTIONS[causal_origin]}.\n"
+        f"- eventScale={event_scale}: {STORY_EVENT_SCALE_INSTRUCTIONS[event_scale]}.\n"
         f"- settingClass={setting_class}: {STORY_SETTING_INSTRUCTIONS[setting_class]}.\n"
         f"- oppositionClass={opposition_class}: "
         f"{STORY_OPPOSITION_INSTRUCTIONS[opposition_class]}.\n"
         f"- resolutionMode={resolution_mode}: "
         f"{STORY_RESOLUTION_INSTRUCTIONS[resolution_mode]}.\n"
+        f"- resolutionFamily={direction['resolutionFamily']}.\n"
         f"- valenceTarget={valence_target}: {STORY_VALENCE_INSTRUCTIONS[valence_target]}.\n"
         "Значение valence в JSON должно точно совпасть с valenceTarget. Для положительного "
         "события каждый statImpact положительный, для отрицательного — отрицательный, "
@@ -1289,7 +1484,9 @@ def _story_direction_block(direction: dict[str, str]) -> str:
         "Используй не более одного старого предмета и только когда без него не работает "
         "причинная линия.\n"
         "Не заменяй выбранное направление привычной схемой «герой случайно попал в ловушку, "
-        "выбрался и потерял вещь/получил травму»."
+        "выбрался и потерял вещь/получил травму». Событие должно менять положение, план, "
+        "безопасность, ресурс или отношения участников. Незначительная находка, отметка, щель, "
+        "рисунок, травинка, шёпот или маленький ритуал не могут быть центром истории."
     )
 
 
@@ -1399,10 +1596,13 @@ def _background_routing_payload(
 
 def _background_story_identity_seed(pet: LocalPetChatContext) -> str:
     name = _background_story_character_name(pet)
-    description = _text_value(pet.description, limit=220)
-    if name and description:
-        return f"{name}: {description}"
-    return name or description
+    bible = pet.characterBible if _is_record(pet.characterBible) else {}
+    identity = bible.get("identity") if _is_record(bible.get("identity")) else {}
+    species = _text_value(identity.get("species") or bible.get("species"), limit=180)
+    identity_description = species or _text_value(pet.description, limit=220)
+    if name and identity_description:
+        return f"{name}: {identity_description}"
+    return name or identity_description
 
 
 def _background_story_character_name(pet: LocalPetChatContext) -> str:
@@ -1524,9 +1724,6 @@ def character_dossier_for_background_story(
     include_story_library: bool | None = None,
     story_library_query: str | None = None,
 ) -> str:
-    bible = pet.characterBible if _is_record(pet.characterBible) else {}
-    extensions = bible.get("extensions") if _is_record(bible.get("extensions")) else {}
-    lore = bible.get("lore") if _is_record(bible.get("lore")) else {}
     if context_plan is not None:
         sources = {source: context_plan.includes(source) for source in CONTEXT_SOURCE_KEYS}
         if include_story_library is None:
@@ -1550,67 +1747,11 @@ def character_dossier_for_background_story(
         "timezone": timezone,
         "identitySeed": _background_story_identity_seed(pet),
         "currentState": current_state,
-        "characterCanon": effective_character_data(pet),
+        "characterCanon": story_character_data(pet),
     }
 
     if enabled("characterProfile"):
-        dossier.update(
-            {
-                "description": pet.description,
-                "identity": _select_record(
-                    bible.get("identity"),
-                    ("name", "nickname", "one_liner", "role", "species"),
-                ),
-                "signature": _text_value(bible.get("signature"), limit=300),
-                "species": _text_value(bible.get("species"), limit=200),
-                "visual": _select_record(
-                    bible.get("visual"),
-                    (
-                        "anchors",
-                        "colors",
-                        "features",
-                        "growth_forms",
-                        "materials",
-                        "proportions",
-                    ),
-                ),
-                "innerState": _select_record(
-                    bible.get("inner_state"),
-                    (
-                        "core_want",
-                        "inner_conflict",
-                        "fears",
-                        "comfort_actions",
-                        "drives",
-                    ),
-                ),
-                "lore": _select_record(
-                    lore,
-                    (
-                        "origin",
-                        "home",
-                        "world",
-                        "relationships",
-                        "inner_life",
-                        "story_seeds",
-                        "growth_arc",
-                    ),
-                ),
-                "world": _select_record(
-                    bible.get("world"),
-                    (
-                        "habitat",
-                        "home",
-                        "objects",
-                        "relationships",
-                        "routines",
-                        "story_seeds",
-                    ),
-                ),
-            }
-        )
-    if enabled("liteOverlay"):
-        dossier["liteFacts"] = _lite_overlay_facts(extensions)
+        dossier["identityDescription"] = _text_value(pet.description, limit=300)
     if include_story_library is None:
         include_story_library = context_source_enabled(
             "backgroundStory",
@@ -2078,15 +2219,21 @@ def _check_background_story_coherence(
     issues = _string_list(parsed.get("issues"), limit=4)
     retry_instruction = _text_value(parsed.get("retryInstruction"), limit=600)
     coherent = parsed.get("coherent") is not False
+    eventful = parsed.get("eventful") is not False
+    pattern_class = _text_value(parsed.get("patternClass"), limit=80) or "concrete_incident"
+    accepted = coherent and eventful
     prompt_debug.append(
         {
             "event": "background_story_coherence_result",
             "coherent": coherent,
+            "eventful": eventful,
+            "patternClass": pattern_class,
+            "accepted": accepted,
             "issues": issues,
             "retryInstruction": retry_instruction,
         }
     )
-    return coherent, issues, retry_instruction
+    return accepted, issues, retry_instruction
 
 
 def generate_background_story(
@@ -2178,7 +2325,7 @@ def generate_background_story(
     content = completion.choices[0].message.content or "{}"
     raw_story_payload = _json_record_from_text(content)
     try:
-        coherent, issues, retry_instruction = _check_background_story_coherence(
+        accepted, issues, retry_instruction = _check_background_story_coherence(
             story_payload=raw_story_payload,
             story_direction=story_direction,
             client=openai_client,
@@ -2194,8 +2341,8 @@ def generate_background_story(
                 "error": exc.__class__.__name__,
             }
         )
-        coherent, issues, retry_instruction = True, [], ""
-    if not coherent:
+        accepted, issues, retry_instruction = True, [], ""
+    if not accepted:
         issue_lines = "\n".join(f"- {issue}" for issue in issues)
         repair_instruction = retry_instruction or (
             "Перепиши историю так, чтобы действие героя имело заранее показанный "
@@ -2278,8 +2425,12 @@ def generate_background_story(
         stat_impact=result.stat_impact,
         stat_validation=result.stat_validation,
         plot_mode=story_direction["plotMode"],
+        incident_class=story_direction["incidentClass"],
+        causal_origin=story_direction["causalOrigin"],
+        event_scale=story_direction["eventScale"],
         setting_class=story_direction["settingClass"],
         opposition_class=story_direction["oppositionClass"],
         resolution_mode=story_direction["resolutionMode"],
+        resolution_family=story_direction["resolutionFamily"],
         valence_target=story_direction["valenceTarget"],
     )

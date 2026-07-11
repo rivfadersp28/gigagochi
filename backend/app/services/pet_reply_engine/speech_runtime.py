@@ -82,6 +82,9 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("storyContext", "defaultQuery"),
     ("backgroundStory", "systemPrompt"),
     ("backgroundStory", "userTemplate"),
+    ("backgroundStory", "incidentRule"),
+    ("backgroundStory", "characterInfluenceRule"),
+    ("backgroundStory", "eventfulnessCheckRule"),
     ("backgroundStory", "coherenceCheckSystem"),
     ("backgroundStory", "coherenceCheckUserTemplate"),
     ("backgroundStory", "aftermathExtractionSystem"),
@@ -551,18 +554,34 @@ def story_context_default_query(_mode: str) -> str:
 
 
 def background_story_system_prompt() -> str:
-    return _required_string(speech_runtime_config(), ("backgroundStory", "systemPrompt"))
+    config = speech_runtime_config()
+    return "\n\n".join(
+        [
+            _required_string(config, ("backgroundStory", "systemPrompt")),
+            _required_string(config, ("backgroundStory", "characterInfluenceRule")),
+            _required_string(config, ("backgroundStory", "incidentRule")),
+        ]
+    )
 
 
 def background_story_user_prompt(values: dict[str, str]) -> str:
-    template = _required_string(speech_runtime_config(), ("backgroundStory", "userTemplate"))
-    return _template_replace(template, values)
+    config = speech_runtime_config()
+    template = _required_string(config, ("backgroundStory", "userTemplate"))
+    return "\n\n".join(
+        [
+            _template_replace(template, values),
+            _required_string(config, ("backgroundStory", "incidentRule")),
+        ]
+    )
 
 
 def background_story_coherence_check_system_prompt() -> str:
-    return _required_string(
-        speech_runtime_config(),
-        ("backgroundStory", "coherenceCheckSystem"),
+    config = speech_runtime_config()
+    return "\n\n".join(
+        (
+            _required_string(config, ("backgroundStory", "coherenceCheckSystem")),
+            _required_string(config, ("backgroundStory", "eventfulnessCheckRule")),
+        )
     )
 
 

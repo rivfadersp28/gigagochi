@@ -863,9 +863,13 @@ def test_story_novelty_preserves_structural_signature() -> None:
                     "title": "Гость в башне",
                     "tags": ["привидение"],
                     "plotMode": "mystery",
+                    "incidentClass": "other_agent_action",
+                    "causalOrigin": "other_agent",
+                    "eventScale": "shared_situation",
                     "settingClass": "castle_or_tower",
                     "oppositionClass": "supernatural",
                     "resolutionMode": "investigation",
+                    "resolutionFamily": "evidence_based_investigation",
                     "createdAt": "2026-07-11T12:00:00Z",
                 }
             ]
@@ -873,6 +877,10 @@ def test_story_novelty_preserves_structural_signature() -> None:
     )
 
     assert history[0]["plotMode"] == "mystery"
+    assert history[0]["incidentClass"] == "other_agent_action"
+    assert history[0]["causalOrigin"] == "other_agent"
+    assert history[0]["eventScale"] == "shared_situation"
     assert history[0]["settingClass"] == "castle_or_tower"
     assert history[0]["oppositionClass"] == "supernatural"
     assert history[0]["resolutionMode"] == "investigation"
+    assert history[0]["resolutionFamily"] == "evidence_based_investigation"

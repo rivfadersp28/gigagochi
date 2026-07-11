@@ -480,9 +480,13 @@ def _compact_story_novelty_item(value: Any) -> dict[str, Any] | None:
         field: _compact_event_text(value.get(field), limit=80)
         for field in (
             "plotMode",
+            "incidentClass",
+            "causalOrigin",
+            "eventScale",
             "settingClass",
             "oppositionClass",
             "resolutionMode",
+            "resolutionFamily",
             "valenceTarget",
         )
     }
@@ -1287,9 +1291,13 @@ def generate_story_for_telegram_user(
             "title": result.title,
             "tags": list(result.tags),
             "plotMode": getattr(result, "plot_mode", ""),
+            "incidentClass": getattr(result, "incident_class", ""),
+            "causalOrigin": getattr(result, "causal_origin", ""),
+            "eventScale": getattr(result, "event_scale", ""),
             "settingClass": getattr(result, "setting_class", ""),
             "oppositionClass": getattr(result, "opposition_class", ""),
             "resolutionMode": getattr(result, "resolution_mode", ""),
+            "resolutionFamily": getattr(result, "resolution_family", ""),
             "valenceTarget": getattr(result, "valence_target", ""),
             "createdAt": payload.nowIso or _iso(),
         }
@@ -1317,9 +1325,13 @@ def generate_story_for_telegram_user(
         "valence": result.valence,
         "tags": list(result.tags),
         "plotMode": getattr(result, "plot_mode", ""),
+        "incidentClass": getattr(result, "incident_class", ""),
+        "causalOrigin": getattr(result, "causal_origin", ""),
+        "eventScale": getattr(result, "event_scale", ""),
         "settingClass": getattr(result, "setting_class", ""),
         "oppositionClass": getattr(result, "opposition_class", ""),
         "resolutionMode": getattr(result, "resolution_mode", ""),
+        "resolutionFamily": getattr(result, "resolution_family", ""),
         "valenceTarget": getattr(result, "valence_target", ""),
         **(recent_story_event if isinstance(recent_story_event, dict) else {}),
         "storyText": result.story_text,

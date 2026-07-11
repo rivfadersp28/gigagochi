@@ -41,9 +41,13 @@ def test_story_direction_uses_all_modes_before_repeating() -> None:
 def test_story_direction_block_forbids_fallback_to_trap_pattern() -> None:
     direction = {
         "plotMode": "mystery",
+        "incidentClass": "other_agent_action",
+        "causalOrigin": "other_agent",
+        "eventScale": "shared_situation",
         "settingClass": "castle_or_tower",
         "oppositionClass": "supernatural",
         "resolutionMode": "investigation",
+        "resolutionFamily": "evidence_based_investigation",
         "valenceTarget": "positive",
     }
 
@@ -53,6 +57,8 @@ def test_story_direction_block_forbids_fallback_to_trap_pattern() -> None:
     assert "дух, привидение" in block
     assert "герой случайно попал в ловушку" in block
     assert "каждый statImpact положительный" in block
+    assert "incidentClass=other_agent_action" in block
+    assert "рисунок, травинка" in block
     assert "Не упоминай автоматически каждую текущую травму" in block
 
 
@@ -92,6 +98,39 @@ def test_peaceful_story_direction_never_forces_negative_valence() -> None:
 
     assert direction["plotMode"] == "peaceful_change"
     assert direction["valenceTarget"] != "negative"
+
+
+def test_puzzle_incident_waits_for_structural_cooldown() -> None:
+    rng = random.Random(4)
+    other_modes = [
+        mode for mode in background_story_service.STORY_DIRECTION_SPECS if mode != "exploration"
+    ]
+    non_puzzle = [
+        "accident",
+        "plan_disrupted",
+        "environmental_change",
+        "unexpected_opportunity",
+    ]
+    history = [
+        {
+            "plotMode": mode,
+            "incidentClass": non_puzzle[index % len(non_puzzle)],
+        }
+        for index, mode in enumerate(other_modes)
+    ]
+
+    direction = background_story_service.select_background_story_direction(
+        history,
+        rng=rng,
+    )
+
+    assert direction["plotMode"] == "exploration"
+    assert direction["incidentClass"] == "puzzle_discovery"
+    next_direction = background_story_service.select_background_story_direction(
+        [*history, direction],
+        rng=rng,
+    )
+    assert next_direction["incidentClass"] != "puzzle_discovery"
 
 
 @pytest.mark.parametrize(
@@ -672,7 +711,9 @@ def test_background_story_retries_once_after_incoherent_verdict(monkeypatch) -> 
     )
     verdict = json.dumps(
         {
-            "coherent": False,
+            "coherent": True,
+            "eventful": False,
+            "patternClass": "micro_clue_unlock",
             "issues": ["Не объяснено, почему слова открывают переправу."],
             "retryInstruction": (
                 "Покажи наблюдаемое препятствие и действие, "
@@ -783,9 +824,54 @@ def test_background_story_profile_toggle_controls_description() -> None:
         timezone="Europe/Moscow",
     )
 
-    assert '"identitySeed": "Олег: чел с листом вместо лица"' in without_profile
+    assert '"identitySeed": "Олег: Чел с листом вместо лица"' in without_profile
     assert '"description": "чел с листом вместо лица"' not in without_profile
-    assert '"description": "чел с листом вместо лица"' in with_profile
+    assert '"identityDescription": "чел с листом вместо лица"' in with_profile
+
+
+def test_background_story_dossier_does_not_use_bible_as_plot_source() -> None:
+    pet = _pet().model_copy(
+        update={
+            "name": "Мяу",
+            "description": "кошка-волшебница",
+            "characterBible": {
+                "identity": {"name": "Мяу", "species": "кошка-волшебница"},
+                "genesis": {
+                    "character_trait": "смелая",
+                    "story_engine": "ритуалы с маленькими реликвиями",
+                },
+                "inner_state": {
+                    "comfort_actions": ["шепчет травинке"],
+                    "core_want": "собирать мелкие рисунки",
+                },
+                "world": {
+                    "objects": ["травинка", "мелкая плита"],
+                    "routines": ["рисует знаки"],
+                    "story_seeds": ["щель открывается после шёпота"],
+                },
+            },
+        }
+    )
+
+    dossier = background_story_service.character_dossier_for_background_story(
+        pet=pet,
+        source_flags={
+            "characterProfile": False,
+            "stateParams": False,
+            "liteOverlay": False,
+            "storyOverlay": False,
+            "userMemory": False,
+            "chatHistory": False,
+            "recentReplies": False,
+        },
+        include_story_library=False,
+    )
+
+    assert '"name": "Мяу"' in dossier
+    assert '"species": "кошка-волшебница"' in dossier
+    assert '"temperament": "смелая"' in dossier
+    for forbidden in ("ритуалы", "травинка", "рисует знаки", "щель открывается"):
+        assert forbidden not in dossier
 
 
 def test_background_story_resolves_name_from_character_identity() -> None:
@@ -814,7 +900,7 @@ def test_background_story_resolves_name_from_character_identity() -> None:
         timezone="Europe/Moscow",
     )
 
-    assert '"identitySeed": "Луна: чел с листом вместо лица"' in dossier
+    assert '"identitySeed": "Луна: кошка-волшебница"' in dossier
     assert '"name": "Луна"' in dossier
 
 
@@ -870,11 +956,11 @@ def test_background_story_context_sources_policy_controls_dossier(monkeypatch) -
     )
 
     prompt = _call_by_schema(completions, "background_story")["messages"][1]["content"]
-    assert "Олег: чел с листом вместо лица" in prompt
+    assert "Олег: Чел с листом вместо лица" in prompt
     assert '"description": "чел с листом вместо лица"' not in prompt
     assert "params" not in prompt
     assert "наевшийся" not in prompt
-    assert "Лист на лице стук" in prompt
+    assert "Лист на лице стук" not in prompt
     assert "Листики выпускают запахи-сигналы опасности." in prompt
     assert "стеклянный шорох" not in prompt
     assert "Сергей принес листовой амулет" not in prompt
@@ -996,7 +1082,7 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     assert captured_story_queries == ["лор мира"]
     assert "Кристаллическая капля" in prompt
     assert "Каменная тропа" not in prompt
-    assert "Лист на лице стук" in prompt
+    assert "Лист на лице стук" not in prompt
     assert "Листики выпускают запахи-сигналы опасности." in prompt
     assert "Сергей принес листовой амулет" not in prompt
 
