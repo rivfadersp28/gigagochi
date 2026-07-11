@@ -172,7 +172,7 @@ def story_character_data(pet: Any) -> dict[str, Any]:
     relevant_facts = [
         item
         for item in durable
-        if isinstance(item, dict) and item.get("sphere") in {"appearance", "relationship"}
+        if isinstance(item, dict) and item.get("sphere") == "appearance"
     ][-4:]
     result = {
         "identity": {

@@ -2168,6 +2168,30 @@ def _extract_background_story_aftermath_patch(
     )
 
 
+def _has_forbidden_micro_unlock_pattern(
+    story_payload: dict[str, Any],
+    story_direction: dict[str, str],
+) -> bool:
+    if story_direction.get("incidentClass") == "puzzle_discovery":
+        return False
+    paragraphs = story_payload.get("storyParagraphs")
+    visible_parts = paragraphs if isinstance(paragraphs, list) else []
+    visible_text = " ".join(
+        [
+            *[str(value) for value in visible_parts],
+            str(story_payload.get("storyText") or ""),
+        ]
+    ).casefold()
+    clue_pattern = re.compile(
+        r"узор|рисунк|рун|метк|травин|мох|пыл[ьи]|саж|щел[ьи]|плит|ш[её]п|знак"
+    )
+    unlock_pattern = re.compile(
+        r"открыл|проявил|тайн\w*\s+(?:ход|двер)|скрыт\w*\s+(?:ход|двер)|"
+        r"служебн\w*\s+ход|обходн\w*\s+(?:ход|лестниц)"
+    )
+    return bool(clue_pattern.search(visible_text) and unlock_pattern.search(visible_text))
+
+
 def _check_background_story_coherence(
     *,
     story_payload: dict[str, Any],
@@ -2221,6 +2245,17 @@ def _check_background_story_coherence(
     coherent = parsed.get("coherent") is not False
     eventful = parsed.get("eventful") is not False
     pattern_class = _text_value(parsed.get("patternClass"), limit=80) or "concrete_incident"
+    if _has_forbidden_micro_unlock_pattern(story_payload, story_direction):
+        eventful = False
+        pattern_class = "micro_clue_unlock"
+        issues.append(
+            "История повторяет запрещённую схему: маленькая улика или предмет открывает "
+            "скрытый проход вместо самостоятельного происшествия."
+        )
+        retry_instruction = (
+            "Замени центральную линию на внешнее происшествие из incidentClass; не используй "
+            "знаки, рисунки, травинки, щели, плиты и открывающиеся скрытые проходы."
+        )
     accepted = coherent and eventful
     prompt_debug.append(
         {
@@ -2341,7 +2376,17 @@ def generate_background_story(
                 "error": exc.__class__.__name__,
             }
         )
-        accepted, issues, retry_instruction = True, [], ""
+        micro_unlock = _has_forbidden_micro_unlock_pattern(
+            raw_story_payload,
+            story_direction,
+        )
+        accepted = not micro_unlock
+        issues = (
+            ["Запрещённая схема маленькой улики и открывающегося скрытого прохода."]
+            if micro_unlock
+            else []
+        )
+        retry_instruction = "Замени микроголоволомку самостоятельным происшествием."
     if not accepted:
         issue_lines = "\n".join(f"- {issue}" for issue in issues)
         repair_instruction = retry_instruction or (
@@ -2373,6 +2418,30 @@ def generate_background_story(
         raw_story_payload = _json_record_from_text(
             retry_completion.choices[0].message.content or "{}"
         )
+        try:
+            retry_accepted, _, _ = _check_background_story_coherence(
+                story_payload=raw_story_payload,
+                story_direction=story_direction,
+                client=openai_client,
+                model=model,
+                timeout=timeout,
+                prompt_debug=prompt_debug,
+            )
+        except Exception as exc:
+            logger.exception("background_story_retry_coherence_check failed")
+            retry_accepted = not _has_forbidden_micro_unlock_pattern(
+                raw_story_payload,
+                story_direction,
+            )
+            prompt_debug.append(
+                {
+                    "event": "background_story_retry_coherence_error",
+                    "error": exc.__class__.__name__,
+                    "acceptedByDeterministicFallback": retry_accepted,
+                }
+            )
+        if not retry_accepted:
+            raise RuntimeError("BACKGROUND_STORY_QUALITY_REJECTED")
     result = _normalize_story_payload(raw_story_payload)
     prompt_debug.append(
         {

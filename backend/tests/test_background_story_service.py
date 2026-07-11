@@ -849,6 +849,20 @@ def test_background_story_dossier_does_not_use_bible_as_plot_source() -> None:
                     "routines": ["рисует знаки"],
                     "story_seeds": ["щель открывается после шёпота"],
                 },
+                "extensions": {
+                    "lite_overlay": {
+                        "facts": [
+                            {
+                                "sphere": "appearance",
+                                "text": "Мяу временно прихрамывает.",
+                            },
+                            {
+                                "sphere": "relationship",
+                                "text": "Мяу обещала назвать ворота первому путнику.",
+                            },
+                        ]
+                    }
+                },
             },
         }
     )
@@ -870,8 +884,29 @@ def test_background_story_dossier_does_not_use_bible_as_plot_source() -> None:
     assert '"name": "Мяу"' in dossier
     assert '"species": "кошка-волшебница"' in dossier
     assert '"temperament": "смелая"' in dossier
+    assert "временно прихрамывает" in dossier
+    assert "назвать ворота" not in dossier
     for forbidden in ("ритуалы", "травинка", "рисует знаки", "щель открывается"):
         assert forbidden not in dossier
+
+
+def test_micro_clue_unlock_is_rejected_outside_puzzle_incident() -> None:
+    payload = {
+        "storyParagraphs": [
+            "Кошка заметила меловую метку.",
+            "Она положила травинку у щели.",
+            "В стене открылся скрытый ход.",
+        ]
+    }
+
+    assert background_story_service._has_forbidden_micro_unlock_pattern(
+        payload,
+        {"incidentClass": "unexpected_opportunity"},
+    )
+    assert not background_story_service._has_forbidden_micro_unlock_pattern(
+        payload,
+        {"incidentClass": "puzzle_discovery"},
+    )
 
 
 def test_background_story_resolves_name_from_character_identity() -> None:
