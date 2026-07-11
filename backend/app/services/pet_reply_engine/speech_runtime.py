@@ -85,6 +85,7 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("backgroundStory", "incidentRule"),
     ("backgroundStory", "characterInfluenceRule"),
     ("backgroundStory", "storyProseRule"),
+    ("backgroundStory", "storySimplicityRule"),
     ("backgroundStory", "eventfulnessCheckRule"),
     ("backgroundStory", "fullStorySystem"),
     ("backgroundStory", "fullStoryUserTemplate"),
@@ -581,6 +582,7 @@ def background_story_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "characterInfluenceRule")),
             _required_string(config, ("backgroundStory", "incidentRule")),
             _required_string(config, ("backgroundStory", "storyProseRule")),
+            _required_string(config, ("backgroundStory", "storySimplicityRule")),
         ]
     )
 
@@ -603,6 +605,7 @@ def background_story_coherence_check_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "coherenceCheckSystem")),
             _required_string(config, ("backgroundStory", "eventfulnessCheckRule")),
             _required_string(config, ("backgroundStory", "storyProseRule")),
+            _required_string(config, ("backgroundStory", "storySimplicityRule")),
         )
     )
 
@@ -623,6 +626,7 @@ def full_story_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "characterInfluenceRule")),
             _required_string(config, ("backgroundStory", "incidentRule")),
             _required_string(config, ("backgroundStory", "storyProseRule")),
+            _required_string(config, ("backgroundStory", "storySimplicityRule")),
         ]
     )
 
@@ -641,6 +645,7 @@ def full_story_quality_check_system_prompt() -> str:
         [
             _required_string(config, ("backgroundStory", "fullStoryQualityCheckSystem")),
             _required_string(config, ("backgroundStory", "storyProseRule")),
+            _required_string(config, ("backgroundStory", "storySimplicityRule")),
         ]
     )
 

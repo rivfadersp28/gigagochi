@@ -122,6 +122,9 @@ def test_full_story_generates_four_linked_parts_with_impacts(monkeypatch) -> Non
         "весь видимый текст storyParagraphs рассказывает сам питомец от первого лица"
         in request["messages"][0]["content"]
     )
+    assert "Центральное действие содержит не больше двух причинных шагов" in request[
+        "messages"
+    ][0]["content"]
     assert '"hunger": 60' in prompt
     assert "STORY_DIRECTION" in prompt
     assert "ANTI_REPEAT" in prompt
