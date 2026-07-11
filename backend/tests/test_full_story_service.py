@@ -110,7 +110,8 @@ def test_full_story_generates_four_linked_parts_with_impacts(monkeypatch) -> Non
     assert len(result.parts) == 4
     assert result.story_direction["plotMode"]
     assert result.parts[0].stat_impacts[0]["amount"] == -8
-    assert result.parts[3].stat_impacts[0]["amount"] == 15
+    assert sum(len(part.stat_impacts) for part in result.parts) == 3
+    assert result.parts[3].stat_impacts == ()
     request = calls[0]
     assert request["response_format"]["json_schema"]["name"] == "full_story"
     prompt = request["messages"][1]["content"]
@@ -160,6 +161,7 @@ def test_full_story_allows_empty_impacts_and_does_not_bind_sign_to_valence() -> 
         "properties"
     ]["statImpacts"]
     assert stat_schema["minItems"] == 0
+    assert stat_schema["maxItems"] == 1
 
 
 def test_full_story_retries_once_after_style_rejection(monkeypatch) -> None:

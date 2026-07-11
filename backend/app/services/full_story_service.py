@@ -31,8 +31,10 @@ from app.services.prompt_debug import log_chat_completion_prompt, log_chat_compl
 
 STAT_KEYS = ("hunger", "happiness", "energy")
 PART_COUNT = 4
-MAX_PART_IMPACT = 25
-MAX_PART_TOTAL_IMPACT = 35
+MAX_PART_IMPACT = 15
+MAX_PART_TOTAL_IMPACT = 15
+MAX_PART_STAT_IMPACTS = 1
+MAX_STORY_STAT_IMPACTS = 3
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +78,7 @@ FULL_STORY_SCHEMA: dict[str, Any] = {
                     "statImpacts": {
                         "type": "array",
                         "minItems": 0,
-                        "maxItems": 2,
+                        "maxItems": MAX_PART_STAT_IMPACTS,
                         "items": {
                             "type": "object",
                             "additionalProperties": False,
@@ -202,6 +204,8 @@ def _normalize_impacts(value: Any, *, valence: str) -> tuple[dict[str, Any], ...
         )
         seen.add(stat)
         total += abs(amount)
+        if len(impacts) >= MAX_PART_STAT_IMPACTS:
+            break
     return tuple(impacts)
 
 
@@ -218,6 +222,7 @@ def _normalize_payload(
     if len(raw_parts) != PART_COUNT:
         raise FullStoryGenerationError("FULL_STORY_PART_COUNT_INVALID")
     parts: list[FullStoryPart] = []
+    story_impact_count = 0
     for expected_number, raw in enumerate(raw_parts, start=1):
         if not isinstance(raw, dict) or raw.get("partNumber") != expected_number:
             raise FullStoryGenerationError("FULL_STORY_PART_ORDER_INVALID")
@@ -227,6 +232,9 @@ def _normalize_payload(
         valence = raw.get("valence")
         if valence not in {"positive", "negative", "mixed"}:
             raise FullStoryGenerationError("FULL_STORY_VALENCE_INVALID")
+        impacts = _normalize_impacts(raw.get("statImpacts"), valence=valence)
+        impacts = impacts[: max(0, MAX_STORY_STAT_IMPACTS - story_impact_count)]
+        story_impact_count += len(impacts)
         parts.append(
             FullStoryPart(
                 part_number=expected_number,
@@ -234,7 +242,7 @@ def _normalize_payload(
                 summary=_text(raw.get("summary"), 360),
                 story_text="\n\n".join(_text(value, 260) for value in paragraphs),
                 valence=valence,
-                stat_impacts=_normalize_impacts(raw.get("statImpacts"), valence=valence),
+                stat_impacts=impacts,
             )
         )
     return overall_title, arc_plan, tuple(parts)

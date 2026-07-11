@@ -86,6 +86,8 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("backgroundStory", "characterInfluenceRule"),
     ("backgroundStory", "storyProseRule"),
     ("backgroundStory", "storySimplicityRule"),
+    ("backgroundStory", "storyDecisionRule"),
+    ("backgroundStory", "fullStoryStatsRule"),
     ("backgroundStory", "eventfulnessCheckRule"),
     ("backgroundStory", "fullStorySystem"),
     ("backgroundStory", "fullStoryUserTemplate"),
@@ -583,6 +585,7 @@ def background_story_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "incidentRule")),
             _required_string(config, ("backgroundStory", "storyProseRule")),
             _required_string(config, ("backgroundStory", "storySimplicityRule")),
+            _required_string(config, ("backgroundStory", "storyDecisionRule")),
         ]
     )
 
@@ -606,6 +609,7 @@ def background_story_coherence_check_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "eventfulnessCheckRule")),
             _required_string(config, ("backgroundStory", "storyProseRule")),
             _required_string(config, ("backgroundStory", "storySimplicityRule")),
+            _required_string(config, ("backgroundStory", "storyDecisionRule")),
         )
     )
 
@@ -627,6 +631,8 @@ def full_story_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "incidentRule")),
             _required_string(config, ("backgroundStory", "storyProseRule")),
             _required_string(config, ("backgroundStory", "storySimplicityRule")),
+            _required_string(config, ("backgroundStory", "storyDecisionRule")),
+            _required_string(config, ("backgroundStory", "fullStoryStatsRule")),
         ]
     )
 
@@ -646,6 +652,8 @@ def full_story_quality_check_system_prompt() -> str:
             _required_string(config, ("backgroundStory", "fullStoryQualityCheckSystem")),
             _required_string(config, ("backgroundStory", "storyProseRule")),
             _required_string(config, ("backgroundStory", "storySimplicityRule")),
+            _required_string(config, ("backgroundStory", "storyDecisionRule")),
+            _required_string(config, ("backgroundStory", "fullStoryStatsRule")),
         ]
     )
 
