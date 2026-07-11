@@ -562,6 +562,59 @@ def test_background_story_can_restore_stats() -> None:
     assert stats_delta == {"hunger": 0, "happiness": 10, "energy": 20}
 
 
+def test_full_story_applies_each_parts_stat_impacts_sequentially(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    now = datetime(2026, 7, 7, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: now)
+
+    class Part:
+        def __init__(self, number: int, impacts: list[dict]) -> None:
+            self.number = number
+            self.stat_impacts = tuple(impacts)
+
+        def model_dump(self):
+            return {
+                "partNumber": self.number,
+                "title": f"Часть {self.number}",
+                "storyText": f"Событие {self.number}.",
+                "statImpacts": list(self.stat_impacts),
+            }
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_full_story",
+        lambda **_kwargs: SimpleNamespace(
+            overall_title="Лекарство до снегопада",
+            arc_plan={"goal": "Доставить лекарства."},
+            parts=(
+                Part(1, [{"stat": "energy", "amount": -8}]),
+                Part(2, [{"stat": "hunger", "amount": -7}]),
+                Part(3, [{"stat": "happiness", "amount": 8}]),
+                Part(4, [{"stat": "hunger", "amount": 15}]),
+            ),
+            prompt_debug=[],
+        ),
+    )
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+
+    result = telegram_push_service.generate_full_story_for_telegram_user(
+        telegram_id=TEST_TELEGRAM_ID,
+    )
+
+    assert result["statsPatch"]["stats"] == {
+        "hunger": 88,
+        "happiness": 78,
+        "energy": 52,
+    }
+    assert result["story"]["parts"][0]["statsDelta"]["energy"] == -8
+    assert result["story"]["parts"][3]["statsDelta"]["hunger"] == 15
+    store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
+    saved = store["records"][str(TEST_TELEGRAM_ID)]
+    assert saved["lastFullStory"]["overallTitle"] == "Лекарство до снегопада"
+    assert saved["pet"]["stats"] == {"hunger": 88, "happiness": 78, "energy": 52}
+
+
 def test_recent_story_events_fallback_uses_last_story_for_anti_repeat() -> None:
     events = telegram_push_service._record_recent_story_events(
         {

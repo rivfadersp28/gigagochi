@@ -6,7 +6,11 @@ import httpx
 
 from app import bot
 from app.services import telegram_client, telegram_push_service
-from app.services.story_delivery_format import TELEGRAM_PHOTO_CAPTION_LIMIT, format_story_caption
+from app.services.story_delivery_format import (
+    TELEGRAM_PHOTO_CAPTION_LIMIT,
+    format_full_story_message,
+    format_story_caption,
+)
 
 TEST_TELEGRAM_ID = 62943754
 STORY_IMPACT_TEXT = "Влияние на параметры:\nздоровье: минус 25"
@@ -28,6 +32,16 @@ def _push_update() -> dict:
             "chat": {"id": TEST_TELEGRAM_ID},
             "from": {"first_name": "Serge"},
             "text": "/push",
+        }
+    }
+
+
+def _full_story_update() -> dict:
+    return {
+        "message": {
+            "chat": {"id": TEST_TELEGRAM_ID},
+            "from": {"first_name": "Serge"},
+            "text": "/full_story",
         }
     }
 
@@ -165,6 +179,41 @@ def test_story_command_can_be_submitted_without_blocking_polling(monkeypatch) ->
     assert submitted[0][1]["inline_keyboard"][0][0]["web_app"]["url"] == ("https://example.com/app")
 
 
+def test_full_story_command_can_be_submitted_without_blocking_polling(monkeypatch) -> None:
+    submitted: list[tuple[int, dict]] = []
+    monkeypatch.setattr(
+        bot,
+        "get_settings",
+        lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
+    )
+
+    bot.handle_update(
+        httpx.Client(),
+        _full_story_update(),
+        submit_full_story=lambda chat_id, keyboard: submitted.append((chat_id, keyboard)),
+    )
+
+    assert submitted[0][0] == TEST_TELEGRAM_ID
+
+
+def test_full_story_command_generates_for_requesting_user(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        bot,
+        "get_settings",
+        lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_full_story_for_telegram_user",
+        lambda client, **kwargs: calls.append(kwargs) or {"generated": True},
+    )
+
+    bot.handle_update(httpx.Client(), _full_story_update())
+
+    assert calls[0]["telegram_id"] == TEST_TELEGRAM_ID
+
+
 def test_story_command_falls_back_to_message_without_image(monkeypatch) -> None:
     sent: dict[str, object] = {}
     monkeypatch.setattr(
@@ -232,6 +281,27 @@ def test_story_caption_preserves_stat_debug_tail() -> None:
 
     assert len(caption) <= TELEGRAM_PHOTO_CAPTION_LIMIT
     assert caption.endswith("Влияние на параметры:\nголод: минус 25")
+
+
+def test_full_story_message_formats_all_four_parts() -> None:
+    message = format_full_story_message(
+        {
+            "overallTitle": "Большой путь",
+            "parts": [
+                {
+                    "title": f"Этап {index}",
+                    "storyText": f"Событие {index}.",
+                    "statsDelta": {"energy": -index, "hunger": 0, "happiness": index},
+                }
+                for index in range(1, 5)
+            ],
+        }
+    )
+
+    assert "Большой путь" in message
+    assert "Часть 4. Этап 4" in message
+    assert "здоровье: минус 4" in message
+    assert "настроение: плюс 4" in message
 
 
 def test_story_caption_shows_recovery_as_plus() -> None:

@@ -26,10 +26,12 @@ from app.services.background_story_service import (
     generate_background_story,
     generate_background_story_image_bytes,
 )
+from app.services.full_story_service import generate_full_story
 from app.services.image_service import generated_dir_for
 from app.services.lite_overlay import merge_lite_overlay_patch
 from app.services.pet_reply_engine.lite_generator import generate_push_pet_message
 from app.services.story_delivery_format import (
+    format_full_story_message,
     format_story_caption,
     format_story_message,
 )
@@ -1506,6 +1508,96 @@ def generate_story_for_telegram_user(
         "statImpact": stat_impact,
         "debug": {"promptDebug": result.prompt_debug} if include_debug else None,
     }
+
+
+def generate_full_story_for_telegram_user(
+    *,
+    telegram_id: int,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    record = _record_by_telegram_id(telegram_id)
+    now = _now()
+    if _record_is_dead(record, now):
+        raise TelegramPushError("PET_DEAD", "Питомец умер и больше не может путешествовать.")
+    pet = LocalPetChatContext.model_validate(_current_pet_record(record, now))
+    result = generate_full_story(pet=pet)
+    working_record = deepcopy(record)
+    applied_parts: list[dict[str, Any]] = []
+    aggregate_delta = {key: 0 for key in STAT_KEYS}
+
+    for part in result.parts:
+        next_pet, _stats_patch_value, ticks, stats_delta = _apply_story_stat_impact(
+            working_record,
+            list(part.stat_impacts),
+            now=now,
+        )
+        working_record["pet"] = next_pet
+        if ticks is not None:
+            working_record["lastStatsTickAt"] = _legacy_stats_tick(ticks)
+            working_record["lastStatTickAt"] = _stat_tick_iso_map(ticks)
+        actual_delta = stats_delta or {key: 0 for key in STAT_KEYS}
+        for key in STAT_KEYS:
+            aggregate_delta[key] += actual_delta.get(key, 0)
+        part_payload = part.model_dump()
+        part_payload["statsDelta"] = actual_delta
+        applied_parts.append(part_payload)
+
+    generated_at = _iso(now)
+    story_payload = {
+        "overallTitle": result.overall_title,
+        "arcPlan": result.arc_plan,
+        "parts": applied_parts,
+        "generatedAt": generated_at,
+        "statsDelta": aggregate_delta,
+        "source": "full_story_command",
+    }
+
+    def save_full_story(current: dict[str, Any] | None) -> dict[str, Any]:
+        source = current.copy() if isinstance(current, dict) else record.copy()
+        if source.get("petId") != record.get("petId"):
+            raise TelegramPushError(
+                "PUSH_PET_CHANGED",
+                "Питомец изменился во время генерации истории. Повтори запрос.",
+            )
+        return {
+            **source,
+            "pet": working_record["pet"],
+            "lastStatsTickAt": working_record.get("lastStatsTickAt"),
+            "lastStatTickAt": working_record.get("lastStatTickAt"),
+            "lastFullStoryAt": generated_at,
+            "lastFullStory": story_payload,
+        }
+
+    saved_record = _update_record(telegram_id, save_full_story)
+    final_stats = _record_current_stats(saved_record, now)
+    return {
+        "generated": True,
+        "telegramId": telegram_id,
+        "petId": record.get("petId"),
+        "generatedAt": generated_at,
+        "story": story_payload,
+        "statsPatch": {
+            "stats": final_stats,
+            "lastStatsTickAt": saved_record.get("lastStatsTickAt"),
+            "lastStatTickAt": saved_record.get("lastStatTickAt"),
+        },
+        "debug": {"promptDebug": result.prompt_debug} if include_debug else None,
+    }
+
+
+def send_full_story_for_telegram_user(
+    client: httpx.Client,
+    *,
+    telegram_id: int,
+    keyboard: dict[str, Any],
+) -> dict[str, Any]:
+    result = generate_full_story_for_telegram_user(
+        telegram_id=telegram_id,
+        include_debug=False,
+    )
+    story = result.get("story") if isinstance(result.get("story"), dict) else {}
+    send_message(client, telegram_id, format_full_story_message(story), keyboard)
+    return result
 
 
 def _fresh_record(record: dict[str, Any]) -> dict[str, Any]:

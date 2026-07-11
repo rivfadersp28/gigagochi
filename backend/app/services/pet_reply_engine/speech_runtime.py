@@ -85,6 +85,8 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("backgroundStory", "incidentRule"),
     ("backgroundStory", "characterInfluenceRule"),
     ("backgroundStory", "eventfulnessCheckRule"),
+    ("backgroundStory", "fullStorySystem"),
+    ("backgroundStory", "fullStoryUserTemplate"),
     ("backgroundStory", "coherenceCheckSystem"),
     ("backgroundStory", "coherenceCheckUserTemplate"),
     ("backgroundStory", "aftermathExtractionSystem"),
@@ -199,6 +201,15 @@ def validate_speech_runtime_config(config: Any) -> None:
     background_template = _required_string(config, ("backgroundStory", "userTemplate"))
     if "{character}" not in background_template:
         raise ValueError("backgroundStory.userTemplate must include {character}")
+    full_story_template = _required_string(
+        config,
+        ("backgroundStory", "fullStoryUserTemplate"),
+    )
+    for placeholder in ("{character}", "{current_state}"):
+        if placeholder not in full_story_template:
+            raise ValueError(
+                f"backgroundStory.fullStoryUserTemplate must include {placeholder}"
+            )
     coherence_template = _required_string(
         config,
         ("backgroundStory", "coherenceCheckUserTemplate"),
@@ -589,6 +600,25 @@ def background_story_coherence_check_user_prompt(values: dict[str, str]) -> str:
     template = _required_string(
         speech_runtime_config(),
         ("backgroundStory", "coherenceCheckUserTemplate"),
+    )
+    return _template_replace(template, values)
+
+
+def full_story_system_prompt() -> str:
+    config = speech_runtime_config()
+    return "\n\n".join(
+        [
+            _required_string(config, ("backgroundStory", "fullStorySystem")),
+            _required_string(config, ("backgroundStory", "characterInfluenceRule")),
+            _required_string(config, ("backgroundStory", "incidentRule")),
+        ]
+    )
+
+
+def full_story_user_prompt(values: dict[str, str]) -> str:
+    template = _required_string(
+        speech_runtime_config(),
+        ("backgroundStory", "fullStoryUserTemplate"),
     )
     return _template_replace(template, values)
 

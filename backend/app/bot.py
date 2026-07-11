@@ -81,6 +81,46 @@ def _story_worker(chat_id: int, keyboard: dict[str, Any]) -> None:
         _send_story_response(client, chat_id, keyboard)
 
 
+def _send_full_story_response(
+    client: httpx.Client,
+    chat_id: int,
+    keyboard: dict[str, Any],
+) -> None:
+    from app.services.full_story_service import FullStoryGenerationError
+    from app.services.openai_service import MissingOpenAIAPIKey
+    from app.services.telegram_push_service import (
+        TelegramPushError,
+        send_full_story_for_telegram_user,
+    )
+
+    try:
+        send_full_story_for_telegram_user(
+            client,
+            telegram_id=chat_id,
+            keyboard=keyboard,
+        )
+    except TelegramPushError as exc:
+        send_message(client, chat_id, exc.message, keyboard)
+    except MissingOpenAIAPIKey:
+        send_message(client, chat_id, "На сервере не настроен AI API key.", keyboard)
+    except FullStoryGenerationError:
+        logger.exception("Telegram /full_story payload validation failed")
+        send_message(
+            client,
+            chat_id,
+            "Не удалось собрать четыре части. Попробуй ещё раз.",
+            keyboard,
+        )
+    except Exception:
+        logger.exception("Telegram /full_story generation failed")
+        send_message(client, chat_id, "Не удалось сгенерировать большую историю.", keyboard)
+
+
+def _full_story_worker(chat_id: int, keyboard: dict[str, Any]) -> None:
+    with httpx.Client() as client:
+        _send_full_story_response(client, chat_id, keyboard)
+
+
 def _send_push_response(
     client: httpx.Client,
     chat_id: int,
@@ -110,6 +150,7 @@ def handle_update(
     update: dict[str, Any],
     *,
     submit_story: Callable[[int, dict[str, Any]], None] | None = None,
+    submit_full_story: Callable[[int, dict[str, Any]], None] | None = None,
     submit_push: Callable[[int, dict[str, Any]], None] | None = None,
 ) -> None:
     message = update.get("message") or {}
@@ -138,6 +179,13 @@ def handle_update(
             submit_story(chat_id, keyboard)
         else:
             _send_story_response(client, chat_id, keyboard)
+        return
+
+    if command == "/full_story":
+        if submit_full_story is not None:
+            submit_full_story(chat_id, keyboard)
+        else:
+            _send_full_story_response(client, chat_id, keyboard)
         return
 
     if command == "/push":
@@ -181,6 +229,9 @@ def run_bot() -> None:
         def submit_story(chat_id: int, keyboard: dict[str, Any]) -> None:
             command_executor.submit(_story_worker, chat_id, keyboard)
 
+        def submit_full_story(chat_id: int, keyboard: dict[str, Any]) -> None:
+            command_executor.submit(_full_story_worker, chat_id, keyboard)
+
         def submit_push(chat_id: int, keyboard: dict[str, Any]) -> None:
             command_executor.submit(_push_worker, chat_id, keyboard)
 
@@ -201,6 +252,7 @@ def run_bot() -> None:
                         client,
                         update,
                         submit_story=submit_story,
+                        submit_full_story=submit_full_story,
                         submit_push=submit_push,
                     )
             except Exception:

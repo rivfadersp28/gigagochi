@@ -101,3 +101,20 @@ def format_story_message(story: dict[str, Any], *, limit: int = 3500) -> str:
 
 def format_story_caption(story: dict[str, Any]) -> str:
     return format_story_message(story, limit=TELEGRAM_PHOTO_CAPTION_LIMIT)
+
+
+def format_full_story_message(story: dict[str, Any], *, limit: int = 4000) -> str:
+    title = str(story.get("overallTitle") or "Большое путешествие").strip()
+    raw_parts = story.get("parts") if isinstance(story.get("parts"), list) else []
+    sections = [title]
+    for index, part in enumerate(raw_parts[:4], start=1):
+        if not isinstance(part, dict):
+            continue
+        part_title = str(part.get("title") or f"Часть {index}").strip()
+        story_text = str(part.get("storyText") or part.get("summary") or "").strip()
+        impact_block = _story_stat_debug_block(part)
+        section = f"Часть {index}. {part_title}\n\n{story_text}"
+        if impact_block:
+            section = f"{section}\n\n{impact_block}"
+        sections.append(section)
+    return "\n\n————\n\n".join(sections)[:limit].rstrip()
