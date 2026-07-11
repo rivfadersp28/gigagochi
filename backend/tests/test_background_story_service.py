@@ -102,6 +102,48 @@ def test_story_schema_enforces_valence_stat_contract(
     assert stat_impacts["maxItems"] == max_items
 
 
+def test_story_schema_requires_three_compact_paragraphs() -> None:
+    schema = background_story_service._background_story_schema_for_direction(
+        {"valenceTarget": "positive"}
+    )
+
+    paragraphs = schema["properties"]["storyParagraphs"]
+    assert "storyParagraphs" in schema["required"]
+    assert "storyText" not in schema["properties"]
+    assert paragraphs["minItems"] == 3
+    assert paragraphs["maxItems"] == 3
+    assert paragraphs["items"]["maxLength"] == 220
+
+
+def test_story_payload_joins_structured_paragraphs_and_keeps_legacy_fallback() -> None:
+    payload = {
+        "title": "Три шага",
+        "summary": "Олег решил задачу.",
+        "storyParagraphs": [
+            "Олег заметил закрытый проход.",
+            "Он нашёл другой путь.",
+            "К вечеру Олег добрался до укрытия.",
+        ],
+        "eventType": "journey",
+        "valence": "positive",
+        "tags": [],
+        "statImpacts": [],
+        "ragText": "Олег нашёл путь к укрытию.",
+    }
+
+    result = background_story_service._normalize_story_payload(payload)
+    legacy = background_story_service._normalize_story_payload(
+        {**payload, "storyParagraphs": None, "storyText": "Старый цельный текст."}
+    )
+
+    assert result.story_text == (
+        "Олег заметил закрытый проход.\n\n"
+        "Он нашёл другой путь.\n\n"
+        "К вечеру Олег добрался до укрытия."
+    )
+    assert legacy.story_text == "Старый цельный текст."
+
+
 class FakeBackgroundStoryCompletions:
     def __init__(self, content: str | list[str]) -> None:
         self.contents = [content] if isinstance(content, str) else content
@@ -367,9 +409,11 @@ def test_generate_background_story_stores_recent_event_without_lite_patch(monkey
             "causalPlan": TEST_CAUSAL_PLAN,
             "title": "Налет стеклянных улиток",
             "summary": ("На Олега напали стеклянные улитки у лесной миски."),
-            "storyText": (
-                "У лесной миски Олег услышал хруст: стеклянные улитки поползли к его листу."
-            ),
+            "storyParagraphs": [
+                "У лесной миски Олег услышал хруст: стеклянные улитки поползли к его листу.",
+                "Он отвёл их от миски светом листа.",
+                "Улитки ушли, но Олег выбился из сил.",
+            ],
             "eventType": "attack",
             "valence": "negative",
             "tags": ["лес", "улитки"],
@@ -406,6 +450,7 @@ def test_generate_background_story_stores_recent_event_without_lite_patch(monkey
 
     assert result.title == "Налет стеклянных улиток"
     assert result.event_type == "attack"
+    assert result.story_text.count("\n\n") == 2
     assert result.story_library_patch is None
     assert result.lite_overlay_patch is None
     assert result.recent_story_event is not None
@@ -854,7 +899,8 @@ def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) ->
     assert "GENERATION_PROFILE" not in system_prompt
     assert "не задают детский тон" in system_prompt
     assert "Заполни causalPlan" in system_prompt
-    assert "storyText только по этому плану" in system_prompt
+    assert "storyParagraphs только по этому плану" in system_prompt
+    assert "первый абзац объединяет завязку и проблему" in system_prompt
     assert "Не более одного нового магического эффекта" in system_prompt
     assert "ОБЩАЯ БИБЛИЯ МИРА" in system_prompt
     assert "древние леса, чащи и туманные луга" in system_prompt
@@ -864,6 +910,8 @@ def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) ->
     assert "Не своди каждый сюжет к физической опасности" in prompt
     assert "Сравни новую историю с ANTI_REPEAT" in prompt
     assert "Центральное событие заверши внутри эпизода" in prompt
+    assert "ровно 3 смысловых абзаца" in prompt
+    assert "4–5 предложений" in prompt
     assert "ANTI_REPEAT" in prompt
     assert "Используй список только как запрет на повтор" in prompt
     assert "название: Искра у миски" in prompt

@@ -90,6 +90,26 @@ describe("storyHistoryFromPet", () => {
     expect(history.every((item) => Boolean(item.imageUrl))).toBe(true);
   });
 
+  it("splits legacy single-block stories into three readable paragraphs", () => {
+    const history = storyHistoryFromPet(petWithEvents([
+      {
+        title: "Старый формат",
+        storyText: "Завязка. Возникла проблема. Герой сделал выбор. Всё изменилось.",
+      },
+    ]));
+
+    expect(history[0]?.text).toBe(
+      "Завязка. Возникла проблема.\n\nГерой сделал выбор.\n\nВсё изменилось.",
+    );
+  });
+
+  it("preserves paragraphs supplied by the backend", () => {
+    const storyText = "Завязка.\n\nОсознанное действие.\n\nПоследствие.";
+    const history = storyHistoryFromPet(petWithEvents([{ title: "Новый формат", storyText }]));
+
+    expect(history[0]?.text).toBe(storyText);
+  });
+
   it("restores the three illustrated stories for an existing test pet", () => {
     const history = storyHistoryFromPet({
       ...petWithEvents([]),

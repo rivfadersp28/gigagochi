@@ -245,7 +245,12 @@ BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
         },
         "title": {"type": "string", "maxLength": 120},
         "summary": {"type": "string", "maxLength": 360},
-        "storyText": {"type": "string", "maxLength": 2000},
+        "storyParagraphs": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {"type": "string", "maxLength": 220},
+        },
         "eventType": {"type": "string", "maxLength": 60},
         "valence": {
             "type": "string",
@@ -283,7 +288,7 @@ BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
         "causalPlan",
         "title",
         "summary",
-        "storyText",
+        "storyParagraphs",
         "eventType",
         "valence",
         "tags",
@@ -1464,7 +1469,21 @@ def _normalize_story_payload(payload: dict[str, Any]) -> BackgroundStoryResult:
 
     title = _text_value(payload.get("title"), limit=120) or "Фоновое событие"
     summary = _text_value(payload.get("summary"), limit=360)
-    story_text = _truncate_text(_text_value(payload.get("storyText"), limit=2200), max_story_chars)
+    raw_paragraphs = payload.get("storyParagraphs")
+    paragraphs = (
+        [_text_value(value, limit=220) for value in raw_paragraphs[:3]]
+        if isinstance(raw_paragraphs, list)
+        else []
+    )
+    paragraphs = [value for value in paragraphs if value]
+    if len(paragraphs) == 3:
+        story_text = "\n\n".join(paragraphs)[:max_story_chars].rstrip()
+    else:
+        # Backward compatibility for stored stories and pre-contract test fixtures.
+        story_text = _truncate_text(
+            _text_value(payload.get("storyText"), limit=2200),
+            max_story_chars,
+        )
     event_type = _text_value(payload.get("eventType"), limit=60) or fallback_event_type
     valence = _text_value(payload.get("valence"), limit=20) or "mixed"
     if valence not in {"negative", "neutral", "positive", "mixed"}:

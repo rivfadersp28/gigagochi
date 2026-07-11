@@ -17,6 +17,27 @@ function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function readableStoryText(value: string): string {
+  if (/\n\s*\n/.test(value)) {
+    return value;
+  }
+
+  const sentences = value.match(/[^.!?]+[.!?]+(?:[»”"])?|[^.!?]+$/g)
+    ?.map((sentence) => sentence.trim())
+    .filter(Boolean) ?? [];
+  if (sentences.length < 4) {
+    return value;
+  }
+
+  const firstBreak = Math.ceil(sentences.length / 3);
+  const secondBreak = Math.ceil((sentences.length * 2) / 3);
+  return [
+    sentences.slice(0, firstBreak).join(" "),
+    sentences.slice(firstBreak, secondBreak).join(" "),
+    sentences.slice(secondBreak).join(" "),
+  ].join("\n\n");
+}
+
 export function storyHistoryFromPet(pet: LocalPetState): StoryHistoryItem[] {
   const bible = pet.assetSet?.characterBible;
   const extensions = isRecord(bible) && isRecord(bible.extensions) ? bible.extensions : null;
@@ -48,7 +69,7 @@ export function storyHistoryFromPet(pet: LocalPetState): StoryHistoryItem[] {
         return {
           id: text(value.id) || generatedAt || `${title}-${index}`,
           title,
-          text: storyText,
+          text: readableStoryText(storyText),
           imageUrl: text(value.imageUrl) || undefined,
           generatedAt: generatedAt || undefined,
         };

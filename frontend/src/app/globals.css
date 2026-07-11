@@ -855,6 +855,7 @@ body {
   font-size: min(4.229vw, 17px);
   font-weight: 500;
   line-height: 1.08;
+  white-space: pre-line;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 11;
   z-index: 1;
