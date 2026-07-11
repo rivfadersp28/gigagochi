@@ -82,6 +82,8 @@ REQUIRED_STRING_PATHS: tuple[tuple[str, ...], ...] = (
     ("storyContext", "defaultQuery"),
     ("backgroundStory", "systemPrompt"),
     ("backgroundStory", "userTemplate"),
+    ("backgroundStory", "coherenceCheckSystem"),
+    ("backgroundStory", "coherenceCheckUserTemplate"),
     ("backgroundStory", "aftermathExtractionSystem"),
     ("backgroundStory", "aftermathExtractionUserTemplate"),
     ("backgroundStory", "defaultEventType"),
@@ -194,6 +196,15 @@ def validate_speech_runtime_config(config: Any) -> None:
     background_template = _required_string(config, ("backgroundStory", "userTemplate"))
     if "{character}" not in background_template:
         raise ValueError("backgroundStory.userTemplate must include {character}")
+    coherence_template = _required_string(
+        config,
+        ("backgroundStory", "coherenceCheckUserTemplate"),
+    )
+    for placeholder in ("{story_payload}", "{story_direction}"):
+        if placeholder not in coherence_template:
+            raise ValueError(
+                f"backgroundStory.coherenceCheckUserTemplate must include {placeholder}"
+            )
     aftermath_template = _required_string(
         config,
         ("backgroundStory", "aftermathExtractionUserTemplate"),
@@ -545,6 +556,21 @@ def background_story_system_prompt() -> str:
 
 def background_story_user_prompt(values: dict[str, str]) -> str:
     template = _required_string(speech_runtime_config(), ("backgroundStory", "userTemplate"))
+    return _template_replace(template, values)
+
+
+def background_story_coherence_check_system_prompt() -> str:
+    return _required_string(
+        speech_runtime_config(),
+        ("backgroundStory", "coherenceCheckSystem"),
+    )
+
+
+def background_story_coherence_check_user_prompt(values: dict[str, str]) -> str:
+    template = _required_string(
+        speech_runtime_config(),
+        ("backgroundStory", "coherenceCheckUserTemplate"),
+    )
     return _template_replace(template, values)
 
 

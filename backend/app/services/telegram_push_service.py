@@ -185,6 +185,43 @@ def _update_record(
     return _push_store().update_record(telegram_id, updater)
 
 
+def _merge_character_bible(
+    existing: Any,
+    incoming: Any,
+) -> dict[str, Any] | None:
+    existing_record = existing if isinstance(existing, dict) else {}
+    incoming_record = incoming if isinstance(incoming, dict) else {}
+    if not existing_record and not incoming_record:
+        return None
+
+    def merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+        result = deepcopy(base)
+        for key, value in overlay.items():
+            current = result.get(key)
+            if isinstance(current, dict) and isinstance(value, dict):
+                result[key] = merge(current, value)
+            else:
+                result[key] = deepcopy(value)
+        return result
+
+    return merge(existing_record, incoming_record)
+
+
+def _preserve_pet_character_bible(
+    incoming_pet: dict[str, Any],
+    existing_pet: Any,
+) -> dict[str, Any]:
+    existing_record = existing_pet if isinstance(existing_pet, dict) else {}
+    merged_bible = _merge_character_bible(
+        existing_record.get("characterBible"),
+        incoming_pet.get("characterBible"),
+    )
+    result = deepcopy(incoming_pet)
+    if merged_bible:
+        result["characterBible"] = merged_bible
+    return result
+
+
 def _telegram_id_from_record(record: dict[str, Any]) -> int:
     telegram_id = record.get("telegramId")
     if not isinstance(telegram_id, int):
@@ -772,6 +809,11 @@ def register_push_snapshot(
         nonlocal stats_patch
         record = deepcopy(incoming_record)
         same_pet = isinstance(existing, dict) and existing.get("petId") == payload.petId
+        if same_pet:
+            record["pet"] = _preserve_pet_character_bible(
+                record["pet"],
+                existing.get("pet"),
+            )
         stats_patch = _merge_snapshot_stats(record, existing, now=now) if same_pet else None
         if isinstance(existing, dict):
             for key in (

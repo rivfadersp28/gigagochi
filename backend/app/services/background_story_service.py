@@ -37,6 +37,8 @@ from app.services.pet_reply_engine.speech_runtime import (
     CONTEXT_SOURCE_KEYS,
     background_story_aftermath_extraction_system_prompt,
     background_story_aftermath_extraction_user_prompt,
+    background_story_coherence_check_system_prompt,
+    background_story_coherence_check_user_prompt,
     background_story_default_event_type,
     background_story_max_rag_chars,
     background_story_max_story_chars,
@@ -348,9 +350,10 @@ BACKGROUND_STORY_SCHEMA: dict[str, Any] = {
                 "setup": {"type": "string", "maxLength": 240},
                 "problem": {"type": "string", "maxLength": 240},
                 "action": {"type": "string", "maxLength": 240},
+                "whyActionWorks": {"type": "string", "maxLength": 240},
                 "consequence": {"type": "string", "maxLength": 240},
             },
-            "required": ["setup", "problem", "action", "consequence"],
+            "required": ["setup", "problem", "action", "whyActionWorks", "consequence"],
         },
         "title": {"type": "string", "maxLength": 120},
         "summary": {"type": "string", "maxLength": 360},
@@ -429,6 +432,20 @@ BACKGROUND_STORY_ROUTING_SCHEMA: dict[str, Any] = {
         "reason": {"type": "string", "maxLength": 500},
     },
     "required": ["sources", "reason"],
+}
+BACKGROUND_STORY_COHERENCE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "coherent": {"type": "boolean"},
+        "issues": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {"type": "string", "maxLength": 240},
+        },
+        "retryInstruction": {"type": "string", "maxLength": 600},
+    },
+    "required": ["coherent", "issues", "retryInstruction"],
 }
 BACKGROUND_STORY_AFTERMATH_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -1209,7 +1226,14 @@ def select_background_story_direction(
         rng=rng,
     )
     spec = STORY_DIRECTION_SPECS[plot_mode]
+    resolution_mode = _least_used_choice(
+        spec["resolutions"], history=history, field="resolutionMode", rng=rng
+    )
     available_valences = tuple(STORY_VALENCE_WEIGHTS)
+    if plot_mode == "peaceful_change" or resolution_mode == "celebration_or_rest":
+        available_valences = tuple(
+            value for value in available_valences if value != "negative"
+        )
     if current_stats:
         if all(value >= 100 for value in current_stats.values()):
             available_valences = tuple(
@@ -1227,9 +1251,7 @@ def select_background_story_direction(
         "oppositionClass": _least_used_choice(
             spec["oppositions"], history=history, field="oppositionClass", rng=rng
         ),
-        "resolutionMode": _least_used_choice(
-            spec["resolutions"], history=history, field="resolutionMode", rng=rng
-        ),
+        "resolutionMode": resolution_mode,
         "valenceTarget": _weighted_least_used_choice(
             available_valences,
             history=history,
@@ -2005,6 +2027,68 @@ def _extract_background_story_aftermath_patch(
     )
 
 
+def _check_background_story_coherence(
+    *,
+    story_payload: dict[str, Any],
+    story_direction: dict[str, str],
+    client: Any,
+    model: str,
+    timeout: float,
+    prompt_debug: list[dict[str, Any]],
+) -> tuple[bool, list[str], str]:
+    request_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": background_story_coherence_check_system_prompt(),
+            },
+            {
+                "role": "user",
+                "content": background_story_coherence_check_user_prompt(
+                    {
+                        "story_direction": _story_direction_block(story_direction),
+                        "story_payload": json.dumps(
+                            story_payload,
+                            ensure_ascii=False,
+                            indent=2,
+                            default=str,
+                        ),
+                    }
+                ),
+            },
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "background_story_coherence_check",
+                "schema": BACKGROUND_STORY_COHERENCE_SCHEMA,
+                "strict": True,
+            },
+        },
+        "timeout": timeout,
+        **chat_reasoning_effort_kwargs("low"),
+    }
+    prompt_debug.append(
+        log_chat_completion_prompt("background_story/coherence_check", request_kwargs)
+    )
+    completion = client.chat.completions.create(**request_kwargs)
+    log_chat_completion_response("background_story/coherence_check", completion)
+    parsed = _json_record_from_text(completion.choices[0].message.content or "{}")
+    issues = _string_list(parsed.get("issues"), limit=4)
+    retry_instruction = _text_value(parsed.get("retryInstruction"), limit=600)
+    coherent = parsed.get("coherent") is not False
+    prompt_debug.append(
+        {
+            "event": "background_story_coherence_result",
+            "coherent": coherent,
+            "issues": issues,
+            "retryInstruction": retry_instruction,
+        }
+    )
+    return coherent, issues, retry_instruction
+
+
 def generate_background_story(
     *,
     pet: LocalPetChatContext,
@@ -2093,6 +2177,55 @@ def generate_background_story(
     log_chat_completion_response("background_story/generate", completion)
     content = completion.choices[0].message.content or "{}"
     raw_story_payload = _json_record_from_text(content)
+    try:
+        coherent, issues, retry_instruction = _check_background_story_coherence(
+            story_payload=raw_story_payload,
+            story_direction=story_direction,
+            client=openai_client,
+            model=model,
+            timeout=timeout,
+            prompt_debug=prompt_debug,
+        )
+    except Exception as exc:
+        logger.exception("background_story_coherence_check failed")
+        prompt_debug.append(
+            {
+                "event": "background_story_coherence_error",
+                "error": exc.__class__.__name__,
+            }
+        )
+        coherent, issues, retry_instruction = True, [], ""
+    if not coherent:
+        issue_lines = "\n".join(f"- {issue}" for issue in issues)
+        repair_instruction = retry_instruction or (
+            "Перепиши историю так, чтобы действие героя имело заранее показанный "
+            "и понятный механизм, а результат прямо следовал из действия."
+        )
+        retry_user_content = (
+            f"{user_content}\n\nCOHERENCE_RETRY: предыдущая версия отклонена редактором. "
+            "Создай новый полный JSON этой истории, сохрани STORY_DIRECTION, но исправь "
+            "причинность. Не упоминай проверку в видимом тексте.\n"
+            f"Замечания:\n{issue_lines or '- причинная связь недостаточно ясна'}\n"
+            f"Указание:\n{repair_instruction}"
+        )
+        retry_request_kwargs = {
+            **request_kwargs,
+            "messages": [
+                request_kwargs["messages"][0],
+                {"role": "user", "content": retry_user_content},
+            ],
+        }
+        prompt_debug.append(
+            log_chat_completion_prompt(
+                "background_story/generate_retry",
+                retry_request_kwargs,
+            )
+        )
+        retry_completion = openai_client.chat.completions.create(**retry_request_kwargs)
+        log_chat_completion_response("background_story/generate_retry", retry_completion)
+        raw_story_payload = _json_record_from_text(
+            retry_completion.choices[0].message.content or "{}"
+        )
     result = _normalize_story_payload(raw_story_payload)
     prompt_debug.append(
         {

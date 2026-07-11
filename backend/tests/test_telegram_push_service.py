@@ -59,6 +59,49 @@ def _snapshot_payload() -> LocalPetPushSnapshotRequest:
     )
 
 
+def test_snapshot_preserves_rich_character_bible_when_legacy_client_sends_only_extensions(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    first = _snapshot_payload().model_copy(
+        update={
+            "pet": _snapshot_payload().pet.model_copy(
+                update={
+                    "characterBible": {
+                        "identity": {"name": "Громм", "species": "земляной великан"},
+                        "inner_state": {"core_want": "строить надёжные мосты"},
+                        "extensions": {"lite_overlay": {"facts": []}},
+                    }
+                }
+            )
+        }
+    )
+    telegram_push_service.register_push_snapshot(_user(), first)
+    legacy = _snapshot_payload().model_copy(
+        update={
+            "pet": _snapshot_payload().pet.model_copy(
+                update={
+                    "characterBible": {
+                        "extensions": {
+                            "lite_overlay": {"facts": [{"text": "Громм починил мост."}]}
+                        }
+                    }
+                }
+            )
+        }
+    )
+
+    telegram_push_service.register_push_snapshot(_user(), legacy)
+
+    store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
+    bible = store["records"][str(TEST_TELEGRAM_ID)]["pet"]["characterBible"]
+    assert bible["identity"]["species"] == "земляной великан"
+    assert bible["inner_state"]["core_want"] == "строить надёжные мосты"
+    assert bible["extensions"]["lite_overlay"]["facts"] == [{"text": "Громм починил мост."}]
+
+
 def test_manual_push_uses_registered_telegram_chat(monkeypatch, tmp_path) -> None:
     captured = {}
     settings = SimpleNamespace(

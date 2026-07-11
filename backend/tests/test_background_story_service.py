@@ -13,6 +13,7 @@ TEST_CAUSAL_PLAN = {
     "setup": "Олег находится у лесной тропы.",
     "problem": "На тропе возникает одна проблема.",
     "action": "Олег отвечает одним действием.",
+    "whyActionWorks": "Действие воздействует на причину проблемы.",
     "consequence": "Действие приводит к прямому последствию.",
 }
 
@@ -71,7 +72,26 @@ def test_story_direction_valence_distribution_keeps_neutral_rare() -> None:
         valence: sum(item["valenceTarget"] == valence for item in history)
         for valence in background_story_service.STORY_VALENCE_WEIGHTS
     }
-    assert counts == {"positive": 4, "negative": 4, "mixed": 1, "neutral": 1}
+    assert sum(counts.values()) == 10
+    assert counts["neutral"] <= 2
+
+
+def test_peaceful_story_direction_never_forces_negative_valence() -> None:
+    rng = random.Random(3)
+    history = [
+        {"plotMode": mode}
+        for mode in background_story_service.STORY_DIRECTION_SPECS
+        if mode != "peaceful_change"
+    ]
+
+    direction = background_story_service.select_background_story_direction(
+        history,
+        current_stats={"hunger": 50, "happiness": 50, "energy": 50},
+        rng=rng,
+    )
+
+    assert direction["plotMode"] == "peaceful_change"
+    assert direction["valenceTarget"] != "negative"
 
 
 @pytest.mark.parametrize(
@@ -586,6 +606,7 @@ def test_generate_background_story_stores_recent_event_without_lite_patch(monkey
         "setup",
         "problem",
         "action",
+        "whyActionWorks",
         "consequence",
     ]
     assert story_schema["properties"]["valence"]["enum"] == [result.valence_target]
@@ -600,7 +621,8 @@ def test_generate_background_story_stores_recent_event_without_lite_patch(monkey
     assert '"value": 100' in prompt
     assert '"value": 71' in prompt
     assert "Листики выпускают запахи-сигналы опасности." in prompt
-    assert len(completions.calls) == 3
+    assert len(completions.calls) == 4
+    assert _call_by_schema(completions, "background_story_coherence_check")
     assert _call_by_schema(completions, "background_story_aftermath_extraction")
 
 
@@ -631,6 +653,80 @@ def test_background_story_accepts_explicit_recovery_stat_change() -> None:
             "reason": "Отдых восстановил силы Олега.",
         },
     )
+
+
+def test_background_story_retries_once_after_incoherent_verdict(monkeypatch) -> None:
+    bad_story = json.dumps(
+        {
+            "causalPlan": TEST_CAUSAL_PLAN,
+            "title": "Три слова",
+            "summary": "Необъяснённые слова открыли переправу.",
+            "storyParagraphs": ["Кошка пришла к реке.", "Она сказала три слова.", "Путь открылся."],
+            "eventType": "encounter",
+            "valence": "neutral",
+            "tags": [],
+            "statImpacts": [],
+            "ragText": "Кошка открыла переправу словами.",
+        },
+        ensure_ascii=False,
+    )
+    verdict = json.dumps(
+        {
+            "coherent": False,
+            "issues": ["Не объяснено, почему слова открывают переправу."],
+            "retryInstruction": (
+                "Покажи наблюдаемое препятствие и действие, "
+                "которое физически его устраняет."
+            ),
+        },
+        ensure_ascii=False,
+    )
+    repaired_story = json.dumps(
+        {
+            "causalPlan": TEST_CAUSAL_PLAN,
+            "title": "Ветка у затвора",
+            "summary": "Кошка убрала ветку из водяного затвора и опустила мостки.",
+            "storyParagraphs": [
+                "Ветка заклинила водяной затвор у переправы.",
+                "Кошка вытащила ветку, и освобождённый поток повернул колесо.",
+                "Колесо опустило мостки, поэтому Кошка перешла реку.",
+            ],
+            "eventType": "encounter",
+            "valence": "neutral",
+            "tags": [],
+            "statImpacts": [],
+            "ragText": "Кошка освободила затвор и опустила мостки.",
+        },
+        ensure_ascii=False,
+    )
+    completions = FakeBackgroundStoryCompletions([bad_story, verdict, repaired_story])
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    monkeypatch.setattr(
+        background_story_service,
+        "context_source_mode",
+        lambda surface, source: "disabled",
+    )
+    monkeypatch.setattr(
+        background_story_service,
+        "get_settings",
+        lambda: SimpleNamespace(openai_chat_timeout_seconds=10, openai_chat_reasoning_effort=None),
+    )
+
+    result = background_story_service.generate_background_story(
+        pet=_pet(),
+        client=client,
+        model="test-model",
+        timeout=10,
+    )
+
+    assert result.title == "Ветка у затвора"
+    story_calls = [
+        call
+        for call in completions.calls
+        if call["response_format"]["json_schema"]["name"] == "background_story"
+    ]
+    assert len(story_calls) == 2
+    assert "COHERENCE_RETRY" in story_calls[1]["messages"][1]["content"]
 
 
 def test_background_story_keeps_stat_impacts_without_lexical_filter() -> None:
@@ -883,12 +979,15 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     )
 
     assert result.title == "Световая капля"
-    assert len(completions.calls) == 3
+    assert len(completions.calls) == 4
     assert completions.calls[0]["response_format"]["json_schema"]["name"] == (
         "background_story_context_routing"
     )
     assert completions.calls[1]["response_format"]["json_schema"]["name"] == "background_story"
     assert completions.calls[2]["response_format"]["json_schema"]["name"] == (
+        "background_story_coherence_check"
+    )
+    assert completions.calls[3]["response_format"]["json_schema"]["name"] == (
         "background_story_aftermath_extraction"
     )
     routing_payload = json.loads(completions.calls[0]["messages"][1]["content"])
