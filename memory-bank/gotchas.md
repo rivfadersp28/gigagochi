@@ -11,6 +11,12 @@
   Generic wording like `фан-факт`, `вопрос`, or `скажи что-нибудь` must not be a
   hidden world-context trigger.
 - Do not add a post-check/regenerate loop for replies unless explicitly requested. The current architecture avoids point 5 and keeps generation single-pass, with optional background extraction only for new story entities.
+- Full stories are the explicit exception to the single-pass reply rule. A
+  single prose call tends to produce four action summaries instead of four
+  events. Preserve plan -> plan quality -> render -> prose quality, require a
+  visible before/after turn in every part, track consumed/lost/attached objects
+  across parts, and reject opposition that acts against its own stated goal only
+  to manufacture conflict.
 - `storyLibraryPatch` is data, not debug UI. Visible chat responses and
   `/api/push/snapshot` should expose it as a top-level field; keep
   `debug.storyLibraryPatch` only as a backward-compatible diagnostic copy.

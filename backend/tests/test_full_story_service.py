@@ -203,7 +203,7 @@ def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
     assert "случайного повтора соседних слов" in completions.calls[2]["messages"][0][
         "content"
     ]
-    assert completions.calls[0]["timeout"] == 150.0
+    assert completions.calls[0]["timeout"] == 240.0
     assert '"eventSvo"' in render_prompt
     assert "Рассказ ведёт питомец от первого лица" in completions.calls[2]["messages"][0][
         "content"

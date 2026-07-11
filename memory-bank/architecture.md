@@ -195,6 +195,12 @@
 - `/story` receives `recentStoryEvents` only as an `ANTI_REPEAT` block. That
   block is a negative constraint against repeating the same event shape, not
   context to continue or reuse.
+- Full-story generation is hierarchical: create a four-part event plan, reject
+  weak plans, render first-person scenes from the accepted plan, then compare
+  the prose with that plan. Each planned part has an SVO event, before/after
+  state, trigger, protagonist and opposition goals, decisive action, result,
+  state changes and a carry-forward object ledger. A rejected plan may be
+  rebuilt up to three times; each model stage has a 240-second minimum timeout.
 - `/story` illustrations use `background_story_service.generate_background_story_image_bytes`.
   Before image generation, the service sends the generated story through a chat
   completion named `background_story_image_scene` with an artist-brief prompt
