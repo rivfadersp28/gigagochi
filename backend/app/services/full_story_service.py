@@ -39,6 +39,7 @@ MAX_PART_TOTAL_IMPACT = 15
 MAX_PART_STAT_IMPACTS = 1
 MAX_STORY_STAT_IMPACTS = 3
 FULL_STORY_MIN_TIMEOUT_SECONDS = 150.0
+MAX_FULL_STORY_PLAN_ATTEMPTS = 3
 
 STAT_IMPACT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -662,7 +663,9 @@ def generate_full_story(
         timeout=timeout,
         prompt_debug=prompt_debug,
     )
-    if not plan_accepted:
+    plan_attempt = 1
+    while not plan_accepted and plan_attempt < MAX_FULL_STORY_PLAN_ATTEMPTS:
+        plan_attempt += 1
         issue_lines = "\n".join(f"- {issue}" for issue in plan_issues)
         retry_plan_content = (
             f"{plan_user_content}\n\nPLAN_RETRY: предыдущий план отклонён. Создай полностью "
@@ -680,15 +683,21 @@ def generate_full_story(
             ],
         }
         prompt_debug.append(
-            log_chat_completion_prompt("full_story/plan_generate_retry", retry_plan_request)
+            log_chat_completion_prompt(
+                f"full_story/plan_generate_retry_{plan_attempt}",
+                retry_plan_request,
+            )
         )
         retry_completion = openai_client.chat.completions.create(**retry_plan_request)
-        log_chat_completion_response("full_story/plan_generate_retry", retry_completion)
+        log_chat_completion_response(
+            f"full_story/plan_generate_retry_{plan_attempt}",
+            retry_completion,
+        )
         story_plan = _completion_payload(
             retry_completion,
             error_code="FULL_STORY_PLAN_RETRY_JSON_INVALID",
         )
-        retry_accepted, _, _ = _check_full_story_plan(
+        plan_accepted, plan_issues, plan_retry_instruction = _check_full_story_plan(
             story_plan=story_plan,
             story_direction=story_direction,
             client=openai_client,
@@ -696,8 +705,8 @@ def generate_full_story(
             timeout=timeout,
             prompt_debug=prompt_debug,
         )
-        if not retry_accepted:
-            raise FullStoryGenerationError("FULL_STORY_PLAN_QUALITY_REJECTED")
+    if not plan_accepted:
+        raise FullStoryGenerationError("FULL_STORY_PLAN_QUALITY_REJECTED")
 
     render_user_content = full_story_render_user_prompt(
         {

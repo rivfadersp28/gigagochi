@@ -225,6 +225,32 @@ def test_full_story_retries_rejected_plan_before_rendering(monkeypatch) -> None:
     assert "PLAN_RETRY" in completions.calls[2]["messages"][1]["content"]
 
 
+def test_full_story_allows_three_plan_attempts(monkeypatch) -> None:
+    client, completions = _client(
+        monkeypatch,
+        [
+            _story_plan(title="Слабый план 1"),
+            _plan_verdict(False, "Вторая часть — подготовка."),
+            _story_plan(title="Слабый план 2"),
+            _plan_verdict(False, "Третья часть — наблюдение."),
+            _story_plan(title="Четыре события"),
+            _plan_verdict(True),
+            _render(),
+            _quality_verdict(True),
+        ],
+    )
+
+    result = full_story_service.generate_full_story(
+        pet=_pet(), client=client, model="test-model", timeout=30
+    )
+
+    assert result.overall_title == "Четыре события"
+    assert completions.calls[4]["response_format"]["json_schema"]["name"] == (
+        "full_story_plan"
+    )
+    assert "PREVIOUS_PLAN" in completions.calls[4]["messages"][1]["content"]
+
+
 def test_full_story_retries_prose_without_changing_plan(monkeypatch) -> None:
     client, completions = _client(
         monkeypatch,
