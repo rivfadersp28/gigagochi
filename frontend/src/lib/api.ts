@@ -49,6 +49,7 @@ type LocalChatOptions = {
   memoryContext?: LocalPetMemoryContext;
   complimentHistory?: string[];
   replyMaxChars?: number;
+  signal?: AbortSignal;
   visibleContext?: {
     lastPetLine: string;
   };
@@ -512,6 +513,7 @@ export async function sendLocalChatMessage(
   return request("/api/chat", {
     method: "POST",
     headers: tmaAuthHeaders(),
+    signal: options.signal,
     body: {
       message: message.slice(0, MAX_CHAT_INPUT_LENGTH),
       includeDebug: options.includeDebug ?? false,

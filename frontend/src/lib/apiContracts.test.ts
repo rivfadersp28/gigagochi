@@ -96,6 +96,17 @@ describe("API response contracts", () => {
     });
   });
 
+  it("preserves an intentional request abort", async () => {
+    const controller = new AbortController();
+    const abortError = new DOMException("Aborted", "AbortError");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(abortError));
+    controller.abort();
+
+    await expect(
+      request("/api/chat", { signal: controller.signal }, parseLocalChatResponse),
+    ).rejects.toBe(abortError);
+  });
+
   it("shows the field path for FastAPI validation errors", async () => {
     vi.stubGlobal(
       "fetch",

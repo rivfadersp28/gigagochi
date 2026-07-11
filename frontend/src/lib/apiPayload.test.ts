@@ -91,6 +91,22 @@ describe("API request payloads", () => {
     ]);
   });
 
+  it("forwards an abort signal for replaceable chat requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ reply: "Ням" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+
+    await sendLocalChatMessage("Ням", petState(), [], { signal: controller.signal });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(requestInit.signal).toBe(controller.signal);
+  });
+
   it("sanitizes a legacy episode recalled by the identity question", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ reply: "Я лесная мышь" }), {

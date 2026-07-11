@@ -16,6 +16,7 @@ import {
   ApiError,
   generateLocalAmbientMessage,
   generateLocalProactiveMessage,
+  sendLocalChatMessage,
 } from "@/lib/api";
 import {
   createLocalId,
@@ -31,7 +32,7 @@ import {
   recordProactiveDelivery,
   writeLocalPetMemory,
 } from "@/lib/localPetMemoryStorage";
-import { primePetSpeechAudio } from "@/lib/petSpeechAudio";
+import { primePetSpeechAudio, stopPetSpeechAudio } from "@/lib/petSpeechAudio";
 import {
   recordMemoryContextDebug,
   recordReplyPromptDebug,
@@ -310,7 +311,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const feedDropTargetRef = useRef<HTMLDivElement>(null);
   const tapReactionTimeoutRef = useRef<number | null>(null);
   const tapReactionWasPlayingRef = useRef(false);
-  const isFeedingRef = useRef(false);
+  const foodReactionRequestIdRef = useRef(0);
+  const foodReactionAbortRef = useRef<AbortController | null>(null);
   const isSendingChatRef = useRef(false);
   const cancelReplyAutoAdvance = useCallback(() => {
     if (replyAutoAdvanceTimeoutRef.current !== null) {
@@ -683,6 +685,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [cancelReplyAutoAdvance, requestAmbientReply]);
 
   const closeFeedMode = useCallback(() => {
+    foodReactionRequestIdRef.current += 1;
+    foodReactionAbortRef.current?.abort();
+    foodReactionAbortRef.current = null;
+    setIsFeeding(false);
     setIsFeedMode(false);
   }, []);
 
@@ -800,6 +806,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     primePetFeedSound();
   }, []);
 
+  useEffect(() => () => {
+    foodReactionAbortRef.current?.abort();
+  }, []);
+
   useEffect(() => {
     petReplyMessageRef.current = petReplyMessage;
   }, [petReplyMessage]);
@@ -826,25 +836,45 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     setIsFeedMode(true);
   }
 
-  async function generateFoodReaction(nextPet: LocalPetState, foodId: FoodId) {
+  async function generateFoodReaction(
+    nextPet: LocalPetState,
+    foodId: FoodId,
+    requestId: number,
+    signal: AbortSignal,
+  ) {
     const minimumThinkingTime = createMinimumThinkingDelay();
     try {
-      const { response } = await runLocalPetChatTurn({
-        pet: nextPet,
-        message: foodReactionPrompt(foodId),
-        includePromptDebug,
-        replyMaxChars: FOOD_REPLY_MAX_CHARS,
-        logLabel: `dashboard food reaction: ${foodId}`,
-        onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
-      });
+      const response = await sendLocalChatMessage(
+        foodReactionPrompt(foodId),
+        nextPet,
+        readLocalChatHistory().messages.slice(-12),
+        {
+          includeDebug: includePromptDebug,
+          replyMaxChars: FOOD_REPLY_MAX_CHARS,
+          signal,
+        },
+      );
+      if (includePromptDebug) {
+        logBrowserPromptDebug(`dashboard food reaction: ${foodId} reply`, response);
+        recordReplyPromptDebug(response);
+      }
       await minimumThinkingTime;
+      if (foodReactionRequestIdRef.current !== requestId) {
+        return;
+      }
       showPetReplyMessage(response.reply, true, {
         showInFeed: true,
         voiceMode: "generated",
         maxPortions: 1,
       });
     } catch (caught) {
+      if (foodReactionRequestIdRef.current !== requestId || signal.aborted) {
+        return;
+      }
       await minimumThinkingTime;
+      if (foodReactionRequestIdRef.current !== requestId) {
+        return;
+      }
       setFeedError(
         caught instanceof ApiError
           ? caught.message
@@ -852,33 +882,38 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       );
       hapticNotification("error");
     } finally {
-      isFeedingRef.current = false;
-      setIsFeeding(false);
+      if (foodReactionRequestIdRef.current === requestId) {
+        foodReactionAbortRef.current = null;
+        setIsFeeding(false);
+      }
     }
   }
 
   function serveFood(foodId: FoodId) {
-    if (!pet || isFeedingRef.current) {
+    if (!pet) {
       return false;
     }
 
     cancelReplyAutoAdvance();
     setFeedError(null);
     setFeedReplyMessageId(null);
-    isFeedingRef.current = true;
-    setIsFeeding(true);
     const nextPet = localPet.feed(foodId);
     if (!nextPet) {
-      isFeedingRef.current = false;
-      setIsFeeding(false);
       return false;
     }
 
+    const requestId = foodReactionRequestIdRef.current + 1;
+    const controller = new AbortController();
+    foodReactionRequestIdRef.current = requestId;
+    foodReactionAbortRef.current?.abort();
+    foodReactionAbortRef.current = controller;
+    setIsFeeding(true);
     setFeedSuccessId((currentId) => currentId + 1);
+    stopPetSpeechAudio();
     void playPetFeedSound();
     void primePetSpeechAudio();
     hapticNotification("success");
-    void generateFoodReaction(nextPet, foodId);
+    void generateFoodReaction(nextPet, foodId, requestId, controller.signal);
     return true;
   }
 
@@ -1485,7 +1520,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
                 <DraggableFoodToken
                   key={food.id}
                   food={food}
-                  disabled={isFeeding}
+                  disabled={false}
                   onDrop={handleFoodDrop}
                   onActivate={serveFood}
                 />

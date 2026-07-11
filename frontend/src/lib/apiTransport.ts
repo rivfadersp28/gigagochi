@@ -203,7 +203,10 @@ export async function request<T>(
       },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
-  } catch {
+  } catch (error) {
+    if (options.signal?.aborted) {
+      throw error;
+    }
     throw new ApiError(
       "Не удалось связаться с сервисом. Проверьте подключение и попробуйте снова.",
       "NETWORK_ERROR",
