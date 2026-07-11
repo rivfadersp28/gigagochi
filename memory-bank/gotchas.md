@@ -22,6 +22,12 @@
   event and turn, causing artificial action chains and needless full rewrites.
   Judge each part against its narrative function and preserve sound events when
   repairing a rejected plan.
+- Distinct narrative functions do not guarantee distinct events. Compare the
+  immediate trigger mechanisms too: repeated collapses, blocked exits, attacks,
+  or reappearances of the same hazard make four parts feel like one event
+  restated. Keep hidden event/state fields short and atomic; verbose ledgers are
+  prone to damaged endings during structured retries and do not improve the
+  compact visible story.
 - `storyLibraryPatch` is data, not debug UI. Visible chat responses and
   `/api/push/snapshot` should expose it as a top-level field; keep
   `debug.storyLibraryPatch` only as a backward-compatible diagnostic copy.
