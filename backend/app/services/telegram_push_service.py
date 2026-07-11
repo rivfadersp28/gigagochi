@@ -44,7 +44,7 @@ from app.services.telegram_push_store import JsonTelegramPushStore
 
 STORE_VERSION = 1
 STAT_KEYS = ("hunger", "happiness", "energy")
-STAT_FULL_DECAY_HOURS = 6
+STAT_FULL_DECAY_HOURS = 24
 STAT_DECAY_PER_HOUR = 100 / STAT_FULL_DECAY_HOURS
 PET_DEATH_AFTER_ZERO = timedelta(hours=24)
 DAILY_PUSH_REASON = "Ежедневный короткий пуш владельцу от питомца."

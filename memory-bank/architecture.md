@@ -113,7 +113,7 @@
 - Mutable pet stats use three internal keys: `hunger`, `happiness`, and legacy
   `energy` (shown to users as health). Frontend local storage and backend push
   snapshots track `lastStatTickAt` per key; a stat decays from full to zero over
-  six hours, and partial server `statsPatch` updates only the affected keys.
+  24 hours, and partial server `statsPatch` updates only the affected keys.
 - Pet death is persisted with `zeroStatSinceAt` and `diedAt`. A pet dies only
   after any one stat remains exactly zero for more than 24 continuous hours;
   restoring that stat clears its zero timer. New push snapshots enable the same

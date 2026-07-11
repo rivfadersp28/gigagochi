@@ -10,7 +10,7 @@ import type {
 
 const MIN_STAT = 0;
 const MAX_STAT = 100;
-const STAT_FULL_DECAY_HOURS = 6;
+const STAT_FULL_DECAY_HOURS = 24;
 const STAT_DECAY_PER_HOUR = MAX_STAT / STAT_FULL_DECAY_HOURS;
 export const PET_DEATH_AFTER_ZERO_MS = 24 * 3_600_000;
 export const PET_STAT_KEYS = [
