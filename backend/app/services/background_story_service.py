@@ -7,7 +7,7 @@ import random
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from app.config import get_settings
@@ -72,6 +72,11 @@ LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS = 8400
 BACKGROUND_STORY_IMAGE_SCENE_STORY_MAX_CHARS = 2400
 BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS = 700
+BackgroundStoryImagePromptMode = Literal[
+    "baseline",
+    "isolated_identity",
+    "full_stop_motion",
+]
 BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION = (
     "Выдели один самый иллюстративный момент истории. Верни компактное визуальное описание "
     "одного кадра: действие, окружение и важные предметы. Не пересказывай всю историю, "
@@ -128,6 +133,29 @@ DETAIL HIERARCHY AND RESTRAINT:
   individually rendered stones, excessive surface scratches, dramatic depth-of-field bokeh,
   glossy cinematic spectacle and photorealistic environment rendering. Aim for selectively crafted
   detail and premium cinematic composition, not an AI-made maximalist fantasy render.
+""".strip()
+BACKGROUND_STORY_ISOLATED_IDENTITY_STYLE = """
+CHARACTER IDENTITY — APPLY ONLY TO THE REFERENCED MAIN CHARACTER:
+- Treat the attached isolated character image as an identity reference, not as a composition or
+  background reference. Ignore and replace any white, transparent or studio background around it.
+- Preserve the character's exact species, silhouette, face, proportions, colors, clothing,
+  accessories and signature details. Do not redesign or simplify the character.
+- Keep the character's existing authored rendering style. Match it to the scene only through
+  shared lighting, color grading and contact shadows; do not spread its surface detail or realism
+  into the environment.
+""".strip()
+BACKGROUND_STORY_FULL_STOP_MOTION_CHARACTER_STYLE = """
+MAIN CHARACTER — TRANSLATE THE REFERENCE INTO THE SAME STOP-MOTION WORLD:
+- Keep the referenced character unmistakably the same: preserve species, silhouette, face,
+  proportions, palette, clothing, accessories and every signature detail.
+- Rebuild the character as a handcrafted stop-motion puppet made from matte clay, painted wood,
+  felt, stitched fabric, paper and small practical metal parts. Use simplified readable forms,
+  restrained seams and selective handmade imperfections.
+- The character and environment must look physically made by the same miniature workshop and
+  photographed together on one practical set. Use the same scale, light, lens language and tactile
+  material vocabulary across the whole frame.
+- Avoid photoreal fur, skin, vegetation or stone; glossy CGI, vinyl-toy rendering, hyper-detailed
+  scratches, cinematic fantasy realism and a pasted-in character appearance.
 """.strip()
 STORY_DIRECTION_FIELDS = (
     "plotMode",
@@ -626,6 +654,25 @@ def _current_asset_image_url(pet: LocalPetChatContext) -> str:
     return _text_value(stage_images.get(pet.mood), limit=1000)
 
 
+def _isolated_character_asset_image_url(pet: LocalPetChatContext) -> str:
+    asset_images = pet.assetImages
+    source_url = ""
+    if isinstance(asset_images, dict):
+        teen_images = asset_images.get("teen")
+        if isinstance(teen_images, dict):
+            source_url = _text_value(teen_images.get("idle"), limit=1000)
+    source_url = source_url or _current_asset_image_url(pet)
+    if not source_url or source_url.startswith("data:image/"):
+        return ""
+
+    parsed = urlparse(source_url)
+    path_prefix, separator, _filename = parsed.path.rpartition("/")
+    if not separator or "/static/generated/" not in parsed.path:
+        return ""
+    character_path = f"{path_prefix}/teen-idle-character.png"
+    return parsed._replace(path=character_path).geturl()
+
+
 def _is_public_reference_url(image_url: str) -> bool:
     if image_url.startswith("data:image/"):
         return True
@@ -652,14 +699,14 @@ def _absolute_reference_url(image_url: str, settings: Any) -> str:
     return absolute_url if _is_public_reference_url(absolute_url) else ""
 
 
-def _current_asset_reference_url(pet: LocalPetChatContext) -> str:
-    return _absolute_reference_url(_current_asset_image_url(pet), get_settings())
+def _isolated_character_asset_reference_url(pet: LocalPetChatContext) -> str:
+    return _absolute_reference_url(_isolated_character_asset_image_url(pet), get_settings())
 
 
 def _asset_input_references_for_background_story(
     pet: LocalPetChatContext,
 ) -> list[dict[str, Any]]:
-    image_url = _current_asset_reference_url(pet)
+    image_url = _isolated_character_asset_reference_url(pet)
     if not image_url:
         return []
     return [{"type": "image_url", "image_url": {"url": image_url}}]
@@ -741,20 +788,38 @@ def extract_background_story_image_scene(
 def build_background_story_image_prompt(
     *,
     scene: str,
+    mode: BackgroundStoryImagePromptMode = "baseline",
 ) -> str:
+    if mode == "baseline":
+        character_direction = (
+            "Используй персонажа с приложенной референсной картинки без редизайна: "
+            "точно сохрани его\n"
+            "силуэт, лицо, пропорции, цвета, материалы, одежду, аксессуары "
+            "и отличительные детали.\n"
+            "Помести этого же персонажа в описанную сцену."
+        )
+        trailing_style = f"VISUAL_CHARACTER_STYLE:\n{VISUAL_CHARACTER_STYLE}"
+    elif mode == "isolated_identity":
+        character_direction = BACKGROUND_STORY_ISOLATED_IDENTITY_STYLE
+        trailing_style = ""
+    elif mode == "full_stop_motion":
+        character_direction = BACKGROUND_STORY_FULL_STOP_MOTION_CHARACTER_STYLE
+        trailing_style = ""
+    else:
+        raise ValueError(f"Unsupported background story image prompt mode: {mode}")
+
     prompt = f"""
 СЦЕНА:
 {_truncate_text(scene, BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS)}
 
-Используй персонажа с приложенной референсной картинки без редизайна: точно сохрани его
-силуэт, лицо, пропорции, цвета, материалы, одежду, аксессуары и отличительные детали.
-Помести этого же персонажа в описанную сцену. Один цельный кадр, без текста, подписей,
+{character_direction}
+
+Один цельный кадр, без текста, подписей,
 логотипов, водяных знаков, коллажа и интерфейса.
 
 {BACKGROUND_STORY_SCENE_STYLE}
 
-VISUAL_CHARACTER_STYLE:
-{VISUAL_CHARACTER_STYLE}
+{trailing_style}
 """.strip()
     return _truncate_text(prompt, BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS)
 
@@ -763,13 +828,14 @@ def generate_background_story_image_bytes(
     *,
     pet: LocalPetChatContext,
     story: BackgroundStoryResult,
+    prompt_mode: BackgroundStoryImagePromptMode = "full_stop_motion",
 ) -> bytes:
     input_references = _asset_input_references_for_background_story(pet)
     if not input_references:
         raise RuntimeError("BACKGROUND_STORY_IMAGE_REFERENCE_MISSING")
     scene = extract_background_story_image_scene(story, prompt_debug=story.prompt_debug)
     return generate_image_bytes(
-        build_background_story_image_prompt(scene=scene),
+        build_background_story_image_prompt(scene=scene, mode=prompt_mode),
         label="background_story/image",
         input_references=input_references,
     )

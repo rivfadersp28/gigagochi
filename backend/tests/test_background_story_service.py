@@ -213,6 +213,9 @@ def _pet() -> LocalPetChatContext:
                 "baby": {
                     "happy": "https://example.com/oleg-baby-happy.png",
                 },
+                "teen": {
+                    "idle": "https://example.com/static/generated/asset-1/teen-idle.png?v=7",
+                },
             },
         }
     )
@@ -280,9 +283,16 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
     assert calls[0]["input_references"] == [
         {
             "type": "image_url",
-            "image_url": {"url": "https://example.com/oleg-baby-happy.png"},
+            "image_url": {
+                "url": (
+                    "https://example.com/static/generated/asset-1/"
+                    "teen-idle-character.png?v=7"
+                )
+            },
         }
     ]
+    assert "TRANSLATE THE REFERENCE INTO THE SAME STOP-MOTION WORLD" in calls[0]["prompt"]
+    assert "VISUAL_CHARACTER_STYLE:" not in calls[0]["prompt"]
     prompt = str(calls[0]["prompt"])
     assert "лист на его лице светится" in prompt
     assert "древний дуб отвечает шепотом листа" not in prompt
@@ -297,10 +307,10 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
     assert "Tone style" not in prompt
     assert "Базовая визуальная рамка" not in prompt
     normalized_shared_style = " ".join(background_story_service.VISUAL_CHARACTER_STYLE.split())
-    assert normalized_shared_style in prompt
-    assert "collectible designer art toy" in prompt
+    assert normalized_shared_style not in prompt
+    assert "collectible designer art toy" not in prompt
     assert "pure white seamless background" not in prompt
-    assert "приложенной референсной картинки" in prompt
+    assert "MAIN CHARACTER — TRANSLATE THE REFERENCE INTO THE SAME STOP-MOTION WORLD" in prompt
     assert "Do not turn every other character into a copy of the hero" in prompt
     assert "stylized humans, animals, spirits" in prompt
     assert "Humans must remain recognizably human" in prompt
@@ -332,8 +342,8 @@ def test_background_story_image_passes_current_sprite_reference_to_image_helper(
     pet = _pet().model_copy(
         update={
             "assetImages": {
-                "baby": {
-                    "happy": "/static/generated/pets/oleg-baby-happy.png",
+                "teen": {
+                    "idle": "/static/generated/pets/teen-idle.png?v=7",
                 },
             }
         }
@@ -381,7 +391,10 @@ def test_background_story_image_passes_current_sprite_reference_to_image_helper(
         {
             "type": "image_url",
             "image_url": {
-                "url": "https://gigagochi.serega.works/static/generated/pets/oleg-baby-happy.png"
+                "url": (
+                    "https://gigagochi.serega.works/static/generated/pets/"
+                    "teen-idle-character.png?v=7"
+                )
             },
         }
     ]
@@ -398,6 +411,38 @@ def test_background_story_image_prompt_keeps_full_style_for_long_scene() -> None
 
     assert len(prompt) <= background_story_service.BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS
     assert prompt.endswith("quietly magical.")
+
+
+def test_background_story_isolated_identity_prompt_scopes_character_style() -> None:
+    prompt = background_story_service.build_background_story_image_prompt(
+        scene="Олег идёт по бумажному лесу.",
+        mode="isolated_identity",
+    )
+
+    assert "identity reference, not as a composition or" in prompt
+    assert "Ignore and replace any white, transparent or studio background" in prompt
+    assert "VISUAL_CHARACTER_STYLE:" not in prompt
+    assert "handcrafted stop-motion miniature set" in prompt
+
+
+def test_background_story_full_stop_motion_prompt_restylizes_whole_scene() -> None:
+    prompt = background_story_service.build_background_story_image_prompt(
+        scene="Олег идёт по бумажному лесу.",
+        mode="full_stop_motion",
+    )
+
+    assert "TRANSLATE THE REFERENCE INTO THE SAME STOP-MOTION WORLD" in prompt
+    assert "made by the same miniature workshop" in prompt
+    assert "Avoid photoreal fur, skin, vegetation or stone" in prompt
+    assert "VISUAL_CHARACTER_STYLE:" not in prompt
+
+
+def test_background_story_image_prompt_rejects_unknown_mode() -> None:
+    with pytest.raises(ValueError, match="Unsupported background story image prompt mode"):
+        background_story_service.build_background_story_image_prompt(
+            scene="Олег идёт по лесу.",
+            mode="unknown",  # type: ignore[arg-type]
+        )
 
 
 def test_background_story_image_requires_character_reference() -> None:
