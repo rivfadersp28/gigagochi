@@ -69,14 +69,66 @@ STORY_STAT_MAX_TOTAL_DAMAGE = 35
 STORY_DIRECTION_HISTORY_LIMIT = 12
 STORY_MODE_COOLDOWN = 3
 LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
-BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS = 5600
+BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS = 8400
 BACKGROUND_STORY_IMAGE_SCENE_STORY_MAX_CHARS = 2400
 BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS = 700
 BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION = (
     "Выдели один самый иллюстративный момент истории. Верни компактное визуальное описание "
     "одного кадра: действие, окружение и важные предметы. Не пересказывай всю историю, "
-    "не добавляй название, жанр, теги, мораль или сведения, которых нет в сюжете."
+    "не добавляй название, жанр, теги, мораль или сведения, которых нет в сюжете. "
+    "Сохрани указанный в истории вид каждого участника: человек остаётся человеком, дух — "
+    "духом, животное — животным. Для второстепенных персонажей кратко укажи различимые "
+    "силуэт, занятие и соответствующее моменту настроение; не копируй им автоматически "
+    "внешность или меланхоличное выражение главного героя."
 )
+BACKGROUND_STORY_SCENE_STYLE = """
+ART DIRECTION FOR THE WHOLE SCENE:
+- Treat the attached image as the exact identity anchor for the main character and as a loose
+  reference for palette, tactile materials and shape language. Do not turn every other character
+  into a copy of the hero.
+- Keep the cast diverse and faithful to the story. Supporting characters may be stylized humans,
+  animals, spirits, plants, objects or unfamiliar creatures, with varied ages, body shapes,
+  silhouettes, clothing and materials. Humans must remain recognizably human; spirits may be
+  translucent, abstract or weightless; animals keep their species-specific anatomy.
+- Give supporting characters expressions and poses appropriate to their role and the current
+  action. They may be cheerful, alert, busy, stern, frightened, kind or strange. Do not give
+  everyone the hero's sleepy eyes, large head, tiny body, melancholic mood, patched clothes or
+  signature accessories.
+- Unify the cast through one authored illustration language: simplified expressive shapes,
+  restrained facial detail, tactile matte surfaces, the same color harmony and the same soft
+  lighting. Avoid photorealistic skin, portrait faces, live-action extras and realistic wildlife
+  photography, but preserve meaningful differences between people, spirits, animals and creatures.
+
+ENVIRONMENT FRAME — APPLY ONLY TO THE WORLD AROUND THE CHARACTERS:
+- These rules control only scenery, architecture, foliage, terrain, atmospheric depth, lighting
+  and non-character props. They must never redesign, replace or restyle the referenced main
+  character. Story-required supporting characters keep the diverse character direction above.
+- Build the environment as a handcrafted stop-motion miniature set with tactile diorama scenery.
+  Use painted wood, cardboard, paper, fabric, matte resin, clay and occasional stitched elements,
+  with restrained handmade imperfections rather than realistic construction or natural textures.
+- Use Japanese-inspired minimalism: three to five large readable environmental shapes, a clean
+  silhouette, calm negative space and an uncluttered open area around the main action. Favor a
+  balanced, near-symmetrical composition when the story action allows it; clarity is more important
+  than rigid symmetry.
+- Keep distant architecture, foliage, rocks and props simple, graphic and slightly theatrical.
+  The setting should feel like an elegant empty miniature stage before the cast was placed into it,
+  while still matching the location described by the story.
+- Use soft diffused practical lighting, gentle atmospheric depth and only a subtle shallow focus.
+  Keep a muted earthy palette, nostalgic warmth and quiet melancholy in the environment without
+  overriding the actual emotion or valence of the story and its characters.
+
+DETAIL HIERARCHY AND RESTRAINT:
+- Detail hierarchy: highest detail on the main character, medium detail on important supporting
+  characters and story objects, low detail in the background. Keep texture selective and localized
+  near the focal action.
+- Do not invent background people, animals, vehicles, signs or decorative foreground subjects.
+  Include such elements only when the story explicitly requires them. Never add text, logos or
+  readable signage.
+- Avoid micro-detail everywhere, dense prop clutter, countless repeated objects, busy foliage,
+  individually rendered stones, excessive surface scratches, dramatic depth-of-field bokeh,
+  glossy cinematic spectacle and photorealistic environment rendering. Aim for selectively crafted
+  detail and premium cinematic composition, not an AI-made maximalist fantasy render.
+""".strip()
 STORY_DIRECTION_FIELDS = (
     "plotMode",
     "settingClass",
@@ -698,6 +750,8 @@ def build_background_story_image_prompt(
 силуэт, лицо, пропорции, цвета, материалы, одежду, аксессуары и отличительные детали.
 Помести этого же персонажа в описанную сцену. Один цельный кадр, без текста, подписей,
 логотипов, водяных знаков, коллажа и интерфейса.
+
+{BACKGROUND_STORY_SCENE_STYLE}
 
 VISUAL_CHARACTER_STYLE:
 {VISUAL_CHARACTER_STYLE}

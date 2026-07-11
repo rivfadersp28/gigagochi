@@ -273,6 +273,8 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
     scene_request = _call_by_schema(completions, "background_story_image_scene")
     scene_prompt = scene_request["messages"][1]["content"]
     assert background_story_service.BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION in scene_prompt
+    assert "человек остаётся человеком, дух — духом" in scene_prompt
+    assert "не копируй им автоматически" in scene_prompt
     assert "Олег заметил, что древний дуб отвечает шепотом листа" in scene_prompt
     assert calls[0]["label"] == "background_story/image"
     assert calls[0]["input_references"] == [
@@ -299,6 +301,25 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
     assert "collectible designer art toy" in prompt
     assert "pure white seamless background" not in prompt
     assert "приложенной референсной картинки" in prompt
+    assert "Do not turn every other character into a copy of the hero" in prompt
+    assert "stylized humans, animals, spirits" in prompt
+    assert "Humans must remain recognizably human" in prompt
+    assert "They may be cheerful, alert, busy" in prompt
+    assert "Do not give everyone the hero's sleepy eyes" in prompt
+    assert "ENVIRONMENT FRAME — APPLY ONLY TO THE WORLD AROUND THE CHARACTERS" in prompt
+    assert "must never redesign, replace or restyle" in prompt
+    assert "handcrafted stop-motion miniature set" in prompt
+    assert "painted wood, cardboard, paper, fabric, matte resin, clay" in prompt
+    assert "Japanese-inspired minimalism" in prompt
+    assert "three to five large readable environmental shapes" in prompt
+    assert "uncluttered open area around the main action" in prompt
+    assert "near-symmetrical composition when the story action allows it" in prompt
+    assert "soft diffused practical lighting" in prompt
+    assert "without overriding the actual emotion or valence" in prompt
+    assert "Detail hierarchy: highest detail on the main character" in prompt
+    assert "Do not invent background people, animals, vehicles" in prompt
+    assert "selectively crafted detail" in prompt
+    assert "Avoid micro-detail everywhere" in prompt
     assert len(prompt) <= background_story_service.BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS
     assert "Листики выпускают запахи-сигналы опасности" not in prompt
     assert story.prompt_debug[0]["label"] == "background_story/image_scene"
@@ -368,6 +389,15 @@ def test_background_story_image_passes_current_sprite_reference_to_image_helper(
     assert "Олег стоит под древним дубом" in prompt
     assert "чел с листом вместо лица" not in prompt
     assert len(prompt) <= background_story_service.BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS
+
+
+def test_background_story_image_prompt_keeps_full_style_for_long_scene() -> None:
+    prompt = background_story_service.build_background_story_image_prompt(
+        scene="Старинная башня, бумажные деревья и мягкий туман. " * 30,
+    )
+
+    assert len(prompt) <= background_story_service.BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS
+    assert prompt.endswith("quietly magical.")
 
 
 def test_background_story_image_requires_character_reference() -> None:
