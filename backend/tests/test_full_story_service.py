@@ -234,6 +234,12 @@ def test_full_story_retries_rejected_plan_before_rendering(monkeypatch) -> None:
         "full_story_plan"
     )
     assert "PLAN_RETRY" in completions.calls[2]["messages"][1]["content"]
+    assert "Сохрани его понятную причинную основу" in completions.calls[2]["messages"][1][
+        "content"
+    ]
+    assert "Создай полностью новый план" not in completions.calls[2]["messages"][1][
+        "content"
+    ]
 
 
 def test_full_story_allows_three_plan_attempts(monkeypatch) -> None:

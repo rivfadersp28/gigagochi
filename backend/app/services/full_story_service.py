@@ -676,8 +676,9 @@ def generate_full_story(
         plan_attempt += 1
         issue_lines = "\n".join(f"- {issue}" for issue in plan_issues)
         retry_plan_content = (
-            f"{plan_user_content}\n\nPLAN_RETRY: предыдущий план отклонён. Создай полностью "
-            "новый план четырёх событий, а не косметическую перестановку действий.\n"
+            f"{plan_user_content}\n\nPLAN_RETRY: предыдущий план отклонён. Сохрани его "
+            "понятную причинную основу и удачные события, но существенно исправь "
+            "части, названные редактором. Не меняй работающие части только ради новизны.\n"
             f"Замечания:\n{issue_lines or '- части недостаточно событийны'}\n"
             f"Указание:\n{plan_retry_instruction or 'В каждой части нужен отдельный поворот.'}\n"
             "PREVIOUS_PLAN:\n"

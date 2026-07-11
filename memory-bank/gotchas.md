@@ -17,6 +17,11 @@
   visible before/after turn in every part, track consumed/lost/attached objects
   across parts, and reject opposition that acts against its own stated goal only
   to manufacture conflict.
+- Do not apply the finale's quality bar to all four planned events. Requiring
+  every decisive action to overcome its obstacle over-constrains the inciting
+  event and turn, causing artificial action chains and needless full rewrites.
+  Judge each part against its narrative function and preserve sound events when
+  repairing a rejected plan.
 - `storyLibraryPatch` is data, not debug UI. Visible chat responses and
   `/api/push/snapshot` should expose it as a top-level field; keep
   `debug.storyLibraryPatch` only as a backward-compatible diagnostic copy.

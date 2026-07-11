@@ -200,7 +200,11 @@
   the prose with that plan. Each planned part has an SVO event, before/after
   state, trigger, protagonist and opposition goals, decisive action, result,
   state changes and a carry-forward object ledger. A rejected plan may be
-  rebuilt up to three times; each model stage has a 240-second minimum timeout.
+  repaired up to three times while preserving its sound causal core; each model
+  stage has a 240-second minimum timeout. Plan quality is role-aware: the
+  inciting part establishes commitment, the complication changes the plan, the
+  turn creates an observable path to resolution, and only the finale must solve
+  the overall goal.
 - `/story` illustrations use `background_story_service.generate_background_story_image_bytes`.
   Before image generation, the service sends the generated story through a chat
   completion named `background_story_image_scene` with an artist-brief prompt
