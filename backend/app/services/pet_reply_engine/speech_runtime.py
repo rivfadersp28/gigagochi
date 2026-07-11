@@ -210,6 +210,7 @@ def validate_speech_runtime_config(config: Any) -> None:
         "{current_state}",
         "{story_direction}",
         "{anti_repeat}",
+        "{day_context}",
     ):
         if placeholder not in full_story_template:
             raise ValueError(

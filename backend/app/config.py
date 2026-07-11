@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     telegram_daily_push_default_timezone: str = "Europe/Moscow"
     background_story_enabled: bool = True
     background_story_interval_seconds: int = 300
-    background_story_min_interval_seconds: int | None = None
-    background_story_min_interval_hours: int = 6
+    background_story_hours: list[int] = Field(default_factory=lambda: [9, 13, 17, 21])
+    background_story_window_minutes: int = Field(default=120, ge=5, le=180)
     telegram_push_store_path: str = "data/push/telegram_push_state.json"
     admin_publish_enabled: bool = False
     admin_publish_git_remote: str = "origin"

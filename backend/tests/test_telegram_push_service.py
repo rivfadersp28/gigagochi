@@ -661,6 +661,212 @@ def test_full_story_history_includes_legacy_last_story_without_duplicates() -> N
     ]
 
 
+def test_automatic_full_story_sends_four_parts_with_images_in_local_slots(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    current_now = [datetime(2026, 7, 12, 6, 0, tzinfo=UTC)]
+    settings = SimpleNamespace(
+        telegram_push_store_path=str(tmp_path / "push.json"),
+        telegram_daily_push_default_timezone="Europe/Moscow",
+        background_story_enabled=True,
+        background_story_hours=[9, 13, 17, 21],
+        background_story_window_minutes=120,
+        bot_token="bot-token",
+        webapp_url="https://example.com/app",
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: current_now[0])
+
+    class Part:
+        def __init__(self, number: int) -> None:
+            self.number = number
+            self.stat_impacts = (
+                {"stat": "happiness", "amount": 1, "reason": "История продолжается."},
+            )
+
+        def model_dump(self):
+            return {
+                "partNumber": self.number,
+                "title": f"Часть {self.number}",
+                "summary": f"Кратко о части {self.number}.",
+                "storyText": f"Событие части {self.number} происходит последовательно.",
+                "valence": "positive",
+                "statImpacts": list(self.stat_impacts),
+            }
+
+    generated_contexts: list[dict] = []
+
+    def fake_generate_full_story(**kwargs):
+        generated_contexts.append(kwargs["day_context"])
+        return SimpleNamespace(
+            overall_title="Один длинный день",
+            arc_plan={"goal": "Закончить общее дело."},
+            story_direction={"plotMode": "social_event"},
+            parts=tuple(Part(number) for number in range(1, 5)),
+            prompt_debug=[],
+        )
+
+    image_parts: list[dict] = []
+    sent_photos: list[dict] = []
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_full_story",
+        fake_generate_full_story,
+    )
+
+    def fake_generate_image(**kwargs):
+        image_parts.append(kwargs["part"].copy())
+        kwargs["direction_output"].update({"poseFamily": "locomotion"})
+        return f"png-{kwargs['part']['partNumber']}".encode()
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_full_story_part_image_bytes",
+        fake_generate_image,
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_persist_background_story_image",
+        lambda _record, _bytes, *, generated_at: f"/story-{generated_at.hour}.png",
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_photo",
+        lambda _client, chat_id, photo, caption, _keyboard: sent_photos.append(
+            {"chatId": chat_id, "photo": photo, "caption": caption}
+        ),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_message",
+        lambda *_args, **_kwargs: pytest.fail("image fallback was not expected"),
+    )
+
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    telegram_push_service.mark_chat_started(chat_id=TEST_TELEGRAM_ID)
+
+    for utc_hour, part_number in zip((6, 10, 14, 18), range(1, 5), strict=True):
+        current_now[0] = datetime(2026, 7, 12, utc_hour, 0, tzinfo=UTC)
+        result = telegram_push_service.send_due_background_stories()
+        assert result[0]["partNumber"] == part_number
+        assert telegram_push_service.send_due_background_stories() == []
+        if part_number == 1:
+            telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+            refreshed = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+            assert refreshed["dailyFullStory"]["parts"][0]["deliveredAt"]
+
+    assert len(generated_contexts) == 1
+    assert [item["scheduledLocalTime"] for item in generated_contexts[0]["parts"]] == [
+        "09:00",
+        "13:00",
+        "17:00",
+        "21:00",
+    ]
+    assert [item["dayPeriod"] for item in generated_contexts[0]["parts"]] == [
+        "утро",
+        "день",
+        "вечер",
+        "ночь",
+    ]
+    assert [item["scheduledLocalTime"] for item in image_parts] == [
+        "09:00",
+        "13:00",
+        "17:00",
+        "21:00",
+    ]
+    assert len(sent_photos) == 4
+    assert all("Один длинный день" in item["caption"] for item in sent_photos)
+    stored = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert all(part.get("deliveredAt") for part in stored["dailyFullStory"]["parts"])
+    assert all(part.get("statsAppliedAt") for part in stored["dailyFullStory"]["parts"])
+    assert len(stored["fullStoryHistory"]) == 1
+
+
+def test_automatic_full_story_does_not_start_from_second_daily_slot(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    now = datetime(2026, 7, 12, 10, 0, tzinfo=UTC)
+    settings = SimpleNamespace(
+        telegram_push_store_path=str(tmp_path / "push.json"),
+        telegram_daily_push_default_timezone="Europe/Moscow",
+        background_story_hours=[9, 13, 17, 21],
+        background_story_window_minutes=120,
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    telegram_push_service.mark_chat_started(chat_id=TEST_TELEGRAM_ID)
+
+    assert telegram_push_service._due_story_records(now) == []
+
+
+def test_automatic_full_story_does_not_send_text_when_image_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    now = datetime(2026, 7, 12, 6, 0, tzinfo=UTC)
+    settings = SimpleNamespace(
+        telegram_push_store_path=str(tmp_path / "push.json"),
+        telegram_daily_push_default_timezone="Europe/Moscow",
+        background_story_enabled=True,
+        background_story_hours=[9, 13, 17, 21],
+        background_story_window_minutes=120,
+        bot_token="bot-token",
+        webapp_url="https://example.com/app",
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: now)
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    telegram_push_service.mark_chat_started(chat_id=TEST_TELEGRAM_ID)
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    story = {
+        "overallTitle": "История с обязательной картинкой",
+        "generatedAt": "2026-07-12T06:00:00Z",
+        "localDate": "2026-07-12",
+        "parts": [
+            {
+                "partNumber": number,
+                "title": f"Часть {number}",
+                "storyText": "Продолжение общей истории.",
+                "valence": "positive",
+                "statImpacts": [
+                    {"stat": "happiness", "amount": 2, "reason": "Хороший поворот."}
+                ],
+            }
+            for number in range(1, 5)
+        ],
+    }
+    record["dailyFullStory"] = story
+    record["lastFullStory"] = story
+    telegram_push_service._save_record(record)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_full_story_part_image_bytes",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("image unavailable")),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_photo",
+        lambda *_args, **_kwargs: pytest.fail("photo must not be sent"),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_message",
+        lambda *_args, **_kwargs: pytest.fail("text fallback is forbidden"),
+    )
+
+    assert telegram_push_service.send_due_background_stories() == []
+
+    stored = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert stored["lastStoryErrorCode"] == "DAILY_FULL_STORY_IMAGE_FAILED"
+    assert "statsAppliedAt" not in stored["dailyFullStory"]["parts"][0]
+    assert "deliveredAt" not in stored["dailyFullStory"]["parts"][0]
+    assert telegram_push_service._due_story_records(
+        datetime(2026, 7, 12, 10, 0, tzinfo=UTC)
+    ) == []
+
+
 def test_recent_story_events_fallback_uses_last_story_for_anti_repeat() -> None:
     events = telegram_push_service._record_recent_story_events(
         {

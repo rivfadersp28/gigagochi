@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 from app.config import get_settings
 from app.schemas import LocalPetChatContext
 from app.services.background_story_service import (
+    generate_background_story_image_bytes,
     select_background_story_direction,
     story_direction_block,
 )
@@ -259,6 +261,7 @@ def generate_full_story(
     *,
     pet: LocalPetChatContext,
     recent_full_stories: list[dict[str, Any]] | None = None,
+    day_context: dict[str, Any] | None = None,
     client: Any | None = None,
     model: str | None = None,
     timeout: float | None = None,
@@ -301,6 +304,15 @@ def generate_full_story(
                             enforce_single_valence=False,
                         ),
                         "anti_repeat": _full_story_anti_repeat(recent_full_stories),
+                        "day_context": json.dumps(
+                            day_context
+                            or {
+                                "mode": "manual",
+                                "rule": "Плановое локальное время частей не задано.",
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
                     }
                 ),
             },
@@ -333,4 +345,50 @@ def generate_full_story(
         story_direction=story_direction,
         parts=parts,
         prompt_debug=prompt_debug,
+    )
+
+
+def generate_full_story_part_image_bytes(
+    *,
+    pet: LocalPetChatContext,
+    overall_title: str,
+    part: FullStoryPart | dict[str, Any],
+    prompt_debug: list[dict[str, Any]] | None = None,
+    recent_story_events: list[dict[str, Any]] | None = None,
+    direction_output: dict[str, str] | None = None,
+) -> bytes:
+    if isinstance(part, FullStoryPart):
+        title = part.title
+        summary = part.summary
+        story_text = part.story_text
+        valence = part.valence
+        delivery_context = ""
+    else:
+        title = _text(part.get("title"), 120)
+        summary = _text(part.get("summary"), 360)
+        story_text = str(part.get("storyText") or "").strip()
+        valence = _text(part.get("valence"), 40) or "mixed"
+        local_time = _text(part.get("scheduledLocalTime"), 20)
+        day_period = _text(part.get("dayPeriod"), 40)
+        delivery_context = (
+            f" Контекст доставки: {day_period}, локальное время {local_time}. "
+            "Если кадр на улице, согласуй естественный свет с этим временем; "
+            "для интерьера не добавляй внешнее время искусственно."
+            if local_time or day_period
+            else ""
+        )
+    image_story = SimpleNamespace(
+        title=f"{overall_title}: {title}",
+        summary=f"{summary}{delivery_context}",
+        story_text=story_text,
+        event_type="full_story_part",
+        valence=valence,
+        tags=(),
+        prompt_debug=prompt_debug if prompt_debug is not None else [],
+    )
+    return generate_background_story_image_bytes(
+        pet=pet,
+        story=image_story,
+        recent_story_events=recent_story_events,
+        direction_output=direction_output,
     )

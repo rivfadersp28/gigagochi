@@ -171,6 +171,17 @@ def test_full_story_prompt_forbids_reusing_previous_arc(monkeypatch) -> None:
                 "resolutionMode": "journey_or_relocation",
             }
         ],
+        day_context={
+            "localDate": "2026-07-12",
+            "timezone": "Europe/Moscow",
+            "parts": [
+                {
+                    "partNumber": 1,
+                    "scheduledLocalTime": "09:00",
+                    "dayPeriod": "утро",
+                }
+            ],
+        },
         client=SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
         model="test-model",
         timeout=30,
@@ -181,3 +192,36 @@ def test_full_story_prompt_forbids_reusing_previous_arc(monkeypatch) -> None:
     assert "Доставить лекарство до заката" in prompt
     assert "только как запрет на повтор" in prompt
     assert "valenceTarget задаёт общий эмоциональный итог всей арки" in prompt
+    assert '"scheduledLocalTime": "09:00"' in prompt
+    assert '"dayPeriod": "утро"' in prompt
+
+
+def test_full_story_part_image_receives_soft_local_time_context(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_generate_background_story_image_bytes(**kwargs):
+        captured.update(kwargs)
+        return b"png"
+
+    monkeypatch.setattr(
+        full_story_service,
+        "generate_background_story_image_bytes",
+        fake_generate_background_story_image_bytes,
+    )
+
+    result = full_story_service.generate_full_story_part_image_bytes(
+        pet=SimpleNamespace(),
+        overall_title="Один длинный день",
+        part={
+            "title": "Первая встреча",
+            "summary": "Герой вышел на площадь.",
+            "storyText": "На площади начался спор.",
+            "valence": "mixed",
+            "scheduledLocalTime": "21:00",
+            "dayPeriod": "ночь",
+        },
+    )
+
+    assert result == b"png"
+    assert "ночь, локальное время 21:00" in captured["story"].summary
+    assert "для интерьера не добавляй внешнее время" in captured["story"].summary

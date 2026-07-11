@@ -26,14 +26,16 @@ from app.services.background_story_service import (
     generate_background_story,
     generate_background_story_image_bytes,
 )
-from app.services.full_story_service import generate_full_story
+from app.services.full_story_service import (
+    generate_full_story,
+    generate_full_story_part_image_bytes,
+)
 from app.services.image_service import generated_dir_for
 from app.services.lite_overlay import merge_lite_overlay_patch
 from app.services.pet_reply_engine.lite_generator import generate_push_pet_message
 from app.services.story_delivery_format import (
     format_full_story_message,
-    format_story_caption,
-    format_story_message,
+    format_full_story_part_message,
 )
 from app.services.telegram_auth_service import TelegramUserContext
 from app.services.telegram_client import (
@@ -64,6 +66,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_DAILY_PUSH_HOURS = (9, 15, 21)
 DEFAULT_DAILY_PUSH_WINDOW_MINUTES = 120
 DEFAULT_PUSH_TIMEZONE = "Europe/Moscow"
+DEFAULT_BACKGROUND_STORY_HOURS = (9, 13, 17, 21)
+DEFAULT_BACKGROUND_STORY_WINDOW_MINUTES = 120
+DAILY_FULL_STORY_RETRY_DELAY = timedelta(minutes=15)
+DAILY_FULL_STORY_MAX_ATTEMPTS = 2
 
 
 class TelegramPushError(RuntimeError):
@@ -112,6 +118,58 @@ def _daily_push_hours(settings: Any) -> tuple[int, ...]:
         if 0 <= hour <= 23:
             hours.add(hour)
     return tuple(sorted(hours))[:3] or DEFAULT_DAILY_PUSH_HOURS
+
+
+def _background_story_hours(settings: Any) -> tuple[int, ...]:
+    raw_hours = getattr(settings, "background_story_hours", DEFAULT_BACKGROUND_STORY_HOURS)
+    if not isinstance(raw_hours, (list, tuple, set)):
+        return DEFAULT_BACKGROUND_STORY_HOURS
+    hours: list[int] = []
+    for raw_hour in raw_hours:
+        try:
+            hour = int(raw_hour)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= hour <= 23 and hour not in hours:
+            hours.append(hour)
+    return tuple(sorted(hours)) if len(hours) == 4 else DEFAULT_BACKGROUND_STORY_HOURS
+
+
+def _day_period(hour: int) -> str:
+    if hour < 12:
+        return "утро"
+    if hour < 17:
+        return "день"
+    if hour < 21:
+        return "вечер"
+    return "ночь"
+
+
+def _background_story_slot(
+    record: dict[str, Any],
+    now: datetime,
+) -> tuple[int, datetime, str] | None:
+    settings = get_settings()
+    timezone = _push_timezone(record, settings)
+    local_now = now.astimezone(timezone)
+    window_minutes = max(
+        5,
+        min(
+            180,
+            int(
+                getattr(
+                    settings,
+                    "background_story_window_minutes",
+                    DEFAULT_BACKGROUND_STORY_WINDOW_MINUTES,
+                )
+            ),
+        ),
+    )
+    for index, hour in reversed(list(enumerate(_background_story_hours(settings)))):
+        local_slot = local_now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if local_slot <= local_now < local_slot + timedelta(minutes=window_minutes):
+            return index, local_slot, getattr(timezone, "key", str(timezone))
+    return None
 
 
 def _push_timezone(record: dict[str, Any], settings: Any) -> ZoneInfo:
@@ -908,6 +966,16 @@ def register_push_snapshot(
             ):
                 record[key] = existing.get(key)
             if same_pet:
+                for key in (
+                    "lastFullStoryAt",
+                    "lastFullStory",
+                    "fullStoryHistory",
+                    "dailyFullStory",
+                    "dailyFullStoryAttemptKey",
+                    "dailyFullStoryAttemptCount",
+                    "dailyFullStoryAttemptAt",
+                ):
+                    record[key] = deepcopy(existing.get(key))
                 record["recentStoryEvents"] = _record_recent_story_events(existing)
                 _merge_record_lite_overlay_patch(record, _record_lite_overlay_patch(existing))
         return record
@@ -1672,6 +1740,331 @@ def send_full_story_for_telegram_user(
     return result
 
 
+def _daily_full_story_context(
+    record: dict[str, Any],
+    local_date: str,
+    timezone_name: str,
+) -> dict[str, Any]:
+    hours = _background_story_hours(get_settings())
+    return {
+        "mode": "automatic_daily_delivery",
+        "localDate": local_date,
+        "timezone": timezone_name,
+        "parts": [
+            {
+                "partNumber": index,
+                "scheduledLocalTime": f"{hour:02d}:00",
+                "dayPeriod": _day_period(hour),
+            }
+            for index, hour in enumerate(hours, start=1)
+        ],
+        "rule": (
+            "Учитывай время только как мягкий контекст. Для уличной сцены согласуй "
+            "естественный свет и окружение; не называй время без сюжетной необходимости."
+        ),
+    }
+
+
+def _generate_daily_full_story(
+    record: dict[str, Any],
+    *,
+    now: datetime,
+    local_date: str,
+    timezone_name: str,
+) -> dict[str, Any]:
+    pet = LocalPetChatContext.model_validate(_current_pet_record(record, now))
+    history = _record_full_story_history(record)
+    day_context = _daily_full_story_context(record, local_date, timezone_name)
+    result = generate_full_story(
+        pet=pet,
+        recent_full_stories=history,
+        day_context=day_context,
+    )
+    generated_at = _iso(now)
+    schedule = day_context["parts"]
+    story_payload = {
+        "overallTitle": result.overall_title,
+        "arcPlan": result.arc_plan,
+        "storyDirection": result.story_direction,
+        "parts": [
+            {
+                **part.model_dump(),
+                "scheduledLocalTime": schedule[index]["scheduledLocalTime"],
+                "dayPeriod": schedule[index]["dayPeriod"],
+            }
+            for index, part in enumerate(result.parts)
+        ],
+        "generatedAt": generated_at,
+        "localDate": local_date,
+        "timezone": timezone_name,
+        "source": "automatic_daily_full_story",
+    }
+
+    def save_daily_story(current: dict[str, Any] | None) -> dict[str, Any]:
+        source = current.copy() if isinstance(current, dict) else record.copy()
+        if source.get("petId") != record.get("petId"):
+            raise TelegramPushError(
+                "PUSH_PET_CHANGED",
+                "Питомец изменился во время генерации истории. Повтори запрос.",
+            )
+        return {
+            **source,
+            "dailyFullStory": story_payload,
+            "lastFullStoryAt": generated_at,
+            "lastFullStory": story_payload,
+            "fullStoryHistory": _append_full_story_history(source, story_payload),
+        }
+
+    return _update_record(_telegram_id_from_record(record), save_daily_story)
+
+
+def _daily_full_story_part(
+    record: dict[str, Any],
+    *,
+    local_date: str,
+    part_index: int,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    story = record.get("dailyFullStory")
+    if not isinstance(story, dict) or story.get("localDate") != local_date:
+        return None
+    parts = story.get("parts") if isinstance(story.get("parts"), list) else []
+    if part_index >= len(parts) or not isinstance(parts[part_index], dict):
+        return None
+    return story, parts[part_index]
+
+
+def _daily_full_story_attempt_due(
+    record: dict[str, Any],
+    *,
+    attempt_key: str,
+    now: datetime,
+) -> bool:
+    if record.get("dailyFullStoryAttemptKey") != attempt_key:
+        return True
+    attempts = int(record.get("dailyFullStoryAttemptCount") or 0)
+    if attempts >= DAILY_FULL_STORY_MAX_ATTEMPTS:
+        return False
+    last_attempt = _parse_iso(record.get("dailyFullStoryAttemptAt"))
+    return last_attempt is None or now - last_attempt >= DAILY_FULL_STORY_RETRY_DELAY
+
+
+def _mark_daily_full_story_attempt(
+    record: dict[str, Any],
+    *,
+    attempt_key: str,
+    now: datetime,
+) -> dict[str, Any]:
+    def save_attempt(current: dict[str, Any] | None) -> dict[str, Any]:
+        source = current.copy() if isinstance(current, dict) else record.copy()
+        previous_count = (
+            int(source.get("dailyFullStoryAttemptCount") or 0)
+            if source.get("dailyFullStoryAttemptKey") == attempt_key
+            else 0
+        )
+        return {
+            **source,
+            "dailyFullStoryAttemptKey": attempt_key,
+            "dailyFullStoryAttemptCount": previous_count + 1,
+            "dailyFullStoryAttemptAt": _iso(now),
+            "lastStoryAttemptAt": _iso(now),
+        }
+
+    return _update_record(_telegram_id_from_record(record), save_attempt)
+
+
+def _apply_daily_full_story_part_stats(
+    record: dict[str, Any],
+    *,
+    local_date: str,
+    part_index: int,
+    now: datetime,
+) -> dict[str, Any]:
+    def apply_part(current: dict[str, Any] | None) -> dict[str, Any]:
+        source = current.copy() if isinstance(current, dict) else record.copy()
+        current_part = _daily_full_story_part(
+            source,
+            local_date=local_date,
+            part_index=part_index,
+        )
+        if current_part is None:
+            raise TelegramPushError("DAILY_FULL_STORY_MISSING", "История дня не найдена.")
+        story, part = current_part
+        if part.get("statsAppliedAt"):
+            return source
+        next_pet, _stats_patch_value, ticks, stats_delta = _apply_story_stat_impact(
+            source,
+            part.get("statImpacts"),
+            now=now,
+        )
+        next_story = deepcopy(story)
+        next_part = next_story["parts"][part_index]
+        next_part["statsAppliedAt"] = _iso(now)
+        next_part["statsDelta"] = stats_delta or {key: 0 for key in STAT_KEYS}
+        result = {**source, "pet": next_pet, "dailyFullStory": next_story}
+        if ticks is not None:
+            result["lastStatsTickAt"] = _legacy_stats_tick(ticks)
+            result["lastStatTickAt"] = _stat_tick_iso_map(ticks)
+        last_full_story = source.get("lastFullStory")
+        if isinstance(last_full_story, dict) and last_full_story.get(
+            "generatedAt"
+        ) == story.get("generatedAt"):
+            result["lastFullStory"] = next_story
+        return result
+
+    return _update_record(_telegram_id_from_record(record), apply_part)
+
+
+def _send_daily_full_story_part(
+    record: dict[str, Any],
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.bot_token:
+        raise TelegramPushError("BOT_TOKEN_MISSING", "BOT_TOKEN не настроен.")
+    if not settings.webapp_url:
+        raise TelegramPushError("WEBAPP_URL_MISSING", "WEBAPP_URL не настроен.")
+    slot = _background_story_slot(record, now)
+    if slot is None:
+        raise TelegramPushError("DAILY_FULL_STORY_NOT_DUE", "Сейчас нет окна отправки.")
+    part_index, local_slot, timezone_name = slot
+    local_date = local_slot.date().isoformat()
+    attempt_key = f"{local_date}:{part_index + 1}"
+    record = _mark_daily_full_story_attempt(record, attempt_key=attempt_key, now=now)
+    current_part = _daily_full_story_part(
+        record,
+        local_date=local_date,
+        part_index=part_index,
+    )
+    if current_part is None:
+        if part_index != 0:
+            raise TelegramPushError(
+                "DAILY_FULL_STORY_NOT_STARTED",
+                "Первая часть истории дня не была создана.",
+            )
+        record = _generate_daily_full_story(
+            record,
+            now=now,
+            local_date=local_date,
+            timezone_name=timezone_name,
+        )
+        current_part = _daily_full_story_part(
+            record,
+            local_date=local_date,
+            part_index=part_index,
+        )
+    if current_part is None:
+        raise TelegramPushError("DAILY_FULL_STORY_MISSING", "История дня не найдена.")
+    story, part = current_part
+    if part.get("deliveredAt"):
+        raise TelegramPushError("DAILY_FULL_STORY_ALREADY_SENT", "Эта часть уже отправлена.")
+
+    pet = LocalPetChatContext.model_validate(_current_pet_record(record, now))
+    image_bytes: bytes | None = None
+    image_url: str | None = None
+    image_error: str | None = None
+    image_direction: dict[str, str] = {}
+    try:
+        pose_history = [*_record_recent_story_events(record)]
+        pose_history.extend(
+            item
+            for item in story.get("parts", [])
+            if isinstance(item, dict) and item.get("imagePoseFamily")
+        )
+        image_bytes = generate_full_story_part_image_bytes(
+            pet=pet,
+            overall_title=str(story.get("overallTitle") or "История одного дня"),
+            part=part,
+            recent_story_events=pose_history,
+            direction_output=image_direction,
+        )
+        if not image_bytes:
+            raise RuntimeError("DAILY_FULL_STORY_IMAGE_EMPTY")
+        image_url = _persist_background_story_image(record, image_bytes, generated_at=now)
+    except Exception as exc:
+        logger.exception("daily_full_story_image_generation failed")
+        raise TelegramPushError(
+            "DAILY_FULL_STORY_IMAGE_FAILED",
+            f"Не удалось создать иллюстрацию части: {exc.__class__.__name__}",
+        ) from exc
+
+    record = _apply_daily_full_story_part_stats(
+        record,
+        local_date=local_date,
+        part_index=part_index,
+        now=now,
+    )
+    story, part = _daily_full_story_part(
+        record,
+        local_date=local_date,
+        part_index=part_index,
+    ) or ({}, {})
+    chat_id = record.get("chatId")
+    if not isinstance(chat_id, int):
+        raise TelegramPushError("STORY_CHAT_ID_MISSING", "chat_id для Telegram story не найден.")
+    keyboard = mini_app_keyboard(settings.webapp_url)
+    caption = format_full_story_part_message(story, part)
+    with httpx.Client() as client:
+        try:
+            if image_bytes:
+                send_photo(client, chat_id, image_bytes, caption, keyboard)
+            else:
+                send_message(client, chat_id, caption, keyboard)
+        except TelegramAPIError as exc:
+            raise _telegram_push_error(exc) from exc
+        except httpx.HTTPError as exc:
+            raise TelegramPushError(
+                "TELEGRAM_SEND_FAILED",
+                f"Telegram story send failed: {exc.__class__.__name__}",
+            ) from exc
+
+    delivered_at = _iso(now)
+
+    def save_delivery(current: dict[str, Any] | None) -> dict[str, Any]:
+        source = current.copy() if isinstance(current, dict) else record.copy()
+        current_part_value = _daily_full_story_part(
+            source,
+            local_date=local_date,
+            part_index=part_index,
+        )
+        if current_part_value is None:
+            return source
+        current_story, _current_part = current_part_value
+        next_story = deepcopy(current_story)
+        next_part = next_story["parts"][part_index]
+        next_part["deliveredAt"] = delivered_at
+        next_part["imageUrl"] = image_url
+        next_part["imageError"] = image_error
+        next_part["imagePoseFamily"] = image_direction.get("poseFamily")
+        next_part["imageHeroPose"] = image_direction.get("heroPose")
+        next_part["imageCamera"] = image_direction.get("camera")
+        result = {
+            **source,
+            "dailyFullStory": next_story,
+            "lastStoryAt": delivered_at,
+            "lastStoryAttemptAt": delivered_at,
+            "lastStoryError": None,
+            "lastStoryErrorCode": None,
+            "lastStoryErrorAt": None,
+        }
+        last_full_story = source.get("lastFullStory")
+        if isinstance(last_full_story, dict) and last_full_story.get(
+            "generatedAt"
+        ) == current_story.get("generatedAt"):
+            result["lastFullStory"] = next_story
+        return result
+
+    saved = _update_record(_telegram_id_from_record(record), save_delivery)
+    return {
+        "sent": True,
+        "telegramId": record.get("telegramId"),
+        "localDate": local_date,
+        "partNumber": part_index + 1,
+        "story": saved.get("dailyFullStory"),
+        "storyImageError": image_error,
+    }
+
+
 def _fresh_record(record: dict[str, Any]) -> dict[str, Any]:
     telegram_id = record.get("telegramId")
     if isinstance(telegram_id, int):
@@ -1679,59 +2072,6 @@ def _fresh_record(record: dict[str, Any]) -> dict[str, Any]:
         if isinstance(fresh, dict):
             return fresh
     return record
-
-
-def _send_story_record(
-    record: dict[str, Any],
-    *,
-    include_debug: bool = False,
-) -> dict[str, Any]:
-    settings = get_settings()
-    if not settings.bot_token:
-        raise TelegramPushError("BOT_TOKEN_MISSING", "BOT_TOKEN не настроен.")
-    if not settings.webapp_url:
-        raise TelegramPushError("WEBAPP_URL_MISSING", "WEBAPP_URL не настроен.")
-
-    telegram_id = record.get("telegramId")
-    if not isinstance(telegram_id, int):
-        raise TelegramPushError("STORY_TELEGRAM_ID_MISSING", "Telegram ID не найден.")
-    chat_id = record.get("chatId")
-    if not isinstance(chat_id, int):
-        raise TelegramPushError("STORY_CHAT_ID_MISSING", "chat_id для Telegram story не найден.")
-
-    result = generate_story_for_telegram_user(
-        telegram_id=telegram_id,
-        include_debug=include_debug,
-    )
-    story = result.get("story") if isinstance(result.get("story"), dict) else {}
-    story_image = result.get("storyImage") if isinstance(result.get("storyImage"), dict) else {}
-    image_bytes = story_image.get("bytes") if isinstance(story_image, dict) else None
-    keyboard = mini_app_keyboard(settings.webapp_url)
-
-    with httpx.Client() as client:
-        try:
-            if isinstance(image_bytes, bytes) and image_bytes:
-                send_photo(client, chat_id, image_bytes, format_story_caption(story), keyboard)
-            else:
-                send_message(client, chat_id, format_story_message(story), keyboard)
-        except TelegramAPIError as exc:
-            story_error = _telegram_push_error(exc)
-            _save_story_failure(_fresh_record(record), story_error)
-            raise story_error from exc
-        except httpx.HTTPError as exc:
-            story_error = TelegramPushError(
-                "TELEGRAM_SEND_FAILED",
-                f"Telegram story send failed: {exc.__class__.__name__}",
-            )
-            _save_story_failure(_fresh_record(record), story_error)
-            raise story_error from exc
-
-    sent_at = _iso()
-    return {
-        **result,
-        "sent": True,
-        "sentAt": sent_at,
-    }
 
 
 def _snapshot_records() -> list[dict[str, Any]]:
@@ -1832,16 +2172,7 @@ def send_due_pushes() -> list[dict[str, Any]]:
     return results
 
 
-def _background_story_min_interval(settings: Any) -> timedelta:
-    min_interval_seconds = getattr(settings, "background_story_min_interval_seconds", None)
-    if min_interval_seconds is not None:
-        return timedelta(seconds=max(0, int(min_interval_seconds)))
-    return timedelta(hours=settings.background_story_min_interval_hours)
-
-
 def _due_story_records(now: datetime) -> list[dict[str, Any]]:
-    settings = get_settings()
-    cutoff = now - _background_story_min_interval(settings)
     records = _read_store().get("records", {})
     due: list[dict[str, Any]] = []
     for record in records.values():
@@ -1851,10 +2182,29 @@ def _due_story_records(now: datetime) -> list[dict[str, Any]]:
             continue
         if _record_is_dead(record, now):
             continue
-        base_time = _latest_time(record.get("lastStoryAt"), record.get("lastStoryAttemptAt"))
-        if base_time is None:
-            base_time = _parse_iso(record.get("registeredAt"))
-        if base_time and base_time <= cutoff:
+        slot = _background_story_slot(record, now)
+        if slot is None:
+            continue
+        part_index, local_slot, _timezone_name = slot
+        local_date = local_slot.date().isoformat()
+        current_part = _daily_full_story_part(
+            record,
+            local_date=local_date,
+            part_index=part_index,
+        )
+        if current_part is None and part_index != 0:
+            continue
+        if current_part is not None and part_index > 0:
+            story_parts = current_part[0].get("parts")
+            if not isinstance(story_parts, list) or any(
+                not isinstance(previous, dict) or not previous.get("deliveredAt")
+                for previous in story_parts[:part_index]
+            ):
+                continue
+        if current_part is not None and current_part[1].get("deliveredAt"):
+            continue
+        attempt_key = f"{local_date}:{part_index + 1}"
+        if _daily_full_story_attempt_due(record, attempt_key=attempt_key, now=now):
             due.append(record)
     return due
 
@@ -1863,10 +2213,11 @@ def send_due_background_stories() -> list[dict[str, Any]]:
     settings = get_settings()
     if not settings.background_story_enabled:
         return []
+    now = _now()
     results: list[dict[str, Any]] = []
-    for record in _due_story_records(_now()):
+    for record in _due_story_records(now):
         try:
-            results.append(_send_story_record(record, include_debug=False))
+            results.append(_send_daily_full_story_part(record, now=now))
         except Exception as exc:
             _save_story_failure(_fresh_record(record), exc)
     return results

@@ -118,3 +118,24 @@ def format_full_story_message(story: dict[str, Any], *, limit: int = 4000) -> st
             section = f"{section}\n\n{impact_block}"
         sections.append(section)
     return "\n\n————\n\n".join(sections)[:limit].rstrip()
+
+
+def format_full_story_part_message(
+    story: dict[str, Any],
+    part: dict[str, Any],
+    *,
+    limit: int = TELEGRAM_PHOTO_CAPTION_LIMIT,
+) -> str:
+    overall_title = str(story.get("overallTitle") or "История одного дня").strip()
+    part_number = int(part.get("partNumber") or 1)
+    part_title = str(part.get("title") or f"Часть {part_number}").strip()
+    story_text = str(part.get("storyText") or part.get("summary") or "").strip()
+    base_text = f"{overall_title}\n\nЧасть {part_number}. {part_title}\n\n{story_text}"
+    impact_block = _story_stat_debug_block(part)
+    if not impact_block:
+        return base_text[:limit].rstrip()
+    separator = "\n\n"
+    reserved = len(separator) + len(impact_block)
+    if reserved >= limit:
+        return impact_block[:limit].rstrip()
+    return f"{base_text[: limit - reserved].rstrip()}{separator}{impact_block}".rstrip()
