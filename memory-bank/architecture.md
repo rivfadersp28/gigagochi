@@ -21,6 +21,10 @@
   the background; the dashboard polls the same job and atomically applies newer URLs. Until those
   assets are ready, mood rendering uses the normal asset fallback, which is safe because new-pet
   stats start at 100.
+- Generation timing telemetry is stored independently from expiring job responses in the same
+  SQLite database. It records queue start, normal-assets readiness, full derived-assets completion
+  and failure status. The diagnostic Telegram user can view personal 30-day average, median, p95
+  and recent timings in the debug panel; collection starts from the deployment of this telemetry.
 - Production operations alerts use the existing Telegram bot and a dedicated admin ID allowlist.
   AI failures, unexpected HTTP 500s, scheduler failures, queue saturation and stuck generation jobs
   are deduplicated before delivery so an incident does not create an alert storm.

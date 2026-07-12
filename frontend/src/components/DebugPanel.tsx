@@ -11,11 +11,12 @@ import {
   RotateCcw,
   Skull,
   Smile,
+  Timer,
   Trash2,
   X,
   HeartPulse,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   clearDebugPanelEvents,
@@ -23,6 +24,7 @@ import {
   readDebugPanelEvents,
   type DebugPanelEvent,
 } from "@/lib/debugPanelStorage";
+import { fetchGenerationStats, type GenerationStats } from "@/lib/api";
 import { readLocalPetMemory } from "@/lib/localPetMemoryStorage";
 import type { LocalPetMemoryStateV1 } from "@/lib/localPetMemoryTypes";
 import type { LocalPetState } from "@/lib/types";
@@ -46,7 +48,7 @@ type DebugPanelProps = {
   onVisualModeOverrideChange?: (mode: PetVisualMode | null) => void;
 };
 
-type DebugTab = "feed" | "prompts" | "character";
+type DebugTab = "feed" | "prompts" | "character" | "generation";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -274,6 +276,88 @@ function BackgroundGenerationProgress({ pet }: { pet: LocalPetState }) {
   );
 }
 
+function formatDuration(seconds: number | undefined) {
+  if (seconds === undefined) {
+    return "—";
+  }
+  if (seconds < 60) {
+    return `${Math.round(seconds)} с`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  return `${minutes} мин ${rest} с`;
+}
+
+function GenerationStatsView({
+  stats,
+  isLoading,
+  error,
+}: {
+  stats: GenerationStats | null;
+  isLoading: boolean;
+  error: string | null;
+}) {
+  if (isLoading && !stats) {
+    return (
+      <div className="grid gap-3 py-4" aria-label="Загрузка статистики генерации">
+        {[1, 2, 3].map((item) => (
+          <div key={item} className="h-20 rounded-lg bg-black/[0.035]" />
+        ))}
+      </div>
+    );
+  }
+  if (error) {
+    return <p className="py-6 text-pretty text-[13px] leading-[18px] text-red-700">{error}</p>;
+  }
+  if (!stats || stats.totalJobs === 0) {
+    return <EmptyState>Сгенерируйте персонажа, затем обновите эту вкладку.</EmptyState>;
+  }
+  const cards = [
+    ["До входа", stats.normal],
+    ["Полный комплект", stats.full],
+  ] as const;
+  return (
+    <div className="py-4">
+      <p className="text-pretty text-[12px] leading-[17px] text-black/50">
+        Ваши генерации за {stats.windowDays} дней: {stats.totalJobs}. Ошибок: {stats.failedJobs}.
+      </p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        {cards.map(([title, summary]) => (
+          <section key={title} className="rounded-lg bg-black/[0.035] p-3">
+            <h3 className="text-balance text-[13px] font-medium leading-[17px] text-black/72">
+              {title}
+            </h3>
+            <dl className="mt-3 grid grid-cols-3 gap-2 text-[11px] leading-[15px]">
+              <div><dt className="text-black/40">Среднее</dt><dd className="mt-1 tabular-nums text-black/72">{formatDuration(summary.averageSeconds)}</dd></div>
+              <div><dt className="text-black/40">Медиана</dt><dd className="mt-1 tabular-nums text-black/72">{formatDuration(summary.medianSeconds)}</dd></div>
+              <div><dt className="text-black/40">p95</dt><dd className="mt-1 tabular-nums text-black/72">{formatDuration(summary.p95Seconds)}</dd></div>
+            </dl>
+          </section>
+        ))}
+      </div>
+      <section className="mt-4">
+        <h3 className="text-balance text-[13px] font-medium leading-[17px] text-black/72">
+          Последние генерации
+        </h3>
+        <div className="mt-2 divide-y divide-black/10">
+          {stats.recent.map((job) => (
+            <div key={job.jobId} className="flex items-center justify-between gap-3 py-2 text-[11px] leading-[15px]">
+              <div className="min-w-0">
+                <div className="truncate text-black/65">{job.ownerName ?? "Пользователь"}</div>
+                <div className="tabular-nums text-black/35">{job.jobId.slice(0, 8)} · {job.status}</div>
+              </div>
+              <div className="shrink-0 text-right tabular-nums text-black/60">
+                <div>вход {formatDuration(job.normalSeconds)}</div>
+                <div className="text-black/35">всё {formatDuration(job.fullSeconds)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function DebugPanel({
   pet,
   isOpen,
@@ -293,6 +377,10 @@ export function DebugPanel({
   const [events, setEvents] = useState<DebugPanelEvent[]>(() =>
     [...readDebugPanelEvents()].reverse(),
   );
+  const [generationStats, setGenerationStats] = useState<GenerationStats | null>(null);
+  const [generationStatsLoading, setGenerationStatsLoading] = useState(false);
+  const [generationStatsError, setGenerationStatsError] = useState<string | null>(null);
+  const generationStatsRequestRef = useRef(0);
 
   useEffect(() => {
     function handleChange() {
@@ -306,6 +394,31 @@ export function DebugPanel({
     };
   }, []);
 
+  function loadGenerationStats() {
+    const requestId = generationStatsRequestRef.current + 1;
+    generationStatsRequestRef.current = requestId;
+    setGenerationStatsLoading(true);
+    setGenerationStatsError(null);
+    void fetchGenerationStats()
+      .then((value) => {
+        if (generationStatsRequestRef.current === requestId) {
+          setGenerationStats(value);
+        }
+      })
+      .catch((caught) => {
+        if (generationStatsRequestRef.current === requestId) {
+          setGenerationStatsError(
+            caught instanceof Error ? caught.message : "Не получилось загрузить статистику.",
+          );
+        }
+      })
+      .finally(() => {
+        if (generationStatsRequestRef.current === requestId) {
+          setGenerationStatsLoading(false);
+        }
+      });
+  }
+
   const memory = readLocalPetMemory(pet.petId);
   const promptEvents = events.filter((event) => event.kind === "prompt");
 
@@ -317,6 +430,7 @@ export function DebugPanel({
     { id: "feed", label: "Лента", icon: Database },
     { id: "prompts", label: "Prompts", icon: MessageSquareText },
     { id: "character", label: "Персонаж", icon: Bug },
+    { id: "generation", label: "Генерация", icon: Timer },
   ] satisfies { id: DebugTab; label: string; icon: typeof Bug }[];
   const visualModes = [
     { id: "sad", label: "Грустный", icon: Frown, disabled: !canShowSadAsset },
@@ -474,7 +588,7 @@ export function DebugPanel({
 
           <BackgroundGenerationProgress pet={pet} />
 
-          <div className="mt-4 grid grid-cols-3 gap-1 rounded-[8px] bg-black/[0.035] p-1">
+          <div className="mt-4 grid grid-cols-4 gap-1 rounded-[8px] bg-black/[0.035] p-1">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isSelected = activeTab === tab.id;
@@ -483,7 +597,12 @@ export function DebugPanel({
                   key={tab.id}
                   type="button"
                   aria-pressed={isSelected}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                    if (tab.id === "generation") {
+                      loadGenerationStats();
+                    }
+                  }}
                   className="inline-flex h-9 items-center justify-center gap-1.5 rounded-[7px] px-2 text-[12px] font-medium leading-none transition-colors focus:outline-none focus:ring-2 focus:ring-black/10"
                   style={{
                     backgroundColor: isSelected ? "white" : "transparent",
@@ -503,6 +622,13 @@ export function DebugPanel({
           {activeTab === "feed" ? <EventList events={events} /> : null}
           {activeTab === "prompts" ? <PromptList events={promptEvents} /> : null}
           {activeTab === "character" ? <CharacterInfo pet={pet} memory={memory} /> : null}
+          {activeTab === "generation" ? (
+            <GenerationStatsView
+              stats={generationStats}
+              isLoading={generationStatsLoading}
+              error={generationStatsError}
+            />
+          ) : null}
         </div>
           </aside>
         </Dialog.Content>

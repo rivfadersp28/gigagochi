@@ -4,7 +4,7 @@ import logging
 from datetime import timedelta
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.config import get_settings
 from app.dependencies import get_telegram_user
@@ -14,6 +14,7 @@ from app.schemas import (
     GeneratePetRequest,
     GenerateTravelRequest,
     GenerateTravelResponse,
+    GenerationStatsResponse,
     LiteFactExtractionRequest,
     LiteFactExtractionResponse,
     LocalAmbientRequest,
@@ -265,6 +266,24 @@ def generate_pet(payload: GeneratePetRequest, user: TelegramUser) -> GeneratePet
 @router.get("/generate-pet/jobs/{job_id}", response_model=GeneratePetJobResponse)
 def generation_job(job_id: str, user: TelegramUser) -> GeneratePetJobResponse:
     return get_generation_job(job_id, user)
+
+
+@router.get("/generation-stats", response_model=GenerationStatsResponse)
+def generation_stats(
+    user: TelegramUser,
+    days: int = Query(default=30, ge=1, le=365),
+    mine: bool = True,
+) -> GenerationStatsResponse:
+    if not _is_diagnostic_user(user.telegram_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "GENERATION_STATS_FORBIDDEN", "message": "Недостаточно прав."},
+        )
+    payload = _generation_job_service().metrics_summary(
+        days=days,
+        owner_id=user.telegram_id if mine else None,
+    )
+    return GenerationStatsResponse.model_validate(payload)
 
 
 @router.post("/chat", response_model=LocalChatResponse, response_model_exclude_none=True)

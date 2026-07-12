@@ -1,9 +1,14 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { LocalPetState } from "@/lib/types";
 
 import { DebugPanel } from "./DebugPanel";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 function pet(): LocalPetState {
   const timestamp = "2026-07-10T10:00:00.000Z";
@@ -120,5 +125,49 @@ describe("DebugPanel pet life controls", () => {
     expect(enabledReviveButton).toBeEnabled();
     fireEvent.click(enabledReviveButton);
     expect(onRevivePet).toHaveBeenCalledOnce();
+  });
+});
+
+describe("DebugPanel generation stats", () => {
+  it("loads personal generation durations on demand", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        windowDays: 30,
+        totalJobs: 1,
+        activeJobs: 0,
+        failedJobs: 0,
+        normal: {
+          count: 1,
+          averageSeconds: 120,
+          medianSeconds: 120,
+          p95Seconds: 120,
+          minSeconds: 120,
+          maxSeconds: 120,
+        },
+        full: {
+          count: 1,
+          averageSeconds: 600,
+          medianSeconds: 600,
+          p95Seconds: 600,
+          minSeconds: 600,
+          maxSeconds: 600,
+        },
+        recent: [{
+          jobId: "job-123456",
+          ownerName: "Сергей",
+          queuedAt: "2026-07-12T10:00:00Z",
+          status: "completed",
+          normalSeconds: 120,
+          fullSeconds: 600,
+        }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    ));
+
+    render(<DebugPanel pet={pet()} isOpen onClose={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "Генерация" }));
+
+    await waitFor(() => expect(screen.getByText("До входа")).toBeInTheDocument());
+    expect(screen.getAllByText("2 мин 0 с").length).toBeGreaterThan(0);
+    expect(screen.getByText("Сергей")).toBeInTheDocument();
   });
 });

@@ -85,6 +85,34 @@ class GeneratePetJobResponse(BaseModel):
     backgroundError: dict[str, Any] | None = None
 
 
+class GenerationDurationSummary(BaseModel):
+    count: int
+    averageSeconds: float | None = None
+    medianSeconds: float | None = None
+    p95Seconds: float | None = None
+    minSeconds: float | None = None
+    maxSeconds: float | None = None
+
+
+class GenerationStatsRecentJob(BaseModel):
+    jobId: str
+    ownerName: str | None = None
+    queuedAt: datetime
+    status: str
+    normalSeconds: float | None = None
+    fullSeconds: float | None = None
+
+
+class GenerationStatsResponse(BaseModel):
+    windowDays: int
+    totalJobs: int
+    activeJobs: int
+    failedJobs: int
+    normal: GenerationDurationSummary
+    full: GenerationDurationSummary
+    recent: list[GenerationStatsRecentJob]
+
+
 class LocalPetStats(BaseModel):
     hunger: int = Field(ge=0, le=100)
     happiness: int = Field(ge=0, le=100)

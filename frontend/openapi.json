@@ -872,6 +872,175 @@
         "title": "GeneratedPetImages",
         "type": "object"
       },
+      "GenerationDurationSummary": {
+        "properties": {
+          "averageSeconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Averageseconds"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "maxSeconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maxseconds"
+          },
+          "medianSeconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Medianseconds"
+          },
+          "minSeconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minseconds"
+          },
+          "p95Seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95Seconds"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "title": "GenerationDurationSummary",
+        "type": "object"
+      },
+      "GenerationStatsRecentJob": {
+        "properties": {
+          "fullSeconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fullseconds"
+          },
+          "jobId": {
+            "title": "Jobid",
+            "type": "string"
+          },
+          "normalSeconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normalseconds"
+          },
+          "ownerName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ownername"
+          },
+          "queuedAt": {
+            "format": "date-time",
+            "title": "Queuedat",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "jobId",
+          "queuedAt",
+          "status"
+        ],
+        "title": "GenerationStatsRecentJob",
+        "type": "object"
+      },
+      "GenerationStatsResponse": {
+        "properties": {
+          "activeJobs": {
+            "title": "Activejobs",
+            "type": "integer"
+          },
+          "failedJobs": {
+            "title": "Failedjobs",
+            "type": "integer"
+          },
+          "full": {
+            "$ref": "#/components/schemas/GenerationDurationSummary"
+          },
+          "normal": {
+            "$ref": "#/components/schemas/GenerationDurationSummary"
+          },
+          "recent": {
+            "items": {
+              "$ref": "#/components/schemas/GenerationStatsRecentJob"
+            },
+            "title": "Recent",
+            "type": "array"
+          },
+          "totalJobs": {
+            "title": "Totaljobs",
+            "type": "integer"
+          },
+          "windowDays": {
+            "title": "Windowdays",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "windowDays",
+          "totalJobs",
+          "activeJobs",
+          "failedJobs",
+          "normal",
+          "full",
+          "recent"
+        ],
+        "title": "GenerationStatsResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -3049,6 +3218,61 @@
           }
         },
         "summary": "Generation Job",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/generation-stats": {
+      "get": {
+        "operationId": "generation_stats_api_generation_stats_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mine",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Mine",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generation Stats",
         "tags": [
           "telegram-mini-app"
         ]

@@ -192,6 +192,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/generation-stats": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Generation Stats */
+        readonly get: operations["generation_stats_api_generation_stats_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/push/snapshot": {
         readonly parameters: {
             readonly query?: never;
@@ -527,6 +544,54 @@ export interface components {
             readonly teen: {
                 readonly [key: string]: string;
             };
+        };
+        /** GenerationDurationSummary */
+        readonly GenerationDurationSummary: {
+            /** Averageseconds */
+            readonly averageSeconds?: number | null;
+            /** Count */
+            readonly count: number;
+            /** Maxseconds */
+            readonly maxSeconds?: number | null;
+            /** Medianseconds */
+            readonly medianSeconds?: number | null;
+            /** Minseconds */
+            readonly minSeconds?: number | null;
+            /** P95Seconds */
+            readonly p95Seconds?: number | null;
+        };
+        /** GenerationStatsRecentJob */
+        readonly GenerationStatsRecentJob: {
+            /** Fullseconds */
+            readonly fullSeconds?: number | null;
+            /** Jobid */
+            readonly jobId: string;
+            /** Normalseconds */
+            readonly normalSeconds?: number | null;
+            /** Ownername */
+            readonly ownerName?: string | null;
+            /**
+             * Queuedat
+             * Format: date-time
+             */
+            readonly queuedAt: string;
+            /** Status */
+            readonly status: string;
+        };
+        /** GenerationStatsResponse */
+        readonly GenerationStatsResponse: {
+            /** Activejobs */
+            readonly activeJobs: number;
+            /** Failedjobs */
+            readonly failedJobs: number;
+            readonly full: components["schemas"]["GenerationDurationSummary"];
+            readonly normal: components["schemas"]["GenerationDurationSummary"];
+            /** Recent */
+            readonly recent: readonly components["schemas"]["GenerationStatsRecentJob"][];
+            /** Totaljobs */
+            readonly totalJobs: number;
+            /** Windowdays */
+            readonly windowDays: number;
         };
         /** HTTPValidationError */
         readonly HTTPValidationError: {
@@ -1376,6 +1441,38 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["GeneratePetJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly generation_stats_api_generation_stats_get: {
+        readonly parameters: {
+            readonly query?: {
+                readonly days?: number;
+                readonly mine?: boolean;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GenerationStatsResponse"];
                 };
             };
             /** @description Validation Error */

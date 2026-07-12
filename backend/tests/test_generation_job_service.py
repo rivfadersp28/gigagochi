@@ -76,7 +76,6 @@ def _build_response(
 def test_foreground_result_is_available_before_background_assets() -> None:
     background_started = Event()
     release_background = Event()
-
     def generate_background_image(_image_set):
         background_started.set()
         assert release_background.wait(timeout=2)
@@ -295,6 +294,12 @@ def test_completed_generation_job_survives_service_restart(tmp_path: Path) -> No
     first = build_service()
     submitted = first.submit("мышонок", _user())
     completed = _wait_for(first, submitted.jobId, lambda job: job.status == "succeeded")
+    stats = first.metrics_summary(days=30, owner_id=42)
+    assert stats["totalJobs"] == 1
+    assert stats["failedJobs"] == 0
+    assert stats["normal"]["count"] == 1
+    assert stats["full"]["count"] == 1
+    assert stats["recent"][0]["ownerName"] == "Serge"
     first.shutdown(wait=True)
 
     second = build_service()

@@ -32,6 +32,7 @@ import {
 } from "./apiContracts";
 import {
   API_URL,
+  ApiContractError,
   ApiError,
   apiErrorFromDetail,
   request,
@@ -53,6 +54,32 @@ type LocalChatOptions = {
   visibleContext?: {
     lastPetLine: string;
   };
+};
+
+export type GenerationDurationSummary = {
+  count: number;
+  averageSeconds?: number;
+  medianSeconds?: number;
+  p95Seconds?: number;
+  minSeconds?: number;
+  maxSeconds?: number;
+};
+
+export type GenerationStats = {
+  windowDays: number;
+  totalJobs: number;
+  activeJobs: number;
+  failedJobs: number;
+  normal: GenerationDurationSummary;
+  full: GenerationDurationSummary;
+  recent: Array<{
+    jobId: string;
+    ownerName?: string;
+    queuedAt: string;
+    status: string;
+    normalSeconds?: number;
+    fullSeconds?: number;
+  }>;
 };
 
 const REQUIRED_STAGES = ["baby", "teen", "adult"] as const satisfies readonly PetStage[];
@@ -85,6 +112,58 @@ function petNameForApi(pet: LocalPetState): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseGenerationStats(value: unknown): GenerationStats {
+  if (!isRecord(value) || !isRecord(value.normal) || !isRecord(value.full)) {
+    throw new ApiContractError("Invalid generation stats response");
+  }
+  const number = (input: unknown, path: string) => {
+    if (typeof input !== "number" || !Number.isFinite(input)) {
+      throw new ApiContractError(`Invalid ${path}`);
+    }
+    return input;
+  };
+  const optionalNumber = (input: unknown, path: string) =>
+    input === null || input === undefined ? undefined : number(input, path);
+  const summary = (input: Record<string, unknown>, path: string) => ({
+    count: number(input.count, `${path}.count`),
+    averageSeconds: optionalNumber(input.averageSeconds, `${path}.averageSeconds`),
+    medianSeconds: optionalNumber(input.medianSeconds, `${path}.medianSeconds`),
+    p95Seconds: optionalNumber(input.p95Seconds, `${path}.p95Seconds`),
+    minSeconds: optionalNumber(input.minSeconds, `${path}.minSeconds`),
+    maxSeconds: optionalNumber(input.maxSeconds, `${path}.maxSeconds`),
+  });
+  const recent = Array.isArray(value.recent) ? value.recent : [];
+  return {
+    windowDays: number(value.windowDays, "generationStats.windowDays"),
+    totalJobs: number(value.totalJobs, "generationStats.totalJobs"),
+    activeJobs: number(value.activeJobs, "generationStats.activeJobs"),
+    failedJobs: number(value.failedJobs, "generationStats.failedJobs"),
+    normal: summary(value.normal, "generationStats.normal"),
+    full: summary(value.full, "generationStats.full"),
+    recent: recent.flatMap((item) => {
+      if (!isRecord(item) || typeof item.jobId !== "string" || typeof item.status !== "string") {
+        return [];
+      }
+      return [{
+        jobId: item.jobId,
+        ownerName: typeof item.ownerName === "string" ? item.ownerName : undefined,
+        queuedAt: typeof item.queuedAt === "string" ? item.queuedAt : "",
+        status: item.status,
+        normalSeconds: optionalNumber(item.normalSeconds, "generationStats.recent.normalSeconds"),
+        fullSeconds: optionalNumber(item.fullSeconds, "generationStats.recent.fullSeconds"),
+      }];
+    }),
+  };
+}
+
+export function fetchGenerationStats(days = 30): Promise<GenerationStats> {
+  return request(
+    `/api/generation-stats?days=${days}&mine=true`,
+    { headers: tmaAuthHeaders() },
+    parseGenerationStats,
+  );
 }
 
 function cleanApiText(value: unknown, maxLength: number): string | undefined {

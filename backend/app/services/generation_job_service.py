@@ -130,6 +130,11 @@ class GenerationJobService:
             "queueCapacity": self._max_queued_jobs,
         }
 
+    def metrics_summary(self, *, days: int, owner_id: int | None) -> dict[str, object]:
+        if self._store is None:
+            return GenerationJobStore.empty_metrics_summary(days=days)
+        return self._store.metrics_summary(days=days, owner_id=owner_id)
+
     def submit(self, description: str, user: TelegramUserContext) -> GeneratePetJobResponse:
         self.cleanup()
         now = self._now()
@@ -156,6 +161,7 @@ class GenerationJobService:
                 response=response,
             )
             self._persist_locked(job_id)
+        self._record_metric_queued(job_id)
         logger.info(
             "pet_generation_queued jobId=%s ownerId=%s username=%s firstName=%s "
             "imageWorkers=%s videoWorkers=%s",
@@ -234,6 +240,38 @@ class GenerationJobService:
             )
         )
 
+    def _record_metric_queued(self, job_id: str) -> None:
+        if self._store is None:
+            return
+        with self._lock:
+            record = self._jobs.get(job_id)
+            if record is None:
+                return
+            stored = StoredGenerationJob(
+                owner_id=record.owner_id,
+                username=record.username,
+                first_name=record.first_name,
+                description=record.description,
+                response=record.response,
+            )
+        try:
+            self._store.record_queued(stored)
+        except Exception:
+            logger.warning("generation_metric_queued_failed jobId=%s", job_id, exc_info=True)
+
+    def _mark_metric(self, job_id: str, field: str, *, status: str | None = None) -> None:
+        if self._store is None:
+            return
+        try:
+            self._store.mark_metric(job_id, field, status=status)
+        except Exception:
+            logger.warning(
+                "generation_metric_mark_failed jobId=%s field=%s",
+                job_id,
+                field,
+                exc_info=True,
+            )
+
     @staticmethod
     def _record_from_stored(stored: StoredGenerationJob) -> GenerationJobRecord:
         return GenerationJobRecord(
@@ -271,6 +309,7 @@ class GenerationJobService:
             with self._lock:
                 self._jobs[response.jobId] = record
                 self._persist_locked(response.jobId)
+            self._record_metric_queued(response.jobId)
             self._submit_image_job(response.jobId, stored.description)
             logger.warning(
                 "pet_generation_recovered jobId=%s ownerId=%s",
@@ -281,6 +320,7 @@ class GenerationJobService:
     def _fail(self, job_id: str, exc: Exception, *, phase: str) -> None:
         detail = self._build_failure(job_id, phase, exc, self._owner_id(job_id))
         self._update(job_id, status_value="failed", phase=phase, error=detail)
+        self._mark_metric(job_id, "failed_at", status="failed")
 
     def _finish_background_failure(self, job_id: str, exc: Exception, *, phase: str) -> None:
         detail = self._build_failure(job_id, phase, exc, self._owner_id(job_id))
@@ -296,6 +336,7 @@ class GenerationJobService:
             phase="completed",
             background_error=detail,
         )
+        self._mark_metric(job_id, "completed_at", status="completed_with_errors")
 
     def _record_background_failure(self, job_id: str, exc: Exception, *, phase: str) -> None:
         detail = self._build_failure(job_id, phase, exc, self._owner_id(job_id))
@@ -331,6 +372,7 @@ class GenerationJobService:
     ) -> None:
         started_at = time.monotonic()
         self._update(job_id, status_value="running", phase="generating_images")
+        self._mark_metric(job_id, "images_started_at", status="running")
         logger.info("pet_generation_stage_started jobId=%s phase=generating_images", job_id)
         prompt_log_token = self._prompt_context(job_id)
         try:
@@ -348,6 +390,7 @@ class GenerationJobService:
             time.monotonic() - started_at,
             image_set.asset_set_id,
         )
+        self._mark_metric(job_id, "images_ready_at", status="running")
         self._update(job_id, status_value="running", phase="generating_video")
         try:
             self._video_executor.submit(
@@ -388,6 +431,7 @@ class GenerationJobService:
             time.monotonic() - started_at,
             image_set.asset_set_id,
         )
+        self._mark_metric(job_id, "foreground_ready_at", status="running")
         self._update(
             job_id,
             status_value="running",
@@ -472,6 +516,7 @@ class GenerationJobService:
             time.monotonic() - started_at,
             image_set.asset_set_id,
         )
+        self._mark_metric(job_id, "sad_ready_at", status="running")
         self._start_happy_image_job(
             job_id,
             image_set,
@@ -607,3 +652,4 @@ class GenerationJobService:
             phase="completed",
             result=result,
         )
+        self._mark_metric(job_id, "completed_at", status="completed")
