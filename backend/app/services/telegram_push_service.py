@@ -552,6 +552,7 @@ def _compact_story_novelty_item(value: Any) -> dict[str, Any] | None:
             "arcVariant",
             "antagonistClass",
             "wonderClass",
+            "locationClass",
         )
     }
     return {

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import random
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -10,10 +9,12 @@ from app.config import get_settings
 from app.schemas import LocalPetChatContext
 from app.services.background_story_service import (
     generate_background_story_image_bytes,
-    select_background_story_direction,
-    story_direction_block,
 )
 from app.services.character_dossier import story_character_data
+from app.services.full_story_direction import (
+    full_story_direction_block,
+    select_full_story_direction,
+)
 from app.services.lore_runtime import lore_prompt_block
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
@@ -41,22 +42,6 @@ MAX_PART_STAT_IMPACTS = 1
 MAX_STORY_STAT_IMPACTS = 3
 FULL_STORY_MIN_TIMEOUT_SECONDS = 240.0
 MAX_FULL_STORY_PLAN_ATTEMPTS = 3
-
-FULL_STORY_ANTAGONIST_CLASSES = {
-    "predatory_beast": "крупный опасный зверь с естественными повадками",
-    "fantasy_monster": "фантастический монстр с ясной целью и одной устойчивой способностью",
-    "intelligent_enemy": "разумный одиночный враг или организованная группа",
-    "supernatural_entity": "дух, призрак или иная сверхъестественная сущность",
-    "ancient_construct": "древний страж, ожившая статуя или искусственное существо",
-    "swarm_collective": "рой или коллектив существ, действующий как единая сила",
-}
-FULL_STORY_WONDER_CLASSES = {
-    "enchanted_ecosystem": "живое волшебное место со своими обитателями и укладом",
-    "impossible_architecture": "пространственно невозможное здание или территория",
-    "spectral_domain": "место, где видимый мир соприкасается с миром духов",
-    "ancient_machine": "огромное древнее устройство с понятным наблюдаемым назначением",
-    "transformed_landscape": "природное место, необычно изменённое устойчивым явлением",
-}
 
 STAT_IMPACT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -201,6 +186,7 @@ FULL_STORY_PLAN_QUALITY_SCHEMA: dict[str, Any] = {
                     "groundedReferents": {"type": "boolean"},
                     "credibleMechanism": {"type": "boolean"},
                     "arcFit": {"type": "boolean"},
+                    "locationFit": {"type": "boolean"},
                     "interesting": {"type": "boolean"},
                     "causal": {"type": "boolean"},
                     "distinct": {"type": "boolean"},
@@ -214,6 +200,7 @@ FULL_STORY_PLAN_QUALITY_SCHEMA: dict[str, Any] = {
                     "groundedReferents",
                     "credibleMechanism",
                     "arcFit",
+                    "locationFit",
                     "interesting",
                     "causal",
                     "distinct",
@@ -244,6 +231,7 @@ FULL_STORY_QUALITY_SCHEMA: dict[str, Any] = {
         "selfContained": {"type": "boolean"},
         "credibleMechanism": {"type": "boolean"},
         "arcFit": {"type": "boolean"},
+        "locationFit": {"type": "boolean"},
         "issues": {
             "type": "array",
             "maxItems": 6,
@@ -258,6 +246,7 @@ FULL_STORY_QUALITY_SCHEMA: dict[str, Any] = {
         "selfContained",
         "credibleMechanism",
         "arcFit",
+        "locationFit",
         "issues",
         "retryInstruction",
     ],
@@ -424,6 +413,7 @@ def _full_story_anti_repeat(history: list[dict[str, Any]] | None) -> str:
                 "arcVariant",
                 "antagonistClass",
                 "wonderClass",
+                "locationClass",
             )
             if (value := _text(direction.get(key), 80))
         )
@@ -463,6 +453,37 @@ def _quality_issues(parsed: dict[str, Any], *, limit: int = 8) -> list[str]:
     return issues[:limit]
 
 
+def _render_preflight_issues(rendered_story: dict[str, Any]) -> list[str]:
+    """Reject structurally broken prose before paying for an LLM review."""
+    raw_parts = (
+        rendered_story.get("parts")
+        if isinstance(rendered_story.get("parts"), list)
+        else []
+    )
+    if len(raw_parts) != PART_COUNT:
+        return ["Нужно ровно четыре части."]
+    issues: list[str] = []
+    internal_terms = ("carryForward", "narrativeFunction", "statImpacts", "arcPlan")
+    first_person_markers = (" я ", " мне ", " меня ", " мой ", " моя ", " мои ", " моё ")
+    for expected_number, part in enumerate(raw_parts, start=1):
+        if not isinstance(part, dict) or part.get("partNumber") != expected_number:
+            issues.append(f"Нарушен порядок частей у позиции {expected_number}.")
+            continue
+        paragraphs = part.get("storyParagraphs")
+        if not isinstance(paragraphs, list) or not 1 <= len(paragraphs) <= 2:
+            issues.append(f"В части {expected_number} нужен один или два абзаца.")
+            continue
+        text = " ".join(str(value).strip() for value in paragraphs if str(value).strip())
+        padded = f" {text.casefold()} "
+        if not text:
+            issues.append(f"Часть {expected_number} пуста.")
+        elif not any(marker in padded for marker in first_person_markers):
+            issues.append(f"Часть {expected_number} написана не от первого лица.")
+        if any(term.casefold() in padded for term in internal_terms):
+            issues.append(f"В части {expected_number} видны служебные поля.")
+    return issues[:8]
+
+
 def _check_full_story_plan(
     *,
     story_plan: dict[str, Any],
@@ -480,11 +501,7 @@ def _check_full_story_plan(
                 "role": "user",
                 "content": full_story_plan_quality_user_prompt(
                     {
-                        "story_direction": story_direction_block(
-                            story_direction,
-                            enforce_single_valence=False,
-                            compact=True,
-                        ),
+                        "story_direction": full_story_direction_block(story_direction),
                         "story_plan": json.dumps(
                             story_plan,
                             ensure_ascii=False,
@@ -510,7 +527,9 @@ def _check_full_story_plan(
         log_chat_completion_prompt("full_story/plan_quality_check", request_kwargs)
     )
     completion = client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("full_story/plan_quality_check", completion)
+    prompt_debug.append(
+        log_chat_completion_response("full_story/plan_quality_check", completion)
+    )
     parsed = _completion_payload(completion, error_code="FULL_STORY_PLAN_QUALITY_JSON_INVALID")
     issues = _quality_issues(parsed)
     retry_instruction = _text(parsed.get("retryInstruction"), 1000)
@@ -522,6 +541,7 @@ def _check_full_story_plan(
         "groundedReferents",
         "credibleMechanism",
         "arcFit",
+        "locationFit",
         "interesting",
         "causal",
         "distinct",
@@ -561,11 +581,7 @@ def _check_full_story_quality(
                 "role": "user",
                 "content": full_story_quality_check_user_prompt(
                     {
-                        "story_direction": story_direction_block(
-                            story_direction,
-                            enforce_single_valence=False,
-                            compact=True,
-                        ),
+                        "story_direction": full_story_direction_block(story_direction),
                         "story_plan": json.dumps(
                             story_plan,
                             ensure_ascii=False,
@@ -595,7 +611,7 @@ def _check_full_story_quality(
     }
     prompt_debug.append(log_chat_completion_prompt("full_story/quality_check", request_kwargs))
     completion = client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("full_story/quality_check", completion)
+    prompt_debug.append(log_chat_completion_response("full_story/quality_check", completion))
     parsed = _completion_payload(completion, error_code="FULL_STORY_QUALITY_JSON_INVALID")
     issues = _quality_issues(parsed, limit=6)
     retry_instruction = _text(parsed.get("retryInstruction"), 800)
@@ -607,6 +623,7 @@ def _check_full_story_quality(
             "selfContained",
             "credibleMechanism",
             "arcFit",
+            "locationFit",
         )
     )
     prompt_debug.append(
@@ -620,7 +637,7 @@ def _check_full_story_quality(
     return accepted, issues, retry_instruction
 
 
-def _combined_story_payload(
+def _visible_story_payload(
     story_plan: dict[str, Any],
     rendered_story: dict[str, Any],
 ) -> dict[str, Any]:
@@ -632,68 +649,17 @@ def _combined_story_payload(
     for plan_part, render_part in zip(plan_parts, render_parts, strict=False):
         if not isinstance(plan_part, dict) or not isinstance(render_part, dict):
             continue
-        combined_parts.append({**plan_part, **render_part})
+        combined_parts.append(
+            {
+                "partNumber": render_part.get("partNumber"),
+                "title": plan_part.get("title"),
+                "storyParagraphs": render_part.get("storyParagraphs"),
+            }
+        )
     return {
         "overallTitle": story_plan.get("overallTitle"),
-        "arcPlan": story_plan.get("arcPlan"),
         "parts": combined_parts,
     }
-
-
-def _least_used_full_story_class(
-    values: dict[str, str],
-    *,
-    field: str,
-    history: list[dict[str, Any]] | None,
-) -> str:
-    counts = {value: 0 for value in values}
-    for item in history or []:
-        if not isinstance(item, dict):
-            continue
-        value = item.get(field)
-        if value in counts:
-            counts[value] += 1
-    minimum = min(counts.values())
-    return random.SystemRandom().choice(
-        [value for value, count in counts.items() if count == minimum]
-    )
-
-
-def _enrich_full_story_direction(
-    direction: dict[str, str],
-    *,
-    history: list[dict[str, Any]] | None,
-) -> dict[str, str]:
-    result = dict(direction)
-    plot_mode = result.get("plotMode")
-    if plot_mode == "pursuit_or_conflict":
-        causal_origin = result.get("causalOrigin")
-        result["arcVariant"] = (
-            "theft"
-            if causal_origin == "theft"
-            else "chase"
-            if causal_origin == "pursuit"
-            else "battle"
-        )
-        result["antagonistClass"] = _least_used_full_story_class(
-            FULL_STORY_ANTAGONIST_CLASSES,
-            field="antagonistClass",
-            history=history,
-        )
-    elif plot_mode == "encounter" and result.get("resolutionMode") == "contest":
-        result["arcVariant"] = "rivalry"
-        result["antagonistClass"] = _least_used_full_story_class(
-            FULL_STORY_ANTAGONIST_CLASSES,
-            field="antagonistClass",
-            history=history,
-        )
-    if plot_mode in {"exploration", "discovery"}:
-        result["wonderClass"] = _least_used_full_story_class(
-            FULL_STORY_WONDER_CLASSES,
-            field="wonderClass",
-            history=history,
-        )
-    return result
 
 
 def generate_full_story(
@@ -703,11 +669,24 @@ def generate_full_story(
     day_context: dict[str, Any] | None = None,
     client: Any | None = None,
     model: str | None = None,
+    review_model: str | None = None,
+    story_direction: dict[str, str] | None = None,
     timeout: float | None = None,
 ) -> FullStoryResult:
     settings = get_settings()
     openai_client = client or get_openai_client()
-    model = model or get_chat_model(settings)
+    explicit_model = model
+    model = (
+        explicit_model
+        or getattr(settings, "full_story_model", None)
+        or get_chat_model(settings)
+    )
+    review_model = (
+        review_model
+        or explicit_model
+        or getattr(settings, "full_story_review_model", None)
+        or model
+    )
     configured_timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     timeout = max(float(configured_timeout), FULL_STORY_MIN_TIMEOUT_SECONDS)
     character = json.dumps(story_character_data(pet), ensure_ascii=False, indent=2)
@@ -720,22 +699,14 @@ def generate_full_story(
         ensure_ascii=False,
         indent=2,
     )
-    story_direction = _enrich_full_story_direction(
-        select_background_story_direction(
-            recent_full_stories,
-            current_stats=pet.stats.model_dump(mode="json"),
-        ),
-        history=recent_full_stories,
+    story_direction = dict(story_direction) if story_direction else select_full_story_direction(
+        recent_full_stories, current_stats=pet.stats.model_dump(mode="json")
     )
     plan_user_content = full_story_user_prompt(
         {
             "character": character,
             "current_state": current_state,
-            "story_direction": story_direction_block(
-                story_direction,
-                enforce_single_valence=False,
-                compact=True,
-            ),
+            "story_direction": full_story_direction_block(story_direction),
             "anti_repeat": _full_story_anti_repeat(recent_full_stories),
             "day_context": json.dumps(
                 day_context
@@ -775,18 +746,21 @@ def generate_full_story(
         log_chat_completion_prompt("full_story/plan_generate", plan_request_kwargs)
     ]
     completion = openai_client.chat.completions.create(**plan_request_kwargs)
-    log_chat_completion_response("full_story/plan_generate", completion)
+    prompt_debug.append(log_chat_completion_response("full_story/plan_generate", completion))
     story_plan = _completion_payload(completion, error_code="FULL_STORY_PLAN_JSON_INVALID")
     plan_accepted, plan_issues, plan_retry_instruction = _check_full_story_plan(
         story_plan=story_plan,
         story_direction=story_direction,
         client=openai_client,
-        model=model,
+        model=review_model,
         timeout=timeout,
         prompt_debug=prompt_debug,
     )
     plan_attempt = 1
-    while not plan_accepted and plan_attempt < MAX_FULL_STORY_PLAN_ATTEMPTS:
+    max_plan_attempts = getattr(
+        settings, "full_story_max_plan_attempts", MAX_FULL_STORY_PLAN_ATTEMPTS
+    )
+    while not plan_accepted and plan_attempt < max_plan_attempts:
         plan_attempt += 1
         issue_lines = "\n".join(f"- {issue}" for issue in plan_issues)
         retry_plan_content = (
@@ -814,9 +788,10 @@ def generate_full_story(
             )
         )
         retry_completion = openai_client.chat.completions.create(**retry_plan_request)
-        log_chat_completion_response(
-            f"full_story/plan_generate_retry_{plan_attempt}",
-            retry_completion,
+        prompt_debug.append(
+            log_chat_completion_response(
+                f"full_story/plan_generate_retry_{plan_attempt}", retry_completion
+            )
         )
         story_plan = _completion_payload(
             retry_completion,
@@ -826,7 +801,7 @@ def generate_full_story(
             story_plan=story_plan,
             story_direction=story_direction,
             client=openai_client,
-            model=model,
+            model=review_model,
             timeout=timeout,
             prompt_debug=prompt_debug,
         )
@@ -865,21 +840,30 @@ def generate_full_story(
         log_chat_completion_prompt("full_story/render", render_request_kwargs)
     )
     render_completion = openai_client.chat.completions.create(**render_request_kwargs)
-    log_chat_completion_response("full_story/render", render_completion)
+    prompt_debug.append(log_chat_completion_response("full_story/render", render_completion))
     rendered_story = _completion_payload(
         render_completion,
         error_code="FULL_STORY_RENDER_JSON_INVALID",
     )
-    combined_payload = _combined_story_payload(story_plan, rendered_story)
-    accepted, issues, retry_instruction = _check_full_story_quality(
-        story_plan=story_plan,
-        story_payload=combined_payload,
-        story_direction=story_direction,
-        client=openai_client,
-        model=model,
-        timeout=timeout,
-        prompt_debug=prompt_debug,
-    )
+    preflight_issues = _render_preflight_issues(rendered_story)
+    combined_payload = _visible_story_payload(story_plan, rendered_story)
+    if preflight_issues:
+        accepted, issues, retry_instruction = False, preflight_issues, (
+            "Исправь только перечисленные структурные нарушения прозы."
+        )
+        prompt_debug.append(
+            {"event": "full_story_render_preflight", "accepted": False, "issues": issues}
+        )
+    else:
+        accepted, issues, retry_instruction = _check_full_story_quality(
+            story_plan=story_plan,
+            story_payload=combined_payload,
+            story_direction=story_direction,
+            client=openai_client,
+            model=review_model,
+            timeout=timeout,
+            prompt_debug=prompt_debug,
+        )
     if not accepted:
         issue_lines = "\n".join(f"- {issue}" for issue in issues)
         retry_render_content = (
@@ -901,18 +885,30 @@ def generate_full_story(
             log_chat_completion_prompt("full_story/render_retry", retry_render_request)
         )
         retry_completion = openai_client.chat.completions.create(**retry_render_request)
-        log_chat_completion_response("full_story/render_retry", retry_completion)
+        prompt_debug.append(
+            log_chat_completion_response("full_story/render_retry", retry_completion)
+        )
         rendered_story = _completion_payload(
             retry_completion,
             error_code="FULL_STORY_RENDER_RETRY_JSON_INVALID",
         )
-        combined_payload = _combined_story_payload(story_plan, rendered_story)
+        retry_preflight_issues = _render_preflight_issues(rendered_story)
+        if retry_preflight_issues:
+            prompt_debug.append(
+                {
+                    "event": "full_story_render_preflight",
+                    "accepted": False,
+                    "issues": retry_preflight_issues,
+                }
+            )
+            raise FullStoryGenerationError("FULL_STORY_RENDER_PREFLIGHT_REJECTED")
+        combined_payload = _visible_story_payload(story_plan, rendered_story)
         retry_accepted, _, _ = _check_full_story_quality(
             story_plan=story_plan,
             story_payload=combined_payload,
             story_direction=story_direction,
             client=openai_client,
-            model=model,
+            model=review_model,
             timeout=timeout,
             prompt_debug=prompt_debug,
         )

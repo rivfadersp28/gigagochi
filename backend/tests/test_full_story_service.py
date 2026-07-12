@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 
 from app.schemas import LocalPetChatContext
-from app.services import full_story_service
+from app.services import full_story_direction, full_story_service
 
 
 def _plan_part(number: int, *, impacts: list[dict] | None = None) -> dict:
@@ -78,6 +78,7 @@ def _plan_verdict(accepted: bool, issue: str = "") -> dict:
                 "groundedReferents": True,
                 "credibleMechanism": True,
                 "arcFit": True,
+                "locationFit": True,
                 "interesting": accepted,
                 "causal": True,
                 "distinct": True,
@@ -98,6 +99,7 @@ def _quality_verdict(accepted: bool, issue: str = "") -> dict:
         "selfContained": True,
         "credibleMechanism": True,
         "arcFit": True,
+        "locationFit": True,
         "issues": [issue] if issue else [],
         "retryInstruction": "Покажи центральное событие на сцене." if issue else "",
     }
@@ -216,9 +218,68 @@ def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
     assert completions.calls[0]["timeout"] == 240.0
     assert '"eventSvo"' not in render_prompt
     assert '"oppositionGoal"' not in render_prompt
+    assert len(
+        [item for item in result.prompt_debug if item.get("event") == "ai_response"]
+    ) == 4
     assert "первом упоминании" in completions.calls[2]["messages"][0]["content"]
     assert "без скрытого плана" in completions.calls[2]["messages"][0]["content"]
     assert "от первого лица" in completions.calls[2]["messages"][0]["content"]
+    quality_prompt = completions.calls[3]["messages"][1]["content"]
+    visible_payload = quality_prompt.split("STORY_PAYLOAD:", 1)[1]
+    assert '"storyParagraphs"' in visible_payload
+    assert '"situation"' not in visible_payload
+
+
+def test_full_story_uses_separate_generation_and_review_models(monkeypatch) -> None:
+    client, completions = _client(
+        monkeypatch,
+        [_story_plan(), _plan_verdict(True), _render(), _quality_verdict(True)],
+    )
+    monkeypatch.setattr(
+        full_story_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            openai_chat_timeout_seconds=30,
+            openai_chat_reasoning_effort=None,
+            openai_chat_model="fallback-model",
+            ai_provider="openai",
+            full_story_model="generation-model",
+            full_story_review_model="review-model",
+        ),
+    )
+
+    full_story_service.generate_full_story(pet=_pet(), client=client, timeout=30)
+
+    assert [call["model"] for call in completions.calls] == [
+        "generation-model",
+        "review-model",
+        "generation-model",
+        "review-model",
+    ]
+
+
+def test_full_story_rotates_compatible_location_classes() -> None:
+    candidates = full_story_direction.FULL_STORY_LOCATIONS_BY_MODE["social_event"]
+    expected = candidates[-1]
+    history = [{"locationClass": value} for value in candidates[:-1]]
+    direction = {
+        "plotMode": "social_event",
+        "incidentClass": "conflict_or_dispute",
+        "causalOrigin": "misunderstanding",
+        "eventScale": "shared_situation",
+        "settingClass": "inhabited_place",
+        "oppositionClass": "person_or_group",
+        "resolutionMode": "dialogue_or_bargain",
+        "resolutionFamily": "negotiation",
+        "valenceTarget": "mixed",
+    }
+
+    result = full_story_direction.enrich_full_story_direction(
+        direction,
+        history=history,
+    )
+
+    assert result["locationClass"] == expected
 
 
 def test_full_story_retries_rejected_plan_before_rendering(monkeypatch) -> None:
@@ -330,6 +391,37 @@ def test_full_story_retries_prose_without_changing_plan(monkeypatch) -> None:
     )
     assert "RENDER_RETRY" in completions.calls[4]["messages"][1]["content"]
     assert '"eventSvo"' not in completions.calls[4]["messages"][1]["content"]
+
+
+def test_full_story_preflight_retries_before_model_review(monkeypatch) -> None:
+    third_person_render = _render(prefix="Она увидела")
+    for part in third_person_render["parts"]:
+        part["storyParagraphs"][1] = "Помеха возникла, но героиня изменила положение."
+    client, completions = _client(
+        monkeypatch,
+        [
+            _story_plan(),
+            _plan_verdict(True),
+            third_person_render,
+            _render(prefix="Я увидела"),
+            _quality_verdict(True),
+        ],
+    )
+
+    result = full_story_service.generate_full_story(
+        pet=_pet(), client=client, model="test-model", timeout=30
+    )
+
+    assert result.parts[0].story_text.startswith("Я увидела")
+    assert [
+        call["response_format"]["json_schema"]["name"] for call in completions.calls
+    ] == [
+        "full_story_plan",
+        "full_story_plan_quality_check",
+        "full_story_render",
+        "full_story_render",
+        "full_story_quality_check",
+    ]
 
 
 def test_full_story_retries_prose_that_needs_hidden_context(monkeypatch) -> None:

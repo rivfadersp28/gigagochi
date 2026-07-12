@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     openrouter_app_title: str = "AI Tamagotchi Telegram Mini App"
     openai_api_key: str | None = None
     openai_chat_model: str = "gpt-5.5"
+    full_story_model: str | None = None
+    full_story_review_model: str | None = None
+    full_story_max_plan_attempts: int = Field(default=2, ge=1, le=3)
     openai_character_model: str | None = None
     openai_image_model: str = "gpt-image-2"
     openai_image_quality: str = "medium"
