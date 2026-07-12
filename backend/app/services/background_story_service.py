@@ -11,10 +11,16 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from app.config import get_settings
-from app.prompts.style_direction import VISUAL_CHARACTER_STYLE
+from app.prompts.style_direction import (
+    DARK_MUTED_PASTEL_PALETTE_FAMILIES,
+    VISUAL_CHARACTER_STYLE,
+)
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
 from app.services.character_dossier import story_character_data
-from app.services.image_service import generate_image_bytes
+from app.services.image_service import (
+    generate_image_bytes,
+    generate_openrouter_video_from_image_bytes,
+)
 from app.services.lite_overlay import (
     LITE_FACT_KINDS,
     LITE_FACT_SPHERES,
@@ -76,7 +82,28 @@ BACKGROUND_STORY_IMAGE_SCENE_STORY_MAX_CHARS = 2400
 BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS = 700
 BACKGROUND_STORY_IMAGE_HERO_POSE_MAX_CHARS = 240
 BACKGROUND_STORY_IMAGE_CAMERA_MAX_CHARS = 140
+BACKGROUND_STORY_IMAGE_COLOR_MAX_CHARS = 48
 BACKGROUND_STORY_IMAGE_POSE_HISTORY_LIMIT = 3
+BACKGROUND_STORY_IMAGE_PALETTE_HISTORY_LIMIT = 3
+BACKGROUND_STORY_IMAGE_SIZE = "2048x1152"
+BACKGROUND_STORY_VIDEO_RESOLUTION = "720p"
+BACKGROUND_STORY_VIDEO_ASPECT_RATIO = "16:9"
+BACKGROUND_STORY_VIDEO_DURATION_SECONDS = 4
+BACKGROUND_STORY_VIDEO_PROMPT = (
+    "Static locked camera. Keep the exact same framing, composition, camera angle, "
+    "perspective, scale, lighting, colors, focus, depth of field, and background. The camera "
+    "never moves. No zoom, pan, tilt, rotation, handheld motion, or reframing.\n\n"
+    "Animate the scene with only very subtle natural life. A gentle breeze softly moves loose "
+    "fabric, scarves, grass, leaves, small plants, hanging ornaments, ropes, and tiny strands of "
+    "fur. The character occasionally performs a slow natural blink and a barely noticeable "
+    "breathing motion. Small environmental details may sway slightly, and water, dust, mist, or "
+    "tiny floating particles can move gently if present. Preserve the calm, melancholic "
+    "atmosphere.\n\n"
+    "No walking, no body movement, no head turns, no arm movement, no facial expression changes, "
+    "no lip movement, no object displacement, no new elements, no physics changes, and no "
+    "dramatic animation. Everything remains almost perfectly still, with only delicate ambient "
+    "motion that makes the scene feel quietly alive."
+)
 BACKGROUND_STORY_IMAGE_POSE_FAMILIES = (
     "locomotion",
     "crouching_observation",
@@ -112,7 +139,12 @@ BACKGROUND_STORY_IMAGE_SCENE_INSTRUCTION = (
     "Выбери для него сюжетно необходимую активную позу: опиши наклон корпуса, направление "
     "взгляда, положение конечностей, перенос веса и контакт с землёй, предметом или другим "
     "участником. Не используй нейтральное фронтальное стояние с опущенными руками, если оно "
-    "не является важной частью действия."
+    "не является важной частью действия. Выбери для кадра четыре конкретных приглушённых "
+    "тёмно-пастельных цвета и один сдержанный акцент. Используй низкую или умеренную "
+    "насыщенность, среднюю или пониженную светлоту и мягкие переходы. Палитра должна вытекать "
+    "из места, действия и тона этой истории, а не из материалов диорамы. Акцент должен быть "
+    "заметным только относительно основной палитры, но не ярким, не чистым и не неоновым. "
+    "Не своди палитру к коричневому, бежевому, грязно-серому и молочному."
 )
 BACKGROUND_STORY_SCENE_STYLE = """
 ART DIRECTION FOR THE WHOLE SCENE:
@@ -147,8 +179,11 @@ ENVIRONMENT FRAME — APPLY ONLY TO THE WORLD AROUND THE CHARACTERS:
   The setting should feel like an elegant empty miniature stage before the cast was placed into it,
   while still matching the location described by the story.
 - Use soft diffused practical lighting, gentle atmospheric depth and only a subtle shallow focus.
-  Keep a muted earthy palette, nostalgic warmth and quiet melancholy in the environment without
-  overriding the actual emotion or valence of the story and its characters.
+  Follow the scene-specific color script exactly. Use dark muted pastels, low-to-moderate
+  saturation, medium-to-low value, soft hue transitions and deep but readable shadows. Avoid a
+  brown/sepia wash and do not force quiet melancholy onto every story. Painted wood, paper,
+  fabric, resin and clay may carry distinct but subdued chromatic colors; their physical material
+  must not determine the palette.
 
 DETAIL HIERARCHY AND RESTRAINT:
 - Detail hierarchy: highest detail on the main character, medium detail on important supporting
@@ -701,8 +736,33 @@ BACKGROUND_STORY_IMAGE_SCENE_SCHEMA: dict[str, Any] = {
             "type": "string",
             "maxLength": BACKGROUND_STORY_IMAGE_CAMERA_MAX_CHARS,
         },
+        "colorPalette": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+                "type": "string",
+                "maxLength": BACKGROUND_STORY_IMAGE_COLOR_MAX_CHARS,
+            },
+        },
+        "accentColor": {
+            "type": "string",
+            "maxLength": BACKGROUND_STORY_IMAGE_COLOR_MAX_CHARS,
+        },
+        "paletteFamily": {
+            "type": "string",
+            "enum": list(DARK_MUTED_PASTEL_PALETTE_FAMILIES),
+        },
     },
-    "required": ["scene", "poseFamily", "heroPose", "camera"],
+    "required": [
+        "scene",
+        "poseFamily",
+        "heroPose",
+        "camera",
+        "colorPalette",
+        "accentColor",
+        "paletteFamily",
+    ],
 }
 
 
@@ -965,17 +1025,52 @@ def _available_background_story_pose_families(
     return available or BACKGROUND_STORY_IMAGE_POSE_FAMILIES
 
 
+def _recent_background_story_palette_families(
+    recent_story_events: list[dict[str, Any]] | None,
+) -> list[str]:
+    families: list[str] = []
+    for item in reversed(recent_story_events or []):
+        if not isinstance(item, dict):
+            continue
+        family = _text_value(item.get("imagePaletteFamily"), limit=80)
+        if family not in DARK_MUTED_PASTEL_PALETTE_FAMILIES or family in families:
+            continue
+        families.append(family)
+        if len(families) >= BACKGROUND_STORY_IMAGE_PALETTE_HISTORY_LIMIT:
+            break
+    return families
+
+
+def _available_background_story_palette_families(
+    recent_story_events: list[dict[str, Any]] | None,
+) -> tuple[str, ...]:
+    blocked = set(_recent_background_story_palette_families(recent_story_events))
+    available = tuple(
+        family for family in DARK_MUTED_PASTEL_PALETTE_FAMILIES if family not in blocked
+    )
+    return available or tuple(DARK_MUTED_PASTEL_PALETTE_FAMILIES)
+
+
 def _background_story_image_scene_schema(
     pose_families: tuple[str, ...],
+    palette_families: tuple[str, ...],
 ) -> dict[str, Any]:
     schema = copy.deepcopy(BACKGROUND_STORY_IMAGE_SCENE_SCHEMA)
     schema["properties"]["poseFamily"]["enum"] = list(pose_families)
+    schema["properties"]["paletteFamily"]["enum"] = list(palette_families)
     return schema
 
 
 def _background_story_pose_options_block(pose_families: tuple[str, ...]) -> str:
     return "\n".join(
         f"- {family}: {BACKGROUND_STORY_IMAGE_POSE_GUIDANCE[family]}" for family in pose_families
+    )
+
+
+def _background_story_palette_options_block(palette_families: tuple[str, ...]) -> str:
+    return "\n".join(
+        f"- {family}: {', '.join(DARK_MUTED_PASTEL_PALETTE_FAMILIES[family])}"
+        for family in palette_families
     )
 
 
@@ -994,6 +1089,7 @@ def extract_background_story_image_scene(
     model = model or get_chat_model(settings)
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     pose_families = _available_background_story_pose_families(recent_story_events)
+    palette_families = _available_background_story_palette_families(recent_story_events)
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -1013,6 +1109,9 @@ def extract_background_story_image_scene(
                     "Выбери ровно одну допустимую poseFamily из списка ниже и не подменяй её "
                     "нейтральным стоянием:\n"
                     f"{_background_story_pose_options_block(pose_families)}\n\n"
+                    "Выбери ровно одну допустимую paletteFamily из списка ниже. Не смешивай "
+                    "семейства и адаптируй его оттенки к сюжету:\n"
+                    f"{_background_story_palette_options_block(palette_families)}\n\n"
                     f"Текст истории:\n{_background_story_text_for_image_scene(story)}"
                 ),
             },
@@ -1021,7 +1120,10 @@ def extract_background_story_image_scene(
             "type": "json_schema",
             "json_schema": {
                 "name": "background_story_image_scene",
-                "schema": _background_story_image_scene_schema(pose_families),
+                "schema": _background_story_image_scene_schema(
+                    pose_families,
+                    palette_families,
+                ),
                 "strict": True,
             },
         },
@@ -1046,12 +1148,28 @@ def extract_background_story_image_scene(
         limit=BACKGROUND_STORY_IMAGE_HERO_POSE_MAX_CHARS,
     )
     camera = _text_value(payload.get("camera"), limit=BACKGROUND_STORY_IMAGE_CAMERA_MAX_CHARS)
+    raw_palette = payload.get("colorPalette")
+    color_palette = [
+        _text_value(item, limit=BACKGROUND_STORY_IMAGE_COLOR_MAX_CHARS)
+        for item in (raw_palette if isinstance(raw_palette, list) else [])[:4]
+    ]
+    color_palette = [item for item in color_palette if item]
+    accent_color = _text_value(
+        payload.get("accentColor"),
+        limit=BACKGROUND_STORY_IMAGE_COLOR_MAX_CHARS,
+    )
+    palette_family = _text_value(payload.get("paletteFamily"), limit=80)
+    if palette_family not in palette_families:
+        palette_family = palette_families[0]
     if direction_output is not None:
         direction_output.update(
             {
                 "poseFamily": pose_family,
                 "heroPose": hero_pose,
                 "camera": camera,
+                "colorPalette": ", ".join(color_palette),
+                "accentColor": accent_color,
+                "paletteFamily": palette_family,
             }
         )
     return scene
@@ -1064,6 +1182,9 @@ def build_background_story_image_prompt(
     pose_family: str = "",
     hero_pose: str = "",
     camera: str = "",
+    color_palette: str = "",
+    accent_color: str = "",
+    palette_family: str = "",
 ) -> str:
     if mode == "baseline":
         character_direction = (
@@ -1102,11 +1223,29 @@ HERO POSE — REQUIRED, DO NOT COPY THE REFERENCE POSE:
   contact points. Identity details stay exact, but the reference stance must not survive.
 """.strip()
 
+    color_direction = ""
+    if color_palette:
+        color_direction = f"""
+COLOR SCRIPT — REQUIRED FOR THIS SCENE:
+- Palette family: {palette_family or "scene-specific dark muted pastel"}
+- Main dark-muted-pastel palette: {color_palette}
+- Restrained accent: {accent_color or "choose one subdued contrasting accent"}
+- Apply these colors visibly across large scenery shapes, architecture, foliage, sky, water,
+  costumes and story props where appropriate. Preserve the main character's identity colors.
+- Materials do not dictate color: wood, paper, fabric, resin and clay may be distinctly painted.
+- Do not replace this palette with a generic brown, beige, dirty-gray, off-white or sepia grade.
+- Keep saturation low to moderate and overall value medium to dark. Preserve readable hue
+  separation without vivid, electric, neon, candy-colored or glossy high-saturation rendering.
+- The accent stays dusty and softened; it must never become a luminous color wash.
+""".strip()
+
     prompt = f"""
 СЦЕНА:
 {_truncate_text(scene, BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS)}
 
 {pose_direction}
+
+{color_direction}
 
 {character_direction}
 
@@ -1147,9 +1286,24 @@ def generate_background_story_image_bytes(
             pose_family=image_direction.get("poseFamily", ""),
             hero_pose=image_direction.get("heroPose", ""),
             camera=image_direction.get("camera", ""),
+            color_palette=image_direction.get("colorPalette", ""),
+            accent_color=image_direction.get("accentColor", ""),
+            palette_family=image_direction.get("paletteFamily", ""),
         ),
         label="background_story/image",
+        size=BACKGROUND_STORY_IMAGE_SIZE,
         input_references=input_references,
+    )
+
+
+def generate_background_story_video_bytes(image_bytes: bytes) -> bytes:
+    return generate_openrouter_video_from_image_bytes(
+        image_bytes,
+        label="background_story/video",
+        prompt=BACKGROUND_STORY_VIDEO_PROMPT,
+        resolution=BACKGROUND_STORY_VIDEO_RESOLUTION,
+        aspect_ratio=BACKGROUND_STORY_VIDEO_ASPECT_RATIO,
+        duration=BACKGROUND_STORY_VIDEO_DURATION_SECONDS,
     )
 
 

@@ -97,6 +97,33 @@ def send_photo(
         raise TelegramAPIError(method, response)
 
 
+def send_video(
+    client: httpx.Client,
+    chat_id: int,
+    video: bytes,
+    caption: str,
+    reply_markup: dict[str, Any],
+) -> None:
+    settings = get_settings()
+    if not settings.bot_token:
+        raise RuntimeError("BOT_TOKEN is not configured")
+
+    method = "sendVideo"
+    response = client.post(
+        telegram_api_url(method, settings.bot_token),
+        data={
+            "chat_id": str(chat_id),
+            "caption": caption[:TELEGRAM_PHOTO_CAPTION_LIMIT].rstrip(),
+            "reply_markup": json.dumps(reply_markup, ensure_ascii=False),
+            "supports_streaming": "true",
+        },
+        files={"video": ("story.mp4", video, "video/mp4")},
+        timeout=60,
+    )
+    if not response.is_success:
+        raise TelegramAPIError(method, response)
+
+
 def _photo_file_info(photo: bytes) -> tuple[str, str]:
     if photo.startswith(b"\xff\xd8\xff"):
         return "story.jpg", "image/jpeg"

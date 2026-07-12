@@ -405,8 +405,18 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     )
     monkeypatch.setattr(
         telegram_push_service,
+        "generate_background_story_video_bytes",
+        lambda image_bytes: b"story-mp4" if image_bytes == b"story-png" else b"",
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
         "_persist_background_story_image",
         lambda *_args, **_kwargs: "/static/generated/pet-1/background-story.png?v=1",
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_persist_background_story_video",
+        lambda *_args, **_kwargs: "/static/generated/pet-1/background-story.mp4?v=1",
     )
 
     telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
@@ -419,6 +429,8 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     assert result["liteOverlayPatch"] is not None
     assert result["storyImage"] == {"bytes": b"story-png", "mimeType": "image/png"}
     assert result["storyImageError"] is None
+    assert result["storyVideo"] == {"bytes": b"story-mp4", "mimeType": "video/mp4"}
+    assert result["storyVideoError"] is None
     assert result["statsPatch"]["stats"] == {"energy": 45, "happiness": 50}
     assert result["story"]["statsDelta"] == {"hunger": 0, "happiness": -20, "energy": -15}
     assert set(result["statsPatch"]["lastStatTickAt"]) == {"energy", "happiness"}
@@ -441,6 +453,7 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
     assert events[0]["summary"] == "На Громма напала меловая тень у каменного порога."
     assert events[0]["storyText"] == "На Громма напала меловая тень у каменного порога."
     assert events[0]["imageUrl"] == "/static/generated/pet-1/background-story.png?v=1"
+    assert events[0]["videoUrl"] == "/static/generated/pet-1/background-story.mp4?v=1"
     assert events[0]["imagePoseFamily"] == "defending_or_evading"
     assert events[0]["imageHeroPose"] == "Громм пригнулся и прикрыл голову лапой."
     assert events[0]["imageCamera"] == "Низкий боковой план."
@@ -527,6 +540,8 @@ def test_background_story_image_error_is_saved(monkeypatch, tmp_path) -> None:
 
     assert result["storyImage"] is None
     assert result["storyImageError"] == "ConnectTimeout"
+    assert result["storyVideo"] is None
+    assert result["storyVideoError"] == "ConnectTimeout"
     latest = telegram_push_service.push_status()["latest"]
     assert latest["lastStoryImageStatus"] == "failed"
     assert latest["lastStoryImageError"] == "ConnectTimeout"
@@ -635,6 +650,87 @@ def test_full_story_applies_each_parts_stat_impacts_sequentially(monkeypatch, tm
     assert saved["pet"]["stats"] == {"hunger": 88, "happiness": 78, "energy": 52}
 
 
+def test_manual_full_story_sends_each_part_as_video(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    now = datetime(2026, 7, 7, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: now)
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    story = {
+        "overallTitle": "Четыре тихих часа",
+        "generatedAt": "2026-07-07T12:00:00Z",
+        "parts": [
+            {
+                "partNumber": number,
+                "title": f"Часть {number}",
+                "storyText": f"Тихое событие {number}.",
+                "statImpacts": [],
+            }
+            for number in range(1, 5)
+        ],
+    }
+
+    def fake_generate_full_story_for_telegram_user(**_kwargs):
+        telegram_push_service._update_record(
+            TEST_TELEGRAM_ID,
+            lambda record: {**(record or {}), "lastFullStory": story},
+        )
+        return {"generated": True, "story": story}
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_full_story_for_telegram_user",
+        fake_generate_full_story_for_telegram_user,
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_full_story_part_image_bytes",
+        lambda **kwargs: (
+            kwargs["direction_output"].update({"poseFamily": "resting_or_recovering"})
+            or f"png-{kwargs['part']['partNumber']}".encode()
+        ),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_background_story_video_bytes",
+        lambda image_bytes: b"mp4-" + image_bytes,
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_persist_background_story_image",
+        lambda _record, _bytes, *, generated_at: f"/{generated_at.microsecond}.png",
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_persist_background_story_video",
+        lambda _record, _bytes, *, generated_at: f"/{generated_at.microsecond}.mp4",
+    )
+    sent: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_video",
+        lambda _client, chat_id, video, caption, _keyboard: sent.append(
+            {"chatId": chat_id, "video": video, "caption": caption}
+        ),
+    )
+
+    result = telegram_push_service.send_full_story_for_telegram_user(
+        SimpleNamespace(),
+        telegram_id=TEST_TELEGRAM_ID,
+        keyboard={"inline_keyboard": []},
+    )
+
+    assert len(sent) == 4
+    assert [item["video"] for item in sent] == [
+        b"mp4-png-1",
+        b"mp4-png-2",
+        b"mp4-png-3",
+        b"mp4-png-4",
+    ]
+    assert all("Четыре тихих часа" in str(item["caption"]) for item in sent)
+    assert all(part.get("videoUrl") for part in result["story"]["parts"])
+
+
 def test_full_story_history_includes_legacy_last_story_without_duplicates() -> None:
     record = {
         "fullStoryHistory": [
@@ -710,7 +806,7 @@ def test_automatic_full_story_sends_four_parts_with_images_in_local_slots(
         )
 
     image_parts: list[dict] = []
-    sent_photos: list[dict] = []
+    sent_videos: list[dict] = []
     monkeypatch.setattr(
         telegram_push_service,
         "generate_full_story",
@@ -734,9 +830,19 @@ def test_automatic_full_story_sends_four_parts_with_images_in_local_slots(
     )
     monkeypatch.setattr(
         telegram_push_service,
-        "send_photo",
-        lambda _client, chat_id, photo, caption, _keyboard: sent_photos.append(
-            {"chatId": chat_id, "photo": photo, "caption": caption}
+        "generate_background_story_video_bytes",
+        lambda image_bytes: b"mp4-" + image_bytes,
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_persist_background_story_video",
+        lambda _record, _bytes, *, generated_at: f"/story-{generated_at.hour}.mp4",
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_video",
+        lambda _client, chat_id, video, caption, _keyboard: sent_videos.append(
+            {"chatId": chat_id, "video": video, "caption": caption}
         ),
     )
     monkeypatch.setattr(
@@ -777,8 +883,8 @@ def test_automatic_full_story_sends_four_parts_with_images_in_local_slots(
         "17:00",
         "21:00",
     ]
-    assert len(sent_photos) == 4
-    assert all("Один длинный день" in item["caption"] for item in sent_photos)
+    assert len(sent_videos) == 4
+    assert all("Один длинный день" in item["caption"] for item in sent_videos)
     stored = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
     assert all(part.get("deliveredAt") for part in stored["dailyFullStory"]["parts"])
     assert all(part.get("statsAppliedAt") for part in stored["dailyFullStory"]["parts"])
@@ -847,8 +953,8 @@ def test_automatic_full_story_does_not_send_text_when_image_fails(
     )
     monkeypatch.setattr(
         telegram_push_service,
-        "send_photo",
-        lambda *_args, **_kwargs: pytest.fail("photo must not be sent"),
+        "send_video",
+        lambda *_args, **_kwargs: pytest.fail("video must not be sent"),
     )
     monkeypatch.setattr(
         telegram_push_service,
@@ -859,7 +965,7 @@ def test_automatic_full_story_does_not_send_text_when_image_fails(
     assert telegram_push_service.send_due_background_stories() == []
 
     stored = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
-    assert stored["lastStoryErrorCode"] == "DAILY_FULL_STORY_IMAGE_FAILED"
+    assert stored["lastStoryErrorCode"] == "DAILY_FULL_STORY_MEDIA_FAILED"
     assert "statsAppliedAt" not in stored["dailyFullStory"]["parts"][0]
     assert "deliveredAt" not in stored["dailyFullStory"]["parts"][0]
     assert telegram_push_service._due_story_records(datetime(2026, 7, 12, 10, 0, tzinfo=UTC)) == []

@@ -82,7 +82,7 @@ def test_push_command_can_be_submitted_without_blocking_polling(monkeypatch) -> 
     assert submitted[0][1]["inline_keyboard"][0][0]["web_app"]["url"] == ("https://example.com/app")
 
 
-def test_story_command_sends_generated_image_as_photo(monkeypatch) -> None:
+def test_story_command_sends_generated_video(monkeypatch) -> None:
     sent: dict[str, object] = {}
     monkeypatch.setattr(
         bot,
@@ -105,25 +105,25 @@ def test_story_command_sends_generated_image_as_photo(monkeypatch) -> None:
                 },
                 "statsDelta": {"energy": -25, "hunger": 0, "happiness": 0},
             },
-            "storyImage": {"bytes": b"png", "mimeType": "image/png"},
+            "storyVideo": {"bytes": b"mp4", "mimeType": "video/mp4"},
         },
     )
 
-    def fake_send_photo(client, chat_id, photo, caption, reply_markup):
-        sent["method"] = "photo"
+    def fake_send_video(client, chat_id, video, caption, reply_markup):
+        sent["method"] = "video"
         sent["chat_id"] = chat_id
-        sent["photo"] = photo
+        sent["video"] = video
         sent["caption"] = caption
         sent["reply_markup"] = reply_markup
 
-    monkeypatch.setattr(bot, "send_photo", fake_send_photo)
+    monkeypatch.setattr(bot, "send_video", fake_send_video)
     monkeypatch.setattr(bot, "send_message", lambda *args, **kwargs: sent.setdefault("text", True))
 
     bot.handle_update(httpx.Client(), _story_update())
 
-    assert sent["method"] == "photo"
+    assert sent["method"] == "video"
     assert sent["chat_id"] == TEST_TELEGRAM_ID
-    assert sent["photo"] == b"png"
+    assert sent["video"] == b"mp4"
     assert sent["caption"] == (
         f"След под кроной\n\nОлег нашел теплый знак под древним дубом.\n\n{STORY_IMPACT_TEXT}"
     )
@@ -157,6 +157,37 @@ def test_send_photo_uses_detected_jpeg_mime(monkeypatch) -> None:
         b"\xff\xd8\xff\xe0jpeg-bytes",
         "image/jpeg",
     )
+
+
+def test_send_video_uses_mp4_and_streaming(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        telegram_client,
+        "get_settings",
+        lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
+    )
+
+    class FakeClient:
+        def post(self, url, **kwargs):
+            captured["url"] = url
+            captured.update(kwargs)
+            return SimpleNamespace(is_success=True)
+
+    telegram_client.send_video(
+        FakeClient(),
+        123,
+        b"mp4-bytes",
+        "caption",
+        {"inline_keyboard": []},
+    )
+
+    assert captured["url"].endswith("/sendVideo")
+    assert captured["files"]["video"] == (
+        "story.mp4",
+        b"mp4-bytes",
+        "video/mp4",
+    )
+    assert captured["data"]["supports_streaming"] == "true"
 
 
 def test_story_command_can_be_submitted_without_blocking_polling(monkeypatch) -> None:
@@ -212,7 +243,7 @@ def test_full_story_command_generates_for_requesting_user(monkeypatch) -> None:
     assert calls[0]["telegram_id"] == TEST_TELEGRAM_ID
 
 
-def test_story_command_falls_back_to_message_without_image(monkeypatch) -> None:
+def test_story_command_falls_back_to_message_without_video(monkeypatch) -> None:
     sent: dict[str, object] = {}
     monkeypatch.setattr(
         bot,
@@ -235,10 +266,10 @@ def test_story_command_falls_back_to_message_without_image(monkeypatch) -> None:
                 },
                 "statsDelta": {"energy": 0, "hunger": 0, "happiness": 0},
             },
-            "storyImage": None,
+            "storyVideo": None,
         },
     )
-    monkeypatch.setattr(bot, "send_photo", lambda *args, **kwargs: sent.setdefault("photo", True))
+    monkeypatch.setattr(bot, "send_video", lambda *args, **kwargs: sent.setdefault("video", True))
 
     def fake_send_message(client, chat_id, text, reply_markup):
         sent["method"] = "message"
@@ -258,7 +289,7 @@ def test_story_command_falls_back_to_message_without_image(monkeypatch) -> None:
         "Влияние на параметры:\n"
         "без изменений"
     )
-    assert "photo" not in sent
+    assert "video" not in sent
 
 
 def test_story_caption_preserves_stat_debug_tail() -> None:

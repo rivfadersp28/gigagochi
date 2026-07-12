@@ -1,6 +1,74 @@
 from __future__ import annotations
 
+import hashlib
+
 STYLE_DIRECTION_VERSION = "melancholic-designer-art-toy-v1"
+
+DARK_MUTED_PASTEL_PALETTE_FAMILIES: dict[str, tuple[str, ...]] = {
+    "forest_sage": (
+        "dark sage green",
+        "smoky moss",
+        "faded ochre",
+        "subdued coral",
+    ),
+    "terracotta_teal": (
+        "dusty terracotta",
+        "muted brick red",
+        "smoked teal",
+        "faded mustard",
+    ),
+    "coastal_petrol": (
+        "deep petrol blue",
+        "smoky teal",
+        "muted sea-glass green",
+        "dusty coral",
+    ),
+    "autumn_ember": (
+        "dark aubergine",
+        "muted burgundy",
+        "soft rust",
+        "darkened mustard",
+    ),
+    "berry_garden": (
+        "dusty plum",
+        "muted raspberry",
+        "smoky rose",
+        "slate green",
+    ),
+    "mineral_mist": (
+        "slate blue",
+        "smoky lavender",
+        "muted malachite",
+        "dusty rose",
+    ),
+    "night_orchard": (
+        "deep indigo",
+        "muted violet",
+        "charcoal teal",
+        "dusty apricot",
+    ),
+}
+
+
+def dark_muted_palette_family_for_text(value: str) -> tuple[str, tuple[str, ...]]:
+    families = tuple(DARK_MUTED_PASTEL_PALETTE_FAMILIES.items())
+    digest = hashlib.sha256(value.strip().casefold().encode("utf-8")).digest()
+    return families[int.from_bytes(digest[:4], "big") % len(families)]
+
+
+def dark_muted_character_palette_direction(description: str) -> str:
+    family, colors = dark_muted_palette_family_for_text(description)
+    return (
+        "CHARACTER_COLOR_SCRIPT:\n"
+        f"- Palette family: {family}\n"
+        f"- Clothing and accessory colors: {', '.join(colors)}\n"
+        "- Use this family across the helmet, clothing, patches, straps and personal props while "
+        "preserving natural fur, skin, face and species-defining colors.\n"
+        "- Keep low-to-moderate saturation, medium-to-low value, soft transitions and deep but "
+        "readable shadows. Metals stay aged bronze, darkened copper or another subdued metal.\n"
+        "- Do not collapse the character into beige/brown or blue/gray monochrome. Do not use "
+        "vivid, electric, neon, candy-colored or luminous color washes."
+    )
 
 CHARACTER_BIBLE_STYLE_DIRECTION = """
 Global style direction for generated character canon, lore, personality, voice rules,
@@ -99,13 +167,12 @@ weathered wood, stitched fabric, cardboard, ceramic, brushed metal, worn plastic
 rubber, felt, and soft textiles with delicate scratches, chipped paint, dust, wrinkles, fabric
 seams, subtle wear, faded prints, and visible handmade imperfections.
 
-Colors should feel nostalgic and gently muted rather than dull, featuring warm creams, rich earthy
-browns, terracotta reds, mossy greens, golden mustard, soft teal, powder blue, lavender, charcoal
-gray, muted coral, dusty pinks, and other tasteful earth tones. Increase overall color richness and
-saturation slightly while maintaining a soft, refined palette. Allow fabrics, accessories,
-costumes, and signature props to use subtly richer colors, while skin tones and facial features
-remain soft and understated. Preserve the quiet melancholic mood by avoiding neon colors, harsh
-contrast, glossy toy-like palettes, or overly vivid cartoon saturation.
+Use one authored dark muted-pastel palette per character. Keep low-to-moderate saturation,
+medium-to-low value, soft hue transitions and deep but readable shadows. Clothing, accessories,
+costumes and signature props should use three or four distinguishable subdued colors rather than
+defaulting to beige/brown or blue/gray monochrome. Skin, fur and facial features remain natural,
+soft and understated. Preserve the quiet melancholic mood without neon colors, harsh contrast,
+glossy toy-like palettes, luminous color washes or vivid cartoon saturation.
 
 The overall aesthetic should feel like a premium independent collectible designer art toy that
 combines emotional storytelling, subtle surrealism, handcrafted imperfections, nostalgic warmth,

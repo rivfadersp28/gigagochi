@@ -18,7 +18,7 @@ from app.services.telegram_client import (
     TelegramAPIError,
     mini_app_keyboard,
     send_message,
-    send_photo,
+    send_video,
     telegram_api_url,
 )
 
@@ -85,20 +85,20 @@ def _send_story_response(
         return
 
     story = result.get("story") if isinstance(result.get("story"), dict) else {}
-    story_image = result.get("storyImage") if isinstance(result.get("storyImage"), dict) else {}
-    image_bytes = story_image.get("bytes") if isinstance(story_image, dict) else None
-    if isinstance(image_bytes, bytes) and image_bytes:
+    story_video = result.get("storyVideo") if isinstance(result.get("storyVideo"), dict) else {}
+    video_bytes = story_video.get("bytes") if isinstance(story_video, dict) else None
+    if isinstance(video_bytes, bytes) and video_bytes:
         try:
-            send_photo(
+            send_video(
                 client,
                 chat_id,
-                image_bytes,
+                video_bytes,
                 format_story_caption(story),
                 keyboard,
             )
             return
         except (TelegramAPIError, httpx.HTTPError):
-            logger.exception("Telegram /story sendPhoto failed; falling back to sendMessage")
+            logger.exception("Telegram /story sendVideo failed; falling back to sendMessage")
     send_message(client, chat_id, format_story_message(story), keyboard)
 
 

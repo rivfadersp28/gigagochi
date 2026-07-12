@@ -25,6 +25,7 @@ from app.schemas import (
 from app.services.background_story_service import (
     generate_background_story,
     generate_background_story_image_bytes,
+    generate_background_story_video_bytes,
 )
 from app.services.full_story_service import (
     generate_full_story,
@@ -34,7 +35,6 @@ from app.services.image_service import generated_dir_for
 from app.services.lite_overlay import merge_lite_overlay_patch
 from app.services.pet_reply_engine.lite_generator import generate_push_pet_message
 from app.services.story_delivery_format import (
-    format_full_story_message,
     format_full_story_part_message,
 )
 from app.services.telegram_auth_service import TelegramUserContext
@@ -42,7 +42,7 @@ from app.services.telegram_client import (
     TelegramAPIError,
     mini_app_keyboard,
     send_message,
-    send_photo,
+    send_video,
 )
 from app.services.telegram_push_store import JsonTelegramPushStore
 
@@ -711,6 +711,28 @@ def _persist_background_story_image(
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = f"background-story-{generated_at.strftime('%Y%m%dT%H%M%S%fZ')}.png"
     (output_dir / filename).write_bytes(image_bytes)
+    version = int(generated_at.timestamp())
+    return f"/static/generated/{safe_pet_id}/{filename}?v={version}"
+
+
+def _persist_background_story_video(
+    record: dict[str, Any],
+    video_bytes: bytes,
+    *,
+    generated_at: datetime,
+) -> str:
+    raw_pet_id = str(record.get("petId") or record.get("telegramId") or "story")
+    safe_pet_id = (
+        "".join(
+            character if character.isalnum() or character in {"-", "_"} else "-"
+            for character in raw_pet_id
+        ).strip("-")[:120]
+        or "story"
+    )
+    output_dir = generated_dir_for(safe_pet_id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"background-story-{generated_at.strftime('%Y%m%dT%H%M%S%fZ')}.mp4"
+    (output_dir / filename).write_bytes(video_bytes)
     version = int(generated_at.timestamp())
     return f"/static/generated/{safe_pet_id}/{filename}?v={version}"
 
@@ -1559,6 +1581,9 @@ def generate_story_for_telegram_user(
     story_image: dict[str, Any] | None = None
     story_image_error: str | None = None
     story_image_url: str | None = None
+    story_video: dict[str, Any] | None = None
+    story_video_error: str | None = None
+    story_video_url: str | None = None
     story_image_direction: dict[str, str] = {}
     try:
         image_bytes = generate_background_story_image_bytes(
@@ -1576,9 +1601,24 @@ def generate_story_for_telegram_user(
             "bytes": image_bytes,
             "mimeType": "image/png",
         }
+        video_bytes = generate_background_story_video_bytes(image_bytes)
+        if not video_bytes:
+            raise RuntimeError("BACKGROUND_STORY_VIDEO_EMPTY")
+        story_video_url = _persist_background_story_video(
+            record,
+            video_bytes,
+            generated_at=now,
+        )
+        story_video = {
+            "bytes": video_bytes,
+            "mimeType": "video/mp4",
+        }
     except Exception as exc:
-        logger.exception("background_story_image_generation failed")
-        story_image_error = exc.__class__.__name__
+        logger.exception("background_story_media_generation failed")
+        if story_image is None:
+            story_image_error = exc.__class__.__name__
+        else:
+            story_video_error = exc.__class__.__name__
 
     image_status_at = _iso()
 
@@ -1600,15 +1640,23 @@ def generate_story_for_telegram_user(
             next_item = item.copy()
             if story_image_url and item.get("generatedAt") == now_iso:
                 next_item["imageUrl"] = story_image_url
+                next_item["videoUrl"] = story_video_url
                 next_item["imagePoseFamily"] = story_image_direction.get("poseFamily")
                 next_item["imageHeroPose"] = story_image_direction.get("heroPose")
                 next_item["imageCamera"] = story_image_direction.get("camera")
+                next_item["imageColorPalette"] = story_image_direction.get("colorPalette")
+                next_item["imageAccentColor"] = story_image_direction.get("accentColor")
+                next_item["imagePaletteFamily"] = story_image_direction.get("paletteFamily")
             recent_events.append(next_item)
         if story_image_url:
             last_story_record["imageUrl"] = story_image_url
+            last_story_record["videoUrl"] = story_video_url
             last_story_record["imagePoseFamily"] = story_image_direction.get("poseFamily")
             last_story_record["imageHeroPose"] = story_image_direction.get("heroPose")
             last_story_record["imageCamera"] = story_image_direction.get("camera")
+            last_story_record["imageColorPalette"] = story_image_direction.get("colorPalette")
+            last_story_record["imageAccentColor"] = story_image_direction.get("accentColor")
+            last_story_record["imagePaletteFamily"] = story_image_direction.get("paletteFamily")
         return {
             **source_record,
             "lastStory": last_story_record,
@@ -1616,6 +1664,9 @@ def generate_story_for_telegram_user(
             "lastStoryImageStatus": "failed" if story_image_error else "generated",
             "lastStoryImageError": story_image_error,
             "lastStoryImageErrorAt": image_status_at if story_image_error else None,
+            "lastStoryVideoStatus": "generated" if story_video else "failed",
+            "lastStoryVideoError": story_video_error or story_image_error,
+            "lastStoryVideoErrorAt": image_status_at if story_video is None else None,
         }
 
     next_record = _update_record(
@@ -1635,6 +1686,8 @@ def generate_story_for_telegram_user(
         "story": next_record["lastStory"],
         "storyImage": story_image,
         "storyImageError": story_image_error,
+        "storyVideo": story_video,
+        "storyVideoError": story_video_error or story_image_error,
         "storyLibraryPatch": None,
         "liteOverlayPatch": _record_lite_overlay_patch(next_record),
         "recentStoryEvent": stored_recent_story_event,
@@ -1737,7 +1790,82 @@ def send_full_story_for_telegram_user(
         include_debug=False,
     )
     story = result.get("story") if isinstance(result.get("story"), dict) else {}
-    send_message(client, telegram_id, format_full_story_message(story), keyboard)
+    record = _record_by_telegram_id(telegram_id)
+    pet = LocalPetChatContext.model_validate(_current_pet_record(record, _now()))
+    parts = story.get("parts") if isinstance(story.get("parts"), list) else []
+    generated_parts: list[dict[str, Any]] = []
+    pose_history = [*_record_recent_story_events(record)]
+
+    try:
+        for index, raw_part in enumerate(parts):
+            if not isinstance(raw_part, dict):
+                continue
+            part = raw_part.copy()
+            direction: dict[str, str] = {}
+            image_bytes = generate_full_story_part_image_bytes(
+                pet=pet,
+                overall_title=str(story.get("overallTitle") or "История одного дня"),
+                part=part,
+                recent_story_events=pose_history,
+                direction_output=direction,
+            )
+            if not image_bytes:
+                raise RuntimeError("FULL_STORY_IMAGE_EMPTY")
+            media_time = _now() + timedelta(microseconds=index)
+            image_url = _persist_background_story_image(
+                record,
+                image_bytes,
+                generated_at=media_time,
+            )
+            video_bytes = generate_background_story_video_bytes(image_bytes)
+            if not video_bytes:
+                raise RuntimeError("FULL_STORY_VIDEO_EMPTY")
+            video_url = _persist_background_story_video(
+                record,
+                video_bytes,
+                generated_at=media_time,
+            )
+            enriched_part = {
+                **part,
+                "imageUrl": image_url,
+                "videoUrl": video_url,
+                "imagePoseFamily": direction.get("poseFamily"),
+                "imageHeroPose": direction.get("heroPose"),
+                "imageCamera": direction.get("camera"),
+                "imageColorPalette": direction.get("colorPalette"),
+                "imageAccentColor": direction.get("accentColor"),
+                "imagePaletteFamily": direction.get("paletteFamily"),
+            }
+            generated_parts.append({"part": enriched_part, "video": video_bytes})
+            pose_history.append(enriched_part)
+    except Exception as exc:
+        logger.exception("full_story_media_generation failed")
+        raise TelegramPushError(
+            "FULL_STORY_MEDIA_FAILED",
+            f"Не удалось создать видео частей: {exc.__class__.__name__}",
+        ) from exc
+
+    next_story = {**story, "parts": [item["part"] for item in generated_parts]}
+
+    def save_media(current: dict[str, Any] | None) -> dict[str, Any]:
+        source = current.copy() if isinstance(current, dict) else record.copy()
+        last_story = source.get("lastFullStory")
+        if not isinstance(last_story, dict) or last_story.get("generatedAt") != story.get(
+            "generatedAt"
+        ):
+            return source
+        return {**source, "lastFullStory": next_story}
+
+    _update_record(telegram_id, save_media)
+    for item in generated_parts:
+        send_video(
+            client,
+            telegram_id,
+            item["video"],
+            format_full_story_part_message(next_story, item["part"]),
+            keyboard,
+        )
+    result["story"] = next_story
     return result
 
 
@@ -1963,6 +2091,8 @@ def _send_daily_full_story_part(
     pet = LocalPetChatContext.model_validate(_current_pet_record(record, now))
     image_bytes: bytes | None = None
     image_url: str | None = None
+    video_bytes: bytes | None = None
+    video_url: str | None = None
     image_error: str | None = None
     image_direction: dict[str, str] = {}
     try:
@@ -1982,11 +2112,15 @@ def _send_daily_full_story_part(
         if not image_bytes:
             raise RuntimeError("DAILY_FULL_STORY_IMAGE_EMPTY")
         image_url = _persist_background_story_image(record, image_bytes, generated_at=now)
+        video_bytes = generate_background_story_video_bytes(image_bytes)
+        if not video_bytes:
+            raise RuntimeError("DAILY_FULL_STORY_VIDEO_EMPTY")
+        video_url = _persist_background_story_video(record, video_bytes, generated_at=now)
     except Exception as exc:
-        logger.exception("daily_full_story_image_generation failed")
+        logger.exception("daily_full_story_media_generation failed")
         raise TelegramPushError(
-            "DAILY_FULL_STORY_IMAGE_FAILED",
-            f"Не удалось создать иллюстрацию части: {exc.__class__.__name__}",
+            "DAILY_FULL_STORY_MEDIA_FAILED",
+            f"Не удалось создать видео части: {exc.__class__.__name__}",
         ) from exc
 
     record = _apply_daily_full_story_part_stats(
@@ -2007,8 +2141,8 @@ def _send_daily_full_story_part(
     caption = format_full_story_part_message(story, part)
     with httpx.Client() as client:
         try:
-            if image_bytes:
-                send_photo(client, chat_id, image_bytes, caption, keyboard)
+            if video_bytes:
+                send_video(client, chat_id, video_bytes, caption, keyboard)
             else:
                 send_message(client, chat_id, caption, keyboard)
         except TelegramAPIError as exc:
@@ -2035,10 +2169,14 @@ def _send_daily_full_story_part(
         next_part = next_story["parts"][part_index]
         next_part["deliveredAt"] = delivered_at
         next_part["imageUrl"] = image_url
+        next_part["videoUrl"] = video_url
         next_part["imageError"] = image_error
         next_part["imagePoseFamily"] = image_direction.get("poseFamily")
         next_part["imageHeroPose"] = image_direction.get("heroPose")
         next_part["imageCamera"] = image_direction.get("camera")
+        next_part["imageColorPalette"] = image_direction.get("colorPalette")
+        next_part["imageAccentColor"] = image_direction.get("accentColor")
+        next_part["imagePaletteFamily"] = image_direction.get("paletteFamily")
         result = {
             **source,
             "dailyFullStory": next_story,

@@ -317,6 +317,14 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
                     "и тянется второй лапой к светящемуся листу."
                 ),
                 "camera": "Низкая камера в три четверти, средний общий план.",
+                "colorPalette": [
+                    "пыльный тёмный бирюзовый",
+                    "приглушённая охра",
+                    "дымчатый сливовый",
+                    "выцветший сине-серый",
+                ],
+                "accentColor": "приглушённый коралловый",
+                "paletteFamily": "forest_sage",
             }
         )
     )
@@ -367,6 +375,7 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
     assert "не копируй им автоматически" in scene_prompt
     assert "Олег заметил, что древний дуб отвечает шепотом листа" in scene_prompt
     assert calls[0]["label"] == "background_story/image"
+    assert calls[0]["size"] == "2048x1152"
     assert calls[0]["input_references"] == [
         {
             "type": "image_url",
@@ -409,7 +418,8 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
     assert "uncluttered open area around the main action" in prompt
     assert "near-symmetrical composition when the story action allows it" in prompt
     assert "soft diffused practical lighting" in prompt
-    assert "without overriding the actual emotion or valence" in prompt
+    assert "Use dark muted pastels" in prompt
+    assert "their physical material must not determine the palette" in prompt
     assert "Detail hierarchy: highest detail on the main character" in prompt
     assert "Do not invent background people, animals, vehicles" in prompt
     assert "selectively crafted detail" in prompt
@@ -419,7 +429,38 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
     assert "Pose family: reaching_or_manipulating" in prompt
     assert "переносит вес на переднюю лапу" in prompt
     assert "Низкая камера в три четверти" in prompt
+    assert "COLOR SCRIPT — REQUIRED FOR THIS SCENE" in prompt
+    assert "Palette family: forest_sage" in prompt
+    assert "пыльный тёмный бирюзовый" in prompt
+    assert "приглушённый коралловый" in prompt
+    assert "generic brown, beige, dirty-gray" in prompt
+    assert "without vivid, electric, neon, candy-colored" in prompt
+    assert "accent stays dusty and softened" in prompt
     assert story.prompt_debug[0]["label"] == "background_story/image_scene"
+
+
+def test_background_story_video_uses_locked_16_by_9_contract(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_video(image_bytes: bytes, **kwargs):
+        captured["image_bytes"] = image_bytes
+        captured.update(kwargs)
+        return b"story-video"
+
+    monkeypatch.setattr(
+        background_story_service,
+        "generate_openrouter_video_from_image_bytes",
+        fake_video,
+    )
+
+    result = background_story_service.generate_background_story_video_bytes(b"story-image")
+
+    assert result == b"story-video"
+    assert captured["image_bytes"] == b"story-image"
+    assert captured["aspect_ratio"] == "16:9"
+    assert captured["resolution"] == "720p"
+    assert captured["duration"] == 4
+    assert captured["prompt"] == background_story_service.BACKGROUND_STORY_VIDEO_PROMPT
 
 
 def test_background_story_image_pose_options_exclude_three_recent_families() -> None:
@@ -435,6 +476,23 @@ def test_background_story_image_pose_options_exclude_three_recent_families() -> 
     assert "crouching_observation" not in available
     assert "reaching_or_manipulating" not in available
     assert "physical_interaction" in available
+
+
+def test_background_story_palette_options_exclude_three_recent_families() -> None:
+    recent_events = [
+        {"imagePaletteFamily": "forest_sage"},
+        {"imagePaletteFamily": "terracotta_teal"},
+        {"imagePaletteFamily": "coastal_petrol"},
+    ]
+
+    available = background_story_service._available_background_story_palette_families(
+        recent_events
+    )
+
+    assert "forest_sage" not in available
+    assert "terracotta_teal" not in available
+    assert "coastal_petrol" not in available
+    assert "autumn_ember" in available
 
 
 def test_background_story_image_passes_current_sprite_reference_to_image_helper(

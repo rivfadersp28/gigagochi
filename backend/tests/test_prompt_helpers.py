@@ -73,6 +73,8 @@ def test_single_sprite_prompt_uses_raw_description_and_shared_style_frame() -> N
     assert "pure white seamless background" in normalized
     assert "листолицое семечко" not in prompt
     assert "VARIANT:" not in prompt
+    assert "CHARACTER_COLOR_SCRIPT:" in prompt
+    assert "Do not collapse the character into beige/brown or blue/gray monochrome" in prompt
 
 
 def test_single_sprite_safety_retry_keeps_minimal_prompt_contract() -> None:

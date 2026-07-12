@@ -1822,24 +1822,40 @@ def composite_pet_character_region_bytes(
 
 
 def generate_openrouter_video_bytes(
-    source_path: Path,
+    source_path: Path | None,
     *,
     label: str,
     prompt: str = PET_SCENE_VIDEO_PROMPT,
+    source_bytes: bytes | None = None,
+    resolution: str = PET_SCENE_VIDEO_RESOLUTION,
+    aspect_ratio: str = PET_SCENE_VIDEO_ASPECT_RATIO,
+    duration: int = PET_SCENE_VIDEO_DURATION_SECONDS,
 ) -> bytes:
+    if source_bytes is not None:
+        source_data_url = (
+            "data:image/png;base64,"
+            f"{base64.b64encode(source_bytes).decode('utf-8')}"
+        )
+        source_label = "<image-bytes>"
+    elif source_path is not None:
+        source_data_url = _image_path_data_url(source_path)
+        source_label = source_path.name
+    else:
+        raise ValueError("source_path or source_bytes is required")
+
     settings = get_settings()
     model = get_openrouter_video_model(settings)
     payload = {
         "model": model,
         "prompt": prompt,
-        "duration": PET_SCENE_VIDEO_DURATION_SECONDS,
-        "resolution": PET_SCENE_VIDEO_RESOLUTION,
-        "aspect_ratio": PET_SCENE_VIDEO_ASPECT_RATIO,
+        "duration": duration,
+        "resolution": resolution,
+        "aspect_ratio": aspect_ratio,
         "generate_audio": False,
         "frame_images": [
             {
                 "type": "image_url",
-                "image_url": {"url": _image_path_data_url(source_path)},
+                "image_url": {"url": source_data_url},
                 "frame_type": "first_frame",
             }
         ],
@@ -1849,7 +1865,7 @@ def generate_openrouter_video_bytes(
         "frame_images": [
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,<{source_path.name}>"},
+                "image_url": {"url": f"data:image/png;base64,<{source_label}>"},
                 "frame_type": "first_frame",
             }
         ],
@@ -1881,6 +1897,26 @@ def generate_openrouter_video_bytes(
     )
     _poll_openrouter_video_job(settings, job_id, polling_url=polling_url)
     return _download_openrouter_video_bytes(settings, job_id)
+
+
+def generate_openrouter_video_from_image_bytes(
+    image_bytes: bytes,
+    *,
+    label: str,
+    prompt: str,
+    resolution: str,
+    aspect_ratio: str,
+    duration: int,
+) -> bytes:
+    return generate_openrouter_video_bytes(
+        None,
+        label=label,
+        prompt=prompt,
+        source_bytes=image_bytes,
+        resolution=resolution,
+        aspect_ratio=aspect_ratio,
+        duration=duration,
+    )
 
 
 def generate_openrouter_image_bytes(

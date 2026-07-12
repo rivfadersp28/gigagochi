@@ -4,7 +4,10 @@ import json
 import re
 from typing import Any
 
-from app.prompts.style_direction import VISUAL_STYLE_FRAME
+from app.prompts.style_direction import (
+    VISUAL_STYLE_FRAME,
+    dark_muted_character_palette_direction,
+)
 from app.services.character_bible_template import character_bible_prompt_config
 from app.services.lore_runtime import lore_prompt_block
 from app.services.tone_runtime import tone_context_payload, tone_visual_style
@@ -215,6 +218,8 @@ Use a tiny persona-file shape inspired by small persona-file projects:
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
 
+{dark_muted_character_palette_direction(user_description)}
+
 SETTING_HINT:
 Use this only as a light lens for habitat, objects, voice and story hooks.
 Do not replace USER_CHARACTER_DESCRIPTION with the setting.
@@ -334,6 +339,8 @@ TONE_VISUAL_DIRECTION:
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
 
+{dark_muted_character_palette_direction(user_description)}
+
 CHARACTER_BIBLE:
 {bible_text}
 
@@ -379,7 +386,11 @@ def build_pet_single_sprite_prompt(
     stage: str,
     state: str,
 ) -> str:
-    return f"{user_description.strip()}\n\n{STYLE_FRAME}".strip()
+    return (
+        f"{user_description.strip()}\n\n"
+        f"{dark_muted_character_palette_direction(user_description)}\n\n"
+        f"{STYLE_FRAME}"
+    ).strip()
 
 
 def build_pet_single_sprite_safety_retry_prompt(
@@ -389,7 +400,11 @@ def build_pet_single_sprite_safety_retry_prompt(
     stage: str,
     state: str,
 ) -> str:
-    return f"{user_description.strip()}\n\n{STYLE_FRAME}".strip()
+    return (
+        f"{user_description.strip()}\n\n"
+        f"{dark_muted_character_palette_direction(user_description)}\n\n"
+        f"{STYLE_FRAME}"
+    ).strip()
 
 
 def build_pet_state_strip_prompt(
@@ -419,6 +434,8 @@ TONE_VISUAL_DIRECTION:
 
 USER_CHARACTER_DESCRIPTION:
 {safe_description}
+
+{dark_muted_character_palette_direction(user_description)}
 
 CHARACTER_BIBLE:
 {bible_text}
@@ -482,6 +499,8 @@ Create one horizontal 3-column sprite strip of a harmless rounded collectible to
 
 CORE_CONCEPT:
 {safe_description}
+
+{dark_muted_character_palette_direction(user_description)}
 
 STYLE_FRAME:
 {STYLE_FRAME}
