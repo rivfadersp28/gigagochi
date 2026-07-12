@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   canUseDebugMenu,
-  canUseDerivedPetAssets,
   getTelegramUserId,
   setTelegramBackgroundColor,
 } from "./telegram";
@@ -51,22 +50,6 @@ describe("Telegram background color", () => {
     expect(document.body.style.backgroundColor).toBe("rgb(67, 65, 55)");
     expect(setBackgroundColor).toHaveBeenCalledWith("#434137");
     expect(setBottomBarColor).toHaveBeenCalledWith("#434137");
-  });
-});
-
-describe("derived asset pilot", () => {
-  it("enables derived pet assets for Sergey", () => {
-    setTelegramUser(62943754);
-
-    expect(getTelegramUserId()).toBe(62943754);
-    expect(canUseDerivedPetAssets()).toBe(true);
-  });
-
-  it("keeps other Telegram users on normal assets", () => {
-    setTelegramUser(42);
-
-    expect(getTelegramUserId()).toBe(42);
-    expect(canUseDerivedPetAssets()).toBe(false);
   });
 });
 

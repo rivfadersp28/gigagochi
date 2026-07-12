@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { applyOfflineProgress, applyStatsPatch } from "./localPetStats";
+import { createLocalPetState } from "./localPetStorage";
 import type { LocalPetState } from "./types";
 
 function petState(): LocalPetState {
@@ -29,6 +30,14 @@ function petState(): LocalPetState {
 }
 
 describe("localPetStats", () => {
+  it("creates a new pet with full stats", () => {
+    expect(createLocalPetState("мышонок").stats).toEqual({
+      hunger: 100,
+      happiness: 100,
+      energy: 100,
+    });
+  });
+
   it("decays each stat from its own tick and advances the life stage", () => {
     const progressed = applyOfflineProgress(
       petState(),

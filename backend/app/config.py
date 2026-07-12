@@ -27,7 +27,6 @@ class Settings(BaseSettings):
     generation_max_queued_jobs: int = Field(default=40, ge=0, le=500)
     generation_job_store_path: str = "data/push/generation_jobs.sqlite3"
     generation_job_stuck_seconds: int = Field(default=1800, ge=300, le=7200)
-    derived_asset_pilot_telegram_ids: set[int] = Field(default_factory=lambda: {62943754})
     diagnostic_telegram_ids: set[int] = Field(default_factory=lambda: {62943754})
     telegram_init_data_max_age_seconds: int = 60 * 60 * 24
     telegram_daily_push_enabled: bool = False

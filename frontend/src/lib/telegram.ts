@@ -57,7 +57,6 @@ type TelegramWindow = Window &
 
 let lockedTelegramViewportHeight: number | null = null;
 const DEBUG_MENU_TELEGRAM_IDS = new Set([62943754]);
-const DERIVED_ASSET_PILOT_TELEGRAM_IDS = new Set([62943754]);
 
 function telegramWindow() {
   if (typeof window === "undefined") {
@@ -92,14 +91,6 @@ export function getTelegramUserId(): number | null {
     return Number.isSafeInteger(parsed) ? parsed : null;
   }
   return null;
-}
-
-export function canUseDerivedPetAssets(): boolean {
-  const telegramUserId = getTelegramUserId();
-  if (telegramUserId !== null) {
-    return DERIVED_ASSET_PILOT_TELEGRAM_IDS.has(telegramUserId);
-  }
-  return process.env.NODE_ENV === "development" && !getTelegramInitData();
 }
 
 export function canUseDebugMenu(): boolean {

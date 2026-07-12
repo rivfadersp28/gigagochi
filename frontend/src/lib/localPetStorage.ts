@@ -696,9 +696,9 @@ export function createLocalPetState(
     stage: "baby",
     mood: "idle",
     stats: {
-      hunger: 80,
-      happiness: 80,
-      energy: 80,
+      hunger: 100,
+      happiness: 100,
+      energy: 100,
     },
     assetSet: characterAssetSet,
   };

@@ -179,7 +179,7 @@ export function usePetBackgroundAssets({
           backgroundGenerationUpdatedAt: new Date().toISOString(),
         });
       } catch {
-        // A missing pilot asset keeps the current normal fallback.
+        // A missing derived asset keeps the current normal fallback.
       }
     };
 

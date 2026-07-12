@@ -114,7 +114,6 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
             enable_in_memory_rate_limit=False,
             openai_api_key=None,
             openrouter_api_key="test-openrouter-key",
-            derived_asset_pilot_telegram_ids={42},
         ),
     )
     captured: dict[str, object] = {}

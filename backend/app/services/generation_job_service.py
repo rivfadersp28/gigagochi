@@ -62,7 +62,6 @@ class GenerationJobService:
         generate_happy_video: GenerateHappyVideo,
         build_response: BuildResponse,
         build_failure: BuildFailure,
-        derived_asset_owner_ids: set[int] | None = None,
         job_ttl: timedelta = timedelta(hours=1),
         store_path: str | None = None,
         max_queued_jobs: int = 40,
@@ -76,7 +75,6 @@ class GenerationJobService:
         self._generate_happy_video = generate_happy_video
         self._build_response = build_response
         self._build_failure = build_failure
-        self._derived_asset_owner_ids = derived_asset_owner_ids
         self._job_ttl = job_ttl
         self._max_queued_jobs = max(0, max_queued_jobs)
         self._stuck_after = stuck_after
@@ -169,7 +167,7 @@ class GenerationJobService:
             self._video_workers,
         )
         try:
-            self._submit_image_job(job_id, description, user.telegram_id)
+            self._submit_image_job(job_id, description)
         except Exception as exc:
             self._fail(job_id, exc, phase="generating_images")
         return response
@@ -246,13 +244,8 @@ class GenerationJobService:
             response=stored.response,
         )
 
-    def _submit_image_job(self, job_id: str, description: str, owner_id: int) -> None:
-        self._image_executor.submit(
-            self._run_image_job,
-            job_id,
-            description,
-            self._derived_asset_owner_ids is None or owner_id in self._derived_asset_owner_ids,
-        )
+    def _submit_image_job(self, job_id: str, description: str) -> None:
+        self._image_executor.submit(self._run_image_job, job_id, description)
 
     def _recover_active_jobs(self) -> None:
         if self._store is None:
@@ -278,7 +271,7 @@ class GenerationJobService:
             with self._lock:
                 self._jobs[response.jobId] = record
                 self._persist_locked(response.jobId)
-            self._submit_image_job(response.jobId, stored.description, stored.owner_id)
+            self._submit_image_job(response.jobId, stored.description)
             logger.warning(
                 "pet_generation_recovered jobId=%s ownerId=%s",
                 response.jobId,
@@ -335,7 +328,6 @@ class GenerationJobService:
         self,
         job_id: str,
         description: str,
-        generate_derived_assets: bool,
     ) -> None:
         started_at = time.monotonic()
         self._update(job_id, status_value="running", phase="generating_images")
@@ -362,7 +354,6 @@ class GenerationJobService:
                 self._run_video_job,
                 job_id,
                 image_set,
-                generate_derived_assets,
             )
         except Exception as exc:
             self._fail(job_id, exc, phase="generating_video")
@@ -371,7 +362,6 @@ class GenerationJobService:
         self,
         job_id: str,
         image_set: Any,
-        generate_derived_assets: bool,
     ) -> None:
         started_at = time.monotonic()
         logger.info(
@@ -398,14 +388,6 @@ class GenerationJobService:
             time.monotonic() - started_at,
             image_set.asset_set_id,
         )
-        if not generate_derived_assets:
-            self._update(
-                job_id,
-                status_value="succeeded",
-                phase="completed",
-                result=result,
-            )
-            return
         self._update(
             job_id,
             status_value="running",

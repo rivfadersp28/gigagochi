@@ -53,7 +53,6 @@ import {
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import {
   canUseDebugMenu,
-  canUseDerivedPetAssets,
   hapticImpact,
   hapticNotification,
   setTelegramBackgroundColor,
@@ -352,7 +351,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const isPetDead = Boolean(pet?.diedAt);
   const storyHistory = pet ? storyHistoryFromPet(pet) : [];
   const canShowDebugMenu = canUseDebugMenu();
-  const derivedAssetsEnabled = canUseDerivedPetAssets();
+  const derivedAssetsEnabled = true;
   const hasSadAssets = derivedAssetsEnabled && pet ? hasGeneratedSadAssets(pet) : false;
   const hasHappyAssets = derivedAssetsEnabled && pet ? hasGeneratedHappyAssets(pet) : false;
   const visualMode = pet

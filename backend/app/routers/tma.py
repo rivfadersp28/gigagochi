@@ -182,11 +182,6 @@ def _generation_job_service() -> GenerationJobService:
             ),
             build_response=build_pet_asset_set_response,
             build_failure=_build_generation_failure,
-            derived_asset_owner_ids=getattr(
-                settings,
-                "derived_asset_pilot_telegram_ids",
-                None,
-            ),
             store_path=getattr(settings, "generation_job_store_path", None),
             max_queued_jobs=getattr(settings, "generation_max_queued_jobs", 40),
             stuck_after=timedelta(
