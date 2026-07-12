@@ -46,6 +46,10 @@ export function PetCreatingStage({ overlay = false }: PetCreatingStageProps) {
           Создаем друга
         </p>
       </div>
+
+      <p className="creation-loader-notice absolute inset-x-[28px] bottom-[calc(var(--tma-safe-bottom)+32px)] z-[1] text-center text-[15px] leading-[20px] text-white/50">
+        Мы пришлем уведомление, когда персонаж будет готов
+      </p>
     </section>
   );
 }

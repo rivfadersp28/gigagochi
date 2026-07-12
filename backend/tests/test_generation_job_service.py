@@ -76,6 +76,13 @@ def _build_response(
 def test_foreground_result_is_available_before_background_assets() -> None:
     background_started = Event()
     release_background = Event()
+    notification_sent = Event()
+    notifications: list[int] = []
+
+    def notify_ready(owner_id: int) -> None:
+        notifications.append(owner_id)
+        notification_sent.set()
+
     def generate_background_image(_image_set):
         background_started.set()
         assert release_background.wait(timeout=2)
@@ -96,6 +103,7 @@ def test_foreground_result_is_available_before_background_assets() -> None:
             "message": str(exc),
             "phase": phase,
         },
+        notify_ready=notify_ready,
     )
     try:
         submitted = service.submit("мышонок", _user())
@@ -107,6 +115,8 @@ def test_foreground_result_is_available_before_background_assets() -> None:
         assert ready.result is not None
         assert ready.result.videoUrl.endswith("teen-idle.mp4")
         assert ready.result.sadVideoUrl is None
+        assert notification_sent.wait(timeout=2)
+        assert notifications == [42]
 
         release_background.set()
         completed = _wait_for(service, submitted.jobId, lambda job: job.status == "succeeded")
@@ -115,6 +125,35 @@ def test_foreground_result_is_available_before_background_assets() -> None:
         assert completed.result.happyVideoUrl.endswith("teen-happy.mp4")
     finally:
         release_background.set()
+        service.shutdown(wait=True)
+
+
+def test_notification_failure_does_not_fail_generation() -> None:
+    def notify_ready(_owner_id: int) -> None:
+        raise RuntimeError("telegram unavailable")
+
+    service = GenerationJobService(
+        image_workers=1,
+        video_workers=1,
+        generate_images=lambda _description: SimpleNamespace(asset_set_id="asset-1"),
+        generate_video=lambda _image_set: Path("teen-idle.mp4"),
+        generate_background_image=lambda _image_set: Path("teen-sad.png"),
+        generate_background_video=lambda _image_set, _sad_path: Path("teen-sad.mp4"),
+        generate_happy_image=lambda _image_set: Path("teen-happy.png"),
+        generate_happy_video=lambda _image_set, _happy_path: Path("teen-happy.mp4"),
+        build_response=_build_response,
+        build_failure=lambda _job_id, phase, exc, _owner_id: {
+            "code": "GENERATION_FAILED",
+            "message": str(exc),
+            "phase": phase,
+        },
+        notify_ready=notify_ready,
+    )
+    try:
+        submitted = service.submit("мышонок", _user())
+        completed = _wait_for(service, submitted.jobId, lambda job: job.status == "succeeded")
+        assert completed.result is not None
+    finally:
         service.shutdown(wait=True)
 
 

@@ -28,6 +28,7 @@ BuildResponse = Callable[
     dict[str, Any],
 ]
 BuildFailure = Callable[[str, str, Exception, int], dict[str, object]]
+NotifyReady = Callable[[int], None]
 _UNSET = object()
 
 
@@ -62,6 +63,7 @@ class GenerationJobService:
         generate_happy_video: GenerateHappyVideo,
         build_response: BuildResponse,
         build_failure: BuildFailure,
+        notify_ready: NotifyReady | None = None,
         job_ttl: timedelta = timedelta(hours=1),
         store_path: str | None = None,
         max_queued_jobs: int = 40,
@@ -75,6 +77,7 @@ class GenerationJobService:
         self._generate_happy_video = generate_happy_video
         self._build_response = build_response
         self._build_failure = build_failure
+        self._notify_ready_callback = notify_ready
         self._job_ttl = job_ttl
         self._max_queued_jobs = max(0, max_queued_jobs)
         self._stuck_after = stuck_after
@@ -357,6 +360,20 @@ class GenerationJobService:
             record = self._jobs.get(job_id)
             return record.owner_id if record is not None else 0
 
+    def _notify_ready(self, job_id: str) -> None:
+        if self._notify_ready_callback is None:
+            return
+        owner_id = self._owner_id(job_id)
+        try:
+            self._notify_ready_callback(owner_id)
+        except Exception:
+            logger.warning(
+                "pet_generation_notification_failed jobId=%s ownerId=%s",
+                job_id,
+                owner_id,
+                exc_info=True,
+            )
+
     def _prompt_context(self, job_id: str) -> Any:
         return set_prompt_log_context(
             {
@@ -448,6 +465,7 @@ class GenerationJobService:
         except Exception as exc:
             self._record_background_failure(job_id, exc, phase="generating_sad_image")
             self._start_happy_image_job(job_id, image_set, video_path, None, None)
+        self._notify_ready(job_id)
 
     def _run_background_image_job(self, job_id: str, image_set: Any, video_path: Any) -> None:
         started_at = time.monotonic()

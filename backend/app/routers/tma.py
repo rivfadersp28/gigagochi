@@ -45,6 +45,7 @@ from app.services.generation_job_service import (
     GenerationJobService,
     GenerationQueueFullError,
 )
+from app.services.generation_notification_service import send_generation_ready_notification
 from app.services.image_service import (
     build_pet_asset_set_response,
     generate_pet_happy_scene_path,
@@ -183,6 +184,7 @@ def _generation_job_service() -> GenerationJobService:
             ),
             build_response=build_pet_asset_set_response,
             build_failure=_build_generation_failure,
+            notify_ready=send_generation_ready_notification,
             store_path=getattr(settings, "generation_job_store_path", None),
             max_queued_jobs=getattr(settings, "generation_max_queued_jobs", 40),
             stuck_after=timedelta(
