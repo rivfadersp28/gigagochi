@@ -143,11 +143,7 @@ def main() -> None:
     parser.add_argument("--review-model")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    rows = [
-        _run_case(model, args.review_model, case)
-        for model in args.models
-        for case in CASES
-    ]
+    rows = [_run_case(model, args.review_model, case) for model in args.models for case in CASES]
     output = "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

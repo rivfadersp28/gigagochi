@@ -46,31 +46,58 @@ FULL_STORY_LOCATION_CLASSES = {
 
 FULL_STORY_LOCATIONS_BY_MODE = {
     "encounter": (
-        "wild_nature", "inhabited_settlement", "ruined_city", "underground_city",
-        "enchanted_grove", "water_region",
+        "wild_nature",
+        "inhabited_settlement",
+        "ruined_city",
+        "underground_city",
+        "enchanted_grove",
+        "water_region",
     ),
     "exploration": tuple(FULL_STORY_LOCATION_CLASSES),
     "mystery": (
-        "inhabited_settlement", "ruined_city", "magic_tower", "grand_dungeon",
-        "underground_city", "spectral_realm", "impossible_structure",
+        "inhabited_settlement",
+        "ruined_city",
+        "magic_tower",
+        "grand_dungeon",
+        "underground_city",
+        "spectral_realm",
+        "impossible_structure",
     ),
     "social_event": (
-        "inhabited_settlement", "road_crossing", "ruined_city", "magic_tower",
-        "underground_city", "water_region",
+        "inhabited_settlement",
+        "road_crossing",
+        "ruined_city",
+        "magic_tower",
+        "underground_city",
+        "water_region",
     ),
     "pursuit_or_conflict": (
-        "wild_nature", "inhabited_settlement", "ruined_city", "magic_tower",
-        "grand_dungeon", "underground_city", "spectral_realm", "impossible_structure",
+        "wild_nature",
+        "inhabited_settlement",
+        "ruined_city",
+        "magic_tower",
+        "grand_dungeon",
+        "underground_city",
+        "spectral_realm",
+        "impossible_structure",
     ),
     "rescue_or_help": tuple(FULL_STORY_LOCATION_CLASSES),
     "discovery": tuple(FULL_STORY_LOCATION_CLASSES),
     "environmental_event": (
-        "wild_nature", "ruined_city", "magic_tower", "underground_city",
-        "water_region", "transformed_landscape",
+        "wild_nature",
+        "ruined_city",
+        "magic_tower",
+        "underground_city",
+        "water_region",
+        "transformed_landscape",
     ),
     "peaceful_change": (
-        "inhabited_settlement", "road_crossing", "underground_city",
-        "enchanted_grove", "water_region", "transformed_landscape",
+        "inhabited_settlement",
+        "road_crossing",
+        "underground_city",
+        "enchanted_grove",
+        "water_region",
+        "transformed_landscape",
     ),
 }
 
@@ -113,9 +140,7 @@ _CONFLICT_ARCS = {
 }
 
 
-def _least_used(
-    values: dict[str, str], *, field: str, history: list[dict[str, Any]] | None
-) -> str:
+def _least_used(values: dict[str, str], *, field: str, history: list[dict[str, Any]] | None) -> str:
     counts = {value: 0 for value in values}
     for item in history or []:
         if isinstance(item, dict) and item.get(field) in counts:
@@ -142,9 +167,7 @@ def enrich_full_story_direction(
 ) -> dict[str, str]:
     result = dict(direction)
     plot_mode = result.get("plotMode", "")
-    candidates = FULL_STORY_LOCATIONS_BY_MODE.get(
-        plot_mode, tuple(FULL_STORY_LOCATION_CLASSES)
-    )
+    candidates = FULL_STORY_LOCATIONS_BY_MODE.get(plot_mode, tuple(FULL_STORY_LOCATION_CLASSES))
     result["locationClass"] = _least_used(
         {value: FULL_STORY_LOCATION_CLASSES[value] for value in candidates},
         field="locationClass",
@@ -186,7 +209,7 @@ def full_story_direction_block(direction: dict[str, str]) -> str:
             f"- Тип развития: {_PLOT_INSTRUCTIONS[plot_mode]}.",
             f"- Динамика четырёх частей: {arc}.",
             *extra,
-            f"- Исходное происшествие: {STORY_INCIDENT_INSTRUCTIONS[direction['incidentClass']] }.",
+            f"- Исходное происшествие: {STORY_INCIDENT_INSTRUCTIONS[direction['incidentClass']]}.",
             f"- Среда: {FULL_STORY_LOCATION_CLASSES[direction['locationClass']]}.",
             "- Эта локация остаётся главным пространством всех четырёх частей.",
             f"- Общий итог: {STORY_VALENCE_INSTRUCTIONS[valence]}.",

@@ -1470,9 +1470,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": {
-                        readonly [key: string]: string;
-                    };
+                    readonly "application/json": unknown;
                 };
             };
         };

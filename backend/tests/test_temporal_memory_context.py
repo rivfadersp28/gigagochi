@@ -7,11 +7,14 @@ from app.services.temporal_context import format_current_time, format_temporal_r
 
 
 def test_formats_absolute_and_relative_memory_time() -> None:
-    assert format_temporal_reference(
-        "2026-07-08T10:00:00Z",
-        now_iso="2026-07-10T12:00:00Z",
-        timezone="Europe/Moscow",
-    ) == "08.07.2026 13:00 (позавчера)"
+    assert (
+        format_temporal_reference(
+            "2026-07-08T10:00:00Z",
+            now_iso="2026-07-10T12:00:00Z",
+            timezone="Europe/Moscow",
+        )
+        == "08.07.2026 13:00 (позавчера)"
+    )
 
 
 def test_memory_context_preserves_episode_time_and_class() -> None:
@@ -66,7 +69,10 @@ def test_recent_chat_history_keeps_message_time() -> None:
     assert _history_messages(payload) == [
         {"role": "assistant", "content": "[09.07.2026 13:00 (вчера)] Я нашёл ключ."}
     ]
-    assert format_current_time(
-        payload.nowIso,
-        timezone=payload.timezone,
-    ) == "Текущее локальное время: 10.07.2026 15:00 Europe/Moscow."
+    assert (
+        format_current_time(
+            payload.nowIso,
+            timezone=payload.timezone,
+        )
+        == "Текущее локальное время: 10.07.2026 15:00 Europe/Moscow."
+    )

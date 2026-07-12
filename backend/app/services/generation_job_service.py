@@ -26,7 +26,7 @@ BuildResponse = Callable[
     [Any, Any, Any | None, Any | None, Any | None, Any | None],
     dict[str, Any],
 ]
-BuildFailure = Callable[[str, str, Exception], dict[str, object]]
+BuildFailure = Callable[[str, str, Exception, int], dict[str, object]]
 _UNSET = object()
 
 
@@ -180,11 +180,11 @@ class GenerationJobService:
             record.response = record.response.model_copy(update=updates)
 
     def _fail(self, job_id: str, exc: Exception, *, phase: str) -> None:
-        detail = self._build_failure(job_id, phase, exc)
+        detail = self._build_failure(job_id, phase, exc, self._owner_id(job_id))
         self._update(job_id, status_value="failed", phase=phase, error=detail)
 
     def _finish_background_failure(self, job_id: str, exc: Exception, *, phase: str) -> None:
-        detail = self._build_failure(job_id, phase, exc)
+        detail = self._build_failure(job_id, phase, exc, self._owner_id(job_id))
         logger.warning(
             "pet_background_generation_failed jobId=%s phase=%s errorType=%s",
             job_id,
@@ -199,7 +199,7 @@ class GenerationJobService:
         )
 
     def _record_background_failure(self, job_id: str, exc: Exception, *, phase: str) -> None:
-        detail = self._build_failure(job_id, phase, exc)
+        detail = self._build_failure(job_id, phase, exc, self._owner_id(job_id))
         logger.warning(
             "pet_background_generation_failed jobId=%s phase=%s errorType=%s",
             job_id,
@@ -211,6 +211,11 @@ class GenerationJobService:
             status_value="running",
             background_error=detail,
         )
+
+    def _owner_id(self, job_id: str) -> int:
+        with self._lock:
+            record = self._jobs.get(job_id)
+            return record.owner_id if record is not None else 0
 
     def _prompt_context(self, job_id: str) -> Any:
         return set_prompt_log_context(

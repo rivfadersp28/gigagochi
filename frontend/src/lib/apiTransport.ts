@@ -7,6 +7,7 @@ export type ApiErrorDetail = {
   requestId?: unknown;
   retryAfterSeconds?: unknown;
   errors?: unknown;
+  diagnostic?: unknown;
 };
 
 export type ApiResponseParser<T> = (payload: unknown) => T;
@@ -25,12 +26,21 @@ export class ApiContractError extends Error {
 export class ApiError extends Error {
   code?: string;
   status?: number;
+  requestId?: string;
+  diagnostic?: unknown;
 
-  constructor(message: string, code?: string, status?: number) {
+  constructor(
+    message: string,
+    code?: string,
+    status?: number,
+    options: { requestId?: string; diagnostic?: unknown } = {},
+  ) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
+    this.requestId = options.requestId;
+    this.diagnostic = options.diagnostic;
   }
 }
 
@@ -78,59 +88,36 @@ function errorDetail(payload: unknown): ApiErrorDetail {
   return record as ApiErrorDetail;
 }
 
-function validationErrorMessage(payload: unknown): string | undefined {
+function hasValidationErrors(payload: unknown): boolean {
   if (!payload || typeof payload !== "object") {
-    return undefined;
+    return false;
   }
   const detail = (payload as { detail?: unknown }).detail;
   if (!Array.isArray(detail)) {
-    return undefined;
+    return false;
   }
   const firstError = detail.find(
     (item): item is Record<string, unknown> => Boolean(item) && typeof item === "object",
   );
-  if (!firstError) {
-    return undefined;
-  }
-
-  const location = Array.isArray(firstError.loc)
-    ? firstError.loc
-        .filter((item): item is string | number => (
-          typeof item === "string" || typeof item === "number"
-        ))
-        .filter((item) => item !== "body")
-        .join(".")
-    : "";
-  const reason =
-    firstError.type === "string_too_short"
-      ? "значение не должно быть пустым"
-      : firstError.type === "string_too_long"
-        ? "значение слишком длинное"
-        : firstError.type === "missing"
-          ? "обязательное значение отсутствует"
-          : firstError.type === "literal_error"
-            ? "недопустимое значение"
-            : stringValue(firstError.msg) ?? "недопустимое значение";
-
-  return location
-    ? `Некорректное поле ${location}: ${reason}.`
-    : `Некорректные данные запроса: ${reason}.`;
+  return Boolean(firstError);
 }
 
 function errorMessageFromResponse(
   response: Response,
   payload: unknown,
-): { message: string; code?: string } {
+): { message: string; code?: string; diagnostic?: unknown } {
   const detail = errorDetail(payload);
   const code = stringValue(detail.code);
   const message =
     stringValue(detail.message) ??
     firstErrorMessage(detail.errors) ??
-    validationErrorMessage(payload) ??
+    (hasValidationErrors(payload)
+      ? "Не получилось обработать данные. Обновите приложение и попробуйте снова."
+      : undefined) ??
     stringValue((payload as { message?: unknown } | undefined)?.message);
 
   if (code === "rate_limited") {
-    return { message: rateLimitMessage(detail, message), code };
+    return { message: rateLimitMessage(detail, message), code, diagnostic: detail.diagnostic };
   }
 
   return {
@@ -140,6 +127,7 @@ function errorMessageFromResponse(
         ? "Сервис временно недоступен. Попробуйте позже."
         : "Не получилось выполнить действие. Проверьте данные и попробуйте снова."),
     code,
+    diagnostic: detail.diagnostic,
   };
 }
 
@@ -158,17 +146,18 @@ function firstErrorMessage(value: unknown): string | undefined {
 
 export function apiErrorFromDetail(
   detail: ApiErrorDetail,
-): { message: string; code?: string } {
+): { message: string; code?: string; diagnostic?: unknown } {
   const code = stringValue(detail.code);
   const message = stringValue(detail.message);
 
   if (code === "rate_limited") {
-    return { message: rateLimitMessage(detail, message), code };
+    return { message: rateLimitMessage(detail, message), code, diagnostic: detail.diagnostic };
   }
 
   return {
     message: message ?? "Не получилось создать питомца. Попробуйте снова.",
     code,
+    diagnostic: detail.diagnostic,
   };
 }
 
@@ -215,8 +204,11 @@ export async function request<T>(
 
   const payload = await readJson(response);
   if (!response.ok) {
-    const { message, code } = errorMessageFromResponse(response, payload);
-    throw new ApiError(message, code, response.status);
+    const { message, code, diagnostic } = errorMessageFromResponse(response, payload);
+    throw new ApiError(message, code, response.status, {
+      diagnostic,
+      requestId: response.headers.get("x-request-id") ?? undefined,
+    });
   }
 
   try {

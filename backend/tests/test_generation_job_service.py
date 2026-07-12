@@ -87,7 +87,7 @@ def test_foreground_result_is_available_before_background_assets() -> None:
         generate_happy_image=lambda _image_set: Path("teen-happy.png"),
         generate_happy_video=lambda _image_set, _happy_path: Path("teen-happy.mp4"),
         build_response=_build_response,
-        build_failure=lambda _job_id, phase, exc: {
+        build_failure=lambda _job_id, phase, exc, _owner_id: {
             "code": "GENERATION_FAILED",
             "message": str(exc),
             "phase": phase,
@@ -127,7 +127,7 @@ def test_background_failure_keeps_foreground_result() -> None:
         generate_happy_image=lambda _image_set: Path("teen-happy.png"),
         generate_happy_video=lambda _image_set, _happy_path: Path("teen-happy.mp4"),
         build_response=_build_response,
-        build_failure=lambda _job_id, phase, exc: {
+        build_failure=lambda _job_id, phase, exc, _owner_id: {
             "code": "GENERATION_FAILED",
             "message": str(exc),
             "phase": phase,
@@ -161,7 +161,7 @@ def test_non_pilot_owner_finishes_after_normal_video_without_derived_assets() ->
         generate_happy_image=lambda _image_set: background_calls.append("happy-image"),
         generate_happy_video=lambda _image_set, _happy_path: background_calls.append("happy-video"),
         build_response=_build_response,
-        build_failure=lambda _job_id, phase, exc: {
+        build_failure=lambda _job_id, phase, exc, _owner_id: {
             "code": "GENERATION_FAILED",
             "message": str(exc),
             "phase": phase,

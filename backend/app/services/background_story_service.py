@@ -975,8 +975,7 @@ def _background_story_image_scene_schema(
 
 def _background_story_pose_options_block(pose_families: tuple[str, ...]) -> str:
     return "\n".join(
-        f"- {family}: {BACKGROUND_STORY_IMAGE_POSE_GUIDANCE[family]}"
-        for family in pose_families
+        f"- {family}: {BACKGROUND_STORY_IMAGE_POSE_GUIDANCE[family]}" for family in pose_families
     )
 
 
@@ -1311,8 +1310,7 @@ def _recent_story_directions(
         if not _is_record(item):
             continue
         direction = {
-            field: _text_value(item.get(field), limit=80)
-            for field in STORY_DIRECTION_FIELDS
+            field: _text_value(item.get(field), limit=80) for field in STORY_DIRECTION_FIELDS
         }
         if any(direction.values()):
             result.append(direction)
@@ -1364,9 +1362,7 @@ def select_background_story_direction(
     history = _recent_story_directions(recent_story_events)
     rng = rng or random.SystemRandom()
     recent_modes = {
-        item.get("plotMode")
-        for item in history[-STORY_MODE_COOLDOWN:]
-        if item.get("plotMode")
+        item.get("plotMode") for item in history[-STORY_MODE_COOLDOWN:] if item.get("plotMode")
     }
     available_modes = tuple(
         mode for mode in STORY_DIRECTION_SPECS if mode not in recent_modes
@@ -1384,8 +1380,7 @@ def select_background_story_direction(
     incident_candidates = STORY_INCIDENTS_BY_MODE[plot_mode]
     classified_history = [item for item in history if item.get("incidentClass")]
     recent_incidents = {
-        item.get("incidentClass")
-        for item in classified_history[-STORY_INCIDENT_PUZZLE_COOLDOWN:]
+        item.get("incidentClass") for item in classified_history[-STORY_INCIDENT_PUZZLE_COOLDOWN:]
     }
     if (
         len(classified_history) < STORY_INCIDENT_PUZZLE_COOLDOWN
@@ -1414,18 +1409,12 @@ def select_background_story_direction(
     )
     available_valences = tuple(STORY_VALENCE_WEIGHTS)
     if plot_mode == "peaceful_change" or resolution_mode == "celebration_or_rest":
-        available_valences = tuple(
-            value for value in available_valences if value != "negative"
-        )
+        available_valences = tuple(value for value in available_valences if value != "negative")
     if current_stats:
         if all(value >= 100 for value in current_stats.values()):
-            available_valences = tuple(
-                value for value in available_valences if value != "positive"
-            )
+            available_valences = tuple(value for value in available_valences if value != "positive")
         if all(value <= 0 for value in current_stats.values()):
-            available_valences = tuple(
-                value for value in available_valences if value != "negative"
-            )
+            available_valences = tuple(value for value in available_valences if value != "negative")
     return {
         "plotMode": plot_mode,
         "incidentClass": incident_class,

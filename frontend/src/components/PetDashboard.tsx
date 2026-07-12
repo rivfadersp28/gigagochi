@@ -13,11 +13,11 @@ import type {
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  ApiError,
   generateLocalAmbientMessage,
   generateLocalProactiveMessage,
   sendLocalChatMessage,
 } from "@/lib/api";
+import { presentError, type PresentedError } from "@/lib/errorPresentation";
 import {
   createLocalId,
   readLocalChatHistory,
@@ -69,6 +69,7 @@ import { useLocalPetState } from "@/lib/useLocalPetState";
 
 import { DebugPanel } from "./DebugPanel";
 import { ConfirmActionDialog } from "./ConfirmActionDialog";
+import { ErrorNotice } from "./ErrorNotice";
 import { DraggableFoodToken, type FoodAsset } from "./pet-dashboard/DraggableFoodToken";
 import type { PetReplyMessage } from "./pet-dashboard/PetCharacterMessage";
 import { PetSpeechBubble } from "./pet-dashboard/PetSpeechBubble";
@@ -276,14 +277,14 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [isChatMode, setIsChatMode] = useState(false);
   const [isFeedMode, setIsFeedMode] = useState(false);
   const [chatInput, setChatInput] = useState("");
-  const [chatError, setChatError] = useState<string | null>(null);
+  const [chatError, setChatError] = useState<PresentedError | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
   const [isGeneratingIdleReply, setIsGeneratingIdleReply] = useState(false);
   const [isIdleSpeechBubbleDismissed, setIsIdleSpeechBubbleDismissed] = useState(false);
   const [isStoryHistoryOpen, setIsStoryHistoryOpen] = useState(false);
   const [conversationReplyMessageId, setConversationReplyMessageId] = useState<number | null>(null);
   const [feedReplyMessageId, setFeedReplyMessageId] = useState<number | null>(null);
-  const [feedError, setFeedError] = useState<string | null>(null);
+  const [feedError, setFeedError] = useState<PresentedError | null>(null);
   const [feedSuccessId, setFeedSuccessId] = useState(0);
   const [isTapReactionVisible, setIsTapReactionVisible] = useState(false);
   const [loadedTapReactionSrc, setLoadedTapReactionSrc] = useState<string | null>(null);
@@ -876,9 +877,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         return;
       }
       setFeedError(
-        caught instanceof ApiError
-          ? caught.message
-          : "Не удалось получить ответ персонажа.",
+        presentError(caught, "Питомец поел, но не смог ответить. Попробуйте ещё раз."),
       );
       hapticNotification("error");
     } finally {
@@ -1030,7 +1029,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     } catch (caught) {
       await minimumThinkingTime;
       setChatError(
-        caught instanceof ApiError ? caught.message : "Не удалось отправить сообщение.",
+        presentError(caught, "Не получилось отправить сообщение. Попробуйте ещё раз."),
       );
       hapticNotification("error");
     } finally {
@@ -1211,7 +1210,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   if (localPet.status === "loading") {
     return (
       <main className="tma-screen grid place-items-center bg-[var(--paper)] px-6">
-        <Loader2 className="size-6 animate-spin text-[var(--ink-muted)]" aria-label="Loading" />
+        <div role="status" className="grid place-items-center gap-2 text-sm text-[var(--ink-muted)]">
+          <Loader2 className="size-6 animate-spin" aria-hidden="true" />
+          Загружаем питомца
+        </div>
       </main>
     );
   }
@@ -1223,7 +1225,16 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   if (assetLoadErrorForPetId === petId) {
     return (
       <main className="tma-screen grid place-items-center bg-[var(--paper)] px-6 text-center text-sm text-[var(--ink-muted)]">
-        Не удалось загрузить интерфейс. Откройте приложение ещё раз.
+        <div className="grid max-w-xs gap-4">
+          <p>Не получилось загрузить питомца</p>
+          <button
+            type="button"
+            className="rounded-lg bg-[var(--ink)] px-4 py-3 text-[var(--paper)]"
+            onClick={() => window.location.reload()}
+          >
+            Открыть снова
+          </button>
+        </div>
       </main>
     );
   }
@@ -1231,7 +1242,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   if (assetsReadyForPetId !== petId) {
     return (
       <main className="tma-screen grid place-items-center bg-[var(--paper)] px-6">
-        <Loader2 className="size-6 animate-spin text-[var(--ink-muted)]" aria-label="Loading" />
+        <div role="status" className="grid place-items-center gap-2 text-sm text-[var(--ink-muted)]">
+          <Loader2 className="size-6 animate-spin" aria-hidden="true" />
+          Загружаем питомца
+        </div>
       </main>
     );
   }
@@ -1469,6 +1483,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             className="conversation-input"
             placeholder="Расскажи о себе"
             aria-label="Сообщение персонажу"
+            aria-describedby={chatError ? "dashboard-chat-error" : undefined}
+            aria-invalid={Boolean(chatError)}
             autoComplete="off"
             autoCapitalize="sentences"
             enterKeyHint="send"
@@ -1476,9 +1492,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           />
 
           {chatError ? (
-            <p className="conversation-input-error" aria-live="polite">
-              {chatError}
-            </p>
+            <ErrorNotice
+              error={chatError}
+              id="dashboard-chat-error"
+              className="conversation-input-error"
+            />
           ) : null}
 
           <button
@@ -1511,9 +1529,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               <span key={feedSuccessId} className="feed-drop-pulse" aria-hidden="true" />
             ) : null}
             {feedError ? (
-              <p className="feed-mode-error" role="alert">
-                {feedError}
-              </p>
+              <ErrorNotice error={feedError} className="feed-mode-error" />
             ) : null}
             <div className="feed-food-shelf" aria-label="Еда">
               {feedFoodAssets.map((food) => (

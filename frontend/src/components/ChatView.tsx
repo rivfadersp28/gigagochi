@@ -6,9 +6,9 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  ApiError,
   generateLocalProactiveMessage,
 } from "@/lib/api";
+import { presentError, type PresentedError } from "@/lib/errorPresentation";
 import {
   createLocalId,
   readLocalChatHistory,
@@ -35,6 +35,7 @@ import type { LocalChatMessage } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 
 import { DebugPanel } from "./DebugPanel";
+import { ErrorNotice } from "./ErrorNotice";
 
 type ChatViewProps = {
   petId: string;
@@ -45,7 +46,7 @@ export function ChatView({ petId }: ChatViewProps) {
   const localPet = useLocalPetState();
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PresentedError | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -171,11 +172,7 @@ export function ChatView({ petId }: ChatViewProps) {
         localPet.updateName(response.petPatch.name);
       }
     } catch (caught) {
-      if (caught instanceof ApiError) {
-        setError(caught.message);
-      } else {
-        setError("Не удалось отправить сообщение.");
-      }
+      setError(presentError(caught, "Не получилось отправить сообщение. Попробуйте ещё раз."));
       hapticNotification("error");
     } finally {
       setIsSending(false);
@@ -185,7 +182,10 @@ export function ChatView({ petId }: ChatViewProps) {
   if (localPet.status === "loading") {
     return (
       <main className="tma-screen grid place-items-center bg-[var(--paper)] px-6">
-        <Loader2 className="size-5 animate-spin text-[var(--ink-muted)]" aria-label="Loading" />
+        <div role="status" className="grid place-items-center gap-2 text-sm text-[var(--ink-muted)]">
+          <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+          Загружаем чат
+        </div>
       </main>
     );
   }
@@ -196,7 +196,7 @@ export function ChatView({ petId }: ChatViewProps) {
         <header className="flex items-center justify-between border-b border-[var(--line-soft)] pb-5">
           <div>
             <p className="text-sm font-medium text-[var(--ink-muted)]">AI Tamagotchi</p>
-            <h1 className="mt-1 text-2xl font-semibold text-[var(--ink)]">Chat</h1>
+            <h1 className="mt-1 text-balance text-2xl font-semibold text-[var(--ink)]">Чат</h1>
           </div>
           <div className="flex items-center gap-2">
             {pet && canShowDebugMenu ? (
@@ -216,7 +216,7 @@ export function ChatView({ petId }: ChatViewProps) {
               className="inline-flex h-10 items-center gap-2 rounded-[8px] border border-[var(--line)] px-3 text-sm font-medium text-[var(--ink)] transition-colors hover:bg-[var(--surface)]"
             >
               <ArrowLeft className="size-4" aria-hidden="true" />
-              Back
+              Назад
             </Link>
           </div>
         </header>
@@ -224,7 +224,7 @@ export function ChatView({ petId }: ChatViewProps) {
         <section className="min-h-0 overflow-y-auto rounded-[8px] border border-[var(--line)] bg-[var(--surface-raised)] p-4">
           {messages.length === 0 ? (
             <div className="grid h-full place-items-center text-sm text-[var(--ink-muted)]">
-              No messages
+              Напишите питомцу
             </div>
           ) : (
             <div className="grid gap-3">
@@ -243,7 +243,7 @@ export function ChatView({ petId }: ChatViewProps) {
               {isSending ? (
                 <div className="mr-auto inline-flex items-center gap-2 rounded-[8px] border border-[var(--line-soft)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--ink-muted)]">
                   <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                  Thinking
+                  Питомец думает
                 </div>
               ) : null}
               <div ref={bottomRef} />
@@ -253,9 +253,11 @@ export function ChatView({ petId }: ChatViewProps) {
 
         <form onSubmit={handleSubmit} className="grid gap-2">
           {error ? (
-            <div className="rounded-[8px] border border-[var(--danger-line)] bg-[var(--danger-bg)] px-3 py-2 text-sm text-[var(--danger)]">
-              {error}
-            </div>
+            <ErrorNotice
+              error={error}
+              id="chat-error"
+              className="rounded-[8px] border border-[var(--danger-line)] bg-[var(--danger-bg)] px-3 py-2 text-sm text-[var(--danger)]"
+            />
           ) : null}
           <div className="flex gap-3">
             <input
@@ -263,7 +265,10 @@ export function ChatView({ petId }: ChatViewProps) {
               onChange={(event) => setInput(event.target.value)}
               maxLength={1000}
               className="h-11 min-w-0 flex-1 rounded-[8px] border border-[var(--line)] bg-[var(--control)] px-4 text-sm text-[var(--ink)] outline-none placeholder:text-[var(--ink-faint)] focus:border-[var(--leaf)] focus:ring-2 focus:ring-[var(--leaf-soft)]"
-              placeholder="Message"
+              placeholder="Сообщение"
+              aria-label="Сообщение питомцу"
+              aria-describedby={error ? "chat-error" : undefined}
+              aria-invalid={Boolean(error)}
               disabled={isSending}
             />
             <button
@@ -276,7 +281,7 @@ export function ChatView({ petId }: ChatViewProps) {
               ) : (
                 <Send className="size-4" aria-hidden="true" />
               )}
-              Send
+              Отправить
             </button>
           </div>
         </form>

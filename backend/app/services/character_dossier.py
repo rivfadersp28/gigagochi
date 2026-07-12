@@ -171,9 +171,7 @@ def story_character_data(pet: Any) -> dict[str, Any]:
     voice = _record(data.get("voice"))
     durable = data.get("durableFacts") if isinstance(data.get("durableFacts"), list) else []
     relevant_facts = [
-        item
-        for item in durable
-        if isinstance(item, dict) and item.get("sphere") == "appearance"
+        item for item in durable if isinstance(item, dict) and item.get("sphere") == "appearance"
     ][-4:]
     result = {
         "identity": {
@@ -185,8 +183,7 @@ def story_character_data(pet: Any) -> dict[str, Any]:
             "rhythm": voice.get("rhythm"),
         },
         "durableConstraints": [
-            {"sphere": item.get("sphere"), "text": item.get("text")}
-            for item in relevant_facts
+            {"sphere": item.get("sphere"), "text": item.get("text")} for item in relevant_facts
         ],
     }
 

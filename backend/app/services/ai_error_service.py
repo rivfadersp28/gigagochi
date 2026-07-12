@@ -20,16 +20,18 @@ logger = logging.getLogger(__name__)
 
 def generation_error_message(code: str) -> str:
     if code == "OPENAI_TIMEOUT":
-        return "Генерация заняла больше времени, чем ожидалось. Попробуйте еще раз."
+        return "Создание питомца заняло больше времени, чем ожидалось. Попробуйте ещё раз."
     if code == "OPENAI_RATE_LIMIT":
-        return "AI-провайдер временно ограничил генерацию. Попробуйте позже."
-    if code in {"OPENAI_AUTH_FAILED", "OPENAI_PERMISSION_DENIED"}:
-        return "API key AI-провайдера не принят сервером. Проверьте настройки backend."
-    if code == "MISSING_OPENAI_API_KEY":
-        return "На сервере не настроен API key AI-провайдера."
-    if code == "IMAGE_POSTPROCESS_FAILED":
-        return "Картинка сгенерировалась, но backend не смог подготовить ее для питомца."
-    return "Не удалось создать питомца. Попробуйте еще раз."
+        return "Создание питомцев временно ограничено. Попробуйте позже."
+    if code in {
+        "OPENAI_AUTH_FAILED",
+        "OPENAI_PERMISSION_DENIED",
+        "MISSING_OPENAI_API_KEY",
+    }:
+        return "Сервис временно недоступен. Попробуйте позже."
+    if code in {"IMAGE_POSTPROCESS_FAILED", "IMAGE_SAVE_FAILED"}:
+        return "Не получилось подготовить питомца. Попробуйте ещё раз."
+    return "Не получилось создать питомца. Попробуйте ещё раз."
 
 
 def chat_error_code(exc: Exception) -> str:
@@ -41,42 +43,36 @@ def chat_error_code(exc: Exception) -> str:
 
 def chat_error_message(code: str) -> str:
     if code == "OPENAI_TIMEOUT":
-        return "Ответ занял больше времени, чем ожидалось. Попробуйте еще раз."
+        return "Ответ занял больше времени, чем ожидалось. Отправьте сообщение ещё раз."
     if code == "OPENAI_RATE_LIMIT":
-        return "AI-провайдер временно ограничил чат. Попробуйте позже."
-    if code in {"OPENAI_AUTH_FAILED", "OPENAI_PERMISSION_DENIED"}:
-        return "API key AI-провайдера не принят сервером. Проверьте настройки backend."
-    if code == "MISSING_OPENAI_API_KEY":
-        return "На сервере не настроен API key AI-провайдера."
-    if code == "OPENAI_BAD_REQUEST":
-        return "AI-провайдер отклонил параметры chat-запроса. Проверьте настройки backend."
-    if code.startswith("OPENAI_STATUS_"):
-        return "AI-провайдер вернул ошибку при ответе питомца. Попробуйте позже."
-    if code == "OPENAI_CONNECTION_FAILED":
-        return "Backend не смог подключиться к AI-провайдеру. Попробуйте позже."
-    return "Не удалось получить ответ питомца. Попробуйте еще раз."
+        return "Ответы временно ограничены. Попробуйте позже."
+    if code in {
+        "OPENAI_AUTH_FAILED",
+        "OPENAI_PERMISSION_DENIED",
+        "MISSING_OPENAI_API_KEY",
+        "OPENAI_BAD_REQUEST",
+        "OPENAI_CONNECTION_FAILED",
+    } or code.startswith("OPENAI_STATUS_"):
+        return "Сервис временно недоступен. Попробуйте позже."
+    return "Не получилось получить ответ. Отправьте сообщение ещё раз."
 
 
 def travel_error_message(code: str) -> str:
     if code == "OPENAI_TIMEOUT":
-        return "Путешествие заняло больше времени, чем ожидалось. Попробуйте еще раз."
+        return "Путешествие заняло больше времени, чем ожидалось. Попробуйте ещё раз."
     if code == "OPENAI_RATE_LIMIT":
-        return "AI-провайдер временно ограничил генерацию путешествий. Попробуйте позже."
-    if code in {"OPENAI_AUTH_FAILED", "OPENAI_PERMISSION_DENIED"}:
-        return "API key AI-провайдера не принят сервером. Проверьте настройки backend."
-    if code == "MISSING_OPENAI_API_KEY":
-        return "На сервере не настроен API key AI-провайдера."
-    if code == "OPENAI_BAD_REQUEST":
-        return "AI-провайдер отклонил параметры travel-запроса. Проверьте настройки backend."
-    if code.startswith("OPENAI_STATUS_"):
-        return "AI-провайдер вернул ошибку при генерации путешествия. Попробуйте позже."
-    if code == "OPENAI_CONNECTION_FAILED":
-        return "Backend не смог подключиться к AI-провайдеру. Попробуйте позже."
-    if code == "IMAGE_SAVE_FAILED":
-        return "Картинка путешествия сгенерировалась, но backend не смог ее сохранить."
-    if code == "IMAGE_PROMPT_REJECTED":
-        return "AI-провайдер отклонил описание картинки путешествия. Попробуйте еще раз."
-    return "Не удалось создать путешествие. Попробуйте еще раз."
+        return "Путешествия временно ограничены. Попробуйте позже."
+    if code in {
+        "OPENAI_AUTH_FAILED",
+        "OPENAI_PERMISSION_DENIED",
+        "MISSING_OPENAI_API_KEY",
+        "OPENAI_BAD_REQUEST",
+        "OPENAI_CONNECTION_FAILED",
+    } or code.startswith("OPENAI_STATUS_"):
+        return "Сервис временно недоступен. Попробуйте позже."
+    if code in {"IMAGE_SAVE_FAILED", "IMAGE_PROMPT_REJECTED"}:
+        return "Не получилось подготовить путешествие. Попробуйте ещё раз."
+    return "Не получилось создать путешествие. Попробуйте ещё раз."
 
 
 def _compact_error_text(value: str) -> str:
@@ -165,16 +161,32 @@ def error_detail(error: str, code: str, message: str, exc: Exception) -> dict[st
         "code": code,
         "error": error,
         "message": message,
+        "exceptionType": type(exc).__name__,
+        "exceptionMessage": _compact_error_text(str(exc)) if str(exc) else None,
         **provider_error_details(exc),
     }
 
 
-def public_error_detail(detail: dict[str, object]) -> dict[str, object]:
-    return {
-        key: detail[key]
-        for key in ("code", "error", "message", "requestId")
-        if detail.get(key) is not None
-    }
+def public_error_detail(
+    detail: dict[str, object],
+    *,
+    include_diagnostic: bool = False,
+) -> dict[str, object]:
+    result = {key: detail[key] for key in ("code", "message") if detail.get(key) is not None}
+    if include_diagnostic:
+        result["diagnostic"] = {
+            key: detail[key]
+            for key in (
+                "error",
+                "exceptionType",
+                "exceptionMessage",
+                "providerStatus",
+                "providerMessage",
+                "requestId",
+            )
+            if detail.get(key) is not None
+        }
+    return result
 
 
 def write_ai_failure_log_line(log_payload: dict[str, Any]) -> None:
@@ -222,10 +234,12 @@ def ai_failure_http_exception(
     code: str,
     message: str,
     exc: Exception,
+    *,
+    include_diagnostic: bool = False,
 ) -> HTTPException:
     detail = error_detail(error, code, message, exc)
     log_ai_request_failure(endpoint, detail, exc)
     return HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
-        detail=public_error_detail(detail),
+        detail=public_error_detail(detail, include_diagnostic=include_diagnostic),
     )

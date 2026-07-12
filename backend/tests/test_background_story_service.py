@@ -28,8 +28,7 @@ def test_story_direction_uses_all_modes_before_repeating() -> None:
             rng=rng,
         )
         assert direction["plotMode"] not in {
-            item["plotMode"]
-            for item in history[-background_story_service.STORY_MODE_COOLDOWN :]
+            item["plotMode"] for item in history[-background_story_service.STORY_MODE_COOLDOWN :]
         }
         history.append(direction)
 
@@ -372,10 +371,7 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
         {
             "type": "image_url",
             "image_url": {
-                "url": (
-                    "https://example.com/static/generated/asset-1/"
-                    "teen-idle-character.png?v=7"
-                )
+                "url": ("https://example.com/static/generated/asset-1/teen-idle-character.png?v=7")
             },
         }
     ]
@@ -647,9 +643,7 @@ def test_generate_background_story_stores_recent_event_without_lite_patch(monkey
     assert result.opposition_class
     assert result.resolution_mode
     assert result.valence_target in background_story_service.STORY_VALENCE_WEIGHTS
-    assert any(
-        item.get("event") == "background_story_direction" for item in result.prompt_debug
-    )
+    assert any(item.get("event") == "background_story_direction" for item in result.prompt_debug)
     assert result.stat_impact == {
         "stat": "energy",
         "amount": -25,
@@ -739,8 +733,7 @@ def test_background_story_retries_once_after_incoherent_verdict(monkeypatch) -> 
             "patternClass": "micro_clue_unlock",
             "issues": ["Не объяснено, почему слова открывают переправу."],
             "retryInstruction": (
-                "Покажи наблюдаемое препятствие и действие, "
-                "которое физически его устраняет."
+                "Покажи наблюдаемое препятствие и действие, которое физически его устраняет."
             ),
         },
         ensure_ascii=False,

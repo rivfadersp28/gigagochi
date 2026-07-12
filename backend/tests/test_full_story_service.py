@@ -176,9 +176,7 @@ def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
     assert len(result.parts) == 4
     assert result.parts[0].story_text.startswith("Я увидела")
     assert result.parts[0].stat_impacts[0]["amount"] == -4
-    assert [
-        call["response_format"]["json_schema"]["name"] for call in completions.calls
-    ] == [
+    assert [call["response_format"]["json_schema"]["name"] for call in completions.calls] == [
         "full_story_plan",
         "full_story_plan_quality_check",
         "full_story_render",
@@ -194,21 +192,11 @@ def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
     assert "Каждое поле event — одна короткая" in plan_prompt
     assert "resolutionMode=" not in plan_prompt
     assert "oppositionClass=" not in plan_prompt
-    assert "обычный современный русский язык" in completions.calls[0]["messages"][0][
-        "content"
-    ]
-    assert "каждое change является проблемой" in completions.calls[0]["messages"][0][
-        "content"
-    ]
-    assert "вместо универсальной схемы" in completions.calls[0]["messages"][
-        0
-    ]["content"]
-    assert "случайного повтора соседних слов" in completions.calls[2]["messages"][0][
-        "content"
-    ]
-    assert "1–2 законченных предложения" in completions.calls[2]["messages"][
-        0
-    ]["content"]
+    assert "обычный современный русский язык" in completions.calls[0]["messages"][0]["content"]
+    assert "каждое change является проблемой" in completions.calls[0]["messages"][0]["content"]
+    assert "вместо универсальной схемы" in completions.calls[0]["messages"][0]["content"]
+    assert "случайного повтора соседних слов" in completions.calls[2]["messages"][0]["content"]
+    assert "1–2 законченных предложения" in completions.calls[2]["messages"][0]["content"]
     render_schema = completions.calls[2]["response_format"]["json_schema"]["schema"]
     paragraph_schema = render_schema["properties"]["parts"]["items"]["properties"][
         "storyParagraphs"
@@ -218,9 +206,7 @@ def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
     assert completions.calls[0]["timeout"] == 240.0
     assert '"eventSvo"' not in render_prompt
     assert '"oppositionGoal"' not in render_prompt
-    assert len(
-        [item for item in result.prompt_debug if item.get("event") == "ai_response"]
-    ) == 4
+    assert len([item for item in result.prompt_debug if item.get("event") == "ai_response"]) == 4
     assert "первом упоминании" in completions.calls[2]["messages"][0]["content"]
     assert "без скрытого плана" in completions.calls[2]["messages"][0]["content"]
     assert "от первого лица" in completions.calls[2]["messages"][0]["content"]
@@ -302,16 +288,10 @@ def test_full_story_retries_rejected_plan_before_rendering(monkeypatch) -> None:
     )
 
     assert result.overall_title == "Четыре события"
-    assert completions.calls[2]["response_format"]["json_schema"]["name"] == (
-        "full_story_plan"
-    )
+    assert completions.calls[2]["response_format"]["json_schema"]["name"] == ("full_story_plan")
     assert "PLAN_RETRY" in completions.calls[2]["messages"][1]["content"]
-    assert "Сохрани его понятную причинную основу" in completions.calls[2]["messages"][1][
-        "content"
-    ]
-    assert "Создай полностью новый план" not in completions.calls[2]["messages"][1][
-        "content"
-    ]
+    assert "Сохрани его понятную причинную основу" in completions.calls[2]["messages"][1]["content"]
+    assert "Создай полностью новый план" not in completions.calls[2]["messages"][1]["content"]
 
 
 def test_full_story_retries_plan_with_ungrounded_referents(monkeypatch) -> None:
@@ -337,9 +317,7 @@ def test_full_story_retries_plan_with_ungrounded_referents(monkeypatch) -> None:
     )
 
     assert result.overall_title == "Четыре события"
-    assert completions.calls[2]["response_format"]["json_schema"]["name"] == (
-        "full_story_plan"
-    )
+    assert completions.calls[2]["response_format"]["json_schema"]["name"] == ("full_story_plan")
 
 
 def test_full_story_allows_three_plan_attempts(monkeypatch) -> None:
@@ -362,9 +340,7 @@ def test_full_story_allows_three_plan_attempts(monkeypatch) -> None:
     )
 
     assert result.overall_title == "Четыре события"
-    assert completions.calls[4]["response_format"]["json_schema"]["name"] == (
-        "full_story_plan"
-    )
+    assert completions.calls[4]["response_format"]["json_schema"]["name"] == ("full_story_plan")
     assert "PREVIOUS_PLAN" in completions.calls[4]["messages"][1]["content"]
 
 
@@ -386,9 +362,7 @@ def test_full_story_retries_prose_without_changing_plan(monkeypatch) -> None:
     )
 
     assert result.parts[0].story_text.startswith("Я увидела")
-    assert completions.calls[4]["response_format"]["json_schema"]["name"] == (
-        "full_story_render"
-    )
+    assert completions.calls[4]["response_format"]["json_schema"]["name"] == ("full_story_render")
     assert "RENDER_RETRY" in completions.calls[4]["messages"][1]["content"]
     assert '"eventSvo"' not in completions.calls[4]["messages"][1]["content"]
 
@@ -413,9 +387,7 @@ def test_full_story_preflight_retries_before_model_review(monkeypatch) -> None:
     )
 
     assert result.parts[0].story_text.startswith("Я увидела")
-    assert [
-        call["response_format"]["json_schema"]["name"] for call in completions.calls
-    ] == [
+    assert [call["response_format"]["json_schema"]["name"] for call in completions.calls] == [
         "full_story_plan",
         "full_story_plan_quality_check",
         "full_story_render",
@@ -446,9 +418,7 @@ def test_full_story_retries_prose_that_needs_hidden_context(monkeypatch) -> None
     )
 
     assert result.parts[0].story_text.startswith("Я пошла к мосту")
-    assert completions.calls[4]["response_format"]["json_schema"]["name"] == (
-        "full_story_render"
-    )
+    assert completions.calls[4]["response_format"]["json_schema"]["name"] == ("full_story_render")
 
 
 def test_full_story_limits_and_normalizes_stat_impacts() -> None:
@@ -457,9 +427,7 @@ def test_full_story_limits_and_normalizes_stat_impacts() -> None:
         {"stat": "energy", "amount": -20, "reason": "Тяжёлый вред."},
         {"stat": "happiness", "amount": 5, "reason": "Лишнее изменение."},
     ]
-    plan["parts"][1]["statImpacts"] = [
-        {"stat": "hunger", "amount": -3, "reason": "Пропущена еда."}
-    ]
+    plan["parts"][1]["statImpacts"] = [{"stat": "hunger", "amount": -3, "reason": "Пропущена еда."}]
     plan["parts"][2]["statImpacts"] = [
         {"stat": "happiness", "amount": -4, "reason": "Сильная потеря."}
     ]
@@ -472,9 +440,9 @@ def test_full_story_limits_and_normalizes_stat_impacts() -> None:
     assert parts[0].stat_impacts[0]["amount"] == -15
     assert sum(len(part.stat_impacts) for part in parts) == 3
     assert parts[3].stat_impacts == ()
-    stat_schema = full_story_service.FULL_STORY_PLAN_SCHEMA["properties"]["parts"][
-        "items"
-    ]["properties"]["statImpacts"]
+    stat_schema = full_story_service.FULL_STORY_PLAN_SCHEMA["properties"]["parts"]["items"][
+        "properties"
+    ]["statImpacts"]
     assert stat_schema["minItems"] == 0
     assert stat_schema["maxItems"] == 1
 

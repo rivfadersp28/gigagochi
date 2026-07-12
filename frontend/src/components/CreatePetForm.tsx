@@ -5,26 +5,56 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
-import { ApiError, generatePetAssets } from "@/lib/api";
+import { ApiError, generatePetAssets, resumePetGeneration } from "@/lib/api";
+import { presentError, type PresentedError } from "@/lib/errorPresentation";
 import { canUseDebugMenu, hapticNotification } from "@/lib/telegram";
 import { TEST_PET_ASSET_SET, TEST_PET_DESCRIPTION } from "@/lib/testPetFixture";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 import { cn } from "@/lib/utils";
 
 import { PetCreatingStage } from "./PetCreatingStage";
+import { ErrorNotice } from "./ErrorNotice";
 
 const MAX_PROMPT_LENGTH = 300;
 const PROMPT_PLACEHOLDER = "Грозовой дракон с добрым характером";
+const PENDING_GENERATION_KEY = "gigagochi.pending-generation.v1";
+
+type PendingGeneration = { jobId: string; description: string };
+
+function readPendingGeneration(): PendingGeneration | null {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(PENDING_GENERATION_KEY) ?? "null");
+    return value
+      && typeof value.jobId === "string"
+      && typeof value.description === "string"
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearPendingGeneration() {
+  try {
+    window.localStorage.removeItem(PENDING_GENERATION_KEY);
+  } catch {
+    // WebView storage can be unavailable in restricted browser modes.
+  }
+}
 
 export function CreatePetForm() {
   const router = useRouter();
   const localPet = useLocalPetState();
+  const createLocalPet = localPet.create;
+  const currentPet = localPet.pet;
+  const localPetStatus = localPet.status;
   const [description, setDescription] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PresentedError | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
   const isSubmittingRef = useRef(false);
+  const resumeAttemptedRef = useRef(false);
   const hasDescription = description.trim().length > 0;
   const isKeyboardRaised = keyboardInset > 120;
   const canShowDebugMenu = canUseDebugMenu();
@@ -35,6 +65,54 @@ export function CreatePetForm() {
       return;
     }
   }, [localPet.pet, localPet.status, router]);
+
+  useEffect(() => {
+    if (resumeAttemptedRef.current || localPetStatus === "loading" || currentPet) {
+      return;
+    }
+    resumeAttemptedRef.current = true;
+    const pending = readPendingGeneration();
+    if (!pending) {
+      return;
+    }
+    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      if (cancelled) {
+        return;
+      }
+      isSubmittingRef.current = true;
+      setIsSubmitting(true);
+      void resumePetGeneration(pending.jobId)
+        .then((assetSet) => {
+          if (cancelled) {
+            return;
+          }
+          clearPendingGeneration();
+          const pet = createLocalPet(pending.description, assetSet);
+          router.push(`/pet/${pet.petId}`);
+        })
+        .catch((caught) => {
+          if (cancelled) {
+            return;
+          }
+          if (caught instanceof ApiError && caught.code === "GENERATION_JOB_NOT_FOUND") {
+            clearPendingGeneration();
+          }
+          setError(
+            presentError(
+              caught,
+              "Не получилось продолжить создание питомца. Попробуйте ещё раз.",
+            ),
+          );
+          isSubmittingRef.current = false;
+          setIsSubmitting(false);
+        });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [createLocalPet, currentPet, localPetStatus, router]);
 
   useEffect(() => {
     let animationFrameId: number | null = null;
@@ -94,7 +172,7 @@ export function CreatePetForm() {
     const trimmedDescription = description.trim();
 
     if (!trimmedDescription) {
-      setError("Опишите персонажа перед генерацией.");
+      setError({ message: "Опишите персонажа" });
       return;
     }
 
@@ -103,18 +181,24 @@ export function CreatePetForm() {
     setIsSubmitting(true);
 
     try {
-      const assetSet = await generatePetAssets(trimmedDescription);
+      const assetSet = await generatePetAssets(trimmedDescription, {
+        onJobQueued: (jobId) => {
+          try {
+            window.localStorage.setItem(
+              PENDING_GENERATION_KEY,
+              JSON.stringify({ jobId, description: trimmedDescription }),
+            );
+          } catch {
+            // Generation can continue even when WebView storage is unavailable.
+          }
+        },
+      });
+      clearPendingGeneration();
       const pet = localPet.create(trimmedDescription, assetSet);
       hapticNotification("success");
       router.push(`/pet/${pet.petId}`);
     } catch (caught) {
-      if (caught instanceof ApiError) {
-        setError(caught.message);
-      } else if (caught instanceof Error) {
-        setError(`Не удалось создать питомца.\n${caught.name}: ${caught.message}`);
-      } else {
-        setError("Не удалось создать питомца. Неизвестная ошибка.");
-      }
+      setError(presentError(caught, "Не получилось создать питомца. Попробуйте ещё раз."));
       hapticNotification("error");
       isSubmittingRef.current = false;
       setIsSubmitting(false);
@@ -161,19 +245,18 @@ export function CreatePetForm() {
             spellCheck={false}
             disabled={isSubmitting}
             aria-describedby={error ? "create-pet-error" : undefined}
+            aria-invalid={Boolean(error)}
             placeholder={PROMPT_PLACEHOLDER}
             className={`create-pet-prompt ${hasDescription ? "create-pet-prompt--filled" : ""}`}
           />
         </div>
 
         {error ? (
-          <p
+          <ErrorNotice
+            error={error}
             id="create-pet-error"
             className="create-pet-error"
-            aria-live="polite"
-          >
-            {error}
-          </p>
+          />
         ) : null}
 
         <div className="create-pet-actions mt-auto flex min-h-[138px] items-start pb-[calc(var(--tma-safe-bottom)+52px)] pt-[48px]">

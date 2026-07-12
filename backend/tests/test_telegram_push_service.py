@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -84,9 +85,7 @@ def test_snapshot_preserves_rich_character_bible_when_legacy_client_sends_only_e
             "pet": _snapshot_payload().pet.model_copy(
                 update={
                     "characterBible": {
-                        "extensions": {
-                            "lite_overlay": {"facts": [{"text": "Громм починил мост."}]}
-                        }
+                        "extensions": {"lite_overlay": {"facts": [{"text": "Громм починил мост."}]}}
                     }
                 }
             )
@@ -295,10 +294,13 @@ def test_record_dies_only_after_more_than_24_hours_at_zero() -> None:
 
     threshold = zero_since + timedelta(hours=24)
     assert telegram_push_service._record_death_at(record, threshold) is None
-    assert telegram_push_service._record_death_at(
-        record,
-        threshold + timedelta(microseconds=1),
-    ) == threshold
+    assert (
+        telegram_push_service._record_death_at(
+            record,
+            threshold + timedelta(microseconds=1),
+        )
+        == threshold
+    )
 
 
 def test_background_story_is_saved_and_preserved_on_next_snapshot(
@@ -830,9 +832,7 @@ def test_automatic_full_story_does_not_send_text_when_image_fails(
                 "title": f"Часть {number}",
                 "storyText": "Продолжение общей истории.",
                 "valence": "positive",
-                "statImpacts": [
-                    {"stat": "happiness", "amount": 2, "reason": "Хороший поворот."}
-                ],
+                "statImpacts": [{"stat": "happiness", "amount": 2, "reason": "Хороший поворот."}],
             }
             for number in range(1, 5)
         ],
@@ -862,9 +862,7 @@ def test_automatic_full_story_does_not_send_text_when_image_fails(
     assert stored["lastStoryErrorCode"] == "DAILY_FULL_STORY_IMAGE_FAILED"
     assert "statsAppliedAt" not in stored["dailyFullStory"]["parts"][0]
     assert "deliveredAt" not in stored["dailyFullStory"]["parts"][0]
-    assert telegram_push_service._due_story_records(
-        datetime(2026, 7, 12, 10, 0, tzinfo=UTC)
-    ) == []
+    assert telegram_push_service._due_story_records(datetime(2026, 7, 12, 10, 0, tzinfo=UTC)) == []
 
 
 def test_recent_story_events_fallback_uses_last_story_for_anti_repeat() -> None:
@@ -1189,3 +1187,31 @@ def test_story_novelty_preserves_structural_signature() -> None:
     assert history[0]["oppositionClass"] == "supernatural"
     assert history[0]["resolutionMode"] == "investigation"
     assert history[0]["resolutionFamily"] == "evidence_based_investigation"
+
+
+def test_scheduler_loop_survives_iteration_failure() -> None:
+    calls = 0
+    state = telegram_push_service._scheduler_runtime["dailyPush"]
+    state.update(running=False, consecutiveFailures=0, lastError=None)
+
+    def operation() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("temporary store failure")
+
+    async def scenario() -> None:
+        task = asyncio.create_task(
+            telegram_push_service._scheduler_loop("dailyPush", operation, 0.01)
+        )
+        while calls < 2:
+            await asyncio.sleep(0.01)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+    assert calls >= 2
+    assert state["running"] is False
+    assert state["consecutiveFailures"] == 0
+    assert state["lastError"] is None

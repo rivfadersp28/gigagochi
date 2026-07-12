@@ -269,6 +269,15 @@
   `./.next/dev/types/routes.d.ts` to `./.next/types/routes.d.ts`. Treat it as a
   generated build side effect and revert it unless the Next config/source setup
   intentionally changes.
+- Next 16 Turbopack production builds spawn an internal PostCSS process that
+  binds a loopback port. In a restricted sandbox this can appear to hang and
+  eventually panic with `binding to a port: Operation not permitted`; rerun the
+  build with the required sandbox permission instead of treating it as an app
+  deadlock.
+- Do not put provider messages, exception strings, backend configuration hints
+  or Pydantic field paths back into public error `message`. Trusted details
+  belong only in the optional server-authenticated `diagnostic` object and the
+  Sergey-only expandable UI block.
 - `npm audit` currently reports the moderate PostCSS advisory
   `GHSA-qx2v-qp2m-jg93` through Next's bundled PostCSS. npm proposes an
   incompatible downgrade to Next 9.3.3, so do not run `npm audit fix --force`;

@@ -107,7 +107,7 @@ describe("API response contracts", () => {
     ).rejects.toBe(abortError);
   });
 
-  it("shows the field path for FastAPI validation errors", async () => {
+  it("hides FastAPI field paths from the user", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -122,7 +122,7 @@ describe("API response contracts", () => {
     );
 
     await expect(request("/api/chat", {}, parseLocalChatResponse)).rejects.toMatchObject({
-      message: "Некорректное поле history.0.text: значение не должно быть пустым.",
+      message: "Не получилось обработать данные. Обновите приложение и попробуйте снова.",
       status: 422,
     });
   });

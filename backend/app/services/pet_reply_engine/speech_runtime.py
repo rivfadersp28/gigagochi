@@ -227,9 +227,7 @@ def validate_speech_runtime_config(config: Any) -> None:
         "{day_context}",
     ):
         if placeholder not in full_story_template:
-            raise ValueError(
-                f"backgroundStory.fullStoryUserTemplate must include {placeholder}"
-            )
+            raise ValueError(f"backgroundStory.fullStoryUserTemplate must include {placeholder}")
     plan_quality_template = _required_string(
         config,
         ("backgroundStory", "fullStoryPlanQualityUserTemplate"),
@@ -237,8 +235,7 @@ def validate_speech_runtime_config(config: Any) -> None:
     for placeholder in ("{story_direction}", "{story_plan}"):
         if placeholder not in plan_quality_template:
             raise ValueError(
-                "backgroundStory.fullStoryPlanQualityUserTemplate must include "
-                f"{placeholder}"
+                f"backgroundStory.fullStoryPlanQualityUserTemplate must include {placeholder}"
             )
     render_template = _required_string(
         config,

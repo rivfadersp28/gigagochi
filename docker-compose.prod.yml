@@ -17,6 +17,11 @@ services:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   backend:
     image: gigagochi-backend:latest
@@ -34,6 +39,13 @@ services:
       BACKGROUND_STORY_HOURS: "[9,13,17,21]"
       BACKGROUND_STORY_WINDOW_MINUTES: "120"
       BACKEND_INTERNAL_URL: http://backend:8000
+      ALLOW_DEV_TMA_AUTH: "false"
+      ENABLE_IN_MEMORY_RATE_LIMIT: "true"
+      GENERATION_RATE_LIMIT_PER_DAY: "3"
+      CHAT_RATE_LIMIT_PER_HOUR: "120"
+      LITE_FACTS_RATE_LIMIT_PER_HOUR: "120"
+      MEMORY_RATE_LIMIT_PER_HOUR: "120"
+      DIAGNOSTIC_TELEGRAM_IDS: "[62943754]"
     ports:
       - "127.0.0.1:18080:8000"
     expose:
@@ -68,6 +80,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+    logging: *default-logging
 
   bot:
     image: gigagochi-backend:latest
@@ -81,6 +94,18 @@ services:
     environment:
       BACKEND_INTERNAL_URL: http://backend:8000
     command: ["python", "-m", "app.bot"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os,time; p='/tmp/gigagochi-bot-heartbeat'; raise SystemExit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<120 else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 50s
     volumes:
       - backend_logs:/app/logs
       - ./backend/data/speech_runtime.json:/app/data/speech_runtime.json:ro
@@ -93,6 +118,7 @@ services:
       - ./backend/data/age_speech_examples:/app/data/age_speech_examples:ro
       - ./backend/data/world_descriptions:/app/data/world_descriptions:ro
       - push_data:/app/data/push
+    logging: *default-logging
 
   frontend:
     image: gigagochi-frontend:latest
@@ -126,6 +152,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+    logging: *default-logging
 
 volumes:
   caddy_data:

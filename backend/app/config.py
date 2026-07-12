@@ -17,14 +17,15 @@ class Settings(BaseSettings):
     backend_internal_url: str | None = None
     allow_dev_tma_auth: bool = False
     enable_in_memory_rate_limit: bool = True
-    generation_rate_limit_per_day: int = 0
-    chat_rate_limit_per_hour: int = 0
-    lite_facts_rate_limit_per_hour: int = 0
-    memory_rate_limit_per_hour: int = 0
+    generation_rate_limit_per_day: int = 3
+    chat_rate_limit_per_hour: int = 120
+    lite_facts_rate_limit_per_hour: int = 120
+    memory_rate_limit_per_hour: int = 120
     bot_story_workers: int = Field(default=2, ge=1, le=4)
     generation_image_workers: int = Field(default=3, ge=1, le=8)
     generation_video_workers: int = Field(default=4, ge=1, le=8)
     derived_asset_pilot_telegram_ids: set[int] = Field(default_factory=lambda: {62943754})
+    diagnostic_telegram_ids: set[int] = Field(default_factory=lambda: {62943754})
     telegram_init_data_max_age_seconds: int = 60 * 60 * 24
     telegram_daily_push_enabled: bool = False
     telegram_daily_push_interval_seconds: int = 300

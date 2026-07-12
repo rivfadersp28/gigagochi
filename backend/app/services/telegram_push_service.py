@@ -563,7 +563,8 @@ def _compact_story_novelty_item(value: Any) -> dict[str, Any] | None:
         "createdAt": _compact_event_text(
             value.get("generatedAt") or value.get("createdAt"),
             limit=80,
-        ) or _iso(),
+        )
+        or _iso(),
     }
 
 
@@ -699,10 +700,13 @@ def _persist_background_story_image(
     generated_at: datetime,
 ) -> str:
     raw_pet_id = str(record.get("petId") or record.get("telegramId") or "story")
-    safe_pet_id = "".join(
-        character if character.isalnum() or character in {"-", "_"} else "-"
-        for character in raw_pet_id
-    ).strip("-")[:120] or "story"
+    safe_pet_id = (
+        "".join(
+            character if character.isalnum() or character in {"-", "_"} else "-"
+            for character in raw_pet_id
+        ).strip("-")[:120]
+        or "story"
+    )
     output_dir = generated_dir_for(safe_pet_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = f"background-story-{generated_at.strftime('%Y%m%dT%H%M%S%fZ')}.png"
@@ -911,8 +915,7 @@ def register_push_snapshot(
     now_iso = _iso(now)
     fallback_stat_tick = payload.lastStatsTickAt or payload.updatedAt or now_iso
     death_tracking_enabled = (
-        "zeroStatSinceAt" in payload.model_fields_set
-        or "diedAt" in payload.model_fields_set
+        "zeroStatSinceAt" in payload.model_fields_set or "diedAt" in payload.model_fields_set
     )
     incoming_record = {
         "telegramId": user.telegram_id,
@@ -1477,9 +1480,7 @@ def generate_story_for_telegram_user(
         "storyText": result.story_text,
         "generatedAt": now_iso,
         "createdAt": (
-            recent_story_event.get("createdAt")
-            if isinstance(recent_story_event, dict)
-            else now_iso
+            recent_story_event.get("createdAt") if isinstance(recent_story_event, dict) else now_iso
         ),
         "source": "background_story",
     }
@@ -1623,11 +1624,7 @@ def generate_story_for_telegram_user(
     )
     stored_recent_events = _record_recent_story_events(next_record)
     stored_recent_story_event = next(
-        (
-            item
-            for item in reversed(stored_recent_events)
-            if item.get("generatedAt") == now_iso
-        ),
+        (item for item in reversed(stored_recent_events) if item.get("generatedAt") == now_iso),
         history_event,
     )
     return {
@@ -1909,9 +1906,9 @@ def _apply_daily_full_story_part_stats(
             result["lastStatsTickAt"] = _legacy_stats_tick(ticks)
             result["lastStatTickAt"] = _stat_tick_iso_map(ticks)
         last_full_story = source.get("lastFullStory")
-        if isinstance(last_full_story, dict) and last_full_story.get(
+        if isinstance(last_full_story, dict) and last_full_story.get("generatedAt") == story.get(
             "generatedAt"
-        ) == story.get("generatedAt"):
+        ):
             result["lastFullStory"] = next_story
         return result
 
@@ -2230,17 +2227,48 @@ def send_due_background_stories() -> list[dict[str, Any]]:
 async def _daily_push_loop() -> None:
     settings = get_settings()
     interval = max(60, int(settings.telegram_daily_push_interval_seconds))
-    while True:
-        await asyncio.to_thread(send_due_pushes)
-        await asyncio.sleep(interval)
+    await _scheduler_loop("dailyPush", send_due_pushes, interval)
 
 
 async def _background_story_loop() -> None:
     settings = get_settings()
     interval = max(60, int(settings.background_story_interval_seconds))
-    while True:
-        await asyncio.to_thread(send_due_background_stories)
-        await asyncio.sleep(interval)
+    await _scheduler_loop("backgroundStory", send_due_background_stories, interval)
+
+
+_scheduler_runtime: dict[str, dict[str, Any]] = {
+    "dailyPush": {"running": False, "consecutiveFailures": 0, "lastError": None},
+    "backgroundStory": {"running": False, "consecutiveFailures": 0, "lastError": None},
+}
+
+
+async def _scheduler_loop(
+    name: str,
+    operation: Callable[[], Any],
+    interval: int,
+) -> None:
+    state = _scheduler_runtime[name]
+    state["running"] = True
+    try:
+        while True:
+            try:
+                await asyncio.to_thread(operation)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                state["consecutiveFailures"] = int(state["consecutiveFailures"]) + 1
+                state["lastError"] = type(exc).__name__
+                logger.exception("scheduler_iteration_failed scheduler=%s", name)
+            else:
+                state["consecutiveFailures"] = 0
+                state["lastError"] = None
+            await asyncio.sleep(interval)
+    finally:
+        state["running"] = False
+
+
+def scheduler_runtime_status() -> dict[str, dict[str, Any]]:
+    return {name: dict(state) for name, state in _scheduler_runtime.items()}
 
 
 def start_daily_push_scheduler() -> asyncio.Task[None] | None:

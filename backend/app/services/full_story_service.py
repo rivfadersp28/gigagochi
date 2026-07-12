@@ -342,9 +342,7 @@ def _normalize_payload(
     render_payload: dict[str, Any],
 ) -> tuple[str, dict[str, str], tuple[FullStoryPart, ...]]:
     overall_title = _text(plan_payload.get("overallTitle"), 120) or "Большое путешествие"
-    raw_plan = (
-        plan_payload.get("arcPlan") if isinstance(plan_payload.get("arcPlan"), dict) else {}
-    )
+    raw_plan = plan_payload.get("arcPlan") if isinstance(plan_payload.get("arcPlan"), dict) else {}
     arc_plan = {
         key: _text(raw_plan.get(key), limit)
         for key, limit in (("goal", 240), ("stakes", 240), ("escalation", 300), ("finale", 240))
@@ -455,11 +453,7 @@ def _quality_issues(parsed: dict[str, Any], *, limit: int = 8) -> list[str]:
 
 def _render_preflight_issues(rendered_story: dict[str, Any]) -> list[str]:
     """Reject structurally broken prose before paying for an LLM review."""
-    raw_parts = (
-        rendered_story.get("parts")
-        if isinstance(rendered_story.get("parts"), list)
-        else []
-    )
+    raw_parts = rendered_story.get("parts") if isinstance(rendered_story.get("parts"), list) else []
     if len(raw_parts) != PART_COUNT:
         return ["Нужно ровно четыре части."]
     issues: list[str] = []
@@ -523,13 +517,9 @@ def _check_full_story_plan(
         "timeout": timeout,
         **chat_reasoning_effort_kwargs("low"),
     }
-    prompt_debug.append(
-        log_chat_completion_prompt("full_story/plan_quality_check", request_kwargs)
-    )
+    prompt_debug.append(log_chat_completion_prompt("full_story/plan_quality_check", request_kwargs))
     completion = client.chat.completions.create(**request_kwargs)
-    prompt_debug.append(
-        log_chat_completion_response("full_story/plan_quality_check", completion)
-    )
+    prompt_debug.append(log_chat_completion_response("full_story/plan_quality_check", completion))
     parsed = _completion_payload(completion, error_code="FULL_STORY_PLAN_QUALITY_JSON_INVALID")
     issues = _quality_issues(parsed)
     retry_instruction = _text(parsed.get("retryInstruction"), 1000)
@@ -546,10 +536,13 @@ def _check_full_story_plan(
         "causal",
         "distinct",
     )
-    accepted = parsed.get("accepted") is True and len(raw_parts) == PART_COUNT and all(
-        isinstance(part, dict)
-        and all(part.get(flag) is True for flag in required_part_flags)
-        for part in raw_parts
+    accepted = (
+        parsed.get("accepted") is True
+        and len(raw_parts) == PART_COUNT
+        and all(
+            isinstance(part, dict) and all(part.get(flag) is True for flag in required_part_flags)
+            for part in raw_parts
+        )
     )
     prompt_debug.append(
         {
@@ -677,9 +670,7 @@ def generate_full_story(
     openai_client = client or get_openai_client()
     explicit_model = model
     model = (
-        explicit_model
-        or getattr(settings, "full_story_model", None)
-        or get_chat_model(settings)
+        explicit_model or getattr(settings, "full_story_model", None) or get_chat_model(settings)
     )
     review_model = (
         review_model
@@ -699,8 +690,12 @@ def generate_full_story(
         ensure_ascii=False,
         indent=2,
     )
-    story_direction = dict(story_direction) if story_direction else select_full_story_direction(
-        recent_full_stories, current_stats=pet.stats.model_dump(mode="json")
+    story_direction = (
+        dict(story_direction)
+        if story_direction
+        else select_full_story_direction(
+            recent_full_stories, current_stats=pet.stats.model_dump(mode="json")
+        )
     )
     plan_user_content = full_story_user_prompt(
         {
@@ -742,9 +737,7 @@ def generate_full_story(
         "timeout": timeout,
         **chat_reasoning_effort_kwargs(background_story_reasoning_effort()),
     }
-    prompt_debug = [
-        log_chat_completion_prompt("full_story/plan_generate", plan_request_kwargs)
-    ]
+    prompt_debug = [log_chat_completion_prompt("full_story/plan_generate", plan_request_kwargs)]
     completion = openai_client.chat.completions.create(**plan_request_kwargs)
     prompt_debug.append(log_chat_completion_response("full_story/plan_generate", completion))
     story_plan = _completion_payload(completion, error_code="FULL_STORY_PLAN_JSON_INVALID")
@@ -771,8 +764,7 @@ def generate_full_story(
             "один факт без перечисления пересказа всей части.\n"
             f"Замечания:\n{issue_lines or '- части недостаточно событийны'}\n"
             f"Указание:\n{plan_retry_instruction or 'В каждой части нужен отдельный поворот.'}\n"
-            "PREVIOUS_PLAN:\n"
-            + json.dumps(story_plan, ensure_ascii=False, indent=2, default=str)
+            "PREVIOUS_PLAN:\n" + json.dumps(story_plan, ensure_ascii=False, indent=2, default=str)
         )
         retry_plan_request = {
             **plan_request_kwargs,
@@ -836,9 +828,7 @@ def generate_full_story(
         "timeout": timeout,
         **chat_reasoning_effort_kwargs(background_story_reasoning_effort()),
     }
-    prompt_debug.append(
-        log_chat_completion_prompt("full_story/render", render_request_kwargs)
-    )
+    prompt_debug.append(log_chat_completion_prompt("full_story/render", render_request_kwargs))
     render_completion = openai_client.chat.completions.create(**render_request_kwargs)
     prompt_debug.append(log_chat_completion_response("full_story/render", render_completion))
     rendered_story = _completion_payload(
@@ -848,8 +838,10 @@ def generate_full_story(
     preflight_issues = _render_preflight_issues(rendered_story)
     combined_payload = _visible_story_payload(story_plan, rendered_story)
     if preflight_issues:
-        accepted, issues, retry_instruction = False, preflight_issues, (
-            "Исправь только перечисленные структурные нарушения прозы."
+        accepted, issues, retry_instruction = (
+            False,
+            preflight_issues,
+            ("Исправь только перечисленные структурные нарушения прозы."),
         )
         prompt_debug.append(
             {"event": "full_story_render_preflight", "accepted": False, "issues": issues}

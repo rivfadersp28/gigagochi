@@ -4,6 +4,7 @@ import logging
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -22,6 +23,13 @@ from app.services.telegram_client import (
 )
 
 logger = logging.getLogger(__name__)
+BOT_HEARTBEAT_PATH = Path("/tmp/gigagochi-bot-heartbeat")
+
+
+def _diagnostic_message(chat_id: int, public_message: str, diagnostic: str) -> str:
+    if chat_id not in getattr(get_settings(), "diagnostic_telegram_ids", {62943754}):
+        return public_message
+    return f"{public_message}\n\nТехнические детали: {diagnostic[:1200]}"
 
 
 def _message_command(text: str) -> str:
@@ -43,10 +51,28 @@ def _send_story_response(
     try:
         result = generate_story_for_telegram_user(telegram_id=chat_id, include_debug=False)
     except TelegramPushError as exc:
-        send_message(client, chat_id, exc.message, keyboard)
+        send_message(
+            client,
+            chat_id,
+            _diagnostic_message(
+                chat_id,
+                "Не получилось создать историю. Попробуй позже.",
+                f"{exc.code}: {exc.message}",
+            ),
+            keyboard,
+        )
         return
     except MissingOpenAIAPIKey:
-        send_message(client, chat_id, "На сервере не настроен AI API key.", keyboard)
+        send_message(
+            client,
+            chat_id,
+            _diagnostic_message(
+                chat_id,
+                "Истории временно недоступны. Попробуй позже.",
+                "MISSING_OPENAI_API_KEY",
+            ),
+            keyboard,
+        )
         return
     except Exception:
         logger.exception("Telegram /story generation failed")
@@ -100,9 +126,27 @@ def _send_full_story_response(
             keyboard=keyboard,
         )
     except TelegramPushError as exc:
-        send_message(client, chat_id, exc.message, keyboard)
+        send_message(
+            client,
+            chat_id,
+            _diagnostic_message(
+                chat_id,
+                "Не получилось создать большую историю. Попробуй позже.",
+                f"{exc.code}: {exc.message}",
+            ),
+            keyboard,
+        )
     except MissingOpenAIAPIKey:
-        send_message(client, chat_id, "На сервере не настроен AI API key.", keyboard)
+        send_message(
+            client,
+            chat_id,
+            _diagnostic_message(
+                chat_id,
+                "Истории временно недоступны. Попробуй позже.",
+                "MISSING_OPENAI_API_KEY",
+            ),
+            keyboard,
+        )
     except FullStoryGenerationError:
         logger.exception("Telegram /full_story payload validation failed")
         send_message(
@@ -132,12 +176,35 @@ def _send_push_response(
     try:
         send_manual_push(telegram_id=chat_id, include_debug=False)
     except TelegramPushError as exc:
-        send_message(client, chat_id, exc.message, keyboard)
+        send_message(
+            client,
+            chat_id,
+            _diagnostic_message(
+                chat_id,
+                "Не получилось отправить сообщение питомца. Попробуй позже.",
+                f"{exc.code}: {exc.message}",
+            ),
+            keyboard,
+        )
     except MissingOpenAIAPIKey:
-        send_message(client, chat_id, "На сервере не настроен AI API key.", keyboard)
+        send_message(
+            client,
+            chat_id,
+            _diagnostic_message(
+                chat_id,
+                "Сообщения питомца временно недоступны. Попробуй позже.",
+                "MISSING_OPENAI_API_KEY",
+            ),
+            keyboard,
+        )
     except Exception:
         logger.exception("Telegram /push generation failed")
-        send_message(client, chat_id, "Не удалось сгенерировать push. Попробуй позже.", keyboard)
+        send_message(
+            client,
+            chat_id,
+            "Не получилось отправить сообщение питомца. Попробуй позже.",
+            keyboard,
+        )
 
 
 def _push_worker(chat_id: int, keyboard: dict[str, Any]) -> None:
@@ -218,6 +285,7 @@ def run_bot() -> None:
         raise RuntimeError("WEBAPP_URL is not configured")
 
     offset: int | None = None
+    BOT_HEARTBEAT_PATH.touch()
     with (
         httpx.Client() as client,
         ThreadPoolExecutor(
@@ -244,6 +312,7 @@ def run_bot() -> None:
                 )
                 response.raise_for_status()
                 payload = response.json()
+                BOT_HEARTBEAT_PATH.touch()
                 for update in payload.get("result", []):
                     update_id = update.get("update_id")
                     if isinstance(update_id, int):

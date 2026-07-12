@@ -130,10 +130,15 @@ def _without_untrusted_debug(payload: Any) -> Any:
     return payload.model_copy(update={"includeDebug": False})
 
 
+def _is_diagnostic_user(user_id: int) -> bool:
+    return user_id in getattr(get_settings(), "diagnostic_telegram_ids", {62943754})
+
+
 def _build_generation_failure(
     job_id: str,
     phase: str,
     exc: Exception,
+    owner_id: int,
 ) -> dict[str, object]:
     code = generation_error_code(exc)
     detail = error_detail(
@@ -150,7 +155,7 @@ def _build_generation_failure(
         code,
         type(exc).__name__,
     )
-    return public_error_detail(detail)
+    return public_error_detail(detail, include_diagnostic=_is_diagnostic_user(owner_id))
 
 
 generation_job_service: GenerationJobService | None = None
@@ -220,6 +225,7 @@ def generate_pet(payload: GeneratePetRequest, user: TelegramUser) -> GeneratePet
         raise public_error(
             "MISSING_OPENAI_API_KEY",
             status.HTTP_500_INTERNAL_SERVER_ERROR,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
         ) from None
     return submit_generation_job(description, user)
 
@@ -240,6 +246,7 @@ def chat(payload: LocalChatRequest, user: TelegramUser) -> LocalChatResponse:
         raise public_error(
             "MISSING_OPENAI_API_KEY",
             status.HTTP_500_INTERNAL_SERVER_ERROR,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
         ) from None
     except HTTPException:
         raise
@@ -251,6 +258,7 @@ def chat(payload: LocalChatRequest, user: TelegramUser) -> LocalChatResponse:
             code,
             chat_error_message(code),
             exc,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
         ) from exc
     finally:
         reset_prompt_log_context(prompt_log_token)
@@ -276,6 +284,7 @@ def travel(payload: GenerateTravelRequest, user: TelegramUser) -> GenerateTravel
         raise public_error(
             "MISSING_OPENAI_API_KEY",
             status.HTTP_500_INTERNAL_SERVER_ERROR,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
         ) from None
 
     prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel"})
@@ -285,6 +294,7 @@ def travel(payload: GenerateTravelRequest, user: TelegramUser) -> GenerateTravel
         raise public_error(
             "MISSING_OPENAI_API_KEY",
             status.HTTP_500_INTERNAL_SERVER_ERROR,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
         ) from None
     except HTTPException:
         raise
@@ -296,6 +306,7 @@ def travel(payload: GenerateTravelRequest, user: TelegramUser) -> GenerateTravel
             code,
             travel_error_message(code),
             exc,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
         ) from exc
     finally:
         reset_prompt_log_context(prompt_log_token)
@@ -319,6 +330,7 @@ def ambient_chat(
         raise public_error(
             "MISSING_OPENAI_API_KEY",
             status.HTTP_500_INTERNAL_SERVER_ERROR,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
         ) from None
     except HTTPException:
         raise
@@ -330,6 +342,7 @@ def ambient_chat(
             code,
             chat_error_message(code),
             exc,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
         ) from exc
     finally:
         reset_prompt_log_context(prompt_log_token)
@@ -395,6 +408,7 @@ def proactive_chat(
         raise public_error(
             "MISSING_OPENAI_API_KEY",
             status.HTTP_500_INTERNAL_SERVER_ERROR,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
         ) from None
     except HTTPException:
         raise
@@ -406,4 +420,5 @@ def proactive_chat(
             code,
             chat_error_message(code),
             exc,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
         ) from exc

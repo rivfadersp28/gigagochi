@@ -20,6 +20,24 @@
   logging live in `backend/app/services/ai_error_service.py`. Routers select the
   user-facing operation message but do not parse provider payloads or write log
   files themselves.
+- Public API errors now have a safe `message` for every user and an optional
+  `diagnostic` object only for Telegram IDs in
+  `Settings.diagnostic_telegram_ids` (Sergey `62943754` by default). The
+  frontend renders diagnostics in a separate expandable block only when the
+  same user passes the debug-menu allowlist. Provider messages, exception text
+  and internal validation paths are never used as ordinary UI copy.
+- Every backend response receives `X-Request-ID`; unexpected exceptions and
+  request-validation failures use the same safe JSON error envelope. Frontend
+  `ApiError` keeps the request ID and optional trusted diagnostic separately
+  from its public message.
+- Telegram push and background-story scheduler iterations are supervised: a
+  failed iteration is logged and retried instead of terminating the task.
+  `/health` becomes degraded when an enabled scheduler task exits or its latest
+  iteration failed.
+- Pending pet generation job ID plus description are stored in frontend
+  localStorage while generation runs, allowing the creation screen to resume
+  polling after a WebView reload. The marker is removed after success or a
+  confirmed `GENERATION_JOB_NOT_FOUND` response.
 
 ## Frontend Interaction Primitives
 

@@ -21,7 +21,12 @@ from app.schemas import (
     MemoryConsolidationResponse,
     MemoryExtractionResponse,
 )
-from app.services.ai_error_service import generation_error_message, provider_error_details
+from app.services.ai_error_service import (
+    error_detail,
+    generation_error_message,
+    provider_error_details,
+    public_error_detail,
+)
 from app.services.rate_limit_service import rate_limiter
 from app.services.telegram_auth_service import TelegramUserContext
 
@@ -232,14 +237,14 @@ def test_generate_pet_asset_response_rejects_incomplete_image_set() -> None:
 def test_generation_error_message_handles_openai_timeout() -> None:
     assert (
         generation_error_message("OPENAI_TIMEOUT")
-        == "Генерация заняла больше времени, чем ожидалось. Попробуйте еще раз."
+        == "Создание питомца заняло больше времени, чем ожидалось. Попробуйте ещё раз."
     )
 
 
 def test_generation_error_message_handles_image_postprocess_failure() -> None:
     assert (
         generation_error_message("IMAGE_POSTPROCESS_FAILED")
-        == "Картинка сгенерировалась, но backend не смог подготовить ее для питомца."
+        == "Не получилось подготовить питомца. Попробуйте ещё раз."
     )
 
 
@@ -439,8 +444,7 @@ def test_chat_wraps_unhandled_error_with_cors(monkeypatch, caplog) -> None:
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
     assert response.json()["detail"] == {
         "code": "CHAT_FAILED",
-        "error": "chat_failed",
-        "message": "Не удалось получить ответ питомца. Попробуйте еще раз.",
+        "message": "Не получилось получить ответ. Отправьте сообщение ещё раз.",
     }
     assert any(
         "AI request failed" in record.message
@@ -448,6 +452,54 @@ def test_chat_wraps_unhandled_error_with_cors(monkeypatch, caplog) -> None:
         and '"code": "CHAT_FAILED"' in record.message
         for record in caplog.records
     )
+
+    app.dependency_overrides.clear()
+
+
+def test_chat_exposes_diagnostics_only_to_configured_user(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=False,
+            diagnostic_telegram_ids={62943754},
+        ),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.chat_with_local_pet",
+        lambda _payload: (_ for _ in ()).throw(RuntimeError("provider exploded")),
+    )
+    app.dependency_overrides[get_telegram_user] = lambda: TelegramUserContext(
+        telegram_id=62943754,
+        username="sergey",
+        first_name="Сергей",
+        language_code="ru",
+        auth_date=datetime.now(UTC),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "message": "Как ты?",
+            "pet": {
+                "description": "маленький дракон",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": {"hunger": 80, "happiness": 70, "energy": 60},
+            },
+            "history": [],
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["message"] == (
+        "Не получилось получить ответ. Отправьте сообщение ещё раз."
+    )
+    assert response.json()["detail"]["diagnostic"] == {
+        "error": "chat_failed",
+        "exceptionType": "RuntimeError",
+        "exceptionMessage": "provider exploded",
+    }
 
     app.dependency_overrides.clear()
 
@@ -489,6 +541,25 @@ def test_provider_error_details_extracts_wrapped_provider_payload() -> None:
         }
 
 
+def test_public_error_detail_exposes_diagnostics_only_when_requested() -> None:
+    detail = error_detail(
+        "chat_failed",
+        "CHAT_FAILED",
+        "Не получилось получить ответ. Отправьте сообщение ещё раз.",
+        RuntimeError("provider exploded"),
+    )
+
+    assert public_error_detail(detail) == {
+        "code": "CHAT_FAILED",
+        "message": "Не получилось получить ответ. Отправьте сообщение ещё раз.",
+    }
+    assert public_error_detail(detail, include_diagnostic=True)["diagnostic"] == {
+        "error": "chat_failed",
+        "exceptionType": "RuntimeError",
+        "exceptionMessage": "provider exploded",
+    }
+
+
 def test_generate_pet_job_records_provider_failure(monkeypatch, caplog, tmp_path) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
@@ -524,9 +595,7 @@ def test_generate_pet_job_records_provider_failure(monkeypatch, caplog, tmp_path
     assert job["status"] == "failed"
     assert job["error"] == {
         "code": "OPENAI_BAD_REQUEST",
-        "error": "generation_failed",
-        "message": "Не удалось создать питомца. Попробуйте еще раз.",
-        "requestId": "req-job",
+        "message": "Не получилось создать питомца. Попробуйте ещё раз.",
     }
     assert any(
         "AI request failed" in record.message

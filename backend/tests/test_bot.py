@@ -79,9 +79,7 @@ def test_push_command_can_be_submitted_without_blocking_polling(monkeypatch) -> 
     )
 
     assert submitted[0][0] == TEST_TELEGRAM_ID
-    assert submitted[0][1]["inline_keyboard"][0][0]["web_app"]["url"] == (
-        "https://example.com/app"
-    )
+    assert submitted[0][1]["inline_keyboard"][0][0]["web_app"]["url"] == ("https://example.com/app")
 
 
 def test_story_command_sends_generated_image_as_photo(monkeypatch) -> None:

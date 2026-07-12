@@ -49,7 +49,7 @@ const backgroundBootstrapScript = `
 
   function applyTelegramColors() {
     var webApp = window.Telegram && window.Telegram.WebApp;
-    if (!webApp) return;
+    if (!webApp || !webApp.initData) return;
 
     try {
       if (webApp.setHeaderColor) webApp.setHeaderColor(color);

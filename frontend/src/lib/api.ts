@@ -311,8 +311,10 @@ function requiredGeneratedImage(
   const imageUrl = response.images[stage]?.[mood];
   if (!imageUrl) {
     throw new ApiError(
-      `Сгенерировался неполный набор спрайтов: нет ${stage}/${mood}. Попробуйте еще раз.`,
+      "Не получилось подготовить питомца. Попробуйте ещё раз.",
       "INCOMPLETE_ASSET_SET",
+      undefined,
+      { diagnostic: { missingAsset: `${stage}/${mood}` } },
     );
   }
   return publicImageUrl(imageUrl);
@@ -400,7 +402,10 @@ function generatedPetResponseFromJob(job: GeneratePetJobResponse): GeneratePetRe
   };
 }
 
-export async function generatePetAssets(description: string): Promise<GeneratePetResponse> {
+export async function generatePetAssets(
+  description: string,
+  options: { onJobQueued?: (jobId: string) => void } = {},
+): Promise<GeneratePetResponse> {
   const job = await request(
     "/api/generate-pet",
     {
@@ -413,6 +418,16 @@ export async function generatePetAssets(description: string): Promise<GeneratePe
         moods: ["idle", "happy", "hungry", "sad"],
       },
     },
+    parseGeneratePetJobResponse,
+  );
+  options.onJobQueued?.(job.jobId);
+  return generatedPetResponseFromJob(await waitForGeneratedPet(job));
+}
+
+export async function resumePetGeneration(jobId: string): Promise<GeneratePetResponse> {
+  const job = await request(
+    `/api/generate-pet/jobs/${encodeURIComponent(jobId)}`,
+    { headers: tmaAuthHeaders() },
     parseGeneratePetJobResponse,
   );
   return generatedPetResponseFromJob(await waitForGeneratedPet(job));
@@ -482,8 +497,8 @@ async function waitForGeneratedPet(
     }
 
     if (job.status === "failed") {
-      const { message, code } = apiErrorFromDetail(job.error ?? {});
-      throw new ApiError(message, code);
+      const { message, code, diagnostic } = apiErrorFromDetail(job.error ?? {});
+      throw new ApiError(message, code, undefined, { diagnostic });
     }
 
     if (Date.now() > deadline) {
