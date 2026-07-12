@@ -343,6 +343,7 @@ class PetAssetImageSet:
     asset_set_id: uuid.UUID
     generated_paths: dict[tuple[str, str], tuple[Path, str]]
     scene_path: Path
+    character_bible: dict[str, Any]
     version: int
     generated_at: datetime
 
@@ -2279,12 +2280,18 @@ def generate_pet_image_asset_set(description: str) -> PetAssetImageSet:
     output_dir = generated_dir_for(asset_set_id)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    generated_paths = generate_individual_sprite_image_paths(asset_set_id, description, {})
+    character_bible = create_character_bible(description)
+    generated_paths = generate_individual_sprite_image_paths(
+        asset_set_id,
+        description,
+        character_bible,
+    )
     generated_at = datetime.now(UTC)
     return PetAssetImageSet(
         asset_set_id=asset_set_id,
         generated_paths=generated_paths,
         scene_path=generated_paths[(FAST_GENERATION_STAGE, "idle")][0],
+        character_bible=character_bible,
         version=int(generated_at.timestamp()),
         generated_at=generated_at,
     )
@@ -2356,7 +2363,7 @@ def build_pet_asset_set_response(
         "tapReactionImageUrl": tap_reaction_url,
         "blinkImageUrl": generated_urls.get((FAST_GENERATION_STAGE, "blink")),
         "spriteSheetUrl": None,
-        "characterBible": None,
+        "characterBible": image_set.character_bible,
     }
 
 

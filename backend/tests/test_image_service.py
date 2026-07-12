@@ -6,6 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from io import BytesIO
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -1002,23 +1003,29 @@ def test_align_sprite_to_reference_canvas_matches_reference_bbox(tmp_path) -> No
 
 def test_generate_pet_asset_set_generates_idle_scene(monkeypatch, tmp_path) -> None:
     generated_prompts: list[str] = []
+    prompt_bibles: list[dict[str, Any]] = []
     scene_sources: list[str] = []
     video_sources: list[str] = []
+    character_bible = {
+        "identity": {"name": "Гроза"},
+        "openings": {
+            "first_message": "Я Гроза. А ты расскажешь немного о себе?",
+            "alternate_greetings": [],
+        },
+    }
 
     monkeypatch.setattr(
         "app.services.image_service.generated_dir_for",
         lambda asset_id: tmp_path / str(asset_id),
     )
 
-    def fail_create_character_bible(_description):
-        raise AssertionError("pet asset generation must not create character bible")
-
     monkeypatch.setattr(
         "app.services.image_service.create_character_bible",
-        fail_create_character_bible,
+        lambda _description: character_bible,
     )
 
-    def fake_prompt(_description, _character_bible, *, stage, state):
+    def fake_prompt(_description, received_bible, *, stage, state):
+        prompt_bibles.append(received_bible)
         return f"single:{stage}:{state}"
 
     def fake_image_bytes(prompt):
@@ -1063,7 +1070,10 @@ def test_generate_pet_asset_set_generates_idle_scene(monkeypatch, tmp_path) -> N
     assert Image.open(output_dir / "teen-idle.png").size == (720, 1280)
 
     images = result["images"]
-    assert result["characterBible"] is None
+    assert prompt_bibles == [character_bible]
+    assert result["characterBible"] == character_bible
+    assert result["characterBible"]["identity"]["name"] == "Гроза"
+    assert result["characterBible"]["openings"]["first_message"].startswith("Я Гроза")
     assert "/teen-idle.mp4" in result["videoUrl"]
     assert result["blinkImageUrl"] is None
     for stage in ("baby", "teen", "adult"):
@@ -1084,6 +1094,7 @@ def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, t
         asset_set_id=asset_id,
         generated_paths={("teen", "idle"): (idle_scene_path, "scene")},
         scene_path=idle_scene_path,
+        character_bible={},
         version=1,
         generated_at=datetime.now(UTC),
     )
@@ -1151,6 +1162,7 @@ def test_generate_happy_assets_preserve_scene_and_reuse_normal_blink_prompt(
         asset_set_id=asset_id,
         generated_paths={("teen", "idle"): (idle_scene_path, "scene")},
         scene_path=idle_scene_path,
+        character_bible={},
         version=1,
         generated_at=datetime.now(UTC),
     )
@@ -1225,6 +1237,7 @@ def test_asset_response_switches_sad_urls_only_when_both_sad_assets_are_ready(tm
         asset_set_id=asset_id,
         generated_paths={("teen", "idle"): (idle_path, "scene")},
         scene_path=idle_path,
+        character_bible={},
         version=7,
         generated_at=datetime.now(UTC),
     )
@@ -1255,6 +1268,7 @@ def test_asset_response_switches_happy_urls_only_when_both_happy_assets_are_read
         asset_set_id=asset_id,
         generated_paths={("teen", "idle"): (idle_path, "scene")},
         scene_path=idle_path,
+        character_bible={},
         version=7,
         generated_at=datetime.now(UTC),
     )
@@ -1294,6 +1308,7 @@ def test_asset_response_includes_ready_tap_reaction(tmp_path, monkeypatch) -> No
         asset_set_id=asset_id,
         generated_paths={("teen", "idle"): (idle_path, "scene")},
         scene_path=idle_path,
+        character_bible={},
         version=7,
         generated_at=datetime.now(UTC),
     )
