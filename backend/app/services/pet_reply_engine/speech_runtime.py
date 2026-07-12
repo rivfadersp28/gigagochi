@@ -661,12 +661,6 @@ def full_story_system_prompt() -> str:
         [
             _required_string(config, ("backgroundStory", "fullStorySystem")),
             _required_string(config, ("backgroundStory", "characterInfluenceRule")),
-            _required_string(config, ("backgroundStory", "incidentRule")),
-            _required_string(config, ("backgroundStory", "storySimplicityRule")),
-            _required_string(config, ("backgroundStory", "storyDecisionRule")),
-            _required_string(config, ("backgroundStory", "storyCausalityRule")),
-            _required_string(config, ("backgroundStory", "storyOppositionRule")),
-            _required_string(config, ("backgroundStory", "storyContinuityRule")),
             _required_string(config, ("backgroundStory", "fullStoryStatsRule")),
         ]
     )
@@ -685,11 +679,6 @@ def full_story_plan_quality_system_prompt() -> str:
     return "\n\n".join(
         [
             _required_string(config, ("backgroundStory", "fullStoryPlanQualitySystem")),
-            _required_string(config, ("backgroundStory", "storySimplicityRule")),
-            _required_string(config, ("backgroundStory", "storyDecisionRule")),
-            _required_string(config, ("backgroundStory", "storyCausalityRule")),
-            _required_string(config, ("backgroundStory", "storyOppositionRule")),
-            _required_string(config, ("backgroundStory", "storyContinuityRule")),
             _required_string(config, ("backgroundStory", "fullStoryStatsRule")),
         ]
     )
@@ -708,12 +697,6 @@ def full_story_render_system_prompt() -> str:
     return "\n\n".join(
         [
             _required_string(config, ("backgroundStory", "fullStoryRenderSystem")),
-            _required_string(config, ("backgroundStory", "storyProseRule")),
-            _required_string(config, ("backgroundStory", "storySimplicityRule")),
-            _required_string(config, ("backgroundStory", "storyDecisionRule")),
-            _required_string(config, ("backgroundStory", "storyCausalityRule")),
-            _required_string(config, ("backgroundStory", "storyOppositionRule")),
-            _required_string(config, ("backgroundStory", "storyContinuityRule")),
             _required_string(config, ("backgroundStory", "storySurfaceRule")),
         ]
     )
@@ -732,14 +715,7 @@ def full_story_quality_check_system_prompt() -> str:
     return "\n\n".join(
         [
             _required_string(config, ("backgroundStory", "fullStoryQualityCheckSystem")),
-            _required_string(config, ("backgroundStory", "storyProseRule")),
-            _required_string(config, ("backgroundStory", "storySimplicityRule")),
-            _required_string(config, ("backgroundStory", "storyDecisionRule")),
-            _required_string(config, ("backgroundStory", "storyCausalityRule")),
-            _required_string(config, ("backgroundStory", "storyOppositionRule")),
-            _required_string(config, ("backgroundStory", "storyContinuityRule")),
             _required_string(config, ("backgroundStory", "storySurfaceRule")),
-            _required_string(config, ("backgroundStory", "fullStoryStatsRule")),
         ]
     )
 

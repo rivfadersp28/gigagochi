@@ -22,6 +22,15 @@ def test_lore_runtime_drives_all_fiction_surfaces() -> None:
         assert "Канон конкретного персонажа важнее общей палитры мира." in prompt
 
 
+def test_compact_lore_omits_visual_palette_for_full_story() -> None:
+    prompt = lore_prompt_block("backgroundStory", compact=True)
+
+    assert "Большой загадочный пограничный мир" in prompt
+    assert "Материалы и фактура" not in prompt
+    assert "Пространства:" not in prompt
+    assert "Канон персонажа определяет его возможности" in prompt
+
+
 def test_lore_runtime_validation_rejects_missing_surface() -> None:
     config = json.loads(DATA_PATH.read_text(encoding="utf-8"))
     del config["surfaces"]["dialogueLore"]

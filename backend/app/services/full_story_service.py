@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -40,6 +41,22 @@ MAX_PART_STAT_IMPACTS = 1
 MAX_STORY_STAT_IMPACTS = 3
 FULL_STORY_MIN_TIMEOUT_SECONDS = 240.0
 MAX_FULL_STORY_PLAN_ATTEMPTS = 3
+
+FULL_STORY_ANTAGONIST_CLASSES = {
+    "predatory_beast": "крупный опасный зверь с естественными повадками",
+    "fantasy_monster": "фантастический монстр с ясной целью и одной устойчивой способностью",
+    "intelligent_enemy": "разумный одиночный враг или организованная группа",
+    "supernatural_entity": "дух, призрак или иная сверхъестественная сущность",
+    "ancient_construct": "древний страж, ожившая статуя или искусственное существо",
+    "swarm_collective": "рой или коллектив существ, действующий как единая сила",
+}
+FULL_STORY_WONDER_CLASSES = {
+    "enchanted_ecosystem": "живое волшебное место со своими обитателями и укладом",
+    "impossible_architecture": "пространственно невозможное здание или территория",
+    "spectral_domain": "место, где видимый мир соприкасается с миром духов",
+    "ancient_machine": "огромное древнее устройство с понятным наблюдаемым назначением",
+    "transformed_landscape": "природное место, необычно изменённое устойчивым явлением",
+}
 
 STAT_IMPACT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -83,51 +100,29 @@ FULL_STORY_PLAN_SCHEMA: dict[str, Any] = {
                     "partNumber": {"type": "integer", "minimum": 1, "maximum": PART_COUNT},
                     "narrativeFunction": {
                         "type": "string",
-                        "enum": ["inciting_change", "complication", "turn", "resolution"],
+                        "enum": ["opening", "development", "turn", "finale"],
                     },
                     "title": {"type": "string", "maxLength": 120},
                     "summary": {"type": "string", "maxLength": 360},
-                    "eventSvo": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "subject": {"type": "string", "maxLength": 100},
-                            "verb": {"type": "string", "maxLength": 80},
-                            "object": {"type": "string", "maxLength": 160},
-                        },
-                        "required": ["subject", "verb", "object"],
-                    },
                     "event": {
                         "type": "object",
                         "additionalProperties": False,
                         "properties": {
-                            "beforeState": {"type": "string", "maxLength": 260},
-                            "trigger": {"type": "string", "maxLength": 260},
-                            "protagonistGoal": {"type": "string", "maxLength": 220},
-                            "oppositionGoal": {"type": "string", "maxLength": 220},
-                            "opposition": {"type": "string", "maxLength": 260},
-                            "decisiveAction": {"type": "string", "maxLength": 260},
-                            "result": {"type": "string", "maxLength": 260},
-                            "afterState": {"type": "string", "maxLength": 260},
+                            "situation": {"type": "string", "maxLength": 260},
+                            "intent": {"type": "string", "maxLength": 220},
+                            "change": {"type": "string", "maxLength": 260},
+                            "response": {"type": "string", "maxLength": 260},
+                            "outcome": {"type": "string", "maxLength": 260},
                         },
                         "required": [
-                            "beforeState",
-                            "trigger",
-                            "protagonistGoal",
-                            "oppositionGoal",
-                            "opposition",
-                            "decisiveAction",
-                            "result",
-                            "afterState",
+                            "situation",
+                            "intent",
+                            "change",
+                            "response",
+                            "outcome",
                         ],
                     },
-                    "readerHook": {"type": "string", "maxLength": 240},
                     "carryForward": {"type": "string", "maxLength": 300},
-                    "stateChanges": {
-                        "type": "array",
-                        "maxItems": 6,
-                        "items": {"type": "string", "maxLength": 220},
-                    },
                     "valence": {
                         "type": "string",
                         "enum": ["positive", "negative", "mixed"],
@@ -144,11 +139,8 @@ FULL_STORY_PLAN_SCHEMA: dict[str, Any] = {
                     "narrativeFunction",
                     "title",
                     "summary",
-                    "eventSvo",
                     "event",
-                    "readerHook",
                     "carryForward",
-                    "stateChanges",
                     "valence",
                     "statImpacts",
                 ],
@@ -205,6 +197,10 @@ FULL_STORY_PLAN_QUALITY_SCHEMA: dict[str, Any] = {
                     "partNumber": {"type": "integer", "minimum": 1, "maximum": PART_COUNT},
                     "eventful": {"type": "boolean"},
                     "understandable": {"type": "boolean"},
+                    "plainLanguage": {"type": "boolean"},
+                    "groundedReferents": {"type": "boolean"},
+                    "credibleMechanism": {"type": "boolean"},
+                    "arcFit": {"type": "boolean"},
                     "interesting": {"type": "boolean"},
                     "causal": {"type": "boolean"},
                     "distinct": {"type": "boolean"},
@@ -214,6 +210,10 @@ FULL_STORY_PLAN_QUALITY_SCHEMA: dict[str, Any] = {
                     "partNumber",
                     "eventful",
                     "understandable",
+                    "plainLanguage",
+                    "groundedReferents",
+                    "credibleMechanism",
+                    "arcFit",
                     "interesting",
                     "causal",
                     "distinct",
@@ -239,6 +239,11 @@ FULL_STORY_QUALITY_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "properties": {
         "accepted": {"type": "boolean"},
+        "plainLanguage": {"type": "boolean"},
+        "groundedReferents": {"type": "boolean"},
+        "selfContained": {"type": "boolean"},
+        "credibleMechanism": {"type": "boolean"},
+        "arcFit": {"type": "boolean"},
         "issues": {
             "type": "array",
             "maxItems": 6,
@@ -246,7 +251,16 @@ FULL_STORY_QUALITY_SCHEMA: dict[str, Any] = {
         },
         "retryInstruction": {"type": "string", "maxLength": 800},
     },
-    "required": ["accepted", "issues", "retryInstruction"],
+    "required": [
+        "accepted",
+        "plainLanguage",
+        "groundedReferents",
+        "selfContained",
+        "credibleMechanism",
+        "arcFit",
+        "issues",
+        "retryInstruction",
+    ],
 }
 
 
@@ -402,7 +416,15 @@ def _full_story_anti_repeat(history: list[dict[str, Any]] | None) -> str:
         )
         structure = ", ".join(
             value
-            for key in ("plotMode", "incidentClass", "settingClass", "resolutionMode")
+            for key in (
+                "plotMode",
+                "incidentClass",
+                "settingClass",
+                "resolutionMode",
+                "arcVariant",
+                "antagonistClass",
+                "wonderClass",
+            )
             if (value := _text(direction.get(key), 80))
         )
         parts = [value for value in (title, goal, structure) if value]
@@ -461,6 +483,7 @@ def _check_full_story_plan(
                         "story_direction": story_direction_block(
                             story_direction,
                             enforce_single_valence=False,
+                            compact=True,
                         ),
                         "story_plan": json.dumps(
                             story_plan,
@@ -491,7 +514,23 @@ def _check_full_story_plan(
     parsed = _completion_payload(completion, error_code="FULL_STORY_PLAN_QUALITY_JSON_INVALID")
     issues = _quality_issues(parsed)
     retry_instruction = _text(parsed.get("retryInstruction"), 1000)
-    accepted = parsed.get("accepted") is True
+    raw_parts = parsed.get("parts") if isinstance(parsed.get("parts"), list) else []
+    required_part_flags = (
+        "eventful",
+        "understandable",
+        "plainLanguage",
+        "groundedReferents",
+        "credibleMechanism",
+        "arcFit",
+        "interesting",
+        "causal",
+        "distinct",
+    )
+    accepted = parsed.get("accepted") is True and len(raw_parts) == PART_COUNT and all(
+        isinstance(part, dict)
+        and all(part.get(flag) is True for flag in required_part_flags)
+        for part in raw_parts
+    )
     prompt_debug.append(
         {
             "event": "full_story_plan_quality_result",
@@ -525,6 +564,7 @@ def _check_full_story_quality(
                         "story_direction": story_direction_block(
                             story_direction,
                             enforce_single_valence=False,
+                            compact=True,
                         ),
                         "story_plan": json.dumps(
                             story_plan,
@@ -559,7 +599,16 @@ def _check_full_story_quality(
     parsed = _completion_payload(completion, error_code="FULL_STORY_QUALITY_JSON_INVALID")
     issues = _quality_issues(parsed, limit=6)
     retry_instruction = _text(parsed.get("retryInstruction"), 800)
-    accepted = parsed.get("accepted") is True
+    accepted = parsed.get("accepted") is True and all(
+        parsed.get(flag) is True
+        for flag in (
+            "plainLanguage",
+            "groundedReferents",
+            "selfContained",
+            "credibleMechanism",
+            "arcFit",
+        )
+    )
     prompt_debug.append(
         {
             "event": "full_story_quality_result",
@@ -591,6 +640,62 @@ def _combined_story_payload(
     }
 
 
+def _least_used_full_story_class(
+    values: dict[str, str],
+    *,
+    field: str,
+    history: list[dict[str, Any]] | None,
+) -> str:
+    counts = {value: 0 for value in values}
+    for item in history or []:
+        if not isinstance(item, dict):
+            continue
+        value = item.get(field)
+        if value in counts:
+            counts[value] += 1
+    minimum = min(counts.values())
+    return random.SystemRandom().choice(
+        [value for value, count in counts.items() if count == minimum]
+    )
+
+
+def _enrich_full_story_direction(
+    direction: dict[str, str],
+    *,
+    history: list[dict[str, Any]] | None,
+) -> dict[str, str]:
+    result = dict(direction)
+    plot_mode = result.get("plotMode")
+    if plot_mode == "pursuit_or_conflict":
+        causal_origin = result.get("causalOrigin")
+        result["arcVariant"] = (
+            "theft"
+            if causal_origin == "theft"
+            else "chase"
+            if causal_origin == "pursuit"
+            else "battle"
+        )
+        result["antagonistClass"] = _least_used_full_story_class(
+            FULL_STORY_ANTAGONIST_CLASSES,
+            field="antagonistClass",
+            history=history,
+        )
+    elif plot_mode == "encounter" and result.get("resolutionMode") == "contest":
+        result["arcVariant"] = "rivalry"
+        result["antagonistClass"] = _least_used_full_story_class(
+            FULL_STORY_ANTAGONIST_CLASSES,
+            field="antagonistClass",
+            history=history,
+        )
+    if plot_mode in {"exploration", "discovery"}:
+        result["wonderClass"] = _least_used_full_story_class(
+            FULL_STORY_WONDER_CLASSES,
+            field="wonderClass",
+            history=history,
+        )
+    return result
+
+
 def generate_full_story(
     *,
     pet: LocalPetChatContext,
@@ -615,9 +720,12 @@ def generate_full_story(
         ensure_ascii=False,
         indent=2,
     )
-    story_direction = select_background_story_direction(
-        recent_full_stories,
-        current_stats=pet.stats.model_dump(mode="json"),
+    story_direction = _enrich_full_story_direction(
+        select_background_story_direction(
+            recent_full_stories,
+            current_stats=pet.stats.model_dump(mode="json"),
+        ),
+        history=recent_full_stories,
     )
     plan_user_content = full_story_user_prompt(
         {
@@ -626,6 +734,7 @@ def generate_full_story(
             "story_direction": story_direction_block(
                 story_direction,
                 enforce_single_valence=False,
+                compact=True,
             ),
             "anti_repeat": _full_story_anti_repeat(recent_full_stories),
             "day_context": json.dumps(
@@ -645,7 +754,8 @@ def generate_full_story(
             {
                 "role": "system",
                 "content": (
-                    f"{full_story_system_prompt()}\n\n{lore_prompt_block('backgroundStory')}"
+                    f"{full_story_system_prompt()}\n\n"
+                    f"{lore_prompt_block('backgroundStory', compact=True)}"
                 ),
             },
             {"role": "user", "content": plan_user_content},

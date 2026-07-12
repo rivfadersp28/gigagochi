@@ -8,30 +8,20 @@ from app.services import full_story_service
 
 
 def _plan_part(number: int, *, impacts: list[dict] | None = None) -> dict:
-    functions = ("inciting_change", "complication", "turn", "resolution")
+    functions = ("opening", "development", "turn", "finale")
     return {
         "partNumber": number,
         "narrativeFunction": functions[number - 1],
         "title": f"Событие {number}",
         "summary": f"В части {number} положение заметно меняется.",
-        "eventSvo": {
-            "subject": "Мяу",
-            "verb": "меняет",
-            "object": f"положение {number}",
-        },
         "event": {
-            "beforeState": f"До события {number} цель ещё недоступна.",
-            "trigger": f"Возникает препятствие {number}.",
-            "protagonistGoal": f"Добиться результата {number}.",
-            "oppositionGoal": f"Сохранить ресурс {number} для себя.",
-            "opposition": f"Препятствие {number} мешает.",
-            "decisiveAction": f"Мяу принимает решение {number}.",
-            "result": f"Решение меняет ситуацию {number}.",
-            "afterState": f"После события {number} возникает новое положение.",
+            "situation": f"Сложилась ситуация {number}.",
+            "intent": f"Мяу хочет добиться результата {number}.",
+            "change": f"Происходит изменение {number}.",
+            "response": f"Мяу отвечает на изменение {number}.",
+            "outcome": f"Ответ меняет ситуацию {number}.",
         },
-        "readerHook": f"Что произойдёт после изменения {number}?",
         "carryForward": f"Новое положение {number} сохраняется.",
-        "stateChanges": [f"Предмет {number} остаётся у Мяу и не потрачен."],
         "valence": "mixed",
         "statImpacts": impacts or [],
     }
@@ -84,6 +74,10 @@ def _plan_verdict(accepted: bool, issue: str = "") -> dict:
                 "partNumber": number,
                 "eventful": accepted,
                 "understandable": True,
+                "plainLanguage": True,
+                "groundedReferents": True,
+                "credibleMechanism": True,
+                "arcFit": True,
                 "interesting": accepted,
                 "causal": True,
                 "distinct": True,
@@ -99,6 +93,11 @@ def _plan_verdict(accepted: bool, issue: str = "") -> dict:
 def _quality_verdict(accepted: bool, issue: str = "") -> dict:
     return {
         "accepted": accepted,
+        "plainLanguage": True,
+        "groundedReferents": True,
+        "selfContained": True,
+        "credibleMechanism": True,
+        "arcFit": True,
         "issues": [issue] if issue else [],
         "retryInstruction": "Покажи центральное событие на сцене." if issue else "",
     }
@@ -189,24 +188,23 @@ def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
     assert "ритуалы с маленькими предметами" not in plan_prompt
     assert '"rhythm": "короткие фразы"' in plan_prompt
     assert "загадочные рукодельные метафоры" not in plan_prompt
-    assert "Не пиши storyParagraphs" in plan_prompt
-    assert "каждое поле event — один факт" in plan_prompt
-    assert "совпадение по времени не является причинностью" in completions.calls[0][
-        "messages"
-    ][0]["content"]
-    assert "прямо назови его текущую практическую цель" in completions.calls[0][
-        "messages"
-    ][0]["content"]
-    assert "образуют точный журнал состояния" in completions.calls[0]["messages"][0][
+    assert "Не пиши художественную прозу" in plan_prompt
+    assert "Каждое поле event — одна короткая" in plan_prompt
+    assert "resolutionMode=" not in plan_prompt
+    assert "oppositionClass=" not in plan_prompt
+    assert "обычный современный русский язык" in completions.calls[0]["messages"][0][
         "content"
     ]
-    assert "нельзя запускать две или больше частей новым обвалом" in completions.calls[
+    assert "каждое change является проблемой" in completions.calls[0]["messages"][0][
+        "content"
+    ]
+    assert "вместо универсальной схемы" in completions.calls[0]["messages"][
         0
-    ]["messages"][0]["content"]
+    ]["content"]
     assert "случайного повтора соседних слов" in completions.calls[2]["messages"][0][
         "content"
     ]
-    assert "1–2 недлинных законченных предложения" in completions.calls[2]["messages"][
+    assert "1–2 законченных предложения" in completions.calls[2]["messages"][
         0
     ]["content"]
     render_schema = completions.calls[2]["response_format"]["json_schema"]["schema"]
@@ -216,7 +214,10 @@ def test_full_story_plans_events_before_rendering(monkeypatch) -> None:
     assert paragraph_schema["minItems"] == 1
     assert paragraph_schema["maxItems"] == 2
     assert completions.calls[0]["timeout"] == 240.0
-    assert '"eventSvo"' in render_prompt
+    assert '"eventSvo"' not in render_prompt
+    assert '"oppositionGoal"' not in render_prompt
+    assert "первом упоминании" in completions.calls[2]["messages"][0]["content"]
+    assert "без скрытого плана" in completions.calls[2]["messages"][0]["content"]
     assert "от первого лица" in completions.calls[2]["messages"][0]["content"]
 
 
@@ -250,6 +251,34 @@ def test_full_story_retries_rejected_plan_before_rendering(monkeypatch) -> None:
     assert "Создай полностью новый план" not in completions.calls[2]["messages"][1][
         "content"
     ]
+
+
+def test_full_story_retries_plan_with_ungrounded_referents(monkeypatch) -> None:
+    ungrounded = _plan_verdict(True)
+    ungrounded["parts"][0]["groundedReferents"] = False
+    ungrounded["parts"][0]["issue"] = "Не объяснено, что представляет собой цель пути."
+    ungrounded["issues"] = [ungrounded["parts"][0]["issue"]]
+    ungrounded["retryInstruction"] = "Введи место по его обычной функции."
+    client, completions = _client(
+        monkeypatch,
+        [
+            _story_plan(title="Непонятный план"),
+            ungrounded,
+            _story_plan(),
+            _plan_verdict(True),
+            _render(),
+            _quality_verdict(True),
+        ],
+    )
+
+    result = full_story_service.generate_full_story(
+        pet=_pet(), client=client, model="test-model", timeout=30
+    )
+
+    assert result.overall_title == "Четыре события"
+    assert completions.calls[2]["response_format"]["json_schema"]["name"] == (
+        "full_story_plan"
+    )
 
 
 def test_full_story_allows_three_plan_attempts(monkeypatch) -> None:
@@ -300,7 +329,34 @@ def test_full_story_retries_prose_without_changing_plan(monkeypatch) -> None:
         "full_story_render"
     )
     assert "RENDER_RETRY" in completions.calls[4]["messages"][1]["content"]
-    assert '"eventSvo"' in completions.calls[4]["messages"][1]["content"]
+    assert '"eventSvo"' not in completions.calls[4]["messages"][1]["content"]
+
+
+def test_full_story_retries_prose_that_needs_hidden_context(monkeypatch) -> None:
+    hidden_context = _quality_verdict(True)
+    hidden_context["selfContained"] = False
+    hidden_context["issues"] = ["Цель понятна только из скрытого плана."]
+    hidden_context["retryInstruction"] = "Назови цель прямо в видимом тексте."
+    client, completions = _client(
+        monkeypatch,
+        [
+            _story_plan(),
+            _plan_verdict(True),
+            _render(prefix="Я пошла к нему"),
+            hidden_context,
+            _render(prefix="Я пошла к мосту"),
+            _quality_verdict(True),
+        ],
+    )
+
+    result = full_story_service.generate_full_story(
+        pet=_pet(), client=client, model="test-model", timeout=30
+    )
+
+    assert result.parts[0].story_text.startswith("Я пошла к мосту")
+    assert completions.calls[4]["response_format"]["json_schema"]["name"] == (
+        "full_story_render"
+    )
 
 
 def test_full_story_limits_and_normalizes_stat_impacts() -> None:
@@ -369,7 +425,7 @@ def test_full_story_plan_prompt_forbids_reusing_previous_arc(monkeypatch) -> Non
     assert "Один день холодящего мёда" in prompt
     assert "Доставить лекарство до заката" in prompt
     assert "только как запрет на повтор" in prompt
-    assert "valenceTarget задаёт общий эмоциональный итог всей арки" in prompt
+    assert "Общий итог:" in prompt
     assert '"scheduledLocalTime": "09:00"' in prompt
     assert '"dayPeriod": "утро"' in prompt
 

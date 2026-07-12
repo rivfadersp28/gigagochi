@@ -549,6 +549,9 @@ def _compact_story_novelty_item(value: Any) -> dict[str, Any] | None:
             "resolutionMode",
             "resolutionFamily",
             "valenceTarget",
+            "arcVariant",
+            "antagonistClass",
+            "wonderClass",
         )
     }
     return {

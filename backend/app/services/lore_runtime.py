@@ -102,13 +102,21 @@ def dialogue_vocabulary_block() -> str:
     return "Слова мира, если подходят по смыслу: " + ", ".join(vocabulary) + "."
 
 
-def lore_prompt_block(surface: LoreSurface) -> str:
+def lore_prompt_block(surface: LoreSurface, *, compact: bool = False) -> str:
     config = lore_runtime_config()
     world = config["world"]
 
     def lines(key: str) -> str:
         return "\n".join(f"- {item}" for item in world[key])
 
+    if compact:
+        return (
+            "ОБЩАЯ РАМКА МИРА:\n"
+            f"Основа: {world['premise']}\n"
+            f"Технологии: {world['technologyRule']}\n"
+            f"Необычное: {world['magicRule']}\n"
+            f"Задача поверхности: {config['surfaces'][surface]}"
+        )
     return (
         "ОБЩАЯ БИБЛИЯ МИРА:\n"
         f"Основа: {world['premise']}\n"
