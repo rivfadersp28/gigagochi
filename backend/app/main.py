@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.routers import local_admin, tma
+from app.services.ops_alert_service import notify_ops
 from app.services.telegram_push_service import (
     scheduler_runtime_status,
     start_background_story_scheduler,
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    tma.start_generation_jobs()
     push_task = start_daily_push_scheduler()
     story_task = start_background_story_scheduler()
     app.state.scheduler_tasks = {
@@ -83,6 +85,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def unhandled_exception_handler(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", None)
     logger.exception("unhandled_request_error requestId=%s path=%s", request_id, request.url.path)
+    notify_ops(
+        f"http:{request.url.path}:{type(exc).__name__}",
+        f"HTTP 500: {request.url.path}\n{type(exc).__name__}\nrequest: {request_id}",
+    )
     detail: dict[str, object] = {
         "code": "INTERNAL_ERROR",
         "message": "Сервис временно недоступен. Попробуйте позже.",
@@ -125,7 +131,22 @@ def health(request: Request):
         if task is not None
         and (task.done() or int(runtime.get(name, {}).get("consecutiveFailures", 0)) > 0)
     ]
-    payload: dict[str, object] = {"status": "ok" if not failed else "degraded"}
+    generation = tma.generation_job_runtime_status()
+    for component in failed:
+        notify_ops(
+            f"health:{component}",
+            f"Health degraded: {component}",
+        )
+    if generation["stuck"] > 0:
+        failed.append("generationJobs")
+        notify_ops(
+            "generation:stuck",
+            f"Stuck generation jobs: {generation['stuck']}",
+        )
+    payload: dict[str, object] = {
+        "status": "ok" if not failed else "degraded",
+        "generation": generation,
+    }
     if failed:
         payload["failedComponents"] = failed
         return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=payload)

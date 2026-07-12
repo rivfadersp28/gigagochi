@@ -2,14 +2,22 @@
 
 ## Persistence
 
-- The active MVP has no relational database dependency. Pet/chat/memory state is
-  local to the frontend origin, Telegram delivery state uses the locked JSON
-  registry, and generated assets plus push state use Docker volumes. Local and
-  production Compose files therefore do not start PostgreSQL.
+- The active MVP has no external relational database dependency. Pet/chat/memory state is
+  local to the frontend origin, Telegram delivery state uses the locked JSON registry,
+  generation-job recovery uses SQLite on the same persistent volume, and generated assets plus
+  push state use Docker volumes. Local and production Compose files therefore do not start
+  PostgreSQL.
 
 ## Backend Jobs and Errors
 
 - Backend phrase generation lives in `backend/app/services/pet_reply_engine/lite_generator.py`.
+- Pet-generation admission is sized for 20 concurrent image pipelines plus a bounded queue of 40.
+  Job responses and descriptions are persisted in SQLite on the shared `push_data` volume; queued
+  or running jobs are requeued after a backend restart. The API remains a single Uvicorn process,
+  while generation uses dedicated image and video thread pools.
+- Production operations alerts use the existing Telegram bot and a dedicated admin ID allowlist.
+  AI failures, unexpected HTTP 500s, scheduler failures, queue saturation and stuck generation jobs
+  are deduplicated before delivery so an incident does not create an alert storm.
 - Async pet creation jobs live in
   `backend/app/services/generation_job_service.py`. The TMA router owns only
   HTTP/auth adaptation and injects image generation, video generation, response

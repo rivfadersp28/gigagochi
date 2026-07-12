@@ -11,6 +11,7 @@ from threading import Lock
 from typing import Any
 
 from app.schemas import GeneratePetAssetResponse, GeneratePetJobResponse
+from app.services.generation_job_store import GenerationJobStore, StoredGenerationJob
 from app.services.prompt_debug import reset_prompt_log_context, set_prompt_log_context
 from app.services.telegram_auth_service import TelegramUserContext
 
@@ -34,11 +35,16 @@ class GenerationJobNotFoundError(LookupError):
     pass
 
 
+class GenerationQueueFullError(RuntimeError):
+    pass
+
+
 @dataclass
 class GenerationJobRecord:
     owner_id: int
     username: str | None
     first_name: str | None
+    description: str
     response: GeneratePetJobResponse
 
 
@@ -58,6 +64,9 @@ class GenerationJobService:
         build_failure: BuildFailure,
         derived_asset_owner_ids: set[int] | None = None,
         job_ttl: timedelta = timedelta(hours=1),
+        store_path: str | None = None,
+        max_queued_jobs: int = 40,
+        stuck_after: timedelta = timedelta(minutes=30),
     ) -> None:
         self._generate_images = generate_images
         self._generate_video = generate_video
@@ -69,6 +78,8 @@ class GenerationJobService:
         self._build_failure = build_failure
         self._derived_asset_owner_ids = derived_asset_owner_ids
         self._job_ttl = job_ttl
+        self._max_queued_jobs = max(0, max_queued_jobs)
+        self._stuck_after = stuck_after
         self._image_workers = image_workers
         self._video_workers = video_workers
         self._image_executor = ThreadPoolExecutor(
@@ -81,6 +92,8 @@ class GenerationJobService:
         )
         self._jobs: dict[str, GenerationJobRecord] = {}
         self._lock = Lock()
+        self._store = GenerationJobStore(store_path) if store_path else None
+        self._recover_active_jobs()
 
     @staticmethod
     def _now() -> datetime:
@@ -96,6 +109,28 @@ class GenerationJobService:
             ]
             for job_id in expired_job_ids:
                 self._jobs.pop(job_id, None)
+        if self._store is not None:
+            self._store.delete_older_than(cutoff)
+
+    def runtime_status(self) -> dict[str, int]:
+        now = self._now()
+        with self._lock:
+            records = list(self._jobs.values())
+        queued = sum(record.response.status == "queued" for record in records)
+        running = sum(record.response.status == "running" for record in records)
+        stuck = sum(
+            record.response.status == "running"
+            and now - record.response.updatedAt > self._stuck_after
+            for record in records
+        )
+        return {
+            "imageWorkers": self._image_workers,
+            "videoWorkers": self._video_workers,
+            "queued": queued,
+            "running": running,
+            "stuck": stuck,
+            "queueCapacity": self._max_queued_jobs,
+        }
 
     def submit(self, description: str, user: TelegramUserContext) -> GeneratePetJobResponse:
         self.cleanup()
@@ -109,12 +144,20 @@ class GenerationJobService:
             updatedAt=now,
         )
         with self._lock:
+            active_count = sum(
+                record.response.status in {"queued", "running"}
+                for record in self._jobs.values()
+            )
+            if active_count >= self._image_workers + self._max_queued_jobs:
+                raise GenerationQueueFullError("generation queue is full")
             self._jobs[job_id] = GenerationJobRecord(
                 owner_id=user.telegram_id,
                 username=user.username,
                 first_name=user.first_name,
+                description=description,
                 response=response,
             )
+            self._persist_locked(job_id)
         logger.info(
             "pet_generation_queued jobId=%s ownerId=%s username=%s firstName=%s "
             "imageWorkers=%s videoWorkers=%s",
@@ -126,15 +169,7 @@ class GenerationJobService:
             self._video_workers,
         )
         try:
-            self._image_executor.submit(
-                self._run_image_job,
-                job_id,
-                description,
-                (
-                    self._derived_asset_owner_ids is None
-                    or user.telegram_id in self._derived_asset_owner_ids
-                ),
-            )
+            self._submit_image_job(job_id, description, user.telegram_id)
         except Exception as exc:
             self._fail(job_id, exc, phase="generating_images")
         return response
@@ -143,6 +178,11 @@ class GenerationJobService:
         self.cleanup()
         with self._lock:
             record = self._jobs.get(job_id)
+            if record is None and self._store is not None:
+                stored = self._store.get(job_id)
+                if stored is not None:
+                    record = self._record_from_stored(stored)
+                    self._jobs[job_id] = record
             if record is None or record.owner_id != owner_id:
                 raise GenerationJobNotFoundError(job_id)
             return record.response
@@ -178,6 +218,72 @@ class GenerationJobService:
             if phase is not None:
                 updates["phase"] = phase
             record.response = record.response.model_copy(update=updates)
+            self._persist_locked(job_id)
+
+    def _persist_locked(self, job_id: str) -> None:
+        if self._store is None:
+            return
+        record = self._jobs.get(job_id)
+        if record is None:
+            return
+        self._store.save(
+            StoredGenerationJob(
+                owner_id=record.owner_id,
+                username=record.username,
+                first_name=record.first_name,
+                description=record.description,
+                response=record.response,
+            )
+        )
+
+    @staticmethod
+    def _record_from_stored(stored: StoredGenerationJob) -> GenerationJobRecord:
+        return GenerationJobRecord(
+            owner_id=stored.owner_id,
+            username=stored.username,
+            first_name=stored.first_name,
+            description=stored.description,
+            response=stored.response,
+        )
+
+    def _submit_image_job(self, job_id: str, description: str, owner_id: int) -> None:
+        self._image_executor.submit(
+            self._run_image_job,
+            job_id,
+            description,
+            self._derived_asset_owner_ids is None or owner_id in self._derived_asset_owner_ids,
+        )
+
+    def _recover_active_jobs(self) -> None:
+        if self._store is None:
+            return
+        for stored in self._store.active():
+            response = stored.response.model_copy(
+                update={
+                    "status": "queued",
+                    "phase": "queued",
+                    "updatedAt": self._now(),
+                    "error": None,
+                }
+            )
+            record = self._record_from_stored(
+                StoredGenerationJob(
+                    owner_id=stored.owner_id,
+                    username=stored.username,
+                    first_name=stored.first_name,
+                    description=stored.description,
+                    response=response,
+                )
+            )
+            with self._lock:
+                self._jobs[response.jobId] = record
+                self._persist_locked(response.jobId)
+            self._submit_image_job(response.jobId, stored.description, stored.owner_id)
+            logger.warning(
+                "pet_generation_recovered jobId=%s ownerId=%s",
+                response.jobId,
+                stored.owner_id,
+            )
 
     def _fail(self, job_id: str, exc: Exception, *, phase: str) -> None:
         detail = self._build_failure(job_id, phase, exc, self._owner_id(job_id))

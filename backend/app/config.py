@@ -22,8 +22,11 @@ class Settings(BaseSettings):
     lite_facts_rate_limit_per_hour: int = 120
     memory_rate_limit_per_hour: int = 120
     bot_story_workers: int = Field(default=2, ge=1, le=4)
-    generation_image_workers: int = Field(default=3, ge=1, le=8)
-    generation_video_workers: int = Field(default=4, ge=1, le=8)
+    generation_image_workers: int = Field(default=20, ge=1, le=32)
+    generation_video_workers: int = Field(default=20, ge=1, le=32)
+    generation_max_queued_jobs: int = Field(default=40, ge=0, le=500)
+    generation_job_store_path: str = "data/push/generation_jobs.sqlite3"
+    generation_job_stuck_seconds: int = Field(default=1800, ge=300, le=7200)
     derived_asset_pilot_telegram_ids: set[int] = Field(default_factory=lambda: {62943754})
     diagnostic_telegram_ids: set[int] = Field(default_factory=lambda: {62943754})
     telegram_init_data_max_age_seconds: int = 60 * 60 * 24
@@ -79,7 +82,10 @@ class Settings(BaseSettings):
     openai_character_timeout_seconds: float = 180
     openai_chat_timeout_seconds: float = 90
     openai_image_timeout_seconds: float = 180
-    openai_max_retries: int = 0
+    openai_max_retries: int = Field(default=2, ge=0, le=5)
+    ops_alerts_enabled: bool = False
+    ops_alert_telegram_ids: set[int] = Field(default_factory=lambda: {62943754})
+    ops_alert_dedup_seconds: int = Field(default=300, ge=30, le=3600)
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
     )

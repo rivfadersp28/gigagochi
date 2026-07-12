@@ -42,6 +42,7 @@ from app.services.chat_service import chat_with_local_pet
 from app.services.generation_job_service import (
     GenerationJobNotFoundError,
     GenerationJobService,
+    GenerationQueueFullError,
 )
 from app.services.image_service import (
     build_pet_asset_set_response,
@@ -54,6 +55,7 @@ from app.services.image_service import (
     generation_error_code,
 )
 from app.services.openai_service import MissingOpenAIAPIKey
+from app.services.ops_alert_service import notify_ops
 from app.services.pet_reply_engine.lite_generator import (
     extract_lite_overlay_patch_from_reply,
     generate_ambient_pet_message,
@@ -180,13 +182,40 @@ def _generation_job_service() -> GenerationJobService:
             ),
             build_response=build_pet_asset_set_response,
             build_failure=_build_generation_failure,
-            derived_asset_owner_ids=settings.derived_asset_pilot_telegram_ids,
+            derived_asset_owner_ids=getattr(
+                settings,
+                "derived_asset_pilot_telegram_ids",
+                None,
+            ),
+            store_path=getattr(settings, "generation_job_store_path", None),
+            max_queued_jobs=getattr(settings, "generation_max_queued_jobs", 40),
+            stuck_after=timedelta(
+                seconds=getattr(settings, "generation_job_stuck_seconds", 1800)
+            ),
         )
     return generation_job_service
 
 
 def submit_generation_job(description: str, user: TelegramUserContext) -> GeneratePetJobResponse:
-    return _generation_job_service().submit(description, user)
+    try:
+        return _generation_job_service().submit(description, user)
+    except GenerationQueueFullError:
+        notify_ops(
+            "generation:queue-full",
+            "Generation queue is full. New pet requests receive HTTP 503.",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "GENERATION_QUEUE_FULL",
+                "message": (
+                    "Сейчас создаётся слишком много питомцев. "
+                    "Попробуйте через несколько минут."
+                ),
+                "retryAfterSeconds": 120,
+            },
+            headers={"Retry-After": "120"},
+        ) from None
 
 
 def get_generation_job(job_id: str, user: TelegramUserContext) -> GeneratePetJobResponse:
@@ -207,6 +236,14 @@ def shutdown_generation_jobs() -> None:
     if generation_job_service is not None:
         generation_job_service.shutdown()
         generation_job_service = None
+
+
+def start_generation_jobs() -> None:
+    _generation_job_service()
+
+
+def generation_job_runtime_status() -> dict[str, int]:
+    return _generation_job_service().runtime_status()
 
 
 @router.post(

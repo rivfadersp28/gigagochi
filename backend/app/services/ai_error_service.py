@@ -11,6 +11,7 @@ from fastapi import HTTPException, status
 from openai import APIStatusError
 
 from app.services.image_service import generation_error_code
+from app.services.ops_alert_service import notify_ops
 from app.services.prompt_debug import current_ai_log_context
 
 MAX_PROVIDER_ERROR_CHARS = 1200
@@ -225,6 +226,18 @@ def log_ai_request_failure(
     logger.exception(
         "AI request failed: %s",
         json.dumps(log_payload, ensure_ascii=False, default=str),
+    )
+    notify_ops(
+        f"ai:{endpoint}:{detail.get('code')}",
+        "\n".join(
+            [
+                f"AI error: {endpoint}",
+                f"code: {detail.get('code')}",
+                f"provider: {detail.get('providerStatus') or '-'}",
+                f"exception: {type(exc).__name__}",
+                f"request: {detail.get('requestId') or '-'}",
+            ]
+        ),
     )
 
 

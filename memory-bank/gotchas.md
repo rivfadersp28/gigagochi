@@ -1,5 +1,11 @@
 # Gotchas
 
+- Do not add Uvicorn workers while generation jobs use the local SQLite-backed executor. Multiple
+  API processes would each recover the same active jobs. Scale beyond one backend process only after
+  moving execution ownership to a broker/worker system such as Redis plus a dedicated worker.
+- `GENERATION_IMAGE_WORKERS=20` means accepted concurrency, not guaranteed provider throughput.
+  OpenAI project rate limits and billing must be checked separately; keep the bounded queue and retry
+  policy enabled, and watch memory before increasing the worker count further.
 - Do not send the whole story dataset in every reply prompt.
   `contextRouting.worldContext` may request a small `WORLD_CONTEXT`, but final
   inclusion must still pass `speech_runtime.contextSources`.
