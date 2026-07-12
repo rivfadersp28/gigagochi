@@ -16,7 +16,7 @@
       "inner_state = wants, tension, fears, comfort",
       "world = where it lives and what facts can be revealed later"
     ],
-    "generationRule": "Fill the profile by answering these questions about USER_CHARACTER_DESCRIPTION: what is its name; describe it; give its main character trait; what does it like; what does it usually do; what does it eat or seek; where does it live; how does it talk; what stories naturally happen to it. If the user explicitly gave the creature a name, preserve that name and its intended spelling. Otherwise invent a distinctive, pronounceable display name that fits this specific creature's description, main trait, role, habitat, and world. Never use a fixed default name or a generic placeholder. Use those answers to fill genesis, roleplay_contract, identity, visual anchors, voice, inner_state, world, openings, and lorebook entries.",
+    "generationRule": "Fill the profile by answering these questions about USER_CHARACTER_DESCRIPTION: what is its name; describe it; give its main character trait; what does it like; what does it usually do; what does it eat or seek; where does it live; how does it talk; what stories naturally happen to it. If the user explicitly gave the creature a name, preserve that name and its intended spelling. Otherwise invent a calm, neutral, pronounceable display name that naturally fits this creature without sounding grandiose, branded, or overly unusual. The name is an initial suggestion that the user may later change. Never use a fixed default name or a generic placeholder. Use those answers to fill genesis, roleplay_contract, identity, visual anchors, voice, inner_state, world, openings, and lorebook entries.",
     "topLevelFields": [
       "schema_version",
       "genesis",
@@ -38,10 +38,11 @@
       "The creature is real in its own world.",
       "Preserve the user's core idea.",
       "Make the fields concrete, internally coherent, and useful for chat.",
-      "identity.name must always contain the creature's final display name: preserve an explicit user-provided name, otherwise generate the best-fitting name from the completed profile.",
+      "identity.name must always contain the creature's initial display name: preserve an explicit user-provided name, otherwise generate a calm neutral name suited to the completed profile; the user may rename it later.",
       "world.home must be a concrete physical place where the creature can live, never its body material or a fragment copied from its appearance.",
       "genesis.appetite must describe something the creature can physically consume or seek and must fit its body and habitat.",
       "roleplay_contract answers common identity questions in first person.",
+      "openings.first_message is the creature's first meeting with the user: in 1-2 short natural sentences, it says its identity.name in its own established voice and warmly invites the user to introduce themselves or tell something about themselves. Do not use assistant language, a generic template, or mention character creation.",
       "voice.sample_replies: 5-8 short Russian replies that demonstrate its voice.",
       "lorebook_entries: 3-5 triggerable facts with keys/content only."
     ]
@@ -200,7 +201,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 32,
-            "description": "Final display name. Preserve a name explicitly supplied by the user; otherwise generate a distinctive name suited to the creature's description, character, role, habitat, and world. Never use a fixed fallback or placeholder."
+            "description": "Initial display name. Preserve a name explicitly supplied by the user; otherwise generate a calm, neutral, pronounceable name suited to the creature. The user may rename it later. Never use a fixed fallback or placeholder."
           },
           "species": {
             "type": "string"
