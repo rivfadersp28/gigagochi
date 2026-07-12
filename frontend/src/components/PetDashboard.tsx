@@ -149,7 +149,7 @@ const FOOD_REPLY_MAX_CHARS = 60;
 const REPLY_AUTO_ADVANCE_MS = 3_000;
 const UNNAMED_STATUS_NAME = "Без имени";
 const ACTION_ICON_CACHE_VERSION = "20260710-figma-142-1509-1";
-const VIDEO_FILTER_CACHE_VERSION = "20260709-video-filter-normal-2";
+const VIDEO_FILTER_CACHE_VERSION = "20260713-video-filter-lossless-webp-1";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
 const SCENE_VIDEO_START_OFFSET_SECONDS = 0.1;
 const TAP_REACTION_DURATION_MS = 180;
@@ -162,7 +162,7 @@ const PET_TAP_REGION = {
 } as const;
 const mainSceneBackgroundSrc = `/figma/main-screen-bg.png?v=${MAIN_SCENE_BACKGROUND_CACHE_VERSION}`;
 const emptySceneBackgroundSrc = "/figma/main-scene-underlay.webp";
-const videoFilterSrc = `/figma/video-filter-normal.png?v=${VIDEO_FILTER_CACHE_VERSION}`;
+const videoFilterSrc = `/figma/video-filter-normal.webp?v=${VIDEO_FILTER_CACHE_VERSION}`;
 const actionIconSrc = {
   chat: `/figma/action-chat-icon-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
   feed: `/figma/action-feed-icon-new.svg?v=${ACTION_ICON_CACHE_VERSION}`,
@@ -1357,6 +1357,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       }`}
       onClick={handleMainScreenTap}
     >
+      <img
+        src={videoFilterSrc}
+        alt=""
+        className="main-shell-filter-image"
+        draggable={false}
+        aria-hidden="true"
+      />
       {localPet.error ? (
         <div className="fixed left-5 right-5 top-[max(20px,calc(var(--tma-safe-top)+12px))] z-20 rounded-[8px] border border-[var(--danger-line)] bg-white px-4 py-3 text-sm text-[var(--danger)] sm:left-8 sm:right-auto sm:max-w-sm">
           {localPet.error}
