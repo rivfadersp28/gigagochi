@@ -39,6 +39,14 @@
   polling after a WebView reload. The marker is removed after success or a
   confirmed `GENERATION_JOB_NOT_FOUND` response.
 
+## Production Routing
+
+- Production containers join the shared `public_proxy` Docker network. The live
+  `gigagochi.serega.works` virtual host is served by the shared
+  `bizzy-radio-caddy-1` container using `/opt/bizzy-radio/Caddyfile`; the
+  repository `deploy/Caddyfile` is the standalone compose equivalent, not the
+  currently active proxy configuration on the server.
+
 ## Frontend Interaction Primitives
 
 - Modal focus behavior uses Radix primitives. `DebugPanel` is a controlled

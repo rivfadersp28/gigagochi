@@ -278,10 +278,14 @@
   or Pydantic field paths back into public error `message`. Trusted details
   belong only in the optional server-authenticated `diagnostic` object and the
   Sergey-only expandable UI block.
-- `npm audit` currently reports the moderate PostCSS advisory
-  `GHSA-qx2v-qp2m-jg93` through Next's bundled PostCSS. npm proposes an
-  incompatible downgrade to Next 9.3.3, so do not run `npm audit fix --force`;
-  re-check when the pinned Next release updates its bundled dependency.
+- Next's bundled PostCSS previously triggered `GHSA-qx2v-qp2m-jg93`. Keep the
+  compatible `overrides.next.postcss` pin and do not run `npm audit fix --force`;
+  the release audit currently reports 0 vulnerabilities.
+- The live domain is routed by the shared `/opt/bizzy-radio/Caddyfile`, not by
+  `/opt/gigagochi/deploy/Caddyfile`. Validate changes inside
+  `bizzy-radio-caddy-1` before reloading. Replacing the bind-mounted file with
+  `mv` leaves the running container on the old inode; reload the validated file
+  from a container-visible temporary path or recreate the proxy container.
 - After changing a FastAPI route or Pydantic schema, run the backend OpenAPI
   exporter and `npm run contracts`. `make check` deliberately fails on stale
   `frontend/openapi.json` or `src/lib/generated/openapi.d.ts`.
