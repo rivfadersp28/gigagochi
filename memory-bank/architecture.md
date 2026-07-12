@@ -15,6 +15,12 @@
   Job responses and descriptions are persisted in SQLite on the shared `push_data` volume; queued
   or running jobs are requeued after a backend restart. The API remains a single Uvicorn process,
   while generation uses dedicated image and video thread pools.
+- Pet creation is explicitly two-phase for every user. The creation screen stops blocking as soon
+  as the normal character scene and primary video are ready, persists the still-running generation
+  job ID in the local asset set, and enters the app. Sad and happy image/video assets continue in
+  the background; the dashboard polls the same job and atomically applies newer URLs. Until those
+  assets are ready, mood rendering uses the normal asset fallback, which is safe because new-pet
+  stats start at 100.
 - Production operations alerts use the existing Telegram bot and a dedicated admin ID allowlist.
   AI failures, unexpected HTTP 500s, scheduler failures, queue saturation and stuck generation jobs
   are deduplicated before delivery so an incident does not create an alert storm.
