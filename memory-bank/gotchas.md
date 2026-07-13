@@ -152,11 +152,15 @@
   halves, so the boundary reframe cannot return at the end of the reverse half. Keep the previous
   0.1-second trim for other video providers unless their output proves to need a different cutoff.
   It then encodes both halves into one ping-pong MP4 without duplicated endpoints. Keep
+  the output at constant 24 FPS, H.264 Level 3.1 and MP4 track timescale 12288. Leaving FFmpeg's
+  filter timebase unconstrained produces Level 6.2 MP4 files that Chrome can play but Telegram's
+  iOS WebView may reject, leaving the dashboard on its asset-loading screen.
   native muted `autoPlay` plus `loop` on the dashboard. Do not restore client-side reverse seeking:
   H.264 must decode from an earlier keyframe and visibly freezes at the turn in Chrome/Safari.
   Existing production pet MP4 files predate this cutoff; migrate them once with
   `backend/scripts/migrate_pet_scene_video_preroll.py`, keeping its backup directory and state file
-  so interrupted runs resume without trimming the same asset twice.
+  so interrupted runs resume without trimming the same asset twice. Use `--restore-from-backup`
+  when repairing an already completed migration; reprocessing the migrated files accumulates trims.
   Trim the provider video's low-motion final 0.35 seconds before reversing; removing only an exact
   duplicate endpoint frame still leaves a visible hold because i2v providers often settle before
   the nominal end. Production backend images therefore require the `ffmpeg` and `ffprobe` binaries.

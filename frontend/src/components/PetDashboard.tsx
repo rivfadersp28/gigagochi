@@ -1275,6 +1275,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           >
             Открыть снова
           </button>
+          <button
+            type="button"
+            className="rounded-lg border border-[var(--ink)] px-4 py-3 text-[var(--ink)]"
+            onClick={handleStartOver}
+          >
+            Создать нового персонажа
+          </button>
         </div>
       </main>
     );

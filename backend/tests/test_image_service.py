@@ -116,6 +116,10 @@ def test_ping_pong_video_trims_seedance_preroll_before_reversing(
     assert filter_graph.startswith("[0:v]trim=start=0.200000:")
     assert filter_graph.index("trim=start=0.200000") < filter_graph.index("split=2")
     assert filter_graph.index("split=2") < filter_graph.index("reverse")
+    assert filter_graph.endswith("concat=n=2:v=1:a=0,fps=24[out]")
+    command = ffmpeg_commands[0]
+    assert command[command.index("-level:v") + 1] == "3.1"
+    assert command[command.index("-video_track_timescale") + 1] == "12288"
 
 
 @pytest.mark.parametrize(

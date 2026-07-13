@@ -164,7 +164,7 @@ describe("sad pet assets", () => {
     expect(generatedSceneVideoUrl(state, "happy")).toContain("happy_asset_v=20260710-2");
     expect(generatedSpriteUrl(state, "teen", "idle")).toBe("/idle.png");
     expect(generatedSceneVideoUrl(state)).toBe(
-      "/idle.mp4?ping_pong_v=20260713-preroll-2",
+      "/idle.mp4?ping_pong_v=20260713-safari-3",
     );
   });
 });

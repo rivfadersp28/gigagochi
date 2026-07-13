@@ -49,7 +49,7 @@ def _trim_existing_ping_pong(path: Path, output_path: Path, duration: float) -> 
             "-filter_complex",
             (
                 f"[0:v]trim=start={EXTRA_PING_PONG_TRIM_SECONDS:.6f}:end={end:.6f},"
-                "setpts=PTS-STARTPTS[out]"
+                "setpts=PTS-STARTPTS,fps=24[out]"
             ),
             "-map",
             "[out]",
@@ -62,6 +62,10 @@ def _trim_existing_ping_pong(path: Path, output_path: Path, duration: float) -> 
             "20",
             "-pix_fmt",
             "yuv420p",
+            "-level:v",
+            "3.1",
+            "-video_track_timescale",
+            "12288",
             "-movflags",
             "+faststart",
             str(output_path),
@@ -102,15 +106,23 @@ def _save_completed(state_path: Path, completed: set[str]) -> None:
     os.replace(temp_path, state_path)
 
 
-def migrate(root: Path, backup_root: Path, *, dry_run: bool = False) -> int:
+def migrate(
+    root: Path,
+    backup_root: Path,
+    *,
+    dry_run: bool = False,
+    restore_from_backup: bool = False,
+) -> int:
     root = root.resolve()
     backup_root = backup_root.resolve()
     state_path = root / MIGRATION_STATE_FILENAME
     completed = _load_completed(state_path)
-    candidates = sorted(
-        path for path in root.glob("*/*.mp4") if path.name in PET_VIDEO_NAMES
+    candidates = sorted(path for path in root.glob("*/*.mp4") if path.name in PET_VIDEO_NAMES)
+    pending = (
+        candidates
+        if restore_from_backup
+        else [path for path in candidates if str(path.relative_to(root)) not in completed]
     )
-    pending = [path for path in candidates if str(path.relative_to(root)) not in completed]
     if dry_run:
         for path in pending:
             print(path.relative_to(root))
@@ -120,12 +132,15 @@ def migrate(root: Path, backup_root: Path, *, dry_run: bool = False) -> int:
         relative_path = path.relative_to(root)
         backup_path = backup_root / relative_path
         backup_path.parent.mkdir(parents=True, exist_ok=True)
-        if not backup_path.exists():
+        if restore_from_backup and not backup_path.exists():
+            raise FileNotFoundError(f"Missing migration backup: {backup_path}")
+        if not restore_from_backup and not backup_path.exists():
             shutil.copy2(path, backup_path)
+        source_path = backup_path if restore_from_backup else path
 
         with TemporaryDirectory(prefix=".seedance-preroll-", dir=path.parent) as temp_dir_value:
             output_path = Path(temp_dir_value) / path.name
-            _migrated_bytes(path, output_path)
+            _migrated_bytes(source_path, output_path)
             shutil.copymode(path, output_path)
             os.replace(output_path, path)
 
@@ -143,8 +158,14 @@ def main() -> None:
     parser.add_argument("root", type=Path)
     parser.add_argument("--backup-dir", required=True, type=Path)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--restore-from-backup", action="store_true")
     args = parser.parse_args()
-    count = migrate(args.root, args.backup_dir, dry_run=args.dry_run)
+    count = migrate(
+        args.root,
+        args.backup_dir,
+        dry_run=args.dry_run,
+        restore_from_backup=args.restore_from_backup,
+    )
     print(f"processed={0 if args.dry_run else count} pending={count if args.dry_run else 0}")
 
 

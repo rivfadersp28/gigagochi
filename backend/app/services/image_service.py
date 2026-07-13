@@ -1957,7 +1957,7 @@ def render_ping_pong_video_bytes(
             "setpts=PTS-STARTPTS,split=2[f][r];"
             f"[r]reverse,trim=start={frame_seconds:.6f}:end={reverse_end:.6f},"
             "setpts=PTS-STARTPTS[rev];"
-            "[f][rev]concat=n=2:v=1:a=0[out]"
+            "[f][rev]concat=n=2:v=1:a=0,fps=24[out]"
         )
         subprocess.run(
             [
@@ -1980,6 +1980,10 @@ def render_ping_pong_video_bytes(
                 "20",
                 "-pix_fmt",
                 "yuv420p",
+                "-level:v",
+                "3.1",
+                "-video_track_timescale",
+                "12288",
                 "-movflags",
                 "+faststart",
                 str(output_path),
