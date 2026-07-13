@@ -2153,6 +2153,11 @@
             "title": "Registered",
             "type": "boolean"
           },
+          "resetPet": {
+            "default": false,
+            "title": "Resetpet",
+            "type": "boolean"
+          },
           "statsPatch": {
             "anyOf": [
               {

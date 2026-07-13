@@ -246,6 +246,35 @@ def _update_record(
     return _push_store().update_record(telegram_id, updater)
 
 
+def request_pet_reset(telegram_id: int) -> dict[str, Any]:
+    """Delete server-side pet data and request a one-time client reset for that pet."""
+
+    now_iso = _iso()
+
+    def reset_record(existing: dict[str, Any] | None) -> dict[str, Any]:
+        if not isinstance(existing, dict):
+            raise TelegramPushError("SNAPSHOT_NOT_FOUND", "Snapshot пользователя не найден.")
+        pet_id = existing.get("petId")
+        if not isinstance(pet_id, str) or not pet_id.strip():
+            raise TelegramPushError("SNAPSHOT_NOT_FOUND", "Персонаж пользователя не найден.")
+
+        retained_keys = (
+            "telegramId",
+            "chatId",
+            "username",
+            "firstName",
+            "languageCode",
+            "chatStartedAt",
+            "lastChatSeenAt",
+            "chatReachable",
+        )
+        record = {key: deepcopy(existing.get(key)) for key in retained_keys if key in existing}
+        record["petResetRequest"] = {"petId": pet_id, "requestedAt": now_iso}
+        return record
+
+    return _update_record(telegram_id, reset_record)
+
+
 def _merge_character_bible(
     existing: Any,
     incoming: Any,
@@ -963,9 +992,15 @@ def register_push_snapshot(
         "registeredAt": now_iso,
     }
     stats_patch: LocalPetStatsPatch | None = None
+    reset_pet = False
 
     def merge_snapshot(existing: dict[str, Any] | None) -> dict[str, Any]:
-        nonlocal stats_patch
+        nonlocal reset_pet, stats_patch
+        reset_request = existing.get("petResetRequest") if isinstance(existing, dict) else None
+        if isinstance(reset_request, dict) and reset_request.get("petId") == payload.petId:
+            reset_pet = True
+            return deepcopy(existing)
+
         record = deepcopy(incoming_record)
         same_pet = isinstance(existing, dict) and existing.get("petId") == payload.petId
         if same_pet:
@@ -1014,9 +1049,10 @@ def register_push_snapshot(
         registered=True,
         telegramId=user.telegram_id,
         updatedAt=now_iso,
+        resetPet=reset_pet,
         statsPatch=stats_patch,
-        liteOverlayPatch=_record_lite_overlay_patch(record),
-        recentStoryEventsPatch=_recent_story_events_patch(record),
+        liteOverlayPatch=None if reset_pet else _record_lite_overlay_patch(record),
+        recentStoryEventsPatch=None if reset_pet else _recent_story_events_patch(record),
     )
 
 

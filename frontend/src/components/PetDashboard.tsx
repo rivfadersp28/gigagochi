@@ -417,6 +417,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     applyLiteOverlayPatch: localPet.applyLiteOverlayPatch,
     applyStoryLibraryPatch: localPet.applyStoryLibraryPatch,
     applyRecentStoryEventsPatch: localPet.applyRecentStoryEventsPatch,
+    resetPet: localPet.reset,
   });
   useEffect(() => {
     ambientReplyHistoryRef.current = readRecentAmbientReplies(petId);

@@ -26,6 +26,7 @@ export type PushSnapshotResponse = {
   registered: boolean;
   telegramId: number;
   updatedAt: string;
+  resetPet?: boolean;
   statsPatch?: PetStatsPatch;
   storyLibraryPatch?: Record<string, unknown>;
   liteOverlayPatch?: Record<string, unknown>;
@@ -307,6 +308,10 @@ export function parsePushSnapshotResponse(value: unknown): PushSnapshotResponse 
     registered: boolean(payload.registered, "pushSnapshot.registered"),
     telegramId: number(payload.telegramId, "pushSnapshot.telegramId"),
     updatedAt: string(payload.updatedAt, "pushSnapshot.updatedAt"),
+    resetPet:
+      payload.resetPet === undefined || payload.resetPet === null
+        ? undefined
+        : boolean(payload.resetPet, "pushSnapshot.resetPet"),
     statsPatch: parseStatsPatch(payload.statsPatch, "pushSnapshot.statsPatch"),
     storyLibraryPatch: optionalRecord(
       payload.storyLibraryPatch,

@@ -19,6 +19,7 @@ type UsePetPushSnapshotSyncOptions = {
   applyLiteOverlayPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
   applyStoryLibraryPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
   applyRecentStoryEventsPatch: (patch?: Record<string, unknown>) => LocalPetState | null;
+  resetPet: () => void;
 };
 
 export function usePetPushSnapshotSync({
@@ -30,6 +31,7 @@ export function usePetPushSnapshotSync({
   applyLiteOverlayPatch,
   applyStoryLibraryPatch,
   applyRecentStoryEventsPatch,
+  resetPet,
 }: UsePetPushSnapshotSyncOptions) {
   const lastSyncRef = useRef<{
     petId: string;
@@ -67,6 +69,10 @@ export function usePetPushSnapshotSync({
       },
     )
       .then((response) => {
+        if (response.resetPet) {
+          resetPet();
+          return;
+        }
         applyStatsPatch(response.statsPatch ?? undefined);
         applyLiteOverlayPatch(response.liteOverlayPatch ?? undefined);
         applyStoryLibraryPatch(response.storyLibraryPatch ?? undefined);
@@ -81,6 +87,7 @@ export function usePetPushSnapshotSync({
     pet,
     petId,
     recentAmbientRepliesRef,
+    resetPet,
     status,
   ]);
 }

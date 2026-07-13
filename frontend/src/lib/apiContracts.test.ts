@@ -4,6 +4,7 @@ import {
   parseGeneratePetJobResponse,
   parseLocalChatResponse,
   parseMemoryExtractionResponse,
+  parsePushSnapshotResponse,
 } from "./apiContracts";
 import { ApiContractError, ApiError, request } from "./apiTransport";
 
@@ -33,6 +34,17 @@ describe("API response contracts", () => {
       storyLibraryPatch: undefined,
       debug: undefined,
     });
+  });
+
+  it("parses a server-requested local pet reset", () => {
+    expect(
+      parsePushSnapshotResponse({
+        registered: true,
+        telegramId: 549733365,
+        updatedAt: "2026-07-13T19:00:00Z",
+        resetPet: true,
+      }).resetPet,
+    ).toBe(true);
   });
 
   it("accepts only supported conversation happiness deltas", () => {

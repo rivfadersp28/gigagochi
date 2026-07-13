@@ -901,6 +901,11 @@ export interface components {
             } | null;
             /** Registered */
             readonly registered: boolean;
+            /**
+             * Resetpet
+             * @default false
+             */
+            readonly resetPet: boolean;
             readonly statsPatch?: components["schemas"]["LocalPetStatsPatch"] | null;
             /** Storylibrarypatch */
             readonly storyLibraryPatch?: {

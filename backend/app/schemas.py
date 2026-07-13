@@ -250,6 +250,62 @@ class GenerateTravelResponse(BaseModel):
     debug: LocalChatDebug | None = None
 
 
+class InteractiveTravelStatImpact(BaseModel):
+    stat: PetStatKeyValue
+    amount: int = Field(ge=-15, le=15)
+    reason: str = Field(min_length=1, max_length=280)
+
+
+class InteractiveTravelPart(BaseModel):
+    partNumber: int = Field(ge=1, le=4)
+    title: str = Field(min_length=1, max_length=120)
+    storyText: str = Field(min_length=1, max_length=700)
+    challenge: str | None = Field(default=None, max_length=280)
+    advice: str | None = Field(default=None, max_length=1000)
+    adviceAssessment: Literal["helpful", "harmful", "ambiguous"] | None = None
+    consequence: str | None = Field(default=None, max_length=280)
+
+
+class InteractiveTravelState(BaseModel):
+    travelId: str = Field(min_length=1, max_length=120)
+    generatedAt: datetime
+    destination: str = Field(min_length=1, max_length=500)
+    overallTitle: str = Field(min_length=1, max_length=120)
+    arcPlan: dict[str, str]
+    parts: list[InteractiveTravelPart] = Field(min_length=1, max_length=4)
+    completed: bool = False
+    outcomeValence: Literal["positive", "negative"] | None = None
+    statImpact: InteractiveTravelStatImpact | None = None
+
+    @model_validator(mode="after")
+    def validate_part_sequence(self) -> InteractiveTravelState:
+        expected = list(range(1, len(self.parts) + 1))
+        actual = [part.partNumber for part in self.parts]
+        if actual != expected:
+            raise ValueError("interactive travel parts must be sequential")
+        if self.completed != (len(self.parts) == 4):
+            raise ValueError("completed must match the fourth part")
+        return self
+
+
+class StartInteractiveTravelRequest(BaseModel):
+    pet: LocalPetChatContext
+    destination: str = Field(min_length=1, max_length=500)
+    includeDebug: bool = False
+
+
+class ContinueInteractiveTravelRequest(BaseModel):
+    pet: LocalPetChatContext
+    travel: InteractiveTravelState
+    advice: str = Field(min_length=1, max_length=1000)
+    includeDebug: bool = False
+
+
+class InteractiveTravelResponse(BaseModel):
+    travel: InteractiveTravelState
+    debug: LocalChatDebug | None = None
+
+
 class LocalChatResponse(BaseModel):
     reply: str
     moodHint: PetStateValue | None = None
@@ -362,6 +418,7 @@ class LocalPetPushSnapshotResponse(BaseModel):
     registered: bool
     telegramId: int
     updatedAt: str
+    resetPet: bool = False
     statsPatch: LocalPetStatsPatch | None = None
     storyLibraryPatch: dict[str, Any] | None = None
     liteOverlayPatch: dict[str, Any] | None = None

@@ -101,6 +101,33 @@ def test_snapshot_preserves_rich_character_bible_when_legacy_client_sends_only_e
     assert bible["extensions"]["lite_overlay"]["facts"] == [{"text": "Громм починил мост."}]
 
 
+def test_pet_reset_deletes_server_data_and_resets_only_matching_local_pet(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+
+    reset_record = telegram_push_service.request_pet_reset(TEST_TELEGRAM_ID)
+
+    assert reset_record["petResetRequest"]["petId"] == "pet-1"
+    assert "pet" not in reset_record
+    assert "history" not in reset_record
+    assert "memoryContext" not in reset_record
+
+    old_pet_response = telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    assert old_pet_response.resetPet is True
+
+    new_pet_payload = _snapshot_payload().model_copy(update={"petId": "pet-2"})
+    new_pet_response = telegram_push_service.register_push_snapshot(_user(), new_pet_payload)
+    assert new_pet_response.resetPet is False
+
+    store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
+    assert store["records"][str(TEST_TELEGRAM_ID)]["petId"] == "pet-2"
+    assert "petResetRequest" not in store["records"][str(TEST_TELEGRAM_ID)]
+
+
 def test_manual_push_uses_registered_telegram_chat(monkeypatch, tmp_path) -> None:
     captured = {}
     settings = SimpleNamespace(
