@@ -5,7 +5,7 @@
   }
 
   50% {
-    transform: translate3d(0, -3px, 0);
+    transform: translate3d(0, -0.1154em, 0);
   }
 }
 
@@ -23,21 +23,21 @@
 
 .continuationDots {
   display: inline-flex;
-  width: 24.5833px;
-  height: 5.4167px;
+  width: 0.9455em;
+  height: 0.2083em;
   align-items: center;
   justify-content: space-between;
-  margin-inline-start: 8px;
-  transform: translate3d(0, 2px, 0);
+  margin-inline-start: 0.3077em;
+  transform: translate3d(0, 0.0769em, 0);
   vertical-align: 0.08em;
   white-space: nowrap;
 }
 
 .continuationDotUnit {
   display: block;
-  width: 5.4167px;
-  height: 5.4167px;
-  flex: 0 0 5.4167px;
+  width: 0.2083em;
+  height: 0.2083em;
+  flex: 0 0 0.2083em;
   opacity: 0;
   transform: translate3d(0, var(--pet-continuation-translate-y, 0), 0);
   animation: continuation-dot-enter var(--pet-continuation-enter-duration, 700ms)

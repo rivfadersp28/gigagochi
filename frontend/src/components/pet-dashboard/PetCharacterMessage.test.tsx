@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +12,10 @@ vi.mock("@/lib/telegram", () => ({
 }));
 
 const longMessage = "Это длинное предложение, которое должно остаться в одной порции.";
+const componentStyles = readFileSync(
+  "src/components/pet-dashboard/PetCharacterMessage.module.css",
+  "utf8",
+);
 
 describe("PetCharacterMessage", () => {
   beforeEach(() => {
@@ -170,6 +176,18 @@ describe("PetCharacterMessage", () => {
     expect(screen.getByLabelText("Сверхдлинноепредыдущееслово")).toHaveStyle({
       fontSize: "14px",
     });
+  });
+
+  it("sizes continuation dots relative to the fitted message font", () => {
+    const dotsRule = componentStyles.match(/\.continuationDots\s*\{([^}]*)\}/)?.[1];
+    const dotUnitRule = componentStyles.match(/\.continuationDotUnit\s*\{([^}]*)\}/)?.[1];
+
+    expect(dotsRule).toContain("width: 0.9455em");
+    expect(dotsRule).toContain("height: 0.2083em");
+    expect(dotsRule).toContain("margin-inline-start: 0.3077em");
+    expect(dotUnitRule).toContain("width: 0.2083em");
+    expect(dotUnitRule).toContain("height: 0.2083em");
+    expect(componentStyles).toContain("translate3d(0, -0.1154em, 0)");
   });
 
   it("renders three continuation dots after a message portion", () => {
