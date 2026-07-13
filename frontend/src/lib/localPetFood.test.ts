@@ -5,7 +5,7 @@ import { applyFoodEffect, foodReactionPrompt, type FoodId } from "./localPetFood
 describe("localPetFood", () => {
   it.each([
     ["berry-bowl", { hunger: 65, happiness: 40, energy: 40 }],
-    ["leaf-crunch", { hunger: 40, happiness: 15, energy: 65 }],
+    ["leaf-crunch", { hunger: 40, happiness: 40, energy: 65 }],
   ] satisfies [FoodId, { hunger: number; happiness: number; energy: number }][])(
     "applies the %s effect",
     (foodId, expectedStats) => {
@@ -18,7 +18,7 @@ describe("localPetFood", () => {
   it("clamps changed stats to their valid range", () => {
     expect(
       applyFoodEffect({ hunger: 90, happiness: 10, energy: 90 }, "leaf-crunch"),
-    ).toEqual({ hunger: 90, happiness: 0, energy: 100 });
+    ).toEqual({ hunger: 90, happiness: 10, energy: 100 });
   });
 
   it.each([

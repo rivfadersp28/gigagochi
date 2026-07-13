@@ -333,7 +333,14 @@ body {
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
+  transform: translate3d(0, 0, 0);
+  transition: transform var(--conversation-keyboard-motion-duration)
+    var(--conversation-keyboard-motion-easing);
   user-select: none;
+}
+
+.main-mobile-scene--chat:has(.conversation-input:focus) .main-scene-media {
+  transform: translate3d(0, -240px, 0);
 }
 
 .main-scene-background {

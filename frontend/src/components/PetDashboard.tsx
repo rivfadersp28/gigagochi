@@ -1053,15 +1053,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
       });
       await minimumThinkingTime;
+      flushSync(() => {
+        localPet.applyMoodHint(
+          response.moodHint,
+          response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
+          response.happinessDelta,
+        );
+      });
       showPetReplyMessage(response.reply, true, {
         showInConversation: true,
         autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
       });
-      localPet.applyMoodHint(
-        response.moodHint,
-        response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
-        response.happinessDelta,
-      );
       if (response.petPatch?.name) {
         localPet.updateName(response.petPatch.name);
       }
@@ -1554,17 +1556,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             tabIndex={isChatMode ? 0 : -1}
             className="conversation-send-button"
           >
-            {isSendingChat ? (
-              <Loader2 className="size-[20px] animate-spin" aria-hidden="true" />
-            ) : (
-              <img
-                src={conversationSendIconSrc}
-                alt=""
-                className="conversation-send-button__icon"
-                aria-hidden="true"
-                draggable={false}
-              />
-            )}
+            <img
+              src={conversationSendIconSrc}
+              alt=""
+              className="conversation-send-button__icon"
+              aria-hidden="true"
+              draggable={false}
+            />
             <span className="sr-only">Отправить</span>
           </button>
         </form>

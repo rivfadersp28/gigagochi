@@ -22,6 +22,7 @@ public/generated/
 backend/static/generated/
 backend/logs/
 backend/data/push/
+/data/push/
 backend-dev.log
 .local-dev/
 backend/data/.admin-backups/

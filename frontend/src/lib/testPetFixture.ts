@@ -1,7 +1,7 @@
 import type { LocalPetAssetSet, PetMood } from "./types";
 
 const TEST_PET_IMAGE_BASE = "/test-pet";
-const TEST_PET_VIDEO_VERSION = "20260713-ping-pong-v2";
+const TEST_PET_VIDEO_VERSION = "20260713-seedance-preroll-v3";
 const TEST_PET_SCENE_URL = `${TEST_PET_IMAGE_BASE}/openai-normal.png`;
 const TEST_PET_SAD_SCENE_URL = `${TEST_PET_IMAGE_BASE}/openai-sad.png`;
 const TEST_PET_HAPPY_SCENE_URL = `${TEST_PET_IMAGE_BASE}/openai-happy.png`;

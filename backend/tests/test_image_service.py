@@ -5,6 +5,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -57,10 +58,12 @@ from app.services.image_service import (
     generate_pet_image_asset_set,
     generate_pet_sad_scene_path,
     generate_pet_sad_video_for_image_asset_set,
+    generate_pet_scene_video_bytes,
     generate_pet_tap_reaction_scene_path,
     generation_error_code,
     normalize_pet_scene_video_frame_bytes,
     pet_character_region_box,
+    render_ping_pong_video_bytes,
 )
 from app.services.tone_runtime import tone_context_payload
 
@@ -80,6 +83,76 @@ def test_kandinsky_idle_video_prompt_allows_subtle_body_motion() -> None:
     assert "Ступни остаются на тех же точках опоры" in prompt
     assert "Без ходьбы" in prompt
     assert "Не меняй анатомию, пропорции" in prompt
+
+
+def test_ping_pong_video_trims_seedance_preroll_before_reversing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ffmpeg_commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs: Any) -> SimpleNamespace:
+        if command[0] == "ffprobe":
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    {
+                        "streams": [{"avg_frame_rate": "24/1"}],
+                        "format": {"duration": "5.0"},
+                    }
+                )
+            )
+
+        ffmpeg_commands.append(command)
+        Path(command[-1]).write_bytes(b"ping-pong-video")
+        return SimpleNamespace()
+
+    monkeypatch.setattr("app.services.image_service.subprocess.run", fake_run)
+
+    assert (
+        render_ping_pong_video_bytes(b"seedance-video", start_offset_seconds=0.2)
+        == b"ping-pong-video"
+    )
+
+    filter_graph = ffmpeg_commands[0][ffmpeg_commands[0].index("-filter_complex") + 1]
+    assert filter_graph.startswith("[0:v]trim=start=0.200000:")
+    assert filter_graph.index("trim=start=0.200000") < filter_graph.index("split=2")
+    assert filter_graph.index("split=2") < filter_graph.index("reverse")
+
+
+@pytest.mark.parametrize(
+    ("resolved_provider", "expected_start_offset"),
+    [("openrouter", 0.2), ("kandinsky", 0.1)],
+)
+def test_pet_scene_video_uses_provider_specific_preroll_trim(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    resolved_provider: str,
+    expected_start_offset: float,
+) -> None:
+    captured: dict[str, Any] = {}
+    scene_path = tmp_path / "scene.png"
+    scene_path.write_bytes(b"scene")
+
+    class FakeRouter:
+        def resolve_video(self, _request: Any) -> SimpleNamespace:
+            return SimpleNamespace(provider=resolved_provider)
+
+    class FakeGateway:
+        def generate_video(self, _request: Any) -> bytes:
+            return b"provider-video"
+
+    def fake_render(video_bytes: bytes, **kwargs: Any) -> bytes:
+        captured.update(video_bytes=video_bytes, **kwargs)
+        return b"ping-pong-video"
+
+    monkeypatch.setattr("app.services.image_service.get_media_router", FakeRouter)
+    monkeypatch.setattr("app.services.image_service.get_media_gateway", FakeGateway)
+    monkeypatch.setattr("app.services.image_service.render_ping_pong_video_bytes", fake_render)
+
+    assert generate_pet_scene_video_bytes(scene_path) == b"ping-pong-video"
+    assert captured == {
+        "video_bytes": b"provider-video",
+        "start_offset_seconds": expected_start_offset,
+    }
 
 
 def color_bbox(image: Image.Image, color: tuple[int, int, int, int]) -> tuple[int, int, int, int]:

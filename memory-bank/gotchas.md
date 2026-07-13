@@ -147,10 +147,16 @@
   use it as the dashboard poster; the aspect mismatch can reintroduce initial
   reframe/jitter.
 - Seedance can preserve its input image for the first two frames and then
-  recompose it abruptly around 0.1 seconds. Backend FFmpeg post-processing trims that preroll and
-  encodes forward plus reverse frames into one ping-pong MP4 without duplicated endpoints. Keep
+  recompose it abruptly around 0.1 seconds. Backend FFmpeg post-processing trims the first 0.2
+  seconds from OpenRouter/Seedance pet scenes before splitting the clip into forward and reverse
+  halves, so the boundary reframe cannot return at the end of the reverse half. Keep the previous
+  0.1-second trim for other video providers unless their output proves to need a different cutoff.
+  It then encodes both halves into one ping-pong MP4 without duplicated endpoints. Keep
   native muted `autoPlay` plus `loop` on the dashboard. Do not restore client-side reverse seeking:
   H.264 must decode from an earlier keyframe and visibly freezes at the turn in Chrome/Safari.
+  Existing production pet MP4 files predate this cutoff; migrate them once with
+  `backend/scripts/migrate_pet_scene_video_preroll.py`, keeping its backup directory and state file
+  so interrupted runs resume without trimming the same asset twice.
   Trim the provider video's low-motion final 0.35 seconds before reversing; removing only an exact
   duplicate endpoint frame still leaves a visible hold because i2v providers often settle before
   the nominal end. Production backend images therefore require the `ffmpeg` and `ffprobe` binaries.

@@ -7,7 +7,7 @@ export type FoodId = (typeof FOOD_IDS)[number];
 
 const FOOD_STAT_DELTA: Record<FoodId, Partial<Record<PetStatKey, number>>> = {
   "berry-bowl": { hunger: 25 },
-  "leaf-crunch": { happiness: -25, energy: 25 },
+  "leaf-crunch": { energy: 25 },
 };
 
 const FOOD_REACTION_PROMPT = {

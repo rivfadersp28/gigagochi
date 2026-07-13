@@ -36,6 +36,7 @@ from app.llm.contracts import LLMProviderError
 from app.llm.runtime import resolve_llm_model
 from app.media import ImageRequest, VideoRequest, get_media_gateway
 from app.media.kandinsky_prompt_adapter import adapt_kandinsky_prompt
+from app.media.runtime import get_media_router
 from app.prompts.pet_image_prompts import (
     build_character_bible_prompt,
     build_pet_single_sprite_prompt,
@@ -84,6 +85,8 @@ KANDINSKY_RESULT_RETRY_INTERVAL_SECONDS = 3.0
 OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS = 3
 OPENROUTER_VIDEO_HTTP_RETRY_SECONDS = (1.0, 3.0)
 OPENROUTER_VIDEO_POLL_RETRY_SECONDS = (1.0, 2.0, 4.0, 8.0, 15.0)
+PET_SCENE_VIDEO_START_OFFSET_SECONDS = 0.1
+SEEDANCE_PET_SCENE_VIDEO_START_OFFSET_SECONDS = 0.2
 PLANT_DESCRIPTION_PATTERN = re.compile(
     r"(?:лист|растен|цвет|гриб|мох|сад|теплиц|оранжер|росток|кактус|трава|дерев)",
     re.IGNORECASE,
@@ -1908,7 +1911,7 @@ def normalize_pet_scene_video_frame_bytes(image_bytes: bytes) -> bytes:
 def render_ping_pong_video_bytes(
     video_bytes: bytes,
     *,
-    start_offset_seconds: float = 0.1,
+    start_offset_seconds: float = PET_SCENE_VIDEO_START_OFFSET_SECONDS,
     end_offset_seconds: float = 0.35,
 ) -> bytes:
     if not video_bytes:
@@ -2300,16 +2303,26 @@ def generate_pet_scene_video_bytes(
         if provider == "kandinsky" and prompt == PET_SCENE_VIDEO_PROMPT
         else prompt
     )
-    video_bytes = generate_video_from_image_bytes(
-        scene_path.read_bytes(),
-        label=label,
+    request = VideoRequest(
         prompt=provider_prompt,
+        source_image=scene_path.read_bytes(),
+        task=label,
         resolution=PET_SCENE_VIDEO_RESOLUTION,
         aspect_ratio=PET_SCENE_VIDEO_ASPECT_RATIO,
-        duration=PET_SCENE_VIDEO_DURATION_SECONDS,
+        duration_seconds=PET_SCENE_VIDEO_DURATION_SECONDS,
         provider=provider,
     )
-    return render_ping_pong_video_bytes(video_bytes)
+    resolved_provider = get_media_router().resolve_video(request).provider
+    video_bytes = get_media_gateway().generate_video(request)
+    start_offset_seconds = (
+        SEEDANCE_PET_SCENE_VIDEO_START_OFFSET_SECONDS
+        if resolved_provider == "openrouter"
+        else PET_SCENE_VIDEO_START_OFFSET_SECONDS
+    )
+    return render_ping_pong_video_bytes(
+        video_bytes,
+        start_offset_seconds=start_offset_seconds,
+    )
 
 
 def tap_reaction_path_for_asset(asset_id: uuid.UUID) -> Path:
