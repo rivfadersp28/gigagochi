@@ -107,7 +107,17 @@ def _usage_summary(usage: Any) -> dict[str, Any] | None:
             )
             if usage.get(key) is not None
         }
-    return None
+    summary = {
+        key: getattr(usage, key, None)
+        for key in (
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "cost",
+        )
+        if getattr(usage, key, None) is not None
+    }
+    return summary or None
 
 
 def _first_choice(completion: Any) -> Any:
@@ -117,13 +127,18 @@ def _first_choice(completion: Any) -> Any:
 
 def log_chat_completion_response(label: str, completion: Any) -> dict[str, Any]:
     choice = _first_choice(completion)
+    finish_reason = (
+        _object_value(choice, "finish_reason")
+        if choice
+        else _object_value(completion, "finish_reason")
+    )
     payload = {
         "event": "ai_response",
         "promptType": "chat_completion",
         "label": label,
         "providerGenerationId": _object_value(completion, "id"),
         "model": _object_value(completion, "model"),
-        "finishReason": _object_value(choice, "finish_reason") if choice else None,
+        "finishReason": finish_reason,
         "usage": _usage_summary(_object_value(completion, "usage")),
     }
     return write_response_log_line(payload)

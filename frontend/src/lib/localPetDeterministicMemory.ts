@@ -1,6 +1,23 @@
 import type { MemoryOperation, UserMemoryKind } from "./localPetMemoryTypes";
 
 const UNSAFE_MEMORY_RE = /(ignore previous|system prompt|developer message|api[_-]?key|bearer|token|парол|секрет|ключ|промпт|инструкц)/iu;
+const SELF_INTRO_NAME_STOP_WORDS = new Set([
+  "голодный",
+  "голодная",
+  "устал",
+  "устала",
+  "болен",
+  "больна",
+  "дома",
+  "тут",
+  "здесь",
+  "рядом",
+  "готов",
+  "готова",
+  "занят",
+  "занята",
+]);
+const TOMORROW_DEADLINE_RE = /(?:^|\b)у\s+меня\s+завтра\s+((?:экзамен|зач[её]т|контрольная|собеседование|встреча|дедлайн|защита)(?:\s+[^.!?…]{0,80})?)/iu;
 
 function normalizeText(value: string, limit = 180) {
   return value
@@ -29,6 +46,13 @@ function firstName(value: string) {
 function safeValue(value: string, limit = 180) {
   const text = normalizeText(value, limit);
   return text && !UNSAFE_MEMORY_RE.test(text) ? text : "";
+}
+
+function tomorrowStartIso() {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + 1);
+  return date.toISOString();
 }
 
 function remember(
@@ -89,6 +113,26 @@ export function extractDeterministicMemoryOperations(message: string): MemoryOpe
   );
   if (userName) {
     remember(operations, "user_fact", `Пользователя зовут ${userName}.`, "user-name", 1);
+  }
+
+  const shortIntroName = firstName(text.match(/^я\s+([\p{L}_-]{2,32})$/iu)?.[1] ?? "");
+  if (shortIntroName && !SELF_INTRO_NAME_STOP_WORDS.has(shortIntroName.toLowerCase())) {
+    remember(operations, "user_fact", `Пользователя зовут ${shortIntroName}.`, "user-name", 1);
+  }
+
+  const tomorrowDeadline = safeValue(text.match(TOMORROW_DEADLINE_RE)?.[1] ?? "", 120);
+  if (tomorrowDeadline) {
+    const dueAt = tomorrowStartIso();
+    operations.push({
+      type: "remember_user_fact",
+      kind: "deadline",
+      text: `У пользователя завтра ${tomorrowDeadline}.`,
+      normalizedKey: `deadline-${normalizedKey(tomorrowDeadline)}`,
+      confidence: 0.9,
+      importance: 1,
+      dueAt,
+      tags: [normalizedKey(tomorrowDeadline).split("-")[0] ?? "deadline"],
+    });
   }
 
   const petName = firstName(

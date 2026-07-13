@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { LocalPetState } from "@/lib/types";
+import type { LocalPetAssetSet, LocalPetState } from "@/lib/types";
 
 import { DebugPanel } from "./DebugPanel";
 
@@ -31,7 +31,58 @@ function pet(): LocalPetState {
   };
 }
 
+function generatedAssetSet(
+  overrides: Partial<LocalPetAssetSet> = {},
+): LocalPetAssetSet {
+  const images = {
+    baby: { idle: "/idle.png", happy: "", hungry: "/idle.png", sad: "" },
+    teen: { idle: "/idle.png", happy: "", hungry: "/idle.png", sad: "" },
+    adult: { idle: "/idle.png", happy: "", hungry: "/idle.png", sad: "" },
+  };
+  return {
+    assetSetId: "assets-1",
+    generatedAt: "2026-07-10T10:00:00.000Z",
+    images,
+    generationJobId: "job-1",
+    backgroundGenerationStatus: "running",
+    backgroundGenerationPhase: "generating_sad_image",
+    ...overrides,
+  };
+}
+
 describe("DebugPanel visual mode selector", () => {
+  it("switches to Kandinsky only after comparison assets are ready", () => {
+    const onProviderChange = vi.fn();
+    const { rerender } = render(
+      <DebugPanel
+        pet={pet()}
+        isOpen
+        onClose={() => undefined}
+        visualProvider="openai"
+        onVisualProviderChange={onProviderChange}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "OpenAI" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Kandinsky" })).toBeDisabled();
+
+    rerender(
+      <DebugPanel
+        pet={pet()}
+        isOpen
+        onClose={() => undefined}
+        visualProvider="openai"
+        canShowKandinskyAssets
+        onVisualProviderChange={onProviderChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Kandinsky" }));
+    expect(onProviderChange).toHaveBeenCalledWith("kandinsky");
+  });
+
   it("selects a mode and clears the override on a repeated click", () => {
     const onChange = vi.fn();
     const { rerender } = render(
@@ -82,6 +133,65 @@ describe("DebugPanel visual mode selector", () => {
     expect(screen.getByRole("button", { name: "Грустный" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Счастливый" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Нормальный" })).toBeEnabled();
+  });
+});
+
+describe("DebugPanel background generation status", () => {
+  it("shows Kandinsky as a parallel running pipeline", () => {
+    render(
+      <DebugPanel
+        pet={{ ...pet(), assetSet: generatedAssetSet() }}
+        isOpen
+        onClose={() => undefined}
+      />,
+    );
+
+    const progress = screen.getByRole("region", { name: "Фоновая генерация" });
+    expect(within(progress).getByText("Основные ассеты")).toBeInTheDocument();
+    expect(within(progress).getByText("1/4")).toBeInTheDocument();
+    expect(within(progress).getByText("Kandinsky")).toBeInTheDocument();
+    expect(within(progress).getByRole("status")).toHaveTextContent("Генерируется");
+  });
+
+  it("shows ready Kandinsky assets while the primary pipeline is still running", () => {
+    const kandinskyAssets = generatedAssetSet({
+      assetSetId: "kandinsky-1",
+      generationJobId: undefined,
+      backgroundGenerationStatus: undefined,
+      backgroundGenerationPhase: undefined,
+    });
+    render(
+      <DebugPanel
+        pet={{
+          ...pet(),
+          assetSet: generatedAssetSet({ kandinskyAssets }),
+        }}
+        isOpen
+        onClose={() => undefined}
+      />,
+    );
+
+    const progress = screen.getByRole("region", { name: "Фоновая генерация" });
+    expect(within(progress).getByRole("status")).toHaveTextContent("Готово");
+  });
+
+  it("shows a Kandinsky generation error", () => {
+    render(
+      <DebugPanel
+        pet={{
+          ...pet(),
+          assetSet: generatedAssetSet({
+            comparisonGenerationError: "Провайдер недоступен",
+          }),
+        }}
+        isOpen
+        onClose={() => undefined}
+      />,
+    );
+
+    const progress = screen.getByRole("region", { name: "Фоновая генерация" });
+    expect(within(progress).getByRole("status")).toHaveTextContent("Ошибка");
+    expect(within(progress).getByText("Провайдер недоступен")).toBeInTheDocument();
   });
 });
 

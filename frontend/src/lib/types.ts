@@ -12,6 +12,7 @@ export type PetBackgroundGenerationPhase =
   | "generating_sad_video"
   | "generating_happy_image"
   | "generating_happy_video"
+  | "generating_kandinsky"
   | "completed";
 export type PetStatsPatch = {
   stats?: Partial<Record<PetStatKey, number>>;
@@ -19,16 +20,20 @@ export type PetStatsPatch = {
   lastStatTickAt?: Partial<PetStatTickMap> | null;
 };
 
-export type LocalPetAssetSet = {
+export type LocalPetStaticAssetSet = {
   assetSetId: string;
   generatedAt: string;
-  characterTemplate?: Record<string, unknown>;
-  characterBible?: Record<string, unknown>;
   images: {
     baby: Record<PetMood, string>;
     teen: Record<PetMood, string>;
     adult: Record<PetMood, string>;
   };
+  videoUrl?: string;
+};
+
+export type LocalPetAssetSet = LocalPetStaticAssetSet & {
+  characterTemplate?: Record<string, unknown>;
+  characterBible?: Record<string, unknown>;
   videoUrl?: string;
   sadVideoUrl?: string;
   happyVideoUrl?: string;
@@ -37,9 +42,11 @@ export type LocalPetAssetSet = {
   backgroundGenerationStatus?: PetBackgroundGenerationStatus;
   backgroundGenerationPhase?: PetBackgroundGenerationPhase;
   backgroundGenerationError?: string;
+  comparisonGenerationError?: string;
   backgroundGenerationUpdatedAt?: string;
   blinkImageUrl?: string;
   spriteSheetUrl?: string;
+  kandinskyAssets?: LocalPetStaticAssetSet;
 };
 
 export type LocalPetStateV1 = {
@@ -110,9 +117,11 @@ export type GeneratePetResponse = {
   backgroundGenerationStatus?: PetBackgroundGenerationStatus;
   backgroundGenerationPhase?: PetBackgroundGenerationPhase;
   backgroundGenerationError?: string;
+  comparisonGenerationError?: string;
   backgroundGenerationUpdatedAt?: string;
   blinkImageUrl?: string;
   spriteSheetUrl?: string;
+  kandinskyAssets?: LocalPetStaticAssetSet;
 };
 
 export type ChatPromptDebug = {

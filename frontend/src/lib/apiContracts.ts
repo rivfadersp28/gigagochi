@@ -59,6 +59,7 @@ const JOB_PHASES = new Set([
   "generating_sad_video",
   "generating_happy_image",
   "generating_happy_video",
+  "generating_kandinsky",
   "completed",
 ]);
 const MEMORY_KINDS = new Set<UserMemoryKind>([
@@ -178,7 +179,23 @@ function parseGeneratedPetAsset(value: unknown, path: string): GeneratePetApiRes
   optionalString(payload.blinkImageUrl, `${path}.blinkImageUrl`);
   optionalString(payload.spriteSheetUrl, `${path}.spriteSheetUrl`);
   optionalRecord(payload.characterBible, `${path}.characterBible`);
+  if (payload.kandinskyAssets !== null && payload.kandinskyAssets !== undefined) {
+    parseGeneratedPetStaticAsset(payload.kandinskyAssets, `${path}.kandinskyAssets`);
+  }
   return payload as GeneratePetApiResponse;
+}
+
+function parseGeneratedPetStaticAsset(value: unknown, path: string) {
+  const payload = record(value, path);
+  string(payload.assetSetId, `${path}.assetSetId`);
+  string(payload.generatedAt, `${path}.generatedAt`);
+  const images = record(payload.images, `${path}.images`);
+  for (const stage of ["baby", "teen", "adult"] as const) {
+    const stageImages = record(images[stage], `${path}.images.${stage}`);
+    for (const mood of PET_MOODS) {
+      string(stageImages[mood], `${path}.images.${stage}.${mood}`);
+    }
+  }
 }
 
 export function parseGeneratePetJobResponse(value: unknown): GeneratePetJobResponse {
@@ -193,6 +210,7 @@ export function parseGeneratePetJobResponse(value: unknown): GeneratePetJobRespo
   }
   optionalRecord(payload.error, "generatePetJob.error");
   optionalRecord(payload.backgroundError, "generatePetJob.backgroundError");
+  optionalRecord(payload.comparisonError, "generatePetJob.comparisonError");
   return payload as GeneratePetJobResponse;
 }
 

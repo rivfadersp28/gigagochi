@@ -3,6 +3,79 @@
 - Do not add Uvicorn workers while generation jobs use the local SQLite-backed executor. Multiple
   API processes would each recover the same active jobs. Scale beyond one backend process only after
   moving execution ownership to a broker/worker system such as Redis plus a dedicated worker.
+- Do not use `get_openai_client()` for text. It is now the media compatibility
+  selector controlled by `AI_PROVIDER`; every reply, extractor, character
+  bible and story text call must cross `app.llm.complete_chat`. Use
+  `LLM_PROFILE=legacy` only when text should follow the media provider.
+- Do not select image/video vendors inside story, travel or pet-generation services. Route them
+  through `app.media`; `MEDIA_PROFILE=kandinsky` changes t2i/i2i and i2v together. Kandinsky i2i
+  accepts base64 images under `params.image` and uses task type
+  `k6-i2i`; the i2i REST URL shown as `k6-image-t2i` in the supplied example is a documentation
+  typo. Keep TLS verification enabled even though the standalone sample disables it.
+- Do not mutate `MEDIA_PROFILE` or shared runtime JSON to build the Kandinsky comparison: concurrent
+  jobs would race. Keep the primary job on OpenAI, pass `ImageRequest.provider="kandinsky"` only to
+  the nested comparison branch, reuse the primary character bible, skip tap generation and generate
+  Kandinsky video only for the normal state. Treat its error as best-effort comparison metadata, not as a primary
+  generation failure.
+- Post-reply memory extraction may remain asynchronous so the visible answer is not delayed, but turns
+  for the same pet must await the previous persistence tail before reading memory. Unordered
+  fire-and-forget extraction lets an older turn overwrite a newer fact with the same normalized key.
+- Do not reuse OpenAI images as posters or i2v inputs in the Kandinsky comparison, including test
+  fixtures. Each provider owns a complete visual lineage: provider-adapted image prompts, its own
+  normal/sad/happy images, and normal video generated only from that provider's normal image.
+- Kandinsky K5 i2v accepts one base64 string in `params.image`, not the image array used by K6 i2i.
+  A raw 2.2 MB PNG exceeded the current nginx JSON body limit with HTTP 413; encode the same frame as
+  optimized JPEG before base64. The HD endpoint currently returns a fixed `896x1280` H.264 MP4 even
+  when the source scene is `720x1280`; the dashboard centers and clips scene media by design.
+- Kandinsky 6.0 rejects prompts longer than 2048 characters with HTTP 422. Keep provider-specific
+  compaction in the Kandinsky transport. Replace the full shared style frame with its curated
+  Kandinsky variant before applying the generic head/tail fallback; otherwise the middle face
+  rules are lost and normal assets stop looking sleepy and melancholic. Do not weaken prompts
+  sent to OpenAI or OpenRouter.
+- Kandinsky may report task status `done` before its output-censor dependency can return the file.
+  Retry only the exact transient result response `output censor service unavailable` within the
+  one-minute pickup window; do not retry unrelated 422 validation or moderation failures.
+- Kandinsky i2i carries reference images as base64 inside JSON. Sending original multi-megabyte
+  PNG backgrounds exceeds the API proxy body limit with HTTP 413. Resize references to a bounded
+  long side, flatten alpha onto white and encode as optimized JPEG before base64.
+- Do not send the shared mixed English visual prompts to Kandinsky verbatim. Its task-specific
+  adapter uses compact Russian templates for pet, story and travel. Keep full-body framing and
+  source-species anatomy near the start of pet prompts; a landscape request or late English
+  framing instruction produced close-ups and over-humanized creatures.
+- Kandinsky interprets toy, figurine, miniature, resin and macro wording as a small object. The
+  active pet-creation direction now intentionally accepts that collectible-art-toy character,
+  superseding the earlier full-size-creature experiment. Compensate with explicit full-body framing,
+  large occupancy in the vertical frame, dense layered costume, functional composite accessories
+  and tactile wear so the result does not collapse into a tiny simple object. Keep the isolated
+  identity on white and add the mossy forest only during scene i2i; that separation stabilizes
+  identity and prevents the initial t2i request from spending its detail budget on environment.
+- Changing `backend/.env` does not take effect through `docker compose restart`.
+  Recreate backend and bot after an `LLM_PROFILE` change. A task that changes
+  provider in `llm_runtime.json` must also define its own model, so a model name
+  cannot leak across providers.
+- GigaChat is intentionally text-only here. Do not pass image content or enable
+  the supplied adapter's text-to-image injection. Its reasoning values are
+  `low`, `medium`, `high` (or omitted); JSON Schema is implemented through
+  legacy functions. Some GigaChat models reject `null` inside legacy function
+  schema enums and may return ordinary text instead of a function call; keep the
+  adapter's enum cleanup, system-only anchor message and plain-text
+  visible-reply wrapper in place.
+- `GigaChat-3.5-*` is not compatible with the same structured-output payload as
+  Lightning/Pro/Ultra. On the current endpoint, native `response_format`
+  rejects JSON modes, legacy `functions/function_call` hangs, and any
+  `reasoning_effort` value (`low`/`high` reproduced) can timeout even on a tiny
+  prompt. For 3.5 structured outputs without ordinary tools, use prompt-only
+  JSON schema instructions and omit `reasoning_effort`.
+- GigaChat 3.5 can prepend generic support openers such as `Я рядом, ...` to
+  memory-grounded visible replies even when the response is not a backend
+  fallback. Keep the GigaChat-only visible-reply cleanup that removes this
+  opener only when a substantive continuation remains; do not apply it to
+  OpenAI routes because existing OpenAI behavior intentionally preserves those
+  words.
+- A model routed through LiteLLM still has to support JSON Schema and function
+  tools. Provider-level capability metadata cannot prove that every LiteLLM
+  model supports those features; qualify a new model before enabling its
+  profile.
 - `GENERATION_IMAGE_WORKERS=20` means accepted concurrency, not guaranteed provider throughput.
   OpenAI project rate limits and billing must be checked separately; keep the bounded queue and retry
   policy enabled, and watch memory before increasing the worker count further.
@@ -74,12 +147,13 @@
   use it as the dashboard poster; the aspect mismatch can reintroduce initial
   reframe/jitter.
 - Seedance can preserve its input image for the first two frames and then
-  recompose it abruptly around 0.1 seconds. Dashboard playback intentionally
-  skips that preroll and loops manually from the same offset; native `loop`
-  makes the startup stretch recur on every loop. Keep the muted `autoPlay`
-  attribute and call `play()` immediately after the initial seek: gating play on
-  `seeked`, or seeking without resuming, can stall in Telegram WebView when
-  mobile preload is deferred.
+  recompose it abruptly around 0.1 seconds. Backend FFmpeg post-processing trims that preroll and
+  encodes forward plus reverse frames into one ping-pong MP4 without duplicated endpoints. Keep
+  native muted `autoPlay` plus `loop` on the dashboard. Do not restore client-side reverse seeking:
+  H.264 must decode from an earlier keyframe and visibly freezes at the turn in Chrome/Safari.
+  Trim the provider video's low-motion final 0.35 seconds before reversing; removing only an exact
+  duplicate endpoint frame still leaves a visible hold because i2v providers often settle before
+  the nominal end. Production backend images therefore require the `ffmpeg` and `ffprobe` binaries.
 - Pet creation waits only for the required OpenRouter idle video after image
   composition. Its failure still fails creation, but sad image/video failures
   are best-effort and must keep the base `result`. Keep each image stage in the
@@ -94,6 +168,11 @@
 - Do not mutate character template fields during chat. Evolving per-pet
   character facts belong in `extensions.lite_overlay`; evolving story entities
   belong in `extensions.story_library_overlay`.
+- Frontend user-memory storage owns provider-neutral normalization for memory
+  operations returned by any LLM. Keep canonical core keys stable
+  (`user-name`, `pet-nickname`) and coerce future dated `event + dueAt`
+  operations to `deadline`; provider adapters may emit aliases such as
+  `user_name` or classify tomorrow obligations as events.
 - Do not add per-feature source toggles outside `speech_runtime.contextSources`.
   Chat, idle, proactive, push, and `/story` must use the same matrix:
   `disabled` / `auto` / `always`.
@@ -207,13 +286,14 @@
 - Keep the visible-reply length ceiling in editable
   `speech_runtime.visibleReply.maxChars`; callers may request a lower limit but
   must not bypass the shared cap with surface-specific hardcoded maxima.
-- Keep visible phrase model/reasoning in `speech_runtime.visibleReply`, not in
-  global `OPENAI_CHAT_MODEL` / `OPENAI_CHAT_REASONING_EFFORT`. The global chat
-  settings are also used by stories, travel, memory/extractors and image-scene
-  preparation. `gpt-5.4-mini` Chat Completions rejects function tools combined
-  with reasoning: ordinary chat should omit tools and keep phrase reasoning;
-  only explicit rename-intent messages attach `update_pet_name` and omit the
-  reasoning parameter.
+- Keep visible phrase limits/reasoning in `speech_runtime.visibleReply`, and
+  provider/model selection in `llm_runtime.json` task routes. Do not put
+  visible-reply model selection in global `OPENAI_CHAT_MODEL` /
+  `OPENAI_CHAT_REASONING_EFFORT`: the global chat settings are also used by
+  stories, travel, memory/extractors and image-scene preparation. `gpt-5.4-mini`
+  Chat Completions rejects function tools combined with reasoning: ordinary
+  chat should omit tools and keep phrase reasoning; only explicit rename-intent
+  messages attach `update_pet_name` and omit the reasoning parameter.
 - Deadline/event memories belong to proactive, not ordinary ambient idle.
   Ambient prompt assembly should only pass soft memory kinds such as
   preference/relationship/routine/boundary, and should not include memory

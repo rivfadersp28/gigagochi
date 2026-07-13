@@ -13,6 +13,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
+from app.llm.runtime import llm_runtime_status
+from app.media.runtime import media_runtime_status
 from app.routers import local_admin, tma
 from app.services.ops_alert_service import notify_ops
 from app.services.telegram_push_service import (
@@ -132,6 +134,12 @@ def health(request: Request):
         and (task.done() or int(runtime.get(name, {}).get("consecutiveFailures", 0)) > 0)
     ]
     generation = tma.generation_job_runtime_status()
+    llm = llm_runtime_status()
+    if llm["status"] != "ok":
+        failed.append("llm")
+    media = media_runtime_status()
+    if media["status"] != "ok":
+        failed.append("media")
     for component in failed:
         notify_ops(
             f"health:{component}",
@@ -146,6 +154,8 @@ def health(request: Request):
     payload: dict[str, object] = {
         "status": "ok" if not failed else "degraded",
         "generation": generation,
+        "llm": llm,
+        "media": media,
     }
     if failed:
         payload["failedComponents"] = failed

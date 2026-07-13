@@ -17,6 +17,7 @@ class StoredGenerationJob:
     first_name: str | None
     description: str
     response: GeneratePetJobResponse
+    image_provider: str = "openai"
 
 
 class GenerationJobStore:
@@ -41,12 +42,22 @@ class GenerationJobStore:
                     username TEXT,
                     first_name TEXT,
                     description TEXT NOT NULL,
+                    image_provider TEXT NOT NULL DEFAULT 'openai',
                     status TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     response_json TEXT NOT NULL
                 )
                 """
             )
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(generation_jobs)")
+            }
+            if "image_provider" not in columns:
+                connection.execute(
+                    "ALTER TABLE generation_jobs ADD COLUMN "
+                    "image_provider TEXT NOT NULL DEFAULT 'openai'"
+                )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS generation_jobs_status_idx "
                 "ON generation_jobs(status, updated_at)"
@@ -222,13 +233,14 @@ class GenerationJobStore:
                 """
                 INSERT INTO generation_jobs (
                     job_id, owner_id, username, first_name, description,
-                    status, updated_at, response_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    image_provider, status, updated_at, response_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id) DO UPDATE SET
                     owner_id=excluded.owner_id,
                     username=excluded.username,
                     first_name=excluded.first_name,
                     description=excluded.description,
+                    image_provider=excluded.image_provider,
                     status=excluded.status,
                     updated_at=excluded.updated_at,
                     response_json=excluded.response_json
@@ -239,6 +251,7 @@ class GenerationJobStore:
                     job.username,
                     job.first_name,
                     job.description,
+                    job.image_provider,
                     response.status,
                     response.updatedAt.isoformat(),
                     response.model_dump_json(),
@@ -249,7 +262,8 @@ class GenerationJobStore:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT owner_id, username, first_name, description, response_json
+                SELECT owner_id, username, first_name, description, image_provider,
+                       response_json
                 FROM generation_jobs WHERE job_id = ?
                 """,
                 (job_id,),
@@ -260,7 +274,8 @@ class GenerationJobStore:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT owner_id, username, first_name, description, response_json
+                SELECT owner_id, username, first_name, description, image_provider,
+                       response_json
                 FROM generation_jobs
                 WHERE status IN ('queued', 'running')
                 ORDER BY updated_at ASC
@@ -282,5 +297,6 @@ class GenerationJobStore:
             username=str(row[1]) if row[1] is not None else None,
             first_name=str(row[2]) if row[2] is not None else None,
             description=str(row[3]),
-            response=GeneratePetJobResponse.model_validate_json(str(row[4])),
+            image_provider=str(row[4] or "openai"),
+            response=GeneratePetJobResponse.model_validate_json(str(row[5])),
         )

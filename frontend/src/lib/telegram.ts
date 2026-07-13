@@ -57,6 +57,7 @@ type TelegramWindow = Window &
 
 let lockedTelegramViewportHeight: number | null = null;
 const DEBUG_MENU_TELEGRAM_IDS = new Set([62943754]);
+const LOCAL_DEBUG_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"]);
 
 function telegramWindow() {
   if (typeof window === "undefined") {
@@ -95,7 +96,13 @@ export function getTelegramUserId(): number | null {
 
 export function canUseDebugMenu(): boolean {
   const telegramUserId = getTelegramUserId();
-  return telegramUserId !== null && DEBUG_MENU_TELEGRAM_IDS.has(telegramUserId);
+  if (telegramUserId !== null) {
+    return DEBUG_MENU_TELEGRAM_IDS.has(telegramUserId);
+  }
+  if (typeof window === "undefined" || process.env.NODE_ENV === "production") {
+    return false;
+  }
+  return LOCAL_DEBUG_HOSTS.has(window.location.hostname);
 }
 
 export function getTelegramThemeParams(): Record<string, string> {

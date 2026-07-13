@@ -59,16 +59,26 @@ describe("sad pet assets", () => {
     expect(isPetInRedZone(state)).toBe(false);
   });
 
-  it("requires both a distinct sad image and a sad video", () => {
+  it("requires video for animated assets but accepts a distinct static sad image", () => {
     const state = pet();
+    expect(hasGeneratedSadAssets(state)).toBe(true);
+
+    delete state.assetSet!.sadVideoUrl;
+    expect(hasGeneratedSadAssets(state)).toBe(false);
+    delete state.assetSet!.videoUrl;
     expect(hasGeneratedSadAssets(state)).toBe(true);
 
     state.assetSet!.images.teen.sad = state.assetSet!.images.teen.idle;
     expect(hasGeneratedSadAssets(state)).toBe(false);
   });
 
-  it("requires both a distinct happy image and a happy video", () => {
+  it("requires video for animated assets but accepts a distinct static happy image", () => {
     const state = pet();
+    expect(hasGeneratedHappyAssets(state)).toBe(true);
+
+    delete state.assetSet!.happyVideoUrl;
+    expect(hasGeneratedHappyAssets(state)).toBe(false);
+    delete state.assetSet!.videoUrl;
     expect(hasGeneratedHappyAssets(state)).toBe(true);
 
     state.assetSet!.images.teen.happy = state.assetSet!.images.teen.idle;
@@ -153,6 +163,6 @@ describe("sad pet assets", () => {
     expect(generatedSceneVideoUrl(state, "sad")).toContain("sad_asset_v=20260710-2");
     expect(generatedSceneVideoUrl(state, "happy")).toContain("happy_asset_v=20260710-2");
     expect(generatedSpriteUrl(state, "teen", "idle")).toBe("/idle.png");
-    expect(generatedSceneVideoUrl(state)).toBe("/idle.mp4");
+    expect(generatedSceneVideoUrl(state)).toBe("/idle.mp4?ping_pong_v=20260713-1");
   });
 });

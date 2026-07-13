@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.config import get_settings
+from app.llm.compat import complete_chat, response_log_value
+from app.llm.runtime import resolve_llm_model
 from app.schemas import (
     LocalChatDebug,
     MemoryConsolidationRequest,
@@ -16,7 +18,6 @@ from app.schemas import (
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_chat_model,
-    get_openai_client,
 )
 from app.services.pet_reply_engine.speech_runtime import (
     speech_template,
@@ -329,9 +330,14 @@ def extract_user_memory_operations(
     timeout: float | None = None,
 ) -> MemoryExtractionResponse:
     settings = get_settings()
-    model = model or get_chat_model(settings)
+    if model is None:
+        fallback_model = get_chat_model(settings)
+        model = (
+            fallback_model
+            if client is not None
+            else resolve_llm_model("memory_extraction", fallback_model)
+        )
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
-    openai_client = client or get_openai_client()
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": build_memory_extraction_messages(payload),
@@ -347,9 +353,11 @@ def extract_user_memory_operations(
         **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
     }
     prompt_debug = [log_chat_completion_prompt("pet_reply/memory_extraction", request_kwargs)]
-    completion = openai_client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("pet_reply/memory_extraction", completion)
-    operations = _parse_memory_extraction_payload(completion.choices[0].message.content or "{}")
+    completion = complete_chat("memory_extraction", request_kwargs, client=client)
+    log_chat_completion_response(
+        "pet_reply/memory_extraction", response_log_value(completion)
+    )
+    operations = _parse_memory_extraction_payload(completion.content or "{}")
     debug = None
     if payload.includeDebug:
         debug = LocalChatDebug(
@@ -445,9 +453,14 @@ def consolidate_user_memory(
     timeout: float | None = None,
 ) -> MemoryConsolidationResponse:
     settings = get_settings()
-    model = model or get_chat_model(settings)
+    if model is None:
+        fallback_model = get_chat_model(settings)
+        model = (
+            fallback_model
+            if client is not None
+            else resolve_llm_model("memory_consolidation", fallback_model)
+        )
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
-    openai_client = client or get_openai_client()
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": build_memory_consolidation_messages(payload),
@@ -463,9 +476,11 @@ def consolidate_user_memory(
         **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
     }
     prompt_debug = [log_chat_completion_prompt("pet_reply/memory_consolidation", request_kwargs)]
-    completion = openai_client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("pet_reply/memory_consolidation", completion)
-    operations = _parse_consolidation_payload(completion.choices[0].message.content or "{}")
+    completion = complete_chat("memory_consolidation", request_kwargs, client=client)
+    log_chat_completion_response(
+        "pet_reply/memory_consolidation", response_log_value(completion)
+    )
+    operations = _parse_consolidation_payload(completion.content or "{}")
     debug = None
     if payload.includeDebug:
         debug = LocalChatDebug(

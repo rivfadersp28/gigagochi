@@ -13,11 +13,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError
+from httpx import HTTPError
+from openai import APIConnectionError, APITimeoutError
 from PIL import Image, ImageOps
 from pydantic import BaseModel, Field, model_validator
 
 from app.config import get_settings
+from app.llm.compat import complete_chat, response_log_value
+from app.llm.contracts import LLMResponse
+from app.llm.runtime import resolve_llm_model
 from app.schemas import (
     GenerateTravelRequest,
     GenerateTravelResponse,
@@ -29,7 +33,6 @@ from app.services.image_service import generate_image_bytes, generated_dir_for
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_chat_model,
-    get_openai_client,
 )
 from app.services.pet_reply_engine.speech_runtime import (
     state_param_labels,
@@ -500,19 +503,32 @@ def _story_reasoning_kwargs(settings: Any) -> dict[str, str]:
 
 
 def _is_retryable_chat_error(exc: Exception) -> bool:
-    if isinstance(exc, APIStatusError):
-        return exc.status_code == 429 or exc.status_code >= 500
-    return isinstance(exc, APIConnectionError | APITimeoutError)
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        status_code = getattr(current, "status_code", None)
+        if isinstance(status_code, int) and (status_code == 429 or status_code >= 500):
+            return True
+        if isinstance(current, APIConnectionError | APITimeoutError | HTTPError):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _is_retryable_image_error(exc: Exception) -> bool:
     return _is_retryable_chat_error(exc)
 
 
-def _chat_completion_with_retry(client: Any, request_kwargs: dict[str, Any]) -> Any:
+def _chat_completion_with_retry(
+    request_kwargs: dict[str, Any],
+    *,
+    task: str,
+    client: Any | None = None,
+) -> LLMResponse:
     for attempt_index in range(TRAVEL_CHAT_MAX_ATTEMPTS):
         try:
-            return client.chat.completions.create(**request_kwargs)
+            return complete_chat(task, request_kwargs, client=client)
         except Exception as exc:
             is_last_attempt = attempt_index == TRAVEL_CHAT_MAX_ATTEMPTS - 1
             if is_last_attempt or not _is_retryable_chat_error(exc):
@@ -830,9 +846,8 @@ def _generate_complete_story(
     plot_brief: TravelPlotBrief | None = None,
 ) -> tuple[AdventureStory, dict[str, Any]]:
     settings = get_settings()
-    client = get_openai_client()
     request_kwargs: dict[str, Any] = {
-        "model": get_chat_model(settings),
+        "model": resolve_llm_model("travel_story", get_chat_model(settings)),
         "messages": _build_adventure_story_messages(payload, framework, plot_brief),
         "response_format": {
             "type": "json_schema",
@@ -846,9 +861,9 @@ def _generate_complete_story(
         **_story_reasoning_kwargs(settings),
     }
     prompt_debug = log_chat_completion_prompt("travel/full_story", request_kwargs)
-    completion = _chat_completion_with_retry(client, request_kwargs)
-    log_chat_completion_response("travel/full_story", completion)
-    content = completion.choices[0].message.content or "{}"
+    completion = _chat_completion_with_retry(request_kwargs, task="travel_story")
+    log_chat_completion_response("travel/full_story", response_log_value(completion))
+    content = completion.content or "{}"
     return AdventureStory.model_validate(json.loads(content)), prompt_debug
 
 
@@ -908,9 +923,8 @@ def _generate_storyboard(
     plot_brief: TravelPlotBrief | None = None,
 ) -> tuple[Storyboard, dict[str, Any]]:
     settings = get_settings()
-    client = get_openai_client()
     request_kwargs: dict[str, Any] = {
-        "model": get_chat_model(settings),
+        "model": resolve_llm_model("travel_storyboard", get_chat_model(settings)),
         "messages": _build_storyboard_messages(story, plot_brief),
         "response_format": {
             "type": "json_schema",
@@ -924,9 +938,9 @@ def _generate_storyboard(
         **_story_reasoning_kwargs(settings),
     }
     prompt_debug = log_chat_completion_prompt("travel/storyboard", request_kwargs)
-    completion = _chat_completion_with_retry(client, request_kwargs)
-    log_chat_completion_response("travel/storyboard", completion)
-    content = completion.choices[0].message.content or "{}"
+    completion = _chat_completion_with_retry(request_kwargs, task="travel_storyboard")
+    log_chat_completion_response("travel/storyboard", response_log_value(completion))
+    content = completion.content or "{}"
     return Storyboard.model_validate(json.loads(content)), prompt_debug
 
 

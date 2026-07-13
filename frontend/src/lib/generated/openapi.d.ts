@@ -449,6 +449,7 @@ export interface components {
             /** Happyvideourl */
             readonly happyVideoUrl?: string | null;
             readonly images: components["schemas"]["GeneratedPetImages"];
+            readonly kandinskyAssets?: components["schemas"]["GeneratePetStaticAssetResponse"] | null;
             /** Sadvideourl */
             readonly sadVideoUrl?: string | null;
             /** Spritesheeturl */
@@ -462,6 +463,10 @@ export interface components {
         readonly GeneratePetJobResponse: {
             /** Backgrounderror */
             readonly backgroundError?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Comparisonerror */
+            readonly comparisonError?: {
                 readonly [key: string]: unknown;
             } | null;
             /**
@@ -480,7 +485,7 @@ export interface components {
              * @default queued
              * @enum {string}
              */
-            readonly phase: "queued" | "generating_images" | "generating_video" | "generating_sad_image" | "generating_sad_video" | "generating_happy_image" | "generating_happy_video" | "completed";
+            readonly phase: "queued" | "generating_images" | "generating_video" | "generating_sad_image" | "generating_sad_video" | "generating_happy_image" | "generating_happy_video" | "generating_kandinsky" | "completed";
             readonly result?: components["schemas"]["GeneratePetAssetResponse"] | null;
             /**
              * Status
@@ -506,6 +511,19 @@ export interface components {
              * @default cute mobile game pet
              */
             readonly style: string;
+        };
+        /** GeneratePetStaticAssetResponse */
+        readonly GeneratePetStaticAssetResponse: {
+            /** Assetsetid */
+            readonly assetSetId: string;
+            /**
+             * Generatedat
+             * Format: date-time
+             */
+            readonly generatedAt: string;
+            readonly images: components["schemas"]["GeneratedPetImages"];
+            /** Videourl */
+            readonly videoUrl?: string | null;
         };
         /** GenerateTravelRequest */
         readonly GenerateTravelRequest: {

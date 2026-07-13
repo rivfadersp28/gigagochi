@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from app.llm import LLMResponse, LLMUsage
 from app.services import prompt_debug
 
 
@@ -113,6 +114,30 @@ def test_prompt_debug_writes_response_log_with_generation_id(monkeypatch, tmp_pa
     assert responses[1]["promptType"] == "image_generation"
     assert responses[1]["providerGenerationId"] == "gen-img-1"
     assert responses[1]["headers"] == {"x-request-id": "req-image-1"}
+
+
+def test_prompt_debug_logs_neutral_response_without_raw_payload(monkeypatch, tmp_path) -> None:
+    response_log_path = tmp_path / "ai-responses.jsonl"
+    monkeypatch.setattr(prompt_debug, "AI_RESPONSE_LOG_PATH", response_log_path)
+
+    prompt_debug.log_chat_completion_response(
+        "custom/provider",
+        LLMResponse(
+            content="готово",
+            model="custom-model",
+            finish_reason="stop",
+            usage=LLMUsage(prompt_tokens=7, completion_tokens=3, total_tokens=10),
+        ),
+    )
+
+    payload = json.loads(response_log_path.read_text(encoding="utf-8"))
+    assert payload["model"] == "custom-model"
+    assert payload["finishReason"] == "stop"
+    assert payload["usage"] == {
+        "prompt_tokens": 7,
+        "completion_tokens": 3,
+        "total_tokens": 10,
+    }
 
 
 def test_prompt_debug_redacts_prompt_content_by_default(monkeypatch, tmp_path) -> None:

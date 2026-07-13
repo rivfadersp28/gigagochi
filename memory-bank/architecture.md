@@ -56,6 +56,11 @@
   localStorage while generation runs, allowing the creation screen to resume
   polling after a WebView reload. The marker is removed after success or a
   confirmed `GENERATION_JOB_NOT_FOUND` response.
+- Pet creation always uses OpenAI for the primary normal/sad/happy images and
+  keeps the existing OpenRouter video path. After the primary normal image and video are ready, the same job
+  starts a best-effort Kandinsky branch for normal/sad/happy images plus a normal-state video.
+  The nested Kandinsky asset set is persisted with the job response; its failure
+  is reported separately and never invalidates the usable OpenAI result.
 
 ## Production Routing
 
@@ -64,6 +69,62 @@
   `bizzy-radio-caddy-1` container using `/opt/bizzy-radio/Caddyfile`; the
   repository `deploy/Caddyfile` is the standalone compose equivalent, not the
   currently active proxy configuration on the server.
+
+## LLM Routing
+
+- All text generation crosses the provider-neutral synchronous gateway in
+  `backend/app/llm`: typed request/response contracts, a provider registry,
+  capability checks and task routing are separate from prompts and business
+  services. OpenAI Platform, OpenRouter, GigaChat and optional LiteLLM are
+  adapters behind that boundary.
+- `LLM_PROFILE` selects a profile from `backend/data/llm_runtime.json` for text
+  only. The `legacy` profile preserves the old behavior by following
+  `AI_PROVIDER`; named profiles can override provider/model per task.
+  `AI_PROVIDER` remains the media selector, so switching text to GigaChat does
+  not move image or video generation away from OpenAI/OpenRouter.
+- GigaChat uses a dedicated text-only sync adapter with Basic login/password
+  token acquisition (`/v1/token`, then `/token` fallback), a thread-safe token
+  cache, one refresh after HTTP 401 and TLS verification enabled by default.
+  Existing JSON Schema outputs are translated to legacy functions. The
+  `gigachat` profile routes `visible_reply`, `lite_facts`,
+  `memory_extraction` and `memory_consolidation` to `GigaChat-3-Lightning`
+  while leaving the profile default on `$GIGACHAT_MODEL`, so chat-facing and
+  post-reply lightweight tasks can use a fast model without moving longer text
+  tasks off the default.
+- Production mounts the same `llm_runtime.json` and optional custom-CA directory
+  into backend and bot. `/health` validates the active profile, configured
+  providers, local dependencies, credentials presence and CA-file presence;
+  it intentionally does not make a paid provider request.
+
+## Media Routing
+
+- Image and video generation crosses the provider-neutral synchronous gateway in
+  `backend/app/media`. Image requests declare t2i or i2i from the presence of reference
+  images; video requests currently use i2v. Capability checks happen before transport calls.
+- Pet-scene videos from every provider are post-processed provider-neutrally with FFmpeg into
+  a forward-then-reverse MP4. The first-frame preroll and duplicate endpoint frames are removed,
+  so the frontend only needs native looping and never seeks H.264 backwards.
+- `MEDIA_PROFILE` selects `backend/data/media_runtime.json` independently from `LLM_PROFILE`.
+  The `legacy` profile keeps images on `AI_PROVIDER` and video on OpenRouter. The `kandinsky`
+  profile sends t2i/i2i tasks to Kandinsky 6.0 and i2v to Kandinsky 5 HD.
+- Media profiles support provider overrides by task label. `ImageRequest.provider` is used internally
+  by the parallel Kandinsky comparison branch; absent that field, normal profile routing applies.
+  Video is routed independently; the comparison branch explicitly requests Kandinsky for its
+  normal-state video while happy and sad remain static.
+- Kandinsky uses Bearer authorization, `k6-image-t2i` for requests without references,
+  `k6-i2i` for requests with references, and `k5-i2v-hd` for image-to-video. Task creation, polling and result download are bounded
+  by retries and timeout. `/health` validates active media credentials without a paid request.
+- Kandinsky prompt adaptation is task-aware and deterministic. Pet creation, background-story
+  illustration and travel use compact Russian templates assembled from dynamic scene/identity
+  fields; arbitrary LLM translation is not part of the media path. Isolated pet t2i uses a
+  portrait resolution, while story/travel keep their own composition contracts.
+- The Kandinsky pet-creation frame intentionally targets premium handcrafted collectible art-toy
+  photography: melancholic childlike proportions, dense layered costume, one oversized wearable
+  story object, matte resin and visibly worn mixed materials. The isolated identity request stays
+  on white; the later scene request owns the mossy forest, cinematic light and depth of field.
+- The creation screen does not expose provider selection. The dashboard debug panel can swap the
+  rendered OpenAI asset set for the static Kandinsky comparison set without mutating the persisted
+  primary assets; provider switching is disabled until the comparison set is complete.
 
 ## Frontend Interaction Primitives
 
@@ -101,9 +162,10 @@
 
 ## Pet Replies
 
-- Legacy LLM user-memory extraction and consolidation are isolated in
+- LLM user-memory extraction and consolidation are isolated in
   `backend/app/services/pet_reply_engine/memory_operations.py`: JSON schemas,
-  operation normalization, prompt assembly and provider calls live there.
+  operation normalization and prompt assembly live there; provider calls cross
+  the shared LLM gateway.
 - Frontend user memory is schema v2 with lazy v1 migration. Each stored memory
   has a `memoryClass` (`core` / `fact` / `episode`), independent `recordedAt`
   and optional factual `occurredAt`; old records keep their original

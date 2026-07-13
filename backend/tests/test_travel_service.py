@@ -4,6 +4,7 @@ import uuid
 from io import BytesIO
 from types import SimpleNamespace
 
+import httpx
 from PIL import Image
 
 from app.schemas import GenerateTravelRequest, TravelStory
@@ -115,6 +116,21 @@ def test_story_constructor_context_is_sanitized_and_compact() -> None:
     assert "Princess Peach" not in serialized
     assert "Animal Crossing" not in serialized
     assert "1-Up Mushroom" not in serialized
+
+
+def test_chat_retry_recognizes_provider_status_and_wrapped_transport_error() -> None:
+    status_error = RuntimeError("rate limited")
+    status_error.status_code = 429  # type: ignore[attr-defined]
+
+    try:
+        raise httpx.ReadTimeout("timed out")
+    except httpx.ReadTimeout as cause:
+        wrapped_error = RuntimeError("provider transport failed")
+        wrapped_error.__cause__ = cause
+
+    assert travel_service._is_retryable_chat_error(status_error)
+    assert travel_service._is_retryable_chat_error(wrapped_error)
+    assert not travel_service._is_retryable_chat_error(RuntimeError("invalid response"))
 
 
 def test_travel_plot_brief_expands_template_into_seven_image_ready_beats() -> None:

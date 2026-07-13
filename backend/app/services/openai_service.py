@@ -133,16 +133,41 @@ def chat_reasoning_effort_kwargs(reasoning_effort: str | None) -> dict[str, str]
     return {"reasoning_effort": effort} if effort else {}
 
 
+def _build_openai_platform_client(settings: Any) -> OpenAI:
+    api_key = _clean_string(getattr(settings, "openai_api_key", None))
+    if not api_key:
+        raise MissingOpenAIAPIKey
+    return OpenAI(
+        api_key=api_key,
+        max_retries=settings.openai_max_retries,
+    )
+
+
+def _build_openrouter_client(settings: Any) -> OpenAI:
+    client_kwargs: dict[str, Any] = {
+        "api_key": get_openrouter_api_key(settings),
+        "max_retries": settings.openai_max_retries,
+        "base_url": get_openrouter_base_url(settings),
+    }
+    default_headers = get_openrouter_headers(settings)
+    if default_headers:
+        client_kwargs["default_headers"] = default_headers
+    return OpenAI(**client_kwargs)
+
+
+@lru_cache
+def get_openai_platform_client() -> OpenAI:
+    return _build_openai_platform_client(get_settings())
+
+
+@lru_cache
+def get_openrouter_client() -> OpenAI:
+    return _build_openrouter_client(get_settings())
+
+
 @lru_cache
 def get_openai_client() -> OpenAI:
     settings = get_settings()
-    client_kwargs: dict[str, Any] = {
-        "api_key": get_ai_api_key(settings),
-        "max_retries": settings.openai_max_retries,
-    }
     if is_openrouter_provider(settings):
-        client_kwargs["base_url"] = get_openrouter_base_url(settings)
-        default_headers = get_openrouter_headers(settings)
-        if default_headers:
-            client_kwargs["default_headers"] = default_headers
-    return OpenAI(**client_kwargs)
+        return _build_openrouter_client(settings)
+    return _build_openai_platform_client(settings)

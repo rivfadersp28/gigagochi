@@ -1,6 +1,7 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
+import { useGlimm } from "glimm/react";
 import { Bug, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { flushSync } from "react-dom";
@@ -62,7 +63,11 @@ import {
   APP_BACKGROUND_COLOR,
   DASHBOARD_BACKGROUND_COLOR,
 } from "@/lib/theme";
-import { TEST_PET_ASSET_SET, TEST_PET_DESCRIPTION } from "@/lib/testPetFixture";
+import {
+  refreshedTestPetAssetSet,
+  TEST_PET_ASSET_SET,
+  TEST_PET_DESCRIPTION,
+} from "@/lib/testPetFixture";
 import type { LocalPetState } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 
@@ -151,7 +156,6 @@ const UNNAMED_STATUS_NAME = "Без имени";
 const ACTION_ICON_CACHE_VERSION = "20260710-figma-142-1509-1";
 const VIDEO_FILTER_CACHE_VERSION = "20260713-video-filter-lossless-webp-1";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
-const SCENE_VIDEO_START_OFFSET_SECONDS = 0.1;
 const TAP_REACTION_DURATION_MS = 180;
 const PET_SCENE_ASPECT_RATIO = 720 / 1280;
 const PET_TAP_REGION = {
@@ -170,21 +174,6 @@ const actionIconSrc = {
 } as const;
 const speechBubbleSrc = `/figma/speech-bubble-new.svg?v=${ACTION_ICON_CACHE_VERSION}`;
 const conversationSendIconSrc = `/figma/conversation-send-icon.svg?v=${ACTION_ICON_CACHE_VERSION}`;
-
-function seekSceneVideoToStart(video: HTMLVideoElement) {
-  const startTime = Math.min(
-    SCENE_VIDEO_START_OFFSET_SECONDS,
-    Math.max(0, video.duration - 0.05),
-  );
-  if (Math.abs(video.currentTime - startTime) > 0.01) {
-    video.currentTime = startTime;
-  }
-}
-
-function restartSceneVideo(video: HTMLVideoElement) {
-  seekSceneVideoToStart(video);
-  void video.play().catch(() => undefined);
-}
 
 function createMinimumThinkingDelay() {
   return new Promise<void>((resolve) => {
@@ -268,10 +257,13 @@ function isPointNearRect(clientX: number, clientY: number, rect: DOMRect, paddin
 
 export function PetDashboard({ petId }: PetDashboardProps) {
   const router = useRouter();
+  const { sweep } = useGlimm();
   const localPet = useLocalPetState();
+  const applyGeneratedAssets = localPet.applyGeneratedAssets;
   const [isFeeding, setIsFeeding] = useState(false);
   const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
   const [visualModeOverride, setVisualModeOverride] = useState<PetVisualMode | null>(null);
+  const [visualProvider, setVisualProvider] = useState<"openai" | "kandinsky">("openai");
   const [confirmationAction, setConfirmationAction] = useState<ConfirmationAction | null>(null);
   const [isChatMode, setIsChatMode] = useState(false);
   const [isFeedMode, setIsFeedMode] = useState(false);
@@ -348,23 +340,55 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     };
   }, []);
   const pet = localPet.pet;
+  useEffect(() => {
+    const refreshedAssetSet = refreshedTestPetAssetSet(pet?.assetSet);
+    if (!refreshedAssetSet) {
+      return;
+    }
+    applyGeneratedAssets(refreshedAssetSet);
+  }, [applyGeneratedAssets, pet?.assetSet]);
+  const kandinskyAssets = pet?.assetSet?.kandinskyAssets;
+  const effectiveVisualProvider = visualProvider === "kandinsky" && kandinskyAssets
+    ? "kandinsky"
+    : "openai";
+  const visualPet = pet
+    && pet.assetSet
+    && effectiveVisualProvider === "kandinsky"
+    && kandinskyAssets
+    ? {
+        ...pet,
+        assetSet: {
+          ...pet.assetSet,
+          ...kandinskyAssets,
+          videoUrl: kandinskyAssets.videoUrl,
+          sadVideoUrl: undefined,
+          happyVideoUrl: undefined,
+          tapReactionImageUrl: undefined,
+          blinkImageUrl: undefined,
+        },
+      }
+    : pet;
   const isPetDead = Boolean(pet?.diedAt);
   const storyHistory = pet ? storyHistoryFromPet(pet) : [];
   const canShowDebugMenu = canUseDebugMenu();
   const derivedAssetsEnabled = true;
-  const hasSadAssets = derivedAssetsEnabled && pet ? hasGeneratedSadAssets(pet) : false;
-  const hasHappyAssets = derivedAssetsEnabled && pet ? hasGeneratedHappyAssets(pet) : false;
-  const visualMode = pet
-    ? resolvedPetVisualMode(pet, visualModeOverride, derivedAssetsEnabled)
+  const hasSadAssets = derivedAssetsEnabled && visualPet
+    ? hasGeneratedSadAssets(visualPet)
+    : false;
+  const hasHappyAssets = derivedAssetsEnabled && visualPet
+    ? hasGeneratedHappyAssets(visualPet)
+    : false;
+  const visualMode = visualPet
+    ? resolvedPetVisualMode(visualPet, visualModeOverride, derivedAssetsEnabled)
     : "normal";
-  const requestedSceneBackgroundSrc = pet
+  const requestedSceneBackgroundSrc = visualPet
     ? isPetDead
       ? emptySceneBackgroundSrc
-      : generatedVisualPosterUrl(pet, visualMode)
+      : generatedVisualPosterUrl(visualPet, visualMode)
         ?? mainSceneBackgroundSrc
     : null;
-  const requestedSceneVideoSrc = pet && !isPetDead
-    ? generatedSceneVideoUrl(pet, visualMode)
+  const requestedSceneVideoSrc = visualPet && !isPetDead
+    ? generatedSceneVideoUrl(visualPet, visualMode)
     : null;
   const sceneBackgroundSrc = loadedSceneMedia?.petId === petId
     ? loadedSceneMedia.backgroundSrc
@@ -372,7 +396,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const sceneVideoSrc = loadedSceneMedia?.petId === petId
     ? loadedSceneMedia.videoSrc
     : requestedSceneVideoSrc;
-  const requestedTapReactionSrc = pet && !isPetDead
+  const requestedTapReactionSrc = pet && !isPetDead && effectiveVisualProvider === "openai"
     ? generatedTapReactionImageUrl(pet)
     : null;
   const tapReactionSrc = loadedTapReactionSrc === requestedTapReactionSrc
@@ -487,13 +511,28 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       : Promise.resolve();
 
     void Promise.all([imageReady, videoReady]).then(() => {
-      if (!cancelled) {
-        setLoadedSceneMedia({
-          petId,
-          backgroundSrc: requestedSceneBackgroundSrc,
-          videoSrc: requestedSceneVideoSrc,
-        });
+      if (cancelled) {
+        return;
       }
+
+      const nextSceneMedia = {
+        petId,
+        backgroundSrc: requestedSceneBackgroundSrc,
+        videoSrc: requestedSceneVideoSrc,
+      };
+      const isVisibleReplacement = document.visibilityState === "visible"
+        && loadedSceneMedia?.petId === petId;
+
+      if (!isVisibleReplacement) {
+        setLoadedSceneMedia(nextSceneMedia);
+        return;
+      }
+
+      sweep(() => {
+        if (!cancelled) {
+          setLoadedSceneMedia(nextSceneMedia);
+        }
+      });
     }).catch(() => {
       // Keep the currently rendered media if a generated variant cannot be preloaded.
     });
@@ -507,6 +546,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     petId,
     requestedSceneBackgroundSrc,
     requestedSceneVideoSrc,
+    sweep,
   ]);
 
   const showPetReplyMessage = useCallback((
@@ -1268,6 +1308,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       canShowHappyAsset={hasHappyAssets}
       visualModeOverride={visualModeOverride}
       onVisualModeOverrideChange={setVisualModeOverride}
+      visualProvider={effectiveVisualProvider}
+      canShowKandinskyAssets={Boolean(kandinskyAssets)}
+      onVisualProviderChange={setVisualProvider}
     />
   ) : null;
   const debugTrigger = canShowDebugMenu ? (
@@ -1400,11 +1443,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               poster={sceneBackgroundSrc}
               className="main-scene-background"
               autoPlay
+              loop
               muted
               playsInline
               preload="auto"
-              onLoadedMetadata={(event) => restartSceneVideo(event.currentTarget)}
-              onEnded={(event) => restartSceneVideo(event.currentTarget)}
             />
           ) : null}
           {isTapReactionVisible ? (
@@ -1440,12 +1482,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           {roundedHealthPercent}/100.
         </div>
 
-        <div className="pet-status-name conversation-fade-target">
+        <div className="pet-status-name">
           {displayedPetName}
         </div>
 
         <div
-          className="top-status-strip conversation-fade-target"
+          className="top-status-strip"
           aria-label={`Голод ${roundedHungerPercent} из 100, настроение ${roundedMoodPercent} из 100, здоровье ${roundedHealthPercent} из 100`}
         >
           <StatProgressRing value={hungerPercent} kind="hunger" />

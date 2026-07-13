@@ -10,19 +10,24 @@ from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Any
 
-from app.schemas import GeneratePetAssetResponse, GeneratePetJobResponse
+from app.schemas import (
+    GeneratePetAssetResponse,
+    GeneratePetJobResponse,
+    GeneratePetStaticAssetResponse,
+)
 from app.services.generation_job_store import GenerationJobStore, StoredGenerationJob
 from app.services.prompt_debug import reset_prompt_log_context, set_prompt_log_context
 from app.services.telegram_auth_service import TelegramUserContext
 
 logger = logging.getLogger(__name__)
 
-GenerateImages = Callable[[str], Any]
+GenerateImages = Callable[[str, str], Any]
 GenerateVideo = Callable[[Any], Any]
-GenerateBackgroundImage = Callable[[Any], Any]
+GenerateBackgroundImage = Callable[[Any, str], Any]
 GenerateBackgroundVideo = Callable[[Any, Any], Any]
-GenerateHappyImage = Callable[[Any], Any]
+GenerateHappyImage = Callable[[Any, str], Any]
 GenerateHappyVideo = Callable[[Any, Any], Any]
+GenerateComparisonImages = Callable[[str, Any], dict[str, Any]]
 BuildResponse = Callable[
     [Any, Any, Any | None, Any | None, Any | None, Any | None],
     dict[str, Any],
@@ -46,7 +51,10 @@ class GenerationJobRecord:
     username: str | None
     first_name: str | None
     description: str
+    image_provider: str
     response: GeneratePetJobResponse
+    primary_complete: bool = False
+    comparison_complete: bool = False
 
 
 class GenerationJobService:
@@ -63,6 +71,7 @@ class GenerationJobService:
         generate_happy_video: GenerateHappyVideo,
         build_response: BuildResponse,
         build_failure: BuildFailure,
+        generate_comparison_images: GenerateComparisonImages | None = None,
         notify_ready: NotifyReady | None = None,
         job_ttl: timedelta = timedelta(hours=1),
         store_path: str | None = None,
@@ -77,6 +86,7 @@ class GenerationJobService:
         self._generate_happy_video = generate_happy_video
         self._build_response = build_response
         self._build_failure = build_failure
+        self._generate_comparison_images = generate_comparison_images
         self._notify_ready_callback = notify_ready
         self._job_ttl = job_ttl
         self._max_queued_jobs = max(0, max_queued_jobs)
@@ -138,8 +148,16 @@ class GenerationJobService:
             return GenerationJobStore.empty_metrics_summary(days=days)
         return self._store.metrics_summary(days=days, owner_id=owner_id)
 
-    def submit(self, description: str, user: TelegramUserContext) -> GeneratePetJobResponse:
+    def submit(
+        self,
+        description: str,
+        user: TelegramUserContext,
+        image_provider: str = "openai",
+    ) -> GeneratePetJobResponse:
         self.cleanup()
+        normalized_provider = image_provider.strip().lower()
+        if normalized_provider not in {"openai", "kandinsky"}:
+            raise ValueError(f"Unsupported pet image provider: {image_provider}")
         now = self._now()
         job_id = str(uuid.uuid4())
         response = GeneratePetJobResponse(
@@ -151,8 +169,7 @@ class GenerationJobService:
         )
         with self._lock:
             active_count = sum(
-                record.response.status in {"queued", "running"}
-                for record in self._jobs.values()
+                record.response.status in {"queued", "running"} for record in self._jobs.values()
             )
             if active_count >= self._image_workers + self._max_queued_jobs:
                 raise GenerationQueueFullError("generation queue is full")
@@ -161,7 +178,9 @@ class GenerationJobService:
                 username=user.username,
                 first_name=user.first_name,
                 description=description,
+                image_provider=normalized_provider,
                 response=response,
+                comparison_complete=self._generate_comparison_images is None,
             )
             self._persist_locked(job_id)
         self._record_metric_queued(job_id)
@@ -176,7 +195,7 @@ class GenerationJobService:
             self._video_workers,
         )
         try:
-            self._submit_image_job(job_id, description)
+            self._submit_image_job(job_id, description, normalized_provider)
         except Exception as exc:
             self._fail(job_id, exc, phase="generating_images")
         return response
@@ -239,6 +258,7 @@ class GenerationJobService:
                 username=record.username,
                 first_name=record.first_name,
                 description=record.description,
+                image_provider=record.image_provider,
                 response=record.response,
             )
         )
@@ -275,18 +295,31 @@ class GenerationJobService:
                 exc_info=True,
             )
 
-    @staticmethod
-    def _record_from_stored(stored: StoredGenerationJob) -> GenerationJobRecord:
+    def _record_from_stored(self, stored: StoredGenerationJob) -> GenerationJobRecord:
+        has_comparison = bool(stored.response.result and stored.response.result.kandinskyAssets)
         return GenerationJobRecord(
             owner_id=stored.owner_id,
             username=stored.username,
             first_name=stored.first_name,
             description=stored.description,
+            image_provider=stored.image_provider,
             response=stored.response,
+            primary_complete=stored.response.status == "succeeded",
+            comparison_complete=self._generate_comparison_images is None or has_comparison,
         )
 
-    def _submit_image_job(self, job_id: str, description: str) -> None:
-        self._image_executor.submit(self._run_image_job, job_id, description)
+    def _submit_image_job(
+        self,
+        job_id: str,
+        description: str,
+        image_provider: str,
+    ) -> None:
+        self._image_executor.submit(
+            self._run_image_job,
+            job_id,
+            description,
+            image_provider,
+        )
 
     def _recover_active_jobs(self) -> None:
         if self._store is None:
@@ -306,6 +339,7 @@ class GenerationJobService:
                     username=stored.username,
                     first_name=stored.first_name,
                     description=stored.description,
+                    image_provider=stored.image_provider,
                     response=response,
                 )
             )
@@ -313,7 +347,11 @@ class GenerationJobService:
                 self._jobs[response.jobId] = record
                 self._persist_locked(response.jobId)
             self._record_metric_queued(response.jobId)
-            self._submit_image_job(response.jobId, stored.description)
+            self._submit_image_job(
+                response.jobId,
+                stored.description,
+                stored.image_provider,
+            )
             logger.warning(
                 "pet_generation_recovered jobId=%s ownerId=%s",
                 response.jobId,
@@ -335,11 +373,10 @@ class GenerationJobService:
         )
         self._update(
             job_id,
-            status_value="succeeded",
-            phase="completed",
+            status_value="running",
             background_error=detail,
         )
-        self._mark_metric(job_id, "completed_at", status="completed_with_errors")
+        self._finish_primary_pipeline(job_id, completed_with_errors=True)
 
     def _record_background_failure(self, job_id: str, exc: Exception, *, phase: str) -> None:
         detail = self._build_failure(job_id, phase, exc, self._owner_id(job_id))
@@ -360,6 +397,11 @@ class GenerationJobService:
             record = self._jobs.get(job_id)
             return record.owner_id if record is not None else 0
 
+    def _image_provider(self, job_id: str) -> str:
+        with self._lock:
+            record = self._jobs.get(job_id)
+            return record.image_provider if record is not None else "openai"
+
     def _notify_ready(self, job_id: str) -> None:
         if self._notify_ready_callback is None:
             return
@@ -379,13 +421,174 @@ class GenerationJobService:
             {
                 "jobId": job_id,
                 "endpoint": "/api/generate-pet",
+                "imageProvider": self._image_provider(job_id),
             }
         )
+
+    def _description(self, job_id: str) -> str:
+        with self._lock:
+            record = self._jobs.get(job_id)
+            return record.description if record is not None else ""
+
+    def _merge_comparison_assets(
+        self,
+        job_id: str,
+        result: GeneratePetAssetResponse,
+    ) -> GeneratePetAssetResponse:
+        with self._lock:
+            current = self._jobs.get(job_id)
+            comparison = (
+                current.response.result.kandinskyAssets
+                if current is not None and current.response.result is not None
+                else None
+            )
+        return result.model_copy(update={"kandinskyAssets": comparison})
+
+    def _start_comparison_job(self, job_id: str, primary_image_set: Any) -> None:
+        if self._generate_comparison_images is None:
+            return
+        try:
+            self._image_executor.submit(
+                self._run_comparison_job,
+                job_id,
+                self._description(job_id),
+                primary_image_set,
+            )
+        except Exception as exc:
+            self._finish_comparison_pipeline(job_id, error=exc)
+
+    def _run_comparison_job(
+        self,
+        job_id: str,
+        description: str,
+        primary_image_set: Any,
+    ) -> None:
+        started_at = time.monotonic()
+        logger.info(
+            "pet_generation_stage_started jobId=%s phase=generating_kandinsky",
+            job_id,
+        )
+        prompt_log_token = set_prompt_log_context(
+            {
+                "jobId": job_id,
+                "endpoint": "/api/generate-pet",
+                "imageProvider": "kandinsky",
+            }
+        )
+        try:
+            payload = self._generate_comparison_images(description, primary_image_set)
+            comparison = GeneratePetStaticAssetResponse.model_validate(payload)
+        except Exception as exc:
+            self._finish_comparison_pipeline(job_id, error=exc)
+            return
+        finally:
+            reset_prompt_log_context(prompt_log_token)
+        logger.info(
+            "pet_generation_stage_completed jobId=%s phase=generating_kandinsky "
+            "durationSeconds=%.3f assetSetId=%s",
+            job_id,
+            time.monotonic() - started_at,
+            comparison.assetSetId,
+        )
+        self._finish_comparison_pipeline(job_id, comparison=comparison)
+
+    def _finish_primary_pipeline(
+        self,
+        job_id: str,
+        *,
+        result: GeneratePetAssetResponse | None = None,
+        completed_with_errors: bool = False,
+    ) -> None:
+        with self._lock:
+            record = self._jobs.get(job_id)
+            if record is None:
+                return
+            record.primary_complete = True
+            comparison_complete = record.comparison_complete
+            comparison = (
+                record.response.result.kandinskyAssets
+                if record.response.result is not None
+                else None
+            )
+            next_result = result or record.response.result
+            if next_result is not None:
+                next_result = next_result.model_copy(update={"kandinskyAssets": comparison})
+            has_errors = completed_with_errors or record.response.comparisonError is not None
+            record.response = record.response.model_copy(
+                update={
+                    "status": "succeeded" if comparison_complete else "running",
+                    "phase": "completed" if comparison_complete else "generating_kandinsky",
+                    "updatedAt": self._now(),
+                    "result": next_result,
+                }
+            )
+            self._persist_locked(job_id)
+        if comparison_complete:
+            self._mark_metric(
+                job_id,
+                "completed_at",
+                status="completed_with_errors" if has_errors else "completed",
+            )
+
+    def _finish_comparison_pipeline(
+        self,
+        job_id: str,
+        *,
+        comparison: GeneratePetStaticAssetResponse | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        detail = None
+        if error is not None:
+            detail = self._build_failure(
+                job_id,
+                "generating_kandinsky",
+                error,
+                self._owner_id(job_id),
+            )
+            logger.warning(
+                "pet_comparison_generation_failed jobId=%s errorType=%s",
+                job_id,
+                type(error).__name__,
+            )
+        with self._lock:
+            record = self._jobs.get(job_id)
+            if record is None:
+                return
+            record.comparison_complete = True
+            primary_complete = record.primary_complete
+            current_result = record.response.result
+            has_primary_error = record.response.backgroundError is not None
+            merged_result = (
+                current_result.model_copy(update={"kandinskyAssets": comparison})
+                if current_result is not None and comparison is not None
+                else current_result
+            )
+            updates: dict[str, object] = {
+                "status": "succeeded" if primary_complete else "running",
+                "updatedAt": self._now(),
+                "result": merged_result,
+                "comparisonError": detail,
+            }
+            if primary_complete:
+                updates["phase"] = "completed"
+            record.response = record.response.model_copy(update=updates)
+            self._persist_locked(job_id)
+        if primary_complete:
+            self._mark_metric(
+                job_id,
+                "completed_at",
+                status=(
+                    "completed_with_errors"
+                    if has_primary_error or detail is not None
+                    else "completed"
+                ),
+            )
 
     def _run_image_job(
         self,
         job_id: str,
         description: str,
+        image_provider: str,
     ) -> None:
         started_at = time.monotonic()
         self._update(job_id, status_value="running", phase="generating_images")
@@ -393,7 +596,7 @@ class GenerationJobService:
         logger.info("pet_generation_stage_started jobId=%s phase=generating_images", job_id)
         prompt_log_token = self._prompt_context(job_id)
         try:
-            image_set = self._generate_images(description)
+            image_set = self._generate_images(description, image_provider)
         except Exception as exc:
             self._fail(job_id, exc, phase="generating_images")
             return
@@ -455,6 +658,7 @@ class GenerationJobService:
             phase="generating_sad_image",
             result=result,
         )
+        self._start_comparison_job(job_id, image_set)
         try:
             self._image_executor.submit(
                 self._run_background_image_job,
@@ -476,7 +680,10 @@ class GenerationJobService:
         )
         prompt_log_token = self._prompt_context(job_id)
         try:
-            sad_scene_path = self._generate_background_image(image_set)
+            sad_scene_path = self._generate_background_image(
+                image_set,
+                self._image_provider(job_id),
+            )
         except Exception as exc:
             self._record_background_failure(job_id, exc, phase="generating_sad_image")
             self._start_happy_image_job(job_id, image_set, video_path, None, None)
@@ -551,15 +758,18 @@ class GenerationJobService:
         sad_scene_path: Any | None,
         sad_video_path: Any | None,
     ) -> None:
-        result = GeneratePetAssetResponse.model_validate(
-            self._build_response(
-                image_set,
-                video_path,
-                sad_scene_path,
-                sad_video_path,
-                None,
-                None,
-            )
+        result = self._merge_comparison_assets(
+            job_id,
+            GeneratePetAssetResponse.model_validate(
+                self._build_response(
+                    image_set,
+                    video_path,
+                    sad_scene_path,
+                    sad_video_path,
+                    None,
+                    None,
+                )
+            ),
         )
         self._update(
             job_id,
@@ -595,7 +805,10 @@ class GenerationJobService:
         )
         prompt_log_token = self._prompt_context(job_id)
         try:
-            happy_scene_path = self._generate_happy_image(image_set)
+            happy_scene_path = self._generate_happy_image(
+                image_set,
+                self._image_provider(job_id),
+            )
         except Exception as exc:
             self._finish_background_failure(job_id, exc, phase="generating_happy_image")
             return
@@ -664,10 +877,4 @@ class GenerationJobService:
             time.monotonic() - started_at,
             image_set.asset_set_id,
         )
-        self._update(
-            job_id,
-            status_value="succeeded",
-            phase="completed",
-            result=result,
-        )
-        self._mark_metric(job_id, "completed_at", status="completed")
+        self._finish_primary_pipeline(job_id, result=result)

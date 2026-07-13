@@ -17,6 +17,7 @@ GeneratePetJobPhaseValue = Literal[
     "generating_sad_video",
     "generating_happy_image",
     "generating_happy_video",
+    "generating_kandinsky",
     "completed",
 ]
 UserMemoryKind = Literal[
@@ -52,10 +53,23 @@ class GeneratedPetImages(BaseModel):
     adult: dict[PetStateValue, str]
 
 
-class GeneratePetAssetResponse(BaseModel):
+class GeneratePetStaticAssetResponse(BaseModel):
     assetSetId: str
     generatedAt: datetime
     images: GeneratedPetImages
+    videoUrl: str | None = None
+
+    @model_validator(mode="after")
+    def require_complete_image_set(self) -> GeneratePetStaticAssetResponse:
+        for stage in PET_STAGE_VALUES:
+            stage_images = getattr(self.images, stage)
+            for mood in PET_STATE_VALUES:
+                if not stage_images.get(mood):
+                    raise ValueError(f"missing generated image for {stage}/{mood}")
+        return self
+
+
+class GeneratePetAssetResponse(GeneratePetStaticAssetResponse):
     videoUrl: str | None = None
     sadVideoUrl: str | None = None
     happyVideoUrl: str | None = None
@@ -63,15 +77,7 @@ class GeneratePetAssetResponse(BaseModel):
     blinkImageUrl: str | None = None
     spriteSheetUrl: str | None = None
     characterBible: dict[str, Any] | None = None
-
-    @model_validator(mode="after")
-    def require_complete_image_set(self) -> GeneratePetAssetResponse:
-        for stage in PET_STAGE_VALUES:
-            stage_images = getattr(self.images, stage)
-            for mood in PET_STATE_VALUES:
-                if not stage_images.get(mood):
-                    raise ValueError(f"missing generated image for {stage}/{mood}")
-        return self
+    kandinskyAssets: GeneratePetStaticAssetResponse | None = None
 
 
 class GeneratePetJobResponse(BaseModel):
@@ -83,6 +89,7 @@ class GeneratePetJobResponse(BaseModel):
     result: GeneratePetAssetResponse | None = None
     error: dict[str, Any] | None = None
     backgroundError: dict[str, Any] | None = None
+    comparisonError: dict[str, Any] | None = None
 
 
 class GenerationDurationSummary(BaseModel):

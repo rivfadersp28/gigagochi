@@ -12,6 +12,7 @@ from app.services.generation_job_service import (
     GenerationJobService,
     GenerationQueueFullError,
 )
+from app.services.generation_job_store import GenerationJobStore
 from app.services.telegram_auth_service import TelegramUserContext
 
 
@@ -83,7 +84,7 @@ def test_foreground_result_is_available_before_background_assets() -> None:
         notifications.append(owner_id)
         notification_sent.set()
 
-    def generate_background_image(_image_set):
+    def generate_background_image(_image_set, _image_provider):
         background_started.set()
         assert release_background.wait(timeout=2)
         return Path("teen-sad.png")
@@ -91,11 +92,11 @@ def test_foreground_result_is_available_before_background_assets() -> None:
     service = GenerationJobService(
         image_workers=1,
         video_workers=1,
-        generate_images=lambda _description: SimpleNamespace(asset_set_id="asset-1"),
+        generate_images=lambda _description, _provider: SimpleNamespace(asset_set_id="asset-1"),
         generate_video=lambda _image_set: Path("teen-idle.mp4"),
         generate_background_image=generate_background_image,
         generate_background_video=lambda _image_set, _sad_path: Path("teen-sad.mp4"),
-        generate_happy_image=lambda _image_set: Path("teen-happy.png"),
+        generate_happy_image=lambda _image_set, _provider: Path("teen-happy.png"),
         generate_happy_video=lambda _image_set, _happy_path: Path("teen-happy.mp4"),
         build_response=_build_response,
         build_failure=lambda _job_id, phase, exc, _owner_id: {
@@ -135,11 +136,11 @@ def test_notification_failure_does_not_fail_generation() -> None:
     service = GenerationJobService(
         image_workers=1,
         video_workers=1,
-        generate_images=lambda _description: SimpleNamespace(asset_set_id="asset-1"),
+        generate_images=lambda _description, _provider: SimpleNamespace(asset_set_id="asset-1"),
         generate_video=lambda _image_set: Path("teen-idle.mp4"),
-        generate_background_image=lambda _image_set: Path("teen-sad.png"),
+        generate_background_image=lambda _image_set, _provider: Path("teen-sad.png"),
         generate_background_video=lambda _image_set, _sad_path: Path("teen-sad.mp4"),
-        generate_happy_image=lambda _image_set: Path("teen-happy.png"),
+        generate_happy_image=lambda _image_set, _provider: Path("teen-happy.png"),
         generate_happy_video=lambda _image_set, _happy_path: Path("teen-happy.mp4"),
         build_response=_build_response,
         build_failure=lambda _job_id, phase, exc, _owner_id: {
@@ -161,13 +162,13 @@ def test_background_failure_keeps_foreground_result() -> None:
     service = GenerationJobService(
         image_workers=1,
         video_workers=1,
-        generate_images=lambda _description: SimpleNamespace(asset_set_id="asset-1"),
+        generate_images=lambda _description, _provider: SimpleNamespace(asset_set_id="asset-1"),
         generate_video=lambda _image_set: Path("teen-idle.mp4"),
-        generate_background_image=lambda _image_set: (_ for _ in ()).throw(
+        generate_background_image=lambda _image_set, _provider: (_ for _ in ()).throw(
             RuntimeError("sad image failed")
         ),
         generate_background_video=lambda _image_set, _sad_path: Path("teen-sad.mp4"),
-        generate_happy_image=lambda _image_set: Path("teen-happy.png"),
+        generate_happy_image=lambda _image_set, _provider: Path("teen-happy.png"),
         generate_happy_video=lambda _image_set, _happy_path: Path("teen-happy.mp4"),
         build_response=_build_response,
         build_failure=lambda _job_id, phase, exc, _owner_id: {
@@ -195,15 +196,15 @@ def test_every_owner_gets_derived_assets() -> None:
     service = GenerationJobService(
         image_workers=1,
         video_workers=1,
-        generate_images=lambda _description: SimpleNamespace(asset_set_id="asset-1"),
+        generate_images=lambda _description, _provider: SimpleNamespace(asset_set_id="asset-1"),
         generate_video=lambda _image_set: Path("teen-idle.mp4"),
-        generate_background_image=lambda _image_set: (
+        generate_background_image=lambda _image_set, _provider: (
             background_calls.append("sad-image") or Path("teen-sad.png")
         ),
         generate_background_video=lambda _image_set, _sad_path: (
             background_calls.append("sad-video") or Path("teen-sad.mp4")
         ),
-        generate_happy_image=lambda _image_set: (
+        generate_happy_image=lambda _image_set, _provider: (
             background_calls.append("happy-image") or Path("teen-happy.png")
         ),
         generate_happy_video=lambda _image_set, _happy_path: (
@@ -236,7 +237,7 @@ def test_twenty_generation_pipelines_start_concurrently() -> None:
     active = 0
     peak_active = 0
 
-    def generate_images(_description: str):
+    def generate_images(_description: str, _image_provider: str):
         nonlocal active, peak_active
         with counter_lock:
             active += 1
@@ -252,9 +253,9 @@ def test_twenty_generation_pipelines_start_concurrently() -> None:
         max_queued_jobs=40,
         generate_images=generate_images,
         generate_video=lambda _image_set: Path("teen-idle.mp4"),
-        generate_background_image=lambda _image_set: Path("teen-sad.png"),
+        generate_background_image=lambda _image_set, _provider: Path("teen-sad.png"),
         generate_background_video=lambda _image_set, _sad_path: Path("teen-sad.mp4"),
-        generate_happy_image=lambda _image_set: Path("teen-happy.png"),
+        generate_happy_image=lambda _image_set, _provider: Path("teen-happy.png"),
         generate_happy_video=lambda _image_set, _happy_path: Path("teen-happy.mp4"),
         build_response=_build_response,
         build_failure=lambda _job_id, phase, exc, _owner_id: {
@@ -274,10 +275,130 @@ def test_twenty_generation_pipelines_start_concurrently() -> None:
         service.shutdown(wait=True)
 
 
+def test_selected_provider_reaches_every_image_stage() -> None:
+    calls: list[tuple[str, str]] = []
+
+    service = GenerationJobService(
+        image_workers=1,
+        video_workers=1,
+        generate_images=lambda _description, provider: (
+            calls.append(("initial", provider)) or SimpleNamespace(asset_set_id="asset-1")
+        ),
+        generate_video=lambda _image_set: Path("teen-idle.mp4"),
+        generate_background_image=lambda _image_set, provider: (
+            calls.append(("sad", provider)) or Path("teen-sad.png")
+        ),
+        generate_background_video=lambda _image_set, _sad_path: Path("teen-sad.mp4"),
+        generate_happy_image=lambda _image_set, provider: (
+            calls.append(("happy", provider)) or Path("teen-happy.png")
+        ),
+        generate_happy_video=lambda _image_set, _happy_path: Path("teen-happy.mp4"),
+        build_response=_build_response,
+        build_failure=lambda _job_id, phase, exc, _owner_id: {
+            "code": "GENERATION_FAILED",
+            "message": str(exc),
+            "phase": phase,
+        },
+    )
+    try:
+        submitted = service.submit("мышонок", _user(), "kandinsky")
+        _wait_for(service, submitted.jobId, lambda job: job.status == "succeeded")
+
+        assert calls == [
+            ("initial", "kandinsky"),
+            ("sad", "kandinsky"),
+            ("happy", "kandinsky"),
+        ]
+    finally:
+        service.shutdown(wait=True)
+
+
+def test_kandinsky_static_comparison_is_attached_without_videos() -> None:
+    comparison_images = {
+        stage: {
+            "idle": "/static/generated/kandinsky/idle.png",
+            "happy": "/static/generated/kandinsky/happy.png",
+            "hungry": "/static/generated/kandinsky/idle.png",
+            "sad": "/static/generated/kandinsky/sad.png",
+        }
+        for stage in ("baby", "teen", "adult")
+    }
+    service = GenerationJobService(
+        image_workers=2,
+        video_workers=1,
+        generate_images=lambda _description, provider: (
+            pytest.fail("primary provider must stay OpenAI")
+            if provider != "openai"
+            else SimpleNamespace(asset_set_id="asset-1")
+        ),
+        generate_video=lambda _image_set: Path("teen-idle.mp4"),
+        generate_background_image=lambda _image_set, _provider: Path("teen-sad.png"),
+        generate_background_video=lambda _image_set, _sad_path: Path("teen-sad.mp4"),
+        generate_happy_image=lambda _image_set, _provider: Path("teen-happy.png"),
+        generate_happy_video=lambda _image_set, _happy_path: Path("teen-happy.mp4"),
+        generate_comparison_images=lambda _description, _primary_image_set: {
+            "assetSetId": "asset-kandinsky",
+            "generatedAt": datetime.now(UTC),
+            "images": comparison_images,
+        },
+        build_response=_build_response,
+        build_failure=lambda _job_id, phase, exc, _owner_id: {
+            "code": "GENERATION_FAILED",
+            "message": str(exc),
+            "phase": phase,
+        },
+    )
+    try:
+        submitted = service.submit("мышонок", _user())
+        completed = _wait_for(service, submitted.jobId, lambda job: job.status == "succeeded")
+
+        assert completed.result is not None
+        assert completed.result.videoUrl is not None
+        assert completed.result.kandinskyAssets is not None
+        assert completed.result.kandinskyAssets.assetSetId == "asset-kandinsky"
+        assert completed.result.kandinskyAssets.images.teen["happy"].endswith("happy.png")
+        assert completed.comparisonError is None
+    finally:
+        service.shutdown(wait=True)
+
+
+def test_kandinsky_failure_does_not_fail_openai_assets() -> None:
+    service = GenerationJobService(
+        image_workers=2,
+        video_workers=1,
+        generate_images=lambda _description, _provider: SimpleNamespace(asset_set_id="asset-1"),
+        generate_video=lambda _image_set: Path("teen-idle.mp4"),
+        generate_background_image=lambda _image_set, _provider: Path("teen-sad.png"),
+        generate_background_video=lambda _image_set, _sad_path: Path("teen-sad.mp4"),
+        generate_happy_image=lambda _image_set, _provider: Path("teen-happy.png"),
+        generate_happy_video=lambda _image_set, _happy_path: Path("teen-happy.mp4"),
+        generate_comparison_images=lambda _description, _primary_image_set: (_ for _ in ()).throw(
+            RuntimeError("kandinsky unavailable")
+        ),
+        build_response=_build_response,
+        build_failure=lambda _job_id, phase, exc, _owner_id: {
+            "code": "GENERATION_FAILED",
+            "message": str(exc),
+            "phase": phase,
+        },
+    )
+    try:
+        submitted = service.submit("мышонок", _user())
+        completed = _wait_for(service, submitted.jobId, lambda job: job.status == "succeeded")
+
+        assert completed.result is not None
+        assert completed.result.happyVideoUrl is not None
+        assert completed.result.kandinskyAssets is None
+        assert completed.comparisonError is not None
+        assert completed.comparisonError["message"] == "kandinsky unavailable"
+    finally:
+        service.shutdown(wait=True)
+
+
 def test_generation_queue_is_bounded() -> None:
     release = Event()
 
-    def generate_images(_description: str):
+    def generate_images(_description: str, _image_provider: str):
         assert release.wait(timeout=5)
         return SimpleNamespace(asset_set_id="asset-1")
 
@@ -287,9 +408,9 @@ def test_generation_queue_is_bounded() -> None:
         max_queued_jobs=1,
         generate_images=generate_images,
         generate_video=lambda _image_set: Path("teen-idle.mp4"),
-        generate_background_image=lambda _image_set: Path("teen-sad.png"),
+        generate_background_image=lambda _image_set, _provider: Path("teen-sad.png"),
         generate_background_video=lambda _image_set, _sad_path: Path("teen-sad.mp4"),
-        generate_happy_image=lambda _image_set: Path("teen-happy.png"),
+        generate_happy_image=lambda _image_set, _provider: Path("teen-happy.png"),
         generate_happy_video=lambda _image_set, _happy_path: Path("teen-happy.mp4"),
         build_response=_build_response,
         build_failure=lambda _job_id, phase, exc, _owner_id: {
@@ -316,11 +437,11 @@ def test_completed_generation_job_survives_service_restart(tmp_path: Path) -> No
             image_workers=1,
             video_workers=1,
             store_path=str(store_path),
-            generate_images=lambda _description: SimpleNamespace(asset_set_id="asset-1"),
+            generate_images=lambda _description, _provider: SimpleNamespace(asset_set_id="asset-1"),
             generate_video=lambda _image_set: Path("teen-idle.mp4"),
-            generate_background_image=lambda _image_set: Path("teen-sad.png"),
+            generate_background_image=lambda _image_set, _provider: Path("teen-sad.png"),
             generate_background_video=lambda _image_set, _sad_path: Path("teen-sad.mp4"),
-            generate_happy_image=lambda _image_set: Path("teen-happy.png"),
+            generate_happy_image=lambda _image_set, _provider: Path("teen-happy.png"),
             generate_happy_video=lambda _image_set, _happy_path: Path("teen-happy.mp4"),
             build_response=_build_response,
             build_failure=lambda _job_id, phase, exc, _owner_id: {
@@ -331,7 +452,7 @@ def test_completed_generation_job_survives_service_restart(tmp_path: Path) -> No
         )
 
     first = build_service()
-    submitted = first.submit("мышонок", _user())
+    submitted = first.submit("мышонок", _user(), "kandinsky")
     completed = _wait_for(first, submitted.jobId, lambda job: job.status == "succeeded")
     stats = first.metrics_summary(days=30, owner_id=42)
     assert stats["totalJobs"] == 1
@@ -339,6 +460,9 @@ def test_completed_generation_job_survives_service_restart(tmp_path: Path) -> No
     assert stats["normal"]["count"] == 1
     assert stats["full"]["count"] == 1
     assert stats["recent"][0]["ownerName"] == "Serge"
+    stored = GenerationJobStore(store_path).get(submitted.jobId)
+    assert stored is not None
+    assert stored.image_provider == "kandinsky"
     first.shutdown(wait=True)
 
     second = build_service()

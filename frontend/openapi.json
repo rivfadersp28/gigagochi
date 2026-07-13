@@ -575,6 +575,16 @@
           "images": {
             "$ref": "#/components/schemas/GeneratedPetImages"
           },
+          "kandinskyAssets": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeneratePetStaticAssetResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "sadVideoUrl": {
             "anyOf": [
               {
@@ -642,6 +652,18 @@
             ],
             "title": "Backgrounderror"
           },
+          "comparisonError": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparisonerror"
+          },
           "createdAt": {
             "format": "date-time",
             "title": "Createdat",
@@ -673,6 +695,7 @@
               "generating_sad_video",
               "generating_happy_image",
               "generating_happy_video",
+              "generating_kandinsky",
               "completed"
             ],
             "title": "Phase",
@@ -756,6 +779,40 @@
           "description"
         ],
         "title": "GeneratePetRequest",
+        "type": "object"
+      },
+      "GeneratePetStaticAssetResponse": {
+        "properties": {
+          "assetSetId": {
+            "title": "Assetsetid",
+            "type": "string"
+          },
+          "generatedAt": {
+            "format": "date-time",
+            "title": "Generatedat",
+            "type": "string"
+          },
+          "images": {
+            "$ref": "#/components/schemas/GeneratedPetImages"
+          },
+          "videoUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Videourl"
+          }
+        },
+        "required": [
+          "assetSetId",
+          "generatedAt",
+          "images"
+        ],
+        "title": "GeneratePetStaticAssetResponse",
         "type": "object"
       },
       "GenerateTravelRequest": {

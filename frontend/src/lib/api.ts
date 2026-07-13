@@ -439,10 +439,14 @@ function backgroundGenerationState(job: GeneratePetJobResponse) {
         : "succeeded";
   const errorDetail = job.backgroundError ?? (job.status === "failed" ? job.error : undefined);
   const error = errorDetail ? apiErrorFromDetail(errorDetail).message : undefined;
+  const comparisonError = job.comparisonError
+    ? apiErrorFromDetail(job.comparisonError).message
+    : undefined;
   const phase = job.phase === "generating_sad_image"
     || job.phase === "generating_sad_video"
     || job.phase === "generating_happy_image"
     || job.phase === "generating_happy_video"
+    || job.phase === "generating_kandinsky"
     || job.phase === "completed"
     ? job.phase
     : undefined;
@@ -452,6 +456,7 @@ function backgroundGenerationState(job: GeneratePetJobResponse) {
     backgroundGenerationStatus: status,
     backgroundGenerationPhase: phase,
     backgroundGenerationError: error,
+    comparisonGenerationError: comparisonError,
     backgroundGenerationUpdatedAt: job.updatedAt,
   } as const;
 }
@@ -478,12 +483,24 @@ function generatedPetResponseFromJob(job: GeneratePetJobResponse): GeneratePetRe
       : undefined,
     blinkImageUrl: response.blinkImageUrl ? publicImageUrl(response.blinkImageUrl) : undefined,
     spriteSheetUrl: response.spriteSheetUrl ? publicImageUrl(response.spriteSheetUrl) : undefined,
+    kandinskyAssets: response.kandinskyAssets
+      ? {
+          assetSetId: response.kandinskyAssets.assetSetId,
+          generatedAt: response.kandinskyAssets.generatedAt,
+          images: completeGeneratedImages(response.kandinskyAssets),
+          videoUrl: response.kandinskyAssets.videoUrl
+            ? publicImageUrl(response.kandinskyAssets.videoUrl)
+            : undefined,
+        }
+      : undefined,
   };
 }
 
 export async function generatePetAssets(
   description: string,
-  options: { onJobQueued?: (jobId: string) => void } = {},
+  options: {
+    onJobQueued?: (jobId: string) => void;
+  } = {},
 ): Promise<GeneratePetResponse> {
   const job = await request(
     "/api/generate-pet",

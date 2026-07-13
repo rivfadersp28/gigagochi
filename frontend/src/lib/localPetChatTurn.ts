@@ -52,6 +52,27 @@ type RunLocalPetChatTurnOptions = {
   onLiteOverlayPatch?: (patch: Record<string, unknown>) => void;
 };
 
+const pendingPostReplyMemory = new Map<string, Promise<void>>();
+
+async function waitForPendingPostReplyMemory(petId: string) {
+  await pendingPostReplyMemory.get(petId);
+}
+
+function enqueuePostReplyMemory(
+  petId: string,
+  task: () => Promise<void>,
+  onError: (error: unknown) => void,
+) {
+  const previous = pendingPostReplyMemory.get(petId) ?? Promise.resolve();
+  const pending = previous.then(task).catch(onError);
+  pendingPostReplyMemory.set(petId, pending);
+  void pending.finally(() => {
+    if (pendingPostReplyMemory.get(petId) === pending) {
+      pendingPostReplyMemory.delete(petId);
+    }
+  });
+}
+
 function appendUniqueMessages(
   history: LocalChatMessage[],
   messages: LocalChatMessage[],
@@ -151,6 +172,7 @@ export async function runLocalPetChatTurn({
   onHistoryChange,
   onLiteOverlayPatch,
 }: RunLocalPetChatTurnOptions): Promise<LocalPetChatTurnResult> {
+  await waitForPendingPostReplyMemory(pet.petId);
   const now = new Date().toISOString();
   const userMessage: LocalChatMessage = {
     id: createLocalId("message"),
@@ -218,8 +240,9 @@ export async function runLocalPetChatTurn({
     writeLocalPetMemory(nextMemory);
   }
 
-  try {
-    await persistPostReplyMemory({
+  enqueuePostReplyMemory(
+    pet.petId,
+    () => persistPostReplyMemory({
       pet,
       message,
       reply: response.reply,
@@ -228,12 +251,13 @@ export async function runLocalPetChatTurn({
       sourceMessageIds: [userMessage.id, assistantMessage.id],
       includePromptDebug,
       onLiteOverlayPatch,
-    });
-  } catch (error: unknown) {
-    if (includePromptDebug) {
-      console.warn(`[memory-debug] ${logLabel} post-reply memory failed`, error);
-    }
-  }
+    }),
+    (error: unknown) => {
+      if (includePromptDebug) {
+        console.warn(`[memory-debug] ${logLabel} post-reply memory failed`, error);
+      }
+    },
+  );
 
   return {
     response,

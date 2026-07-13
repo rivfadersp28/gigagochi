@@ -46,6 +46,9 @@ type DebugPanelProps = {
   canShowHappyAsset?: boolean;
   visualModeOverride?: PetVisualMode | null;
   onVisualModeOverrideChange?: (mode: PetVisualMode | null) => void;
+  visualProvider?: "openai" | "kandinsky";
+  canShowKandinskyAssets?: boolean;
+  onVisualProviderChange?: (provider: "openai" | "kandinsky") => void;
 };
 
 type DebugTab = "feed" | "prompts" | "character" | "generation";
@@ -217,16 +220,18 @@ function BackgroundGenerationProgress({ pet }: { pet: LocalPetState }) {
   const assetSet = pet.assetSet;
   const status = assetSet?.backgroundGenerationStatus;
   const phase = assetSet?.backgroundGenerationPhase;
-  const progress = status === "succeeded" || phase === "completed"
+  const primaryProgress = status === "succeeded" || phase === "completed"
     ? 4
     : phase === "generating_happy_video"
-      ? 3
+      ? 4
       : phase === "generating_happy_image"
-        ? 2
+        ? 3
         : phase === "generating_sad_video"
-          ? 1
+          ? 2
+          : phase === "generating_sad_image"
+            ? 1
           : 0;
-  const label = status === "succeeded"
+  const primaryLabel = status === "succeeded"
     ? "Готово"
     : status === "failed"
       ? "Готово с ошибками"
@@ -241,35 +246,64 @@ function BackgroundGenerationProgress({ pet }: { pet: LocalPetState }) {
               : assetSet?.generationJobId
                 ? "Ожидание фоновой генерации"
                 : "Фоновая генерация не запускалась";
+  const kandinskyLabel = assetSet?.kandinskyAssets
+    ? "Готово"
+    : assetSet?.comparisonGenerationError
+      ? "Ошибка"
+      : assetSet?.generationJobId && status === "running"
+        ? "Генерируется"
+        : assetSet?.generationJobId
+          ? "Нет ассетов"
+          : "Не запускалась";
 
   return (
     <section className="mt-4 rounded-lg bg-black/[0.035] p-3" aria-label="Фоновая генерация">
       <div className="flex items-center justify-between gap-3 text-[12px] leading-[16px]">
-        <span className="text-pretty font-medium text-black/62">{label}</span>
-        <span className="shrink-0 tabular-nums text-black/42">{progress}/4</span>
+        <span className="font-medium text-black/62">Основные ассеты</span>
+        <span className="shrink-0 tabular-nums text-black/42">{primaryProgress}/4</span>
       </div>
+      <p className="mt-1 text-pretty text-[11px] leading-[15px] text-black/42">
+        {primaryLabel}
+      </p>
       <div
         className="mt-2 grid grid-cols-4 gap-1"
         role="progressbar"
-        aria-label={`${label}: ${progress} из 4`}
+        aria-label={`Основные ассеты: ${primaryProgress} из 4. ${primaryLabel}`}
         aria-valuemin={0}
         aria-valuemax={4}
-        aria-valuenow={progress}
+        aria-valuenow={primaryProgress}
       >
         {[1, 2, 3, 4].map((step) => (
           <span
             key={step}
             className={cn(
               "h-1.5 rounded-full",
-              step <= progress ? "bg-black/60" : "bg-black/10",
+              step <= primaryProgress ? "bg-black/60" : "bg-black/10",
             )}
             aria-hidden="true"
           />
         ))}
       </div>
+      <div className="mt-3 flex items-center justify-between gap-3 border-t border-black/10 pt-3 text-[12px] leading-[16px]">
+        <span className="font-medium text-black/62">Kandinsky</span>
+        <span
+          className={cn(
+            "shrink-0 text-[11px] font-medium",
+            assetSet?.comparisonGenerationError ? "text-red-700" : "text-black/50",
+          )}
+          role="status"
+        >
+          {kandinskyLabel}
+        </span>
+      </div>
       {assetSet?.backgroundGenerationError ? (
         <p className="mt-2 text-pretty text-[11px] leading-[15px] text-red-700">
           {assetSet.backgroundGenerationError}
+        </p>
+      ) : null}
+      {assetSet?.comparisonGenerationError ? (
+        <p className="mt-2 text-pretty text-[11px] leading-[15px] text-red-700">
+          {assetSet.comparisonGenerationError}
         </p>
       ) : null}
     </section>
@@ -372,6 +406,9 @@ export function DebugPanel({
   canShowHappyAsset = false,
   visualModeOverride = null,
   onVisualModeOverrideChange,
+  visualProvider = "openai",
+  canShowKandinskyAssets = false,
+  onVisualProviderChange,
 }: DebugPanelProps) {
   const [activeTab, setActiveTab] = useState<DebugTab>("feed");
   const [events, setEvents] = useState<DebugPanelEvent[]>(() =>
@@ -497,7 +534,7 @@ export function DebugPanel({
             </div>
           </div>
 
-          {onResetPetStats || onKillPet || onRevivePet || onOpenTestPet || onVisualModeOverrideChange ? (
+          {onResetPetStats || onKillPet || onRevivePet || onOpenTestPet || onVisualModeOverrideChange || onVisualProviderChange ? (
             <div className="mt-4 grid gap-2">
               {onOpenTestPet ? (
                 <button
@@ -540,6 +577,40 @@ export function DebugPanel({
                   <RotateCcw className="size-3.5" aria-hidden="true" />
                   <span>Сбросить параметры персонажа</span>
                 </button>
+              ) : null}
+              {onVisualProviderChange ? (
+                <div>
+                  <div className="mb-2 text-[12px] font-medium leading-[16px] text-black/62">
+                    Генератор изображения
+                  </div>
+                  <div
+                    className="grid grid-cols-2 gap-1 rounded-[8px] bg-black/[0.035] p-1"
+                    role="group"
+                    aria-label="Генератор изображения"
+                  >
+                    {(["openai", "kandinsky"] as const).map((provider) => {
+                      const isSelected = visualProvider === provider;
+                      const disabled = provider === "kandinsky" && !canShowKandinskyAssets;
+                      return (
+                        <button
+                          key={provider}
+                          type="button"
+                          aria-pressed={isSelected}
+                          disabled={disabled}
+                          onClick={() => onVisualProviderChange(provider)}
+                          className={cn(
+                            "h-9 rounded-[7px] px-3 text-[11px] font-medium leading-none transition-colors focus:outline-none focus:ring-2 focus:ring-black/10 disabled:cursor-not-allowed disabled:opacity-40",
+                            isSelected
+                              ? "bg-white text-black/82 shadow-sm"
+                              : "text-black/45 hover:bg-white/60 hover:text-black/70",
+                          )}
+                        >
+                          {provider === "openai" ? "OpenAI" : "Kandinsky"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               ) : null}
               {onVisualModeOverrideChange ? (
                 <div>

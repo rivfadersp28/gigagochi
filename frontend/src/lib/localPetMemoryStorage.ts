@@ -29,6 +29,19 @@ const USER_MEMORY_KINDS: UserMemoryKind[] = [
   "boundary",
 ];
 const CORE_MEMORY_KEYS = new Set(["user-name", "pet-nickname"]);
+const NORMALIZED_KEY_ALIASES = new Map([
+  ["name", "user-name"],
+  ["user", "user-name"],
+  ["user-name", "user-name"],
+  ["user_name", "user-name"],
+  ["username", "user-name"],
+  ["user-имя", "user-name"],
+  ["имя", "user-name"],
+  ["имя-пользователя", "user-name"],
+  ["pet-name", "pet-nickname"],
+  ["pet_name", "pet-nickname"],
+  ["petnickname", "pet-nickname"],
+]);
 
 function storage() {
   if (typeof window === "undefined") {
@@ -84,15 +97,16 @@ function normalizeKey(value: unknown, fallbackText: string): string {
     .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^-+|-+$/g, "");
   if (explicit) {
-    return explicit;
+    return NORMALIZED_KEY_ALIASES.get(explicit) ?? explicit;
   }
-  return (
+  const fallback = (
     fallbackText
       .toLowerCase()
       .replace(/[^\p{L}\p{N}]+/gu, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 160) || "memory"
   );
+  return NORMALIZED_KEY_ALIASES.get(fallback) ?? fallback;
 }
 
 export function localPetMemoryStorageKey(petId: string) {
@@ -390,7 +404,9 @@ function upsertUserMemory(
     return memory.memories;
   }
   const normalizedKey = normalizeKey(fact.normalizedKey, text);
-  const kind = normalizeKind(fact.kind);
+  const hasDueAt = isIsoDate(fact.dueAt);
+  const rawKind = normalizeKind(fact.kind);
+  const kind = hasDueAt && rawKind === "event" ? "deadline" : rawKind;
   const existingIndex = memory.memories.findIndex((item) => item.normalizedKey === normalizedKey);
   if (existingIndex >= 0) {
     return memory.memories.map((item, index) =>
@@ -473,7 +489,8 @@ export function applyMemoryOperations(
         memories: upsertUserMemory(nextMemory, operation, [], now),
       };
     } else if (operation.type === "forget_user_fact") {
-      const key = normalizeText(operation.normalizedKey, 160).toLowerCase();
+      const rawKey = normalizeText(operation.normalizedKey, 160).toLowerCase();
+      const key = rawKey && rawKey !== "*" ? normalizeKey(rawKey, rawKey) : rawKey;
       const matchText = normalizeText(operation.matchText, 180).toLowerCase();
       nextMemory = {
         ...nextMemory,

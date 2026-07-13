@@ -167,12 +167,17 @@ function normalizeAssetSet(value: unknown): LocalPetAssetSet | undefined {
       typeof value.backgroundGenerationError === "string"
         ? value.backgroundGenerationError
         : undefined,
+    comparisonGenerationError:
+      typeof value.comparisonGenerationError === "string"
+        ? value.comparisonGenerationError
+        : undefined,
     backgroundGenerationUpdatedAt:
       isIsoDate(value.backgroundGenerationUpdatedAt)
         ? value.backgroundGenerationUpdatedAt
         : undefined,
     blinkImageUrl: typeof value.blinkImageUrl === "string" ? value.blinkImageUrl : undefined,
     spriteSheetUrl: typeof value.spriteSheetUrl === "string" ? value.spriteSheetUrl : undefined,
+    kandinskyAssets: normalizeAssetSet(value.kandinskyAssets),
   });
 }
 

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import Script from "next/script";
 
+import { AppGlimmProvider } from "@/components/AppGlimmProvider";
 import { TelegramBootstrap } from "@/components/TelegramBootstrap";
 import { APP_BACKGROUND_COLOR } from "@/lib/theme";
 
@@ -88,7 +89,7 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: backgroundBootstrapScript }}
         />
         <TelegramBootstrap />
-        {children}
+        <AppGlimmProvider>{children}</AppGlimmProvider>
       </body>
     </html>
   );

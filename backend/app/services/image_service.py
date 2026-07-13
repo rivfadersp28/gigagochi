@@ -5,14 +5,16 @@ import json
 import logging
 import math
 import re
+import subprocess
 import time
 import uuid
 from collections import deque
-from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from fractions import Fraction
 from io import BytesIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
@@ -26,9 +28,14 @@ from openai import (
     PermissionDeniedError,
     RateLimitError,
 )
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageOps, UnidentifiedImageError
 
 from app.config import get_settings
+from app.llm.compat import complete_chat, response_log_value
+from app.llm.contracts import LLMProviderError
+from app.llm.runtime import resolve_llm_model
+from app.media import ImageRequest, VideoRequest, get_media_gateway
+from app.media.kandinsky_prompt_adapter import adapt_kandinsky_prompt
 from app.prompts.pet_image_prompts import (
     build_character_bible_prompt,
     build_pet_single_sprite_prompt,
@@ -44,14 +51,13 @@ from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_character_model,
     get_image_model,
-    get_openai_client,
+    get_openai_platform_client,
     get_openrouter_api_key,
     get_openrouter_headers,
     get_openrouter_image_model,
     get_openrouter_image_url,
     get_openrouter_video_model,
     get_openrouter_video_url,
-    is_openrouter_provider,
 )
 from app.services.prompt_debug import (
     log_chat_completion_prompt,
@@ -73,6 +79,8 @@ class KandinskyTaskError(RuntimeError):
 
 KANDINSKY_HTTP_MAX_ATTEMPTS = 2
 KANDINSKY_HTTP_RETRY_SECONDS = (3.0,)
+KANDINSKY_RESULT_RETRY_WINDOW_SECONDS = 50.0
+KANDINSKY_RESULT_RETRY_INTERVAL_SECONDS = 3.0
 OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS = 3
 OPENROUTER_VIDEO_HTTP_RETRY_SECONDS = (1.0, 3.0)
 OPENROUTER_VIDEO_POLL_RETRY_SECONDS = (1.0, 2.0, 4.0, 8.0, 15.0)
@@ -182,7 +190,12 @@ def _character_bible_completion(
         "openai_character_timeout_seconds",
         settings.openai_chat_timeout_seconds,
     )
-    model = get_character_model(settings)
+    fallback_model = get_character_model(settings)
+    model = (
+        fallback_model
+        if client is not None
+        else resolve_llm_model("character_bible", fallback_model)
+    )
     request_kwargs = {
         "model": model,
         "messages": messages,
@@ -198,9 +211,9 @@ def _character_bible_completion(
         **_character_reasoning_effort_kwargs(settings, model),
     }
     log_chat_completion_prompt(label, request_kwargs)
-    completion = client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response(label, completion)
-    content = completion.choices[0].message.content or "{}"
+    completion = complete_chat("character_bible", request_kwargs, client=client)
+    log_chat_completion_response(label, response_log_value(completion))
+    content = completion.content or "{}"
     return json.loads(content)
 
 
@@ -247,8 +260,20 @@ PET_SCENE_VIDEO_PROMPT = (
     "additional effects. Preserve every pixel of the original image except for the eyelids "
     "during the blink."
 )
+KANDINSKY_PET_SCENE_VIDEO_PROMPT = (
+    "Статичная зафиксированная камера. Персонаж остаётся на том же месте, в том же масштабе и "
+    "исходной позе. Он спокойно дышит: грудь, плечи и корпус едва заметно поднимаются и "
+    "опускаются. "
+    "Разрешены лёгкое естественное покачивание корпуса, небольшой перенос веса, медленный малый "
+    "наклон или поворот головы и редкое моргание. Уши, хвост и свободные края одежды могут слегка "
+    "следовать за движением тела. Движение плавное, сдержанное и цикличное, с возвращением в "
+    "исходную позу. Ступни остаются на тех же точках опоры. Без ходьбы, прыжков, резких жестов, "
+    "размахивания руками, речи и открывания рта. Не меняй анатомию, пропорции, лицо, одежду, "
+    "предметы, фон, свет, цвета, фокус и глубину резкости. Без движения камеры, морфинга, новых "
+    "объектов и дополнительных эффектов."
+)
 PET_SAD_SCENE_IMAGE_PROMPT = (
-    "пусть персонаж сидит на земле и грустно плачет\n"
+    "пусть персонаж сидит на земле и грустно плачет, но без видимых слёз\n"
     "больше ничего не меняй\n\n"
     "КРИТИЧЕСКИ ВАЖНО СОХРАНИТЬ КОМПОЗИЦИЮ: используй точно ту же камеру, дистанцию "
     "до персонажа, кадрирование, перспективу и размер персонажа в кадре. Не приближай "
@@ -256,7 +281,8 @@ PET_SAD_SCENE_IMAGE_PROMPT = (
     "Голова персонажа должна остаться того же пиксельного размера, что на исходной "
     "картинке, а персонаж должен занимать не больше места в кадре, чем на исходнике. "
     "Сохрани точное положение камеры, фон, освещение, цвета, одежду и все предметы. "
-    "Измени только позу персонажа на сидящую на земле и добавь грустный плач."
+    "Измени только позу персонажа на сидящую на земле и добавь грустный плач. "
+    "Не рисуй слёзы, капли, влагу, мокрые дорожки на щеках или любую другую жидкость."
 )
 PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT = (
     "Первая картинка — единственный обязательный эталон композиции и масштаба. "
@@ -266,8 +292,10 @@ PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT = (
     "Верни сцену в композиции первой картинки: персонаж должен находиться на той же "
     "дистанции от камеры и занимать не больше места, чем персонаж на первой картинке. "
     "Не приближай, не увеличивай, не делай крупный план. Персонаж сидит на земле и "
-    "грустно плачет, как на второй картинке. Сохрани дизайн, одежду, посох, книгу, "
-    "флаконы, освещение и окружение первой картинки. Больше ничего не меняй."
+    "грустно плачет, как на второй картинке, но без видимых слёз. Не рисуй слёзы, "
+    "капли, влагу, мокрые дорожки на щеках или любую другую жидкость. Сохрани дизайн, "
+    "одежду, посох, книгу, флаконы, освещение и окружение первой картинки. Больше "
+    "ничего не меняй."
 )
 PET_HAPPY_SCENE_IMAGE_PROMPT = (
     "Это фиксированный crop области персонажа. Сохрани его точные границы и координаты: "
@@ -319,12 +347,12 @@ PET_SAD_SCENE_VIDEO_PROMPT = (
     "position, scale, composition, lighting, colors, clothing, props, background, focus, "
     "depth of field and camera angle. Do not move the head, body, ears, tail, mouth, nose, "
     "hands, clothing or any object. Do not change the environment or framing. The only "
-    "animation is gentle crying: clear tears naturally well up in the eyes, slowly roll "
-    "down the cheeks, and continue flowing in a subtle loop. The eyes remain sorrowful with "
-    "occasional slight eyelid trembling caused by crying. No eye movement, no pupil movement, "
+    "animation is gentle tearless crying, expressed through occasional slight eyelid trembling. "
+    "The eyes remain sorrowful. No visible tears, droplets, moisture, wet streaks on the cheeks, "
+    "or any other liquid. No eye movement, no pupil movement, "
     "no head movement, no body movement, no camera motion, no lighting changes, no color "
     "shifts, no additional effects. Preserve every pixel of the original image except for "
-    "the eyes and the animated tears."
+    "the subtle eyelid trembling."
 )
 PET_SCENE_VIDEO_SIZE = "720x1280"
 PET_SCENE_VIDEO_RESOLUTION = "720p"
@@ -869,7 +897,7 @@ def expand_compact_character_bible(
 
 def create_character_bible(user_description: str) -> dict[str, Any]:
     settings = get_settings()
-    client = get_openai_client()
+    client = None
     system_message = {
         "role": "system",
         "content": character_bible_system_prompt(),
@@ -1205,6 +1233,28 @@ def _kandinsky_reference_image_b64(image_url: str) -> str:
     image_bytes = _reference_image_bytes(image_url)
     if not image_bytes:
         return ""
+    settings = get_settings()
+    max_side = int(getattr(settings, "kandinsky_reference_max_side", 1280))
+    jpeg_quality = int(getattr(settings, "kandinsky_reference_jpeg_quality", 85))
+    try:
+        with Image.open(BytesIO(image_bytes)) as source:
+            source.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+            if source.mode in {"RGBA", "LA"} or "transparency" in source.info:
+                rgba = source.convert("RGBA")
+                normalized = Image.new("RGB", rgba.size, "white")
+                normalized.paste(rgba, mask=rgba.getchannel("A"))
+            else:
+                normalized = source.convert("RGB")
+            output = BytesIO()
+            normalized.save(
+                output,
+                format="JPEG",
+                quality=jpeg_quality,
+                optimize=True,
+            )
+            image_bytes = output.getvalue()
+    except (OSError, UnidentifiedImageError):
+        logger.warning("kandinsky_reference_normalization_skipped invalid image payload")
     return base64.b64encode(image_bytes).decode("utf-8")
 
 
@@ -1222,6 +1272,18 @@ def _kandinsky_reference_images(
         if len(encoded_images) == 4:
             break
     return encoded_images
+
+
+def _compact_kandinsky_prompt(prompt: str, *, task: str = "default") -> str:
+    compacted = adapt_kandinsky_prompt(prompt, task=task)
+    if compacted != prompt.strip():
+        logger.info(
+            "kandinsky_image_prompt_adapted task=%s originalChars=%s adaptedChars=%s",
+            task,
+            len(prompt.strip()),
+            len(compacted),
+        )
+    return compacted
 
 
 def _kandinsky_create_task(
@@ -1260,10 +1322,23 @@ def _kandinsky_create_task(
     return task_id
 
 
-def _kandinsky_wait_done(settings: Any, *, task_id: str, label: str) -> dict[str, Any]:
+def _kandinsky_wait_done(
+    settings: Any,
+    *,
+    task_id: str,
+    label: str,
+    timeout_seconds: float | None = None,
+) -> dict[str, Any]:
     url = f"{_kandinsky_base_url(settings)}/tasks/{task_id}"
     headers = _kandinsky_headers(settings)
-    timeout_seconds = max(1.0, float(getattr(settings, "openai_image_timeout_seconds", 180)))
+    timeout_seconds = max(
+        1.0,
+        float(
+            timeout_seconds
+            if timeout_seconds is not None
+            else getattr(settings, "openai_image_timeout_seconds", 180)
+        ),
+    )
     poll_seconds = max(1.0, float(getattr(settings, "kandinsky_poll_interval_seconds", 5)))
     deadline = time.monotonic() + timeout_seconds
 
@@ -1297,21 +1372,42 @@ def _kandinsky_wait_done(settings: Any, *, task_id: str, label: str) -> dict[str
             raise KandinskyTaskError(f"KANDINSKY_TASK_FAILED: {error}")
         remaining_seconds = deadline - time.monotonic()
         if remaining_seconds <= 0:
-            raise TimeoutError(f"Kandinsky image task timed out: {task_id}")
+            raise TimeoutError(f"Kandinsky task timed out: {task_id}")
         time.sleep(min(poll_seconds, remaining_seconds))
 
 
 def _kandinsky_download_result(settings: Any, *, task_id: str, label: str) -> bytes:
     url = f"{_kandinsky_base_url(settings)}/tasks/{task_id}/result"
-    response = _kandinsky_with_retry(
-        label,
-        "result",
-        lambda: httpx.get(
-            url,
-            headers=_kandinsky_headers(settings),
-            timeout=_kandinsky_http_timeout(settings),
-        ),
-    )
+    timeout_seconds = max(1.0, float(getattr(settings, "openai_image_timeout_seconds", 180)))
+    retry_window = min(KANDINSKY_RESULT_RETRY_WINDOW_SECONDS, timeout_seconds)
+    deadline = time.monotonic() + retry_window
+    while True:
+        response = _kandinsky_with_retry(
+            label,
+            "result",
+            lambda: httpx.get(
+                url,
+                headers=_kandinsky_headers(settings),
+                timeout=_kandinsky_http_timeout(settings),
+            ),
+        )
+        response_text = response.text.lower()
+        retryable_censor_error = response.status_code == 422 and (
+            "output censor service unavailable" in response_text
+            or "gigachat returned no response" in response_text
+        )
+        remaining_seconds = deadline - time.monotonic()
+        if not retryable_censor_error or remaining_seconds <= 0:
+            break
+        retry_delay = min(KANDINSKY_RESULT_RETRY_INTERVAL_SECONDS, remaining_seconds)
+        logger.warning(
+            "kandinsky_image_result retry label=%s task_id=%s retryDelaySeconds=%s response=%s",
+            label,
+            task_id,
+            retry_delay,
+            response.text[:1000],
+        )
+        time.sleep(retry_delay)
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError:
@@ -1386,31 +1482,39 @@ def generate_kandinsky_image_bytes(
     prompt: str,
     *,
     label: str,
+    size: str | None = None,
     input_references: list[dict[str, Any]] | None = None,
 ) -> bytes:
     settings = get_settings()
+    provider_prompt = _compact_kandinsky_prompt(prompt, task=label)
     reference_images = _kandinsky_reference_images(input_references)
     if reference_images:
         task_type = _clean_setting_string(getattr(settings, "kandinsky_i2i_task_type", None))
         task_type = task_type or "k6-i2i"
         params: dict[str, Any] = {
             "image": reference_images,
-            "query": prompt,
+            "query": provider_prompt,
         }
     else:
         task_type = _clean_setting_string(getattr(settings, "kandinsky_t2i_task_type", None))
         task_type = task_type or "k6-image-t2i"
         params = {
-            "query": prompt,
+            "query": provider_prompt,
             "resolution": (
-                _clean_setting_string(getattr(settings, "kandinsky_image_resolution", None))
+                _clean_setting_string(size)
+                or (
+                    _clean_setting_string(getattr(settings, "kandinsky_pet_image_resolution", None))
+                    if label == "pet_creation/image"
+                    else ""
+                )
+                or _clean_setting_string(getattr(settings, "kandinsky_image_resolution", None))
                 or "1280x768"
             ),
         }
 
     request_kwargs = {
         "model": f"kandinsky/{task_type}",
-        "prompt": prompt,
+        "prompt": provider_prompt,
         "resolution": params.get("resolution"),
         "n": 1,
         "input_references": input_references or [],
@@ -1437,33 +1541,107 @@ def generate_kandinsky_image_bytes(
     return image_bytes
 
 
+def _kandinsky_source_image_b64(image_bytes: bytes) -> str:
+    settings = get_settings()
+    jpeg_quality = int(getattr(settings, "kandinsky_reference_jpeg_quality", 85))
+    try:
+        with Image.open(BytesIO(image_bytes)) as source:
+            if source.mode in {"RGBA", "LA"} or "transparency" in source.info:
+                rgba = source.convert("RGBA")
+                normalized = Image.new("RGB", rgba.size, "white")
+                normalized.paste(rgba, mask=rgba.getchannel("A"))
+            else:
+                normalized = source.convert("RGB")
+            output = BytesIO()
+            normalized.save(
+                output,
+                format="JPEG",
+                quality=jpeg_quality,
+                optimize=True,
+            )
+            image_bytes = output.getvalue()
+    except (OSError, UnidentifiedImageError):
+        logger.warning("kandinsky_video_source_normalization_skipped invalid image payload")
+    return base64.b64encode(image_bytes).decode("utf-8")
+
+
+def generate_kandinsky_video_from_image_bytes(
+    image_bytes: bytes,
+    *,
+    label: str,
+    prompt: str,
+) -> bytes:
+    if not image_bytes:
+        raise ValueError("image_bytes must not be empty")
+    settings = get_settings()
+    task_type = _clean_setting_string(getattr(settings, "kandinsky_i2v_task_type", None))
+    task_type = task_type or "k5-i2v-hd"
+    encoded_image = _kandinsky_source_image_b64(image_bytes)
+    params = {
+        "query": prompt.strip(),
+        "image": encoded_image,
+        "beautificator": "disabled",
+    }
+    timeout_seconds = max(
+        1.0,
+        float(getattr(settings, "kandinsky_video_timeout_seconds", 900)),
+    )
+    logger.info(
+        "Kandinsky video generation prompt label=%s taskType=%s prompt=%s",
+        label,
+        task_type,
+        prompt,
+    )
+    task_id = _kandinsky_create_task(
+        settings,
+        task_type=task_type,
+        params=params,
+        label=label,
+    )
+    _kandinsky_wait_done(
+        settings,
+        task_id=task_id,
+        label=label,
+        timeout_seconds=timeout_seconds,
+    )
+    video_bytes = _kandinsky_download_result(settings, task_id=task_id, label=label)
+    logger.info(
+        "Kandinsky video generation completed label=%s taskId=%s resultBytes=%s",
+        label,
+        task_id,
+        len(video_bytes),
+    )
+    return video_bytes
+
+
 def generate_image_bytes(
     prompt: str,
     *,
     label: str = "pet_creation/image",
     size: str | None = None,
     input_references: list[dict[str, Any]] | None = None,
+    provider: str | None = None,
+) -> bytes:
+    return get_media_gateway().generate_image(
+        ImageRequest(
+            prompt=prompt,
+            task=label,
+            size=size,
+            input_references=tuple(input_references or ()),
+            provider=provider,
+        )
+    )
+
+
+def generate_openai_image_bytes(
+    prompt: str,
+    *,
+    label: str,
+    size: str | None = None,
+    input_references: list[dict[str, Any]] | None = None,
 ) -> bytes:
     settings = get_settings()
-    if is_openrouter_provider(settings):
-        openrouter_kwargs = build_openrouter_image_generate_kwargs(
-            settings,
-            prompt,
-            model=get_openrouter_image_model(settings),
-            size=size,
-            input_references=input_references,
-        )
-        log_image_generation_prompt(label, openrouter_kwargs)
-        return _generate_openrouter_image_bytes(
-            settings,
-            prompt,
-            label=label,
-            model=get_openrouter_image_model(settings),
-            size=size,
-            input_references=input_references,
-        )
-
-    client = get_openai_client()
+    client = get_openai_platform_client()
     reference_files = _openai_reference_image_files(input_references)
     if reference_files:
         kwargs = build_image_edit_kwargs(settings, prompt, size=size)
@@ -1499,29 +1677,20 @@ def generate_image_edit_bytes(
     source_path: Path,
     *,
     label: str,
+    provider: str | None = None,
 ) -> bytes:
-    settings = get_settings()
     input_references = [
         {
             "type": "image_url",
             "image_url": {"url": _image_path_data_url(source_path)},
         }
     ]
-    if is_openrouter_provider(settings):
-        return generate_image_bytes(
-            prompt,
-            label=label,
-            input_references=input_references,
-        )
-
-    client = get_openai_client()
-    kwargs = build_image_edit_kwargs(settings, prompt)
-    log_image_generation_prompt(label, {**kwargs, "input_references": input_references})
-    with source_path.open("rb") as image_file:
-        response = client.images.edit(**kwargs, image=image_file)
-    response_payload = response.model_dump() if hasattr(response, "model_dump") else {}
-    log_image_generation_response(label, kwargs, response_payload)
-    return _image_result_bytes(response.data[0])
+    return generate_image_bytes(
+        prompt,
+        label=label,
+        input_references=input_references,
+        provider=provider,
+    )
 
 
 def generate_multi_image_edit_bytes(
@@ -1530,8 +1699,8 @@ def generate_multi_image_edit_bytes(
     *,
     label: str,
     size: str | None = None,
+    provider: str | None = None,
 ) -> bytes:
-    settings = get_settings()
     input_references = [
         {
             "type": "image_url",
@@ -1539,23 +1708,13 @@ def generate_multi_image_edit_bytes(
         }
         for source_path in source_paths
     ]
-    if is_openrouter_provider(settings):
-        return generate_image_bytes(
-            prompt,
-            label=label,
-            size=size,
-            input_references=input_references,
-        )
-
-    client = get_openai_client()
-    kwargs = build_image_edit_kwargs(settings, prompt, size=size)
-    log_image_generation_prompt(label, {**kwargs, "input_references": input_references})
-    with ExitStack() as stack:
-        image_files = [stack.enter_context(source_path.open("rb")) for source_path in source_paths]
-        response = client.images.edit(**kwargs, image=image_files)
-    response_payload = response.model_dump() if hasattr(response, "model_dump") else {}
-    log_image_generation_response(label, kwargs, response_payload)
-    return _image_result_bytes(response.data[0])
+    return generate_image_bytes(
+        prompt,
+        label=label,
+        size=size,
+        input_references=input_references,
+        provider=provider,
+    )
 
 
 def _openrouter_video_headers(settings: Any) -> dict[str, str]:
@@ -1746,6 +1905,91 @@ def normalize_pet_scene_video_frame_bytes(image_bytes: bytes) -> bytes:
         return buffer.getvalue()
 
 
+def render_ping_pong_video_bytes(
+    video_bytes: bytes,
+    *,
+    start_offset_seconds: float = 0.1,
+    end_offset_seconds: float = 0.35,
+) -> bytes:
+    if not video_bytes:
+        raise ValueError("video_bytes must not be empty")
+
+    with TemporaryDirectory(prefix="pet-ping-pong-") as temp_dir_value:
+        temp_dir = Path(temp_dir_value)
+        source_path = temp_dir / "source.mp4"
+        output_path = temp_dir / "ping-pong.mp4"
+        source_path.write_bytes(video_bytes)
+
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=avg_frame_rate:format=duration",
+                "-of",
+                "json",
+                str(source_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        metadata = json.loads(probe.stdout)
+        streams = metadata.get("streams") or []
+        duration = float((metadata.get("format") or {}).get("duration") or 0)
+        frame_rate_value = str((streams[0] if streams else {}).get("avg_frame_rate") or "24/1")
+        frame_rate = float(Fraction(frame_rate_value))
+        frame_seconds = 1 / max(1.0, frame_rate)
+        trimmed_duration = duration - start_offset_seconds - end_offset_seconds
+        reverse_end = trimmed_duration - frame_seconds
+        if reverse_end <= frame_seconds:
+            raise RuntimeError(f"Video is too short for ping-pong rendering: duration={duration}")
+
+        filter_graph = (
+            f"[0:v]trim=start={start_offset_seconds:.6f}:"
+            f"end={duration - end_offset_seconds:.6f},"
+            "setpts=PTS-STARTPTS,split=2[f][r];"
+            f"[r]reverse,trim=start={frame_seconds:.6f}:end={reverse_end:.6f},"
+            "setpts=PTS-STARTPTS[rev];"
+            "[f][rev]concat=n=2:v=1:a=0[out]"
+        )
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(source_path),
+                "-filter_complex",
+                filter_graph,
+                "-map",
+                "[out]",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "medium",
+                "-crf",
+                "20",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(output_path),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        output_bytes = output_path.read_bytes()
+        if not output_bytes:
+            raise RuntimeError("FFmpeg produced an empty ping-pong video")
+        return output_bytes
+
+
 def pet_character_region_box(scene_size: tuple[int, int]) -> tuple[int, int, int, int]:
     scene_width, scene_height = scene_size
     target_width, target_height = _parse_pixel_size(PET_CHARACTER_REGION_SIZE)
@@ -1833,10 +2077,7 @@ def generate_openrouter_video_bytes(
     duration: int = PET_SCENE_VIDEO_DURATION_SECONDS,
 ) -> bytes:
     if source_bytes is not None:
-        source_data_url = (
-            "data:image/png;base64,"
-            f"{base64.b64encode(source_bytes).decode('utf-8')}"
-        )
+        source_data_url = f"data:image/png;base64,{base64.b64encode(source_bytes).decode('utf-8')}"
         source_label = "<image-bytes>"
     elif source_path is not None:
         source_data_url = _image_path_data_url(source_path)
@@ -1917,6 +2158,29 @@ def generate_openrouter_video_from_image_bytes(
         resolution=resolution,
         aspect_ratio=aspect_ratio,
         duration=duration,
+    )
+
+
+def generate_video_from_image_bytes(
+    image_bytes: bytes,
+    *,
+    label: str,
+    prompt: str,
+    resolution: str,
+    aspect_ratio: str,
+    duration: int,
+    provider: str | None = None,
+) -> bytes:
+    return get_media_gateway().generate_video(
+        VideoRequest(
+            prompt=prompt,
+            source_image=image_bytes,
+            task=label,
+            resolution=resolution,
+            aspect_ratio=aspect_ratio,
+            duration_seconds=duration,
+            provider=provider,
+        )
     )
 
 
@@ -2004,11 +2268,15 @@ def align_sprite_to_reference_canvas(image_bytes: bytes, reference_path: Path) -
         return buffer.getvalue()
 
 
-def generate_single_sprite_image_bytes(prompt: str) -> bytes:
-    return normalize_single_sprite_image(generate_image_bytes(prompt))
+def generate_single_sprite_image_bytes(prompt: str, *, provider: str | None = None) -> bytes:
+    return normalize_single_sprite_image(generate_image_bytes(prompt, provider=provider))
 
 
-def generate_pet_scene_image_bytes(character_path: Path) -> bytes:
+def generate_pet_scene_image_bytes(
+    character_path: Path,
+    *,
+    provider: str | None = None,
+) -> bytes:
     if not PET_SCENE_BACKGROUND_PATH.exists():
         raise RuntimeError(f"Pet scene background not found: {PET_SCENE_BACKGROUND_PATH}")
     return generate_multi_image_edit_bytes(
@@ -2016,6 +2284,7 @@ def generate_pet_scene_image_bytes(character_path: Path) -> bytes:
         [character_path, PET_SCENE_BACKGROUND_PATH],
         label="pet_creation/scene",
         size=PET_SCENE_IMAGE_SIZE,
+        provider=provider,
     )
 
 
@@ -2024,15 +2293,35 @@ def generate_pet_scene_video_bytes(
     *,
     prompt: str = PET_SCENE_VIDEO_PROMPT,
     label: str = "pet_creation/scene_video",
+    provider: str | None = None,
 ) -> bytes:
-    return generate_openrouter_video_bytes(scene_path, label=label, prompt=prompt)
+    provider_prompt = (
+        KANDINSKY_PET_SCENE_VIDEO_PROMPT
+        if provider == "kandinsky" and prompt == PET_SCENE_VIDEO_PROMPT
+        else prompt
+    )
+    video_bytes = generate_video_from_image_bytes(
+        scene_path.read_bytes(),
+        label=label,
+        prompt=provider_prompt,
+        resolution=PET_SCENE_VIDEO_RESOLUTION,
+        aspect_ratio=PET_SCENE_VIDEO_ASPECT_RATIO,
+        duration=PET_SCENE_VIDEO_DURATION_SECONDS,
+        provider=provider,
+    )
+    return render_ping_pong_video_bytes(video_bytes)
 
 
 def tap_reaction_path_for_asset(asset_id: uuid.UUID) -> Path:
     return generated_dir_for(asset_id) / f"{FAST_GENERATION_STAGE}-tap.png"
 
 
-def generate_pet_tap_reaction_scene_path(asset_id: uuid.UUID, scene_path: Path) -> Path:
+def generate_pet_tap_reaction_scene_path(
+    asset_id: uuid.UUID,
+    scene_path: Path,
+    *,
+    provider: str | None = None,
+) -> Path:
     output_dir = generated_dir_for(asset_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     source_region_path = output_dir / f"{FAST_GENERATION_STAGE}-tap-source-region.png"
@@ -2047,6 +2336,7 @@ def generate_pet_tap_reaction_scene_path(asset_id: uuid.UUID, scene_path: Path) 
             PET_TAP_REACTION_IMAGE_PROMPT,
             source_region_path,
             label="pet_creation/tap_reaction",
+            provider=provider,
         )
         reaction_pose_path.write_bytes(
             normalize_pet_character_region_bytes(reaction_pose_bytes, region_size)
@@ -2056,6 +2346,7 @@ def generate_pet_tap_reaction_scene_path(asset_id: uuid.UUID, scene_path: Path) 
             [source_region_path, reaction_pose_path],
             label="pet_creation/tap_reaction_refinement",
             size=PET_SCENE_IMAGE_SIZE,
+            provider=provider,
         )
         reaction_scene_bytes = composite_pet_character_region_bytes(
             scene_path,
@@ -2074,11 +2365,14 @@ def generate_individual_sprite_paths(
     asset_id: uuid.UUID,
     description: str,
     character_bible: str | dict[str, Any],
+    *,
+    image_provider: str | None = None,
 ) -> tuple[dict[tuple[str, str], tuple[Path, str]], Path]:
     output_paths = generate_individual_sprite_image_paths(
         asset_id,
         description,
         character_bible,
+        image_provider=image_provider,
     )
     scene_path = output_paths[(FAST_GENERATION_STAGE, "idle")][0]
     video_path = generate_pet_scene_video_path(asset_id, scene_path)
@@ -2089,6 +2383,9 @@ def generate_individual_sprite_image_paths(
     asset_id: uuid.UUID,
     description: str,
     character_bible: str | dict[str, Any],
+    *,
+    image_provider: str | None = None,
+    generate_tap_reaction: bool = True,
 ) -> dict[tuple[str, str], tuple[Path, str]]:
     output_dir = generated_dir_for(asset_id)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2102,7 +2399,10 @@ def generate_individual_sprite_image_paths(
             state=state,
         )
         try:
-            sprite_bytes = generate_single_sprite_image_bytes(prompt)
+            sprite_bytes = generate_single_sprite_image_bytes(
+                prompt,
+                provider=image_provider,
+            )
         except Exception as exc:
             if generation_error_code(exc) != "IMAGE_PROMPT_REJECTED":
                 raise
@@ -2113,37 +2413,62 @@ def generate_individual_sprite_image_paths(
                 stage=stage,
                 state=state,
             )
-            sprite_bytes = generate_single_sprite_image_bytes(prompt)
+            sprite_bytes = generate_single_sprite_image_bytes(
+                prompt,
+                provider=image_provider,
+            )
 
         character_path = output_dir / f"{stage}-{state}-character.png"
         character_path.write_bytes(sprite_bytes)
 
         path = output_dir / f"{stage}-{state}.png"
-        scene_bytes = generate_pet_scene_image_bytes(character_path)
+        scene_bytes = generate_pet_scene_image_bytes(
+            character_path,
+            provider=image_provider,
+        )
         path.write_bytes(normalize_pet_scene_video_frame_bytes(scene_bytes))
         output_paths[(stage, state)] = (path, PET_SCENE_COMPOSITION_PROMPT)
 
-    idle_scene_path = output_paths[(FAST_GENERATION_STAGE, "idle")][0]
-    try:
-        generate_pet_tap_reaction_scene_path(asset_id, idle_scene_path)
-    except Exception:
-        logger.exception("Optional pet tap reaction generation failed assetSetId=%s", asset_id)
+    if generate_tap_reaction:
+        idle_scene_path = output_paths[(FAST_GENERATION_STAGE, "idle")][0]
+        try:
+            generate_pet_tap_reaction_scene_path(
+                asset_id,
+                idle_scene_path,
+                provider=image_provider,
+            )
+        except Exception:
+            logger.exception("Optional pet tap reaction generation failed assetSetId=%s", asset_id)
 
     return output_paths
 
 
-def generate_pet_scene_video_path(asset_id: uuid.UUID, scene_path: Path) -> Path:
-    video_bytes = generate_pet_scene_video_bytes(scene_path)
+def generate_pet_scene_video_path(
+    asset_id: uuid.UUID,
+    scene_path: Path,
+    *,
+    provider: str | None = None,
+) -> Path:
+    video_bytes = (
+        generate_pet_scene_video_bytes(scene_path, provider=provider)
+        if provider is not None
+        else generate_pet_scene_video_bytes(scene_path)
+    )
     video_path = generated_dir_for(asset_id) / f"{FAST_GENERATION_STAGE}-idle.mp4"
     video_path.write_bytes(video_bytes)
     return video_path
 
 
-def generate_pet_sad_scene_path(image_set: PetAssetImageSet) -> Path:
+def generate_pet_sad_scene_path(
+    image_set: PetAssetImageSet,
+    *,
+    image_provider: str | None = None,
+) -> Path:
     sad_pose_bytes = generate_image_edit_bytes(
         PET_SAD_SCENE_IMAGE_PROMPT,
         image_set.scene_path,
         label="pet_creation/sad_pose",
+        provider=image_provider,
     )
     output_dir = generated_dir_for(image_set.asset_set_id)
     sad_pose_path = output_dir / f"{FAST_GENERATION_STAGE}-sad-pose.png"
@@ -2154,6 +2479,7 @@ def generate_pet_sad_scene_path(image_set: PetAssetImageSet) -> Path:
             [image_set.scene_path, sad_pose_path],
             label="pet_creation/sad_scene",
             size=PET_SCENE_IMAGE_SIZE,
+            provider=image_provider,
         )
     finally:
         sad_pose_path.unlink(missing_ok=True)
@@ -2177,7 +2503,11 @@ def generate_pet_sad_video_for_image_asset_set(
     return video_path
 
 
-def generate_pet_happy_scene_path(image_set: PetAssetImageSet) -> Path:
+def generate_pet_happy_scene_path(
+    image_set: PetAssetImageSet,
+    *,
+    image_provider: str | None = None,
+) -> Path:
     output_dir = generated_dir_for(image_set.asset_set_id)
     source_region_path = output_dir / f"{FAST_GENERATION_STAGE}-happy-source-region.png"
     source_region_bytes = extract_pet_character_region_bytes(image_set.scene_path)
@@ -2191,6 +2521,7 @@ def generate_pet_happy_scene_path(image_set: PetAssetImageSet) -> Path:
             PET_HAPPY_SCENE_IMAGE_PROMPT,
             source_region_path,
             label="pet_creation/happy_pose",
+            provider=image_provider,
         )
         happy_pose_path.write_bytes(
             normalize_pet_character_region_bytes(happy_pose_bytes, region_size)
@@ -2200,6 +2531,7 @@ def generate_pet_happy_scene_path(image_set: PetAssetImageSet) -> Path:
             [source_region_path, happy_pose_path],
             label="pet_creation/happy_scene",
             size=PET_SCENE_IMAGE_SIZE,
+            provider=image_provider,
         )
     finally:
         happy_pose_path.unlink(missing_ok=True)
@@ -2239,6 +2571,28 @@ def crop_sprite_sheet(pet_id: uuid.UUID, sprite_path: Path) -> dict[tuple[str, s
     return output_paths
 
 
+def _llm_provider_error(exc: Exception) -> LLMProviderError | None:
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, LLMProviderError):
+            return current
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _error_chain_contains(exc: BaseException, error_types: Any) -> bool:
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, error_types):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def generation_error_code(exc: Exception) -> str:
     if isinstance(exc, APITimeoutError):
         return "OPENAI_TIMEOUT"
@@ -2270,21 +2624,49 @@ def generation_error_code(exc: Exception) -> str:
         return f"OPENAI_STATUS_{exc.status_code}"
     if isinstance(exc, APIConnectionError | httpx.HTTPError):
         return "OPENAI_CONNECTION_FAILED"
+    llm_error = _llm_provider_error(exc)
+    if llm_error is not None:
+        if llm_error.error_kind == "authentication":
+            return "LLM_AUTH_FAILED"
+        status_code = llm_error.status_code
+        if status_code == 401:
+            return "LLM_AUTH_FAILED"
+        if status_code == 403:
+            return "LLM_PERMISSION_DENIED"
+        if status_code == 429:
+            return "LLM_RATE_LIMIT"
+        if status_code == 400:
+            return "LLM_BAD_REQUEST"
+        if status_code is not None:
+            return f"LLM_STATUS_{status_code}"
+        if _error_chain_contains(llm_error, httpx.TimeoutException):
+            return "LLM_TIMEOUT"
+        if _error_chain_contains(llm_error, httpx.HTTPError):
+            return "LLM_CONNECTION_FAILED"
+        return "LLM_FAILED"
     if isinstance(exc, OSError):
         return "IMAGE_SAVE_FAILED"
     return "GENERATION_FAILED"
 
 
-def generate_pet_image_asset_set(description: str) -> PetAssetImageSet:
+def generate_pet_image_asset_set(
+    description: str,
+    *,
+    image_provider: str | None = None,
+    character_bible: str | dict[str, Any] | None = None,
+    generate_tap_reaction: bool = True,
+) -> PetAssetImageSet:
     asset_set_id = uuid.uuid4()
     output_dir = generated_dir_for(asset_set_id)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    character_bible = create_character_bible(description)
+    character_bible = character_bible or create_character_bible(description)
     generated_paths = generate_individual_sprite_image_paths(
         asset_set_id,
         description,
         character_bible,
+        image_provider=image_provider,
+        generate_tap_reaction=generate_tap_reaction,
     )
     generated_at = datetime.now(UTC)
     return PetAssetImageSet(
@@ -2299,6 +2681,69 @@ def generate_pet_image_asset_set(description: str) -> PetAssetImageSet:
 
 def generate_pet_video_for_image_asset_set(image_set: PetAssetImageSet) -> Path:
     return generate_pet_scene_video_path(image_set.asset_set_id, image_set.scene_path)
+
+
+def build_pet_static_asset_set_response(
+    image_set: PetAssetImageSet,
+    sad_scene_path: Path,
+    happy_scene_path: Path,
+    video_path: Path | None = None,
+) -> dict[str, Any]:
+    asset_set_id = image_set.asset_set_id
+    version = image_set.version
+    idle_url = f"/static/generated/{asset_set_id}/{image_set.scene_path.name}?v={version}"
+    sad_url = f"/static/generated/{asset_set_id}/{sad_scene_path.name}?v={version}"
+    happy_url = f"/static/generated/{asset_set_id}/{happy_scene_path.name}?v={version}"
+    images = {
+        stage: {
+            "idle": idle_url,
+            "happy": happy_url,
+            "hungry": idle_url,
+            "sad": sad_url,
+        }
+        for stage in STAGE_ROWS
+    }
+    return {
+        "assetSetId": str(asset_set_id),
+        "generatedAt": image_set.generated_at,
+        "images": images,
+        "videoUrl": (
+            f"/static/generated/{asset_set_id}/{video_path.name}?v={version}"
+            if video_path is not None
+            else None
+        ),
+    }
+
+
+def generate_kandinsky_pet_comparison_assets(
+    description: str,
+    character_bible: str | dict[str, Any],
+) -> dict[str, Any]:
+    image_set = generate_pet_image_asset_set(
+        description,
+        image_provider="kandinsky",
+        character_bible=character_bible,
+        generate_tap_reaction=False,
+    )
+    sad_scene_path = generate_pet_sad_scene_path(
+        image_set,
+        image_provider="kandinsky",
+    )
+    happy_scene_path = generate_pet_happy_scene_path(
+        image_set,
+        image_provider="kandinsky",
+    )
+    video_path = generate_pet_scene_video_path(
+        image_set.asset_set_id,
+        image_set.scene_path,
+        provider="kandinsky",
+    )
+    return build_pet_static_asset_set_response(
+        image_set,
+        sad_scene_path,
+        happy_scene_path,
+        video_path,
+    )
 
 
 def build_pet_asset_set_response(

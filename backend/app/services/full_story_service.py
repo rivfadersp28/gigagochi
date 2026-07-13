@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.config import get_settings
+from app.llm.compat import complete_chat, response_log_value
+from app.llm.runtime import resolve_llm_model
 from app.schemas import LocalPetChatContext
 from app.services.background_story_service import (
     generate_background_story_image_bytes,
@@ -19,7 +21,6 @@ from app.services.lore_runtime import lore_prompt_block
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_chat_model,
-    get_openai_client,
 )
 from app.services.pet_reply_engine.speech_runtime import (
     background_story_reasoning_effort,
@@ -430,7 +431,7 @@ def _full_story_anti_repeat(history: list[dict[str, Any]] | None) -> str:
 
 def _completion_payload(completion: Any, *, error_code: str) -> dict[str, Any]:
     try:
-        parsed = json.loads(completion.choices[0].message.content or "{}")
+        parsed = json.loads(completion.content or "{}")
     except json.JSONDecodeError as exc:
         raise FullStoryGenerationError(error_code) from exc
     if not isinstance(parsed, dict):
@@ -482,7 +483,7 @@ def _check_full_story_plan(
     *,
     story_plan: dict[str, Any],
     story_direction: dict[str, str],
-    client: Any,
+    client: Any | None,
     model: str,
     timeout: float,
     prompt_debug: list[dict[str, Any]],
@@ -518,8 +519,13 @@ def _check_full_story_plan(
         **chat_reasoning_effort_kwargs("low"),
     }
     prompt_debug.append(log_chat_completion_prompt("full_story/plan_quality_check", request_kwargs))
-    completion = client.chat.completions.create(**request_kwargs)
-    prompt_debug.append(log_chat_completion_response("full_story/plan_quality_check", completion))
+    completion = complete_chat("full_story_review", request_kwargs, client=client)
+    prompt_debug.append(
+        log_chat_completion_response(
+            "full_story/plan_quality_check",
+            response_log_value(completion),
+        )
+    )
     parsed = _completion_payload(completion, error_code="FULL_STORY_PLAN_QUALITY_JSON_INVALID")
     issues = _quality_issues(parsed)
     retry_instruction = _text(parsed.get("retryInstruction"), 1000)
@@ -561,7 +567,7 @@ def _check_full_story_quality(
     story_plan: dict[str, Any],
     story_payload: dict[str, Any],
     story_direction: dict[str, str],
-    client: Any,
+    client: Any | None,
     model: str,
     timeout: float,
     prompt_debug: list[dict[str, Any]],
@@ -603,8 +609,13 @@ def _check_full_story_quality(
         **chat_reasoning_effort_kwargs("low"),
     }
     prompt_debug.append(log_chat_completion_prompt("full_story/quality_check", request_kwargs))
-    completion = client.chat.completions.create(**request_kwargs)
-    prompt_debug.append(log_chat_completion_response("full_story/quality_check", completion))
+    completion = complete_chat("full_story_review", request_kwargs, client=client)
+    prompt_debug.append(
+        log_chat_completion_response(
+            "full_story/quality_check",
+            response_log_value(completion),
+        )
+    )
     parsed = _completion_payload(completion, error_code="FULL_STORY_QUALITY_JSON_INVALID")
     issues = _quality_issues(parsed, limit=6)
     retry_instruction = _text(parsed.get("retryInstruction"), 800)
@@ -667,17 +678,21 @@ def generate_full_story(
     timeout: float | None = None,
 ) -> FullStoryResult:
     settings = get_settings()
-    openai_client = client or get_openai_client()
-    explicit_model = model
-    model = (
-        explicit_model or getattr(settings, "full_story_model", None) or get_chat_model(settings)
-    )
-    review_model = (
-        review_model
-        or explicit_model
-        or getattr(settings, "full_story_review_model", None)
-        or model
-    )
+    llm_client = client
+    if model is None:
+        fallback_model = getattr(settings, "full_story_model", None) or get_chat_model(settings)
+        model = (
+            fallback_model
+            if client is not None
+            else resolve_llm_model("full_story", fallback_model)
+        )
+    if review_model is None:
+        fallback_review_model = getattr(settings, "full_story_review_model", None) or model
+        review_model = (
+            fallback_review_model
+            if client is not None
+            else resolve_llm_model("full_story_review", fallback_review_model)
+        )
     configured_timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     timeout = max(float(configured_timeout), FULL_STORY_MIN_TIMEOUT_SECONDS)
     character = json.dumps(story_character_data(pet), ensure_ascii=False, indent=2)
@@ -738,13 +753,18 @@ def generate_full_story(
         **chat_reasoning_effort_kwargs(background_story_reasoning_effort()),
     }
     prompt_debug = [log_chat_completion_prompt("full_story/plan_generate", plan_request_kwargs)]
-    completion = openai_client.chat.completions.create(**plan_request_kwargs)
-    prompt_debug.append(log_chat_completion_response("full_story/plan_generate", completion))
+    completion = complete_chat("full_story", plan_request_kwargs, client=llm_client)
+    prompt_debug.append(
+        log_chat_completion_response(
+            "full_story/plan_generate",
+            response_log_value(completion),
+        )
+    )
     story_plan = _completion_payload(completion, error_code="FULL_STORY_PLAN_JSON_INVALID")
     plan_accepted, plan_issues, plan_retry_instruction = _check_full_story_plan(
         story_plan=story_plan,
         story_direction=story_direction,
-        client=openai_client,
+        client=llm_client,
         model=review_model,
         timeout=timeout,
         prompt_debug=prompt_debug,
@@ -779,10 +799,15 @@ def generate_full_story(
                 retry_plan_request,
             )
         )
-        retry_completion = openai_client.chat.completions.create(**retry_plan_request)
+        retry_completion = complete_chat(
+            "full_story",
+            retry_plan_request,
+            client=llm_client,
+        )
         prompt_debug.append(
             log_chat_completion_response(
-                f"full_story/plan_generate_retry_{plan_attempt}", retry_completion
+                f"full_story/plan_generate_retry_{plan_attempt}",
+                response_log_value(retry_completion),
             )
         )
         story_plan = _completion_payload(
@@ -792,7 +817,7 @@ def generate_full_story(
         plan_accepted, plan_issues, plan_retry_instruction = _check_full_story_plan(
             story_plan=story_plan,
             story_direction=story_direction,
-            client=openai_client,
+            client=llm_client,
             model=review_model,
             timeout=timeout,
             prompt_debug=prompt_debug,
@@ -829,8 +854,13 @@ def generate_full_story(
         **chat_reasoning_effort_kwargs(background_story_reasoning_effort()),
     }
     prompt_debug.append(log_chat_completion_prompt("full_story/render", render_request_kwargs))
-    render_completion = openai_client.chat.completions.create(**render_request_kwargs)
-    prompt_debug.append(log_chat_completion_response("full_story/render", render_completion))
+    render_completion = complete_chat("full_story", render_request_kwargs, client=llm_client)
+    prompt_debug.append(
+        log_chat_completion_response(
+            "full_story/render",
+            response_log_value(render_completion),
+        )
+    )
     rendered_story = _completion_payload(
         render_completion,
         error_code="FULL_STORY_RENDER_JSON_INVALID",
@@ -851,7 +881,7 @@ def generate_full_story(
             story_plan=story_plan,
             story_payload=combined_payload,
             story_direction=story_direction,
-            client=openai_client,
+            client=llm_client,
             model=review_model,
             timeout=timeout,
             prompt_debug=prompt_debug,
@@ -876,9 +906,16 @@ def generate_full_story(
         prompt_debug.append(
             log_chat_completion_prompt("full_story/render_retry", retry_render_request)
         )
-        retry_completion = openai_client.chat.completions.create(**retry_render_request)
+        retry_completion = complete_chat(
+            "full_story",
+            retry_render_request,
+            client=llm_client,
+        )
         prompt_debug.append(
-            log_chat_completion_response("full_story/render_retry", retry_completion)
+            log_chat_completion_response(
+                "full_story/render_retry",
+                response_log_value(retry_completion),
+            )
         )
         rendered_story = _completion_payload(
             retry_completion,
@@ -899,7 +936,7 @@ def generate_full_story(
             story_plan=story_plan,
             story_payload=combined_payload,
             story_direction=story_direction,
-            client=openai_client,
+            client=llm_client,
             model=review_model,
             timeout=timeout,
             prompt_debug=prompt_debug,

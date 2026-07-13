@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     admin_publish_health_url: str = "https://gigagochi.serega.works/health"
     admin_publish_command_timeout_seconds: float = 1200
     admin_sync_from_server_enabled: bool = False
+    llm_profile: str | None = None
+    llm_runtime_path: str = "data/llm_runtime.json"
+    media_profile: str | None = None
+    media_runtime_path: str = "data/media_runtime.json"
     ai_provider: AIProvider = "openrouter"
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
@@ -73,7 +77,12 @@ class Settings(BaseSettings):
     kandinsky_base_url: str = "https://studio.kandinskylab.ai/api"
     kandinsky_t2i_task_type: str = "k6-image-t2i"
     kandinsky_i2i_task_type: str = "k6-i2i"
+    kandinsky_i2v_task_type: str = "k5-i2v-hd"
+    kandinsky_video_timeout_seconds: float = 900
     kandinsky_image_resolution: str = "1280x768"
+    kandinsky_pet_image_resolution: str = "768x1280"
+    kandinsky_reference_max_side: int = Field(default=1280, ge=256, le=4096)
+    kandinsky_reference_jpeg_quality: int = Field(default=85, ge=60, le=95)
     kandinsky_poll_interval_seconds: float = 5
     image_aspect_ratio: str = "322:540"
     openai_character_reasoning_effort: OpenAIReasoningEffort | None = "minimal"
@@ -82,6 +91,15 @@ class Settings(BaseSettings):
     openai_chat_timeout_seconds: float = 90
     openai_image_timeout_seconds: float = 180
     openai_max_retries: int = Field(default=2, ge=0, le=5)
+    gigachat_base_url: str | None = None
+    gigachat_username: str | None = None
+    gigachat_password: str | None = None
+    gigachat_model: str = "GigaChat-3-Ultra"
+    gigachat_ssl_verify: bool = True
+    gigachat_ca_bundle: str | None = None
+    gigachat_token_timeout_seconds: float = 30
+    gigachat_chat_timeout_seconds: float = 120
+    gigachat_token_ttl_seconds: int = Field(default=1500, ge=60, le=3600)
     ops_alerts_enabled: bool = False
     ops_alert_telegram_ids: set[int] = Field(default_factory=lambda: {62943754})
     ops_alert_dedup_seconds: int = Field(default=300, ge=30, le=3600)

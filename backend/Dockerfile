@@ -10,7 +10,11 @@ COPY app ./app
 COPY data ./data
 COPY static ./static
 
-RUN pip install --no-cache-dir .
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir ".[litellm]"
 
 RUN mkdir -p /app/static/generated
 

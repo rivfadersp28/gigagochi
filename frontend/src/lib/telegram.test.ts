@@ -27,6 +27,7 @@ function setTelegramUser(id: number) {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   delete (window as TelegramTestWindow).Telegram;
   document.documentElement.style.backgroundColor = "";
   document.body.style.backgroundColor = "";
@@ -66,7 +67,13 @@ describe("debug menu access", () => {
     expect(canUseDebugMenu()).toBe(false);
   });
 
-  it("hides the debug menu outside Telegram", () => {
+  it("enables the debug menu in a local dev browser", () => {
+    expect(canUseDebugMenu()).toBe(true);
+  });
+
+  it("hides the debug menu outside Telegram in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+
     expect(canUseDebugMenu()).toBe(false);
   });
 });

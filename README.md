@@ -86,10 +86,85 @@ NEXT_PUBLIC_API_URL=
 В production `ALLOW_DEV_TMA_AUTH` и `NEXT_PUBLIC_ENABLE_TMA_DEV_FALLBACK`
 должны быть `false`.
 
-Для реальной генерации заполните в `backend/.env` как минимум
-`OPENROUTER_API_KEY` (или `OPENAI_API_KEY` при `AI_PROVIDER=openai`),
-`BOT_TOKEN`, `WEBAPP_URL` и `BACKEND_PUBLIC_URL`. Полный список и defaults
-находятся в `backend/.env.example`.
+Для создания питомца `OPENAI_API_KEY` обязателен: primary-набор изображений всегда
+строится через OpenAI. Дополнительно заполните ключи активных text/media-профилей
+(например, `OPENROUTER_API_KEY` для видео профиля `legacy`), а также `BOT_TOKEN`,
+`WEBAPP_URL` и `BACKEND_PUBLIC_URL`. Kandinsky-сравнение best-effort и требует
+`KANDINSKY_API_KEY`. Полный список и defaults находятся в `backend/.env.example`.
+
+## Маршрутизация текстовых моделей
+
+Текстовые задачи маршрутизируются профилем `LLM_PROFILE` из
+`backend/data/llm_runtime.json`:
+
+```env
+# Старое поведение текста: провайдер следует AI_PROVIDER.
+LLM_PROFILE=legacy
+
+# Весь текст через GigaChat, медиа выбираются независимо.
+LLM_PROFILE=gigachat
+GIGACHAT_BASE_URL=
+GIGACHAT_USERNAME=
+GIGACHAT_PASSWORD=
+
+# Быстро вернуть текст на OpenAI Platform.
+LLM_PROFILE=openai
+OPENAI_API_KEY=
+```
+
+После смены профиля пересоздайте backend и bot: обычный `restart` не перечитывает
+`backend/.env`, а маршрутизатор и клиенты кэшируются на время жизни процесса.
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml \
+  up -d --no-build --force-recreate backend bot
+```
+
+`/health` станет `503`, если профиль, dependency или credentials не настроены.
+После успешного health всё равно отправьте одну тестовую реплику: endpoint не
+делает платный сетевой запрос и не может заранее проверить валидность ключа.
+
+TLS-проверка GigaChat включена. Для своего центра сертификации положите CA-файл
+в `deploy/ca/` и задайте контейнерный путь, например
+`GIGACHAT_CA_BUNDLE=/app/ca/gigachat-ca.pem`, а не отключайте проверку.
+
+Профиль может задавать один provider/model по умолчанию и переопределения по
+задачам. Для модели, поддерживаемой LiteLLM, установите опциональный transport:
+
+```bash
+cd backend
+pip install -e ".[litellm]"
+```
+
+Затем добавьте профиль с `"provider": "litellm"` и LiteLLM model id в
+`backend/data/llm_runtime.json`. Выбранная модель должна поддерживать JSON Schema
+и function tools: они нужны репликам, памяти и историям. Production-образ уже
+устанавливает этот optional transport. Для собственного провайдера достаточно
+реализовать нейтральный `LLMProvider.complete()` и зарегистрировать адаптер в
+`backend/app/llm/runtime.py`; бизнес-сервисы менять не нужно.
+
+## Маршрутизация изображений и видео
+
+`MEDIA_PROFILE` выбирает профиль из `backend/data/media_runtime.json`. Изображения
+и видео имеют отдельные маршруты и могут переопределяться для конкретной задачи:
+
+```env
+# Совместимость: изображения следуют AI_PROVIDER, видео — OpenRouter.
+MEDIA_PROFILE=legacy
+
+# t2i/i2i через Kandinsky 6.0, i2v через Kandinsky 5 HD.
+MEDIA_PROFILE=kandinsky
+KANDINSKY_API_KEY=
+```
+
+Профили `openai`, `openrouter` и `kandinsky` готовы к переключению. Kandinsky
+использует `k6-image-t2i` без референсов и `k6-i2i` с одним или несколькими
+референсами. Токен передаётся как Bearer; TLS-проверка не отключается.
+
+Новый провайдер реализует `ImageProvider` и/или `VideoProvider`, объявляет
+capabilities (`text_to_image`, `image_to_image`, `image_to_video`) и регистрируется
+в `backend/app/media/runtime.py`. Бизнес-сервисы продолжают вызывать общий media
+gateway.
 
 ## Telegram tunnel
 

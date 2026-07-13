@@ -10,6 +10,7 @@ import httpx
 from fastapi import HTTPException, status
 from openai import APIStatusError
 
+from app.llm.contracts import LLMProviderError
 from app.services.image_service import generation_error_code
 from app.services.ops_alert_service import notify_ops
 from app.services.prompt_debug import current_ai_log_context
@@ -20,14 +21,16 @@ logger = logging.getLogger(__name__)
 
 
 def generation_error_message(code: str) -> str:
-    if code == "OPENAI_TIMEOUT":
+    if code in {"OPENAI_TIMEOUT", "LLM_TIMEOUT"}:
         return "Создание питомца заняло больше времени, чем ожидалось. Попробуйте ещё раз."
-    if code == "OPENAI_RATE_LIMIT":
+    if code in {"OPENAI_RATE_LIMIT", "LLM_RATE_LIMIT"}:
         return "Создание питомцев временно ограничено. Попробуйте позже."
     if code in {
         "OPENAI_AUTH_FAILED",
         "OPENAI_PERMISSION_DENIED",
         "MISSING_OPENAI_API_KEY",
+        "LLM_AUTH_FAILED",
+        "LLM_PERMISSION_DENIED",
     }:
         return "Сервис временно недоступен. Попробуйте позже."
     if code in {"IMAGE_POSTPROCESS_FAILED", "IMAGE_SAVE_FAILED"}:
@@ -43,9 +46,9 @@ def chat_error_code(exc: Exception) -> str:
 
 
 def chat_error_message(code: str) -> str:
-    if code == "OPENAI_TIMEOUT":
+    if code in {"OPENAI_TIMEOUT", "LLM_TIMEOUT"}:
         return "Ответ занял больше времени, чем ожидалось. Отправьте сообщение ещё раз."
-    if code == "OPENAI_RATE_LIMIT":
+    if code in {"OPENAI_RATE_LIMIT", "LLM_RATE_LIMIT"}:
         return "Ответы временно ограничены. Попробуйте позже."
     if code in {
         "OPENAI_AUTH_FAILED",
@@ -53,15 +56,19 @@ def chat_error_message(code: str) -> str:
         "MISSING_OPENAI_API_KEY",
         "OPENAI_BAD_REQUEST",
         "OPENAI_CONNECTION_FAILED",
-    } or code.startswith("OPENAI_STATUS_"):
+        "LLM_AUTH_FAILED",
+        "LLM_PERMISSION_DENIED",
+        "LLM_BAD_REQUEST",
+        "LLM_CONNECTION_FAILED",
+    } or code.startswith(("OPENAI_STATUS_", "LLM_STATUS_")):
         return "Сервис временно недоступен. Попробуйте позже."
     return "Не получилось получить ответ. Отправьте сообщение ещё раз."
 
 
 def travel_error_message(code: str) -> str:
-    if code == "OPENAI_TIMEOUT":
+    if code in {"OPENAI_TIMEOUT", "LLM_TIMEOUT"}:
         return "Путешествие заняло больше времени, чем ожидалось. Попробуйте ещё раз."
-    if code == "OPENAI_RATE_LIMIT":
+    if code in {"OPENAI_RATE_LIMIT", "LLM_RATE_LIMIT"}:
         return "Путешествия временно ограничены. Попробуйте позже."
     if code in {
         "OPENAI_AUTH_FAILED",
@@ -69,7 +76,11 @@ def travel_error_message(code: str) -> str:
         "MISSING_OPENAI_API_KEY",
         "OPENAI_BAD_REQUEST",
         "OPENAI_CONNECTION_FAILED",
-    } or code.startswith("OPENAI_STATUS_"):
+        "LLM_AUTH_FAILED",
+        "LLM_PERMISSION_DENIED",
+        "LLM_BAD_REQUEST",
+        "LLM_CONNECTION_FAILED",
+    } or code.startswith(("OPENAI_STATUS_", "LLM_STATUS_")):
         return "Сервис временно недоступен. Попробуйте позже."
     if code in {"IMAGE_SAVE_FAILED", "IMAGE_PROMPT_REJECTED"}:
         return "Не получилось подготовить путешествие. Попробуйте ещё раз."
@@ -116,7 +127,7 @@ def _provider_exception(exc: Exception) -> Exception | None:
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, httpx.HTTPStatusError | APIStatusError):
+        if isinstance(current, httpx.HTTPStatusError | APIStatusError | LLMProviderError):
             return current
         current = current.__cause__ or current.__context__
     return None
@@ -135,12 +146,16 @@ def provider_error_details(exc: Exception) -> dict[str, object]:
     elif isinstance(provider_exc, APIStatusError):
         response = provider_exc.response
         provider_status = provider_exc.status_code
+    elif isinstance(provider_exc, LLMProviderError):
+        provider_status = provider_exc.status_code
 
     details: dict[str, object] = {}
     if provider_status is not None:
         details["providerStatus"] = provider_status
 
     response_text = _provider_response_text(response) if response is not None else None
+    if response_text is None and isinstance(provider_exc, LLMProviderError):
+        response_text = str(provider_exc)
     if response_text:
         try:
             payload = json.loads(response_text)

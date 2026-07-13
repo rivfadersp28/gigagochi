@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { extractDeterministicMemoryOperations } from "./localPetDeterministicMemory";
 import {
@@ -16,6 +16,7 @@ import {
 
 describe("local pet memory", () => {
   beforeEach(() => window.localStorage.clear());
+  afterEach(() => vi.useRealTimers());
 
   it("recalls preferences for an explicit preference question", () => {
     const memory = applyMemoryOperations(
@@ -83,6 +84,100 @@ describe("local pet memory", () => {
       "Пользователя зовут Серёга.",
       "Пользователь любит чай.",
     ]);
+  });
+
+  it("remembers a short Russian self-introduction as the canonical user name", () => {
+    const memory = applyMemoryOperations(
+      createEmptyLocalPetMemory("pet-1"),
+      extractDeterministicMemoryOperations("Я серега"),
+    );
+
+    expect(memory.memories).toHaveLength(1);
+    expect(memory.memories[0]).toMatchObject({
+      normalizedKey: "user-name",
+      text: "Пользователя зовут серега.",
+      memoryClass: "core",
+    });
+  });
+
+  it("recalls the user name for a natural 'who am I' question", () => {
+    const memory = applyMemoryOperations(
+      createEmptyLocalPetMemory("pet-1"),
+      extractDeterministicMemoryOperations("я Серега"),
+    );
+
+    const context = buildMemoryContextForMessage([], "кто я", new Date(), memory);
+
+    expect(context.relevantMemories.map((item) => item.text)).toContain(
+      "Пользователя зовут Серега.",
+    );
+  });
+
+  it("normalizes provider user-name aliases to the canonical key", () => {
+    const memory = applyMemoryOperations(createEmptyLocalPetMemory("pet-1"), [
+      {
+        type: "remember_user_fact",
+        kind: "user_fact",
+        text: "Серёга",
+        normalizedKey: "user_name",
+        confidence: 1,
+        importance: 1,
+      },
+    ]);
+
+    expect(memory.memories[0]).toMatchObject({
+      normalizedKey: "user-name",
+      memoryClass: "core",
+    });
+  });
+
+  it("stores tomorrow exam as a deadline and recalls it by topic", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-13T12:00:00.000Z"));
+
+    const memory = applyMemoryOperations(
+      createEmptyLocalPetMemory("pet-1"),
+      extractDeterministicMemoryOperations("у меня завтра экзамен"),
+    );
+    const context = buildMemoryContextForMessage(
+      [],
+      "что насчет экзамена?",
+      new Date("2026-07-13T12:00:00.000Z"),
+      memory,
+    );
+
+    expect(memory.memories[0]).toMatchObject({
+      kind: "deadline",
+      normalizedKey: "deadline-экзамен",
+      memoryClass: "fact",
+    });
+    expect(memory.memories[0]?.dueAt).toBeTruthy();
+    expect(Date.parse(memory.memories[0]?.dueAt ?? "")).toBeGreaterThan(
+      Date.parse("2026-07-13T12:00:00.000Z"),
+    );
+    expect(context.relevantMemories.map((item) => item.text)).toContain(
+      "У пользователя завтра экзамен.",
+    );
+  });
+
+  it("coerces provider event memories with dueAt into deadlines", () => {
+    const memory = applyMemoryOperations(createEmptyLocalPetMemory("pet-1"), [
+      {
+        type: "remember_user_fact",
+        kind: "event",
+        text: "У меня завтра экзамен",
+        normalizedKey: "exam_tomorrow",
+        confidence: 1,
+        importance: 1,
+        dueAt: "2026-07-14T00:00:00.000Z",
+      },
+    ]);
+
+    expect(memory.memories[0]).toMatchObject({
+      kind: "deadline",
+      normalizedKey: "exam-tomorrow",
+      memoryClass: "fact",
+    });
   });
 
   it("replaces stale preference wording even with lower confidence", () => {

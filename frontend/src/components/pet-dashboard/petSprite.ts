@@ -21,6 +21,14 @@ export const stateLabels: Record<PetState, string> = {
 const SAD_ASSET_CACHE_VERSION = "20260710-2";
 const HAPPY_ASSET_CACHE_VERSION = "20260710-2";
 const TAP_REACTION_ASSET_CACHE_VERSION = "20260710-3";
+const VIDEO_PING_PONG_CACHE_VERSION = "20260713-1";
+
+function versionedPingPongVideoUrl(url: string) {
+  if (!url || url.includes("ping_pong_v=")) {
+    return url;
+  }
+  return `${url}${url.includes("?") ? "&" : "?"}ping_pong_v=${VIDEO_PING_PONG_CACHE_VERSION}`;
+}
 
 export function versionedSadAssetUrl(url: string) {
   if (!url || url.includes("sad_asset_v=")) {
@@ -68,12 +76,12 @@ export function generatedSceneVideoUrl(
     return null;
   }
   if (mode === "sad") {
-    return versionedSadAssetUrl(videoUrl);
+    return versionedPingPongVideoUrl(versionedSadAssetUrl(videoUrl));
   }
   if (mode === "happy") {
-    return versionedHappyAssetUrl(videoUrl);
+    return versionedPingPongVideoUrl(versionedHappyAssetUrl(videoUrl));
   }
-  return videoUrl;
+  return versionedPingPongVideoUrl(videoUrl);
 }
 
 export function generatedTapReactionImageUrl(pet: LocalPetState) {
@@ -119,9 +127,10 @@ export function hasGeneratedSadAssets(pet: LocalPetState) {
   const assetSet = assetSetForPet(pet);
   const sadImageUrl = assetSet?.images[pet.stage]?.sad;
   return Boolean(
-    assetSet?.sadVideoUrl
+    assetSet
     && sadImageUrl
-    && sadImageUrl !== assetSet.images[pet.stage].idle,
+    && sadImageUrl !== assetSet.images[pet.stage].idle
+    && (assetSet.sadVideoUrl || !assetSet.videoUrl),
   );
 }
 
@@ -129,9 +138,10 @@ export function hasGeneratedHappyAssets(pet: LocalPetState) {
   const assetSet = assetSetForPet(pet);
   const happyImageUrl = assetSet?.images[pet.stage]?.happy;
   return Boolean(
-    assetSet?.happyVideoUrl
+    assetSet
     && happyImageUrl
-    && happyImageUrl !== assetSet.images[pet.stage].idle,
+    && happyImageUrl !== assetSet.images[pet.stage].idle
+    && (assetSet.happyVideoUrl || !assetSet.videoUrl),
   );
 }
 

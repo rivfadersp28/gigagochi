@@ -1,0 +1,52 @@
+{
+  "activeProfile": "legacy",
+  "profiles": {
+    "legacy": {
+      "default": {
+        "provider": "legacy"
+      },
+      "tasks": {}
+    },
+    "openai": {
+      "default": {
+        "provider": "openai",
+        "model": "$OPENAI_CHAT_MODEL"
+      },
+      "tasks": {
+        "visible_reply": {
+          "model": "gpt-5.4-mini"
+        },
+        "character_bible": {
+          "model": "gpt-5-nano"
+        }
+      }
+    },
+    "openrouter": {
+      "default": {
+        "provider": "openrouter",
+        "model": "$OPENROUTER_CHAT_MODEL"
+      },
+      "tasks": {}
+    },
+    "gigachat": {
+      "default": {
+        "provider": "gigachat",
+        "model": "$GIGACHAT_MODEL"
+      },
+      "tasks": {
+        "visible_reply": {
+          "model": "GigaChat-3.5-432B-A28B"
+        },
+        "lite_facts": {
+          "model": "GigaChat-3.5-432B-A28B"
+        },
+        "memory_extraction": {
+          "model": "GigaChat-3.5-432B-A28B"
+        },
+        "memory_consolidation": {
+          "model": "GigaChat-3.5-432B-A28B"
+        }
+      }
+    }
+  }
+}

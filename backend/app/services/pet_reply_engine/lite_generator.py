@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from app.config import get_settings
+from app.llm.compat import complete_chat, response_log_value
+from app.llm.runtime import resolve_llm_model
 from app.schemas import (
     HAPPINESS_DELTA_VALUES,
     LiteFactExtractionRequest,
@@ -35,7 +37,6 @@ from app.services.lore_runtime import dialogue_vocabulary_block, lore_prompt_blo
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_chat_model,
-    get_openai_client,
 )
 from app.services.pet_reply_engine.context_plan import (
     CONTEXT_ROUTING_SOURCE_IDS,
@@ -146,6 +147,10 @@ RUSSIAN_REPEAT_SUFFIXES = (
     "я",
     "у",
     "ю",
+)
+GIGACHAT_GENERIC_SUPPORT_OPENER_RE = re.compile(
+    r"^\s*я\s+(?:тут\s+)?(?:буду\s+)?рядом(?:\s*(?:[,—–-]|и)\s+|\.\s+)(?P<rest>\S.*)$",
+    re.IGNORECASE,
 )
 
 
@@ -374,6 +379,26 @@ def _truncate_text(value: str, limit: int) -> str:
 def _clean_optional_text(value: str | None, limit: int) -> str | None:
     text = _compact_spaces(value or "")
     return _truncate_text(text, limit) if text else None
+
+
+def _model_is_gigachat(model: str | None) -> bool:
+    return bool(model and model.strip().lower().startswith("gigachat"))
+
+
+def _sentence_case(text: str) -> str:
+    if not text:
+        return text
+    return text[:1].upper() + text[1:]
+
+
+def _remove_gigachat_generic_support_opener(reply: str) -> str:
+    match = GIGACHAT_GENERIC_SUPPORT_OPENER_RE.match(reply)
+    if not match:
+        return reply
+    rest = _compact_spaces(match.group("rest"))
+    if len(rest) < 8:
+        return reply
+    return _sentence_case(rest)
 
 
 def _visible_reply_response_format(
@@ -617,6 +642,10 @@ _CHARACTER_DETAIL_REQUEST_RE = re.compile(
     r"внешн|выгляд|тело|уш|глаз|лап|хвост|крыл|рог|зуб|шерст|чешу|"
     r"привыч|любим|боишь|умеешь|способност|характер|дом|жив[её]шь|"
     r"прошл|истори|пита|\bешь\b|ед[ауеы]|батар|нюх|вывес)",
+    re.IGNORECASE,
+)
+_USER_IDENTITY_RECALL_RE = re.compile(
+    r"(^|\b)(кто\s+я|ты\s+знаешь,?\s+кто\s+я|как\s+меня\s+зовут)(\b|[?!.,;:]*$)",
     re.IGNORECASE,
 )
 _CASUAL_CHARACTER_SUPPRESSED_SOURCES = frozenset({"characterProfile", "liteOverlay", "chatHistory"})
@@ -1081,9 +1110,11 @@ def _plan_contexts_for_visible_reply(
         **chat_reasoning_effort_kwargs("none"),
     }
     prompt_debug = log_chat_completion_prompt("pet_reply/context_routing", request_kwargs)
-    completion = client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("pet_reply/context_routing", completion)
-    content = completion.choices[0].message.content or "{}"
+    completion = complete_chat("visible_reply", request_kwargs, client=client)
+    log_chat_completion_response(
+        "pet_reply/context_routing", response_log_value(completion)
+    )
+    content = completion.content or "{}"
     routing = _parse_context_routing_decision(surface=surface, raw_content=content)
     context_plan = build_context_plan(
         surface=surface,
@@ -1477,6 +1508,7 @@ def _phrase_plan_for_chat(
             format_current_time(payload.nowIso, timezone=payload.timezone),
             state_param_usage_rule(),
             _recent_event_truth_rule(payload, recent_events_block),
+            _user_identity_recall_rule(payload),
             transient_context_rule(),
             _structured_reply_contract_rule(),
             _compliment_history_block(payload),
@@ -1682,9 +1714,11 @@ def _world_seed_overlay_patch(
         **chat_reasoning_effort_kwargs(settings.openai_chat_reasoning_effort),
     }
     prompt_debug.append(log_chat_completion_prompt("pet_reply/lite_world_seed", request_kwargs))
-    completion = client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("pet_reply/lite_world_seed", completion)
-    world_text = _parse_world_seed_text(completion.choices[0].message.content or "")
+    completion = complete_chat("visible_reply", request_kwargs, client=client)
+    log_chat_completion_response(
+        "pet_reply/lite_world_seed", response_log_value(completion)
+    )
+    world_text = _parse_world_seed_text(completion.content or "")
     if not world_text:
         return None
 
@@ -1693,13 +1727,13 @@ def _world_seed_overlay_patch(
         "kind": "world_fact",
         "text": world_text,
         "pathHint": "lite_overlay.spheres.world",
-        "source": "chatgpt_world_seed",
+        "source": "llm_world_seed",
     }
     patch = overlay_patch_from_extracted_facts([raw_fact])
     if not patch:
         return None
     patch["worldSeed"] = {
-        "source": "chatgpt",
+        "source": "llm",
         "createdAt": _now_iso(),
     }
     return patch
@@ -1767,7 +1801,7 @@ def _read_character_json(
             timeout=timeout,
             prompt_debug=prompt_debug,
         )
-        if should_seed_world and client and model and timeout and prompt_debug is not None
+        if should_seed_world and model and timeout and prompt_debug is not None
         else None
     )
     if world_seed_patch and overlay_patch is not None:
@@ -1787,7 +1821,7 @@ def _read_character_json(
         result["liteOverlay"] = overlay
     if world_seed_patch:
         result["worldInfo"] = {
-            "createdByChatGPT": True,
+            "createdByLLM": True,
             "patch": world_seed_patch,
         }
     return result
@@ -1983,6 +2017,15 @@ def _recent_event_truth_rule(
     )
 
 
+def _user_identity_recall_rule(payload: LocalChatRequest) -> str | None:
+    if not _USER_IDENTITY_RECALL_RE.search(_compact_spaces(payload.message)):
+        return None
+    return (
+        "Если владелец спрашивает «кто я» или «как меня зовут», отвечай о владельце "
+        "по блоку памяти пользователя. Не отвечай в этот момент, кто ты сам как персонаж."
+    )
+
+
 def _filter_lite_overlay_patch_against_recent_events(
     patch: dict[str, Any] | None,
     events: list[dict[str, Any]],
@@ -2092,6 +2135,9 @@ def _tool_call_function(tool_call: Any) -> tuple[str, str]:
     if isinstance(tool_call, dict):
         function = tool_call.get("function") or {}
         return str(function.get("name") or ""), str(function.get("arguments") or "{}")
+    direct_name = getattr(tool_call, "name", None)
+    if direct_name:
+        return str(direct_name), str(getattr(tool_call, "arguments", "{}") or "{}")
     function = getattr(tool_call, "function", None)
     return (
         str(getattr(function, "name", "") or ""),
@@ -2184,13 +2230,19 @@ def generate_lite_pet_reply(
     timeout: float | None = None,
 ) -> LocalChatResponse:
     settings = get_settings()
-    model = model or visible_reply_model()
+    if model is None:
+        fallback_model = visible_reply_model()
+        model = (
+            fallback_model
+            if client is not None
+            else resolve_llm_model("visible_reply", fallback_model)
+        )
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
-    openai_client = client or get_openai_client()
+    llm_client = client
     context_plan, context_routing_prompt_debug = _plan_contexts_for_visible_reply(
         surface="chat",
         payload=payload,
-        client=openai_client,
+        client=llm_client,
         model=model,
         timeout=timeout,
     )
@@ -2241,13 +2293,14 @@ def generate_lite_pet_reply(
         prompt_debug.append(
             log_chat_completion_prompt(f"pet_reply/lite round {round_index + 1}", request_kwargs)
         )
-        completion = openai_client.chat.completions.create(**request_kwargs)
-        log_chat_completion_response(f"pet_reply/lite round {round_index + 1}", completion)
-        message = completion.choices[0].message
-        tool_calls = list(getattr(message, "tool_calls", None) or [])
+        completion = complete_chat("visible_reply", request_kwargs, client=llm_client)
+        log_chat_completion_response(
+            f"pet_reply/lite round {round_index + 1}", response_log_value(completion)
+        )
+        tool_calls = list(completion.tool_calls)
         if not tools or not tool_calls:
             structured_reply = _parse_visible_reply_response(
-                getattr(message, "content", None) or "",
+                completion.content or "",
                 surface="chat",
                 reply_limit=reply_limit,
             )
@@ -2259,9 +2312,24 @@ def generate_lite_pet_reply(
             structured_reply_debug = structured_reply.debug
             structured_reply_used_fallback = structured_reply.used_fallback
             structured_reply_validation_flags = structured_reply.validation_flags
+            if (
+                _model_is_gigachat(model)
+                and not structured_reply_used_fallback
+                and reply
+            ):
+                cleaned_reply = _remove_gigachat_generic_support_opener(reply)
+                if cleaned_reply != reply:
+                    reply = cleaned_reply
+                    structured_reply_validation_flags = [
+                        *structured_reply_validation_flags,
+                        "gigachat_generic_support_opener_removed",
+                    ]
+                    normalized_response = structured_reply_debug.get("normalizedResponse")
+                    if isinstance(normalized_response, dict):
+                        normalized_response["reply"] = reply
             break
 
-        messages.append(_assistant_tool_call_message(message, tool_calls))
+        messages.append(_assistant_tool_call_message(completion, tool_calls))
         for tool_call in tool_calls:
             result, debug = _handle_tool_call(
                 payload,
@@ -2269,7 +2337,7 @@ def generate_lite_pet_reply(
                 overlay_patch,
                 pet_patch,
                 context_routing=context_plan,
-                client=openai_client,
+                client=llm_client,
                 model=model,
                 timeout=timeout,
                 prompt_debug=prompt_debug,
@@ -2334,9 +2402,15 @@ def extract_lite_overlay_patch_from_reply(
     timeout: float | None = None,
 ) -> tuple[dict[str, Any] | None, LocalChatDebug | None]:
     settings = get_settings()
-    model = model or get_chat_model(settings)
+    if model is None:
+        fallback_model = get_chat_model(settings)
+        model = (
+            fallback_model
+            if client is not None
+            else resolve_llm_model("lite_facts", fallback_model)
+        )
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
-    openai_client = client or get_openai_client()
+    llm_client = client
     prompt_debug: list[dict[str, Any]] = []
 
     request_kwargs: dict[str, Any] = {
@@ -2356,9 +2430,11 @@ def extract_lite_overlay_patch_from_reply(
     prompt_debug.append(
         log_chat_completion_prompt("pet_reply/lite_fact_extraction", request_kwargs)
     )
-    completion = openai_client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("pet_reply/lite_fact_extraction", completion)
-    patch = _parse_lite_fact_extraction_payload(completion.choices[0].message.content or "{}")
+    completion = complete_chat("lite_facts", request_kwargs, client=llm_client)
+    log_chat_completion_response(
+        "pet_reply/lite_fact_extraction", response_log_value(completion)
+    )
+    patch = _parse_lite_fact_extraction_payload(completion.content or "{}")
     selected_events, recent_events_debug = _select_recent_events_for_text(
         events=_recent_story_events_from_pet(payload.pet),
         text=f"{payload.message}\n{payload.reply}",
@@ -2514,14 +2590,20 @@ def generate_proactive_pet_message(
     timeout: float | None = None,
 ) -> LocalProactiveResponse:
     settings = get_settings()
-    model = model or visible_reply_model()
+    if model is None:
+        fallback_model = visible_reply_model()
+        model = (
+            fallback_model
+            if client is not None
+            else resolve_llm_model("visible_reply", fallback_model)
+        )
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
-    openai_client = client or get_openai_client()
+    llm_client = client
     prompt_debug: list[dict[str, Any]] = []
     context_plan, context_routing_prompt_debug = _plan_contexts_for_visible_reply(
         surface="proactive",
         payload=payload,
-        client=openai_client,
+        client=llm_client,
         model=model,
         timeout=timeout,
     )
@@ -2546,10 +2628,10 @@ def generate_proactive_pet_message(
         **chat_reasoning_effort_kwargs(visible_reply_reasoning_effort()),
     }
     prompt_debug.append(log_chat_completion_prompt("pet_reply/proactive", request_kwargs))
-    completion = openai_client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("pet_reply/proactive", completion)
+    completion = complete_chat("visible_reply", request_kwargs, client=llm_client)
+    log_chat_completion_response("pet_reply/proactive", response_log_value(completion))
     structured_reply = _parse_visible_reply_response(
-        completion.choices[0].message.content or "",
+        completion.content or "",
         surface="proactive",
         reply_limit=reply_limit,
     )
@@ -2587,14 +2669,20 @@ def generate_push_pet_message(
     timeout: float | None = None,
 ) -> LocalProactiveResponse:
     settings = get_settings()
-    model = model or visible_reply_model()
+    if model is None:
+        fallback_model = visible_reply_model()
+        model = (
+            fallback_model
+            if client is not None
+            else resolve_llm_model("visible_reply", fallback_model)
+        )
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
-    openai_client = client or get_openai_client()
+    llm_client = client
     prompt_debug: list[dict[str, Any]] = []
     context_plan, context_routing_prompt_debug = _plan_contexts_for_visible_reply(
         surface="push",
         payload=payload,
-        client=openai_client,
+        client=llm_client,
         model=model,
         timeout=timeout,
     )
@@ -2619,10 +2707,10 @@ def generate_push_pet_message(
         **chat_reasoning_effort_kwargs(visible_reply_reasoning_effort()),
     }
     prompt_debug.append(log_chat_completion_prompt("pet_reply/push", request_kwargs))
-    completion = openai_client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("pet_reply/push", completion)
+    completion = complete_chat("visible_reply", request_kwargs, client=llm_client)
+    log_chat_completion_response("pet_reply/push", response_log_value(completion))
     structured_reply = _parse_visible_reply_response(
-        completion.choices[0].message.content or "",
+        completion.content or "",
         surface="push",
         reply_limit=reply_limit,
     )
@@ -2733,14 +2821,20 @@ def generate_ambient_pet_message(
     timeout: float | None = None,
 ) -> LocalChatResponse:
     settings = get_settings()
-    model = model or visible_reply_model()
+    if model is None:
+        fallback_model = visible_reply_model()
+        model = (
+            fallback_model
+            if client is not None
+            else resolve_llm_model("visible_reply", fallback_model)
+        )
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
-    openai_client = client or get_openai_client()
+    llm_client = client
     prompt_debug: list[dict[str, Any]] = []
     context_plan, context_routing_prompt_debug = _plan_contexts_for_visible_reply(
         surface="ambient",
         payload=payload,
-        client=openai_client,
+        client=llm_client,
         model=model,
         timeout=timeout,
     )
@@ -2765,9 +2859,9 @@ def generate_ambient_pet_message(
         **chat_reasoning_effort_kwargs(visible_reply_reasoning_effort()),
     }
     prompt_debug.append(log_chat_completion_prompt("pet_reply/ambient", request_kwargs))
-    completion = openai_client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("pet_reply/ambient", completion)
-    raw_reply = completion.choices[0].message.content or ""
+    completion = complete_chat("visible_reply", request_kwargs, client=llm_client)
+    log_chat_completion_response("pet_reply/ambient", response_log_value(completion))
+    raw_reply = completion.content or ""
     structured_reply = _parse_visible_reply_response(
         raw_reply,
         surface="ambient",

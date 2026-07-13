@@ -23,6 +23,9 @@ dev = [
     "pytest>=8.4.0",
     "ruff>=0.14.0",
 ]
+litellm = [
+    "litellm>=1.0,<2",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

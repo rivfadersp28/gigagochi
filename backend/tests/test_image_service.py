@@ -12,12 +12,16 @@ import httpx
 import pytest
 from PIL import Image, ImageDraw
 
+from app.llm import LLMProviderError
+from app.llm.providers.openai_compatible import OpenAICompatibleProvider
 from app.prompts.pet_image_prompts import (
     build_character_bible_prompt,
+    build_pet_single_sprite_prompt,
     build_pet_state_strip_prompt,
 )
 from app.services.image_service import (
     CHARACTER_BIBLE_SCHEMA,
+    KANDINSKY_PET_SCENE_VIDEO_PROMPT,
     PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT,
     PET_HAPPY_SCENE_IMAGE_PROMPT,
     PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT,
@@ -28,7 +32,9 @@ from app.services.image_service import (
     PET_TAP_REACTION_IMAGE_PROMPT,
     PetAssetImageSet,
     _character_reasoning_effort_kwargs,
+    _compact_kandinsky_prompt,
     _internal_reference_image_url,
+    _kandinsky_reference_image_b64,
     _reference_image_bytes,
     align_sprite_to_reference_canvas,
     build_pet_asset_set_response,
@@ -38,15 +44,17 @@ from app.services.image_service import (
     extract_sprite_cells,
     extract_state_strip_cells,
     foreground_component_bbox,
-    generate_image_bytes,
     generate_image_edit_bytes,
     generate_individual_sprite_paths,
     generate_kandinsky_image_bytes,
+    generate_kandinsky_video_from_image_bytes,
+    generate_openai_image_bytes,
     generate_openrouter_image_bytes,
     generate_openrouter_video_bytes,
     generate_pet_asset_set,
     generate_pet_happy_scene_path,
     generate_pet_happy_video_for_image_asset_set,
+    generate_pet_image_asset_set,
     generate_pet_sad_scene_path,
     generate_pet_sad_video_for_image_asset_set,
     generate_pet_tap_reaction_scene_path,
@@ -61,6 +69,17 @@ def image_contains_color(image: Image.Image, color: tuple[int, int, int, int]) -
     pixels = image.load()
     width, height = image.size
     return any(pixels[x, y] == color for y in range(height) for x in range(width))
+
+
+def test_kandinsky_idle_video_prompt_allows_subtle_body_motion() -> None:
+    prompt = KANDINSKY_PET_SCENE_VIDEO_PROMPT
+
+    assert "спокойно дышит" in prompt
+    assert "покачивание корпуса" in prompt
+    assert "наклон или поворот головы" in prompt
+    assert "Ступни остаются на тех же точках опоры" in prompt
+    assert "Без ходьбы" in prompt
+    assert "Не меняй анатомию, пропорции" in prompt
 
 
 def color_bbox(image: Image.Image, color: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
@@ -114,12 +133,12 @@ def test_generate_pet_tap_reaction_reuses_happy_crop_refinement_pipeline(
         lambda _asset_id: output_dir,
     )
 
-    def fake_image_edit(prompt, source_path, *, label):
+    def fake_image_edit(prompt, source_path, *, label, **_kwargs):
         with Image.open(source_path) as source:
             edit_calls.append((prompt, source_path.name, label, source.size))
         return png_bytes(Image.new("RGB", (1024, 1536), (200, 80, 100)))
 
-    def fake_multi_image_edit(prompt, source_paths, *, label, size):
+    def fake_multi_image_edit(prompt, source_paths, *, label, size, **_kwargs):
         refinement_calls.append((prompt, [path.name for path in source_paths], label, size))
         return png_bytes(Image.new("RGB", (1024, 1536), (90, 110, 130)))
 
@@ -307,7 +326,7 @@ def test_generate_image_bytes_uses_openrouter_image_endpoint(monkeypatch) -> Non
     )
     monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
 
-    result = generate_image_bytes("sprite prompt")
+    result = generate_openrouter_image_bytes("sprite prompt", label="pet_creation/image")
 
     assert result == b"openrouter-image"
     assert captured["url"] == "https://openrouter.ai/api/v1/images"
@@ -374,7 +393,11 @@ def test_generate_image_bytes_passes_openrouter_input_references(monkeypatch) ->
         }
     ]
 
-    result = generate_image_bytes("travel prompt", input_references=references)
+    result = generate_openrouter_image_bytes(
+        "travel prompt",
+        label="travel/image",
+        input_references=references,
+    )
 
     assert result == b"openrouter-image"
     assert captured["json"]["input_references"] == references
@@ -417,7 +440,7 @@ def test_generate_image_bytes_uses_openai_edit_for_input_reference(monkeypatch) 
         ),
     )
     monkeypatch.setattr(
-        "app.services.image_service.get_openai_client",
+        "app.services.image_service.get_openai_platform_client",
         lambda: SimpleNamespace(images=FakeImages()),
     )
     monkeypatch.setattr(
@@ -429,8 +452,9 @@ def test_generate_image_bytes_uses_openai_edit_for_input_reference(monkeypatch) 
         ),
     )
 
-    result = generate_image_bytes(
+    result = generate_openai_image_bytes(
         "story prompt",
+        label="background_story/image",
         input_references=[
             {
                 "type": "image_url",
@@ -605,7 +629,7 @@ def test_generate_kandinsky_image_bytes_uses_t2i_without_references(monkeypatch)
     monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
     monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
 
-    result = generate_kandinsky_image_bytes("story prompt", label="background_story/image")
+    result = generate_kandinsky_image_bytes("story prompt", label="smoke/image")
 
     assert result == b"kandinsky-image"
     assert captured["post_url"] == "https://studio.kandinskylab.ai/api/tasks/k6-image-t2i"
@@ -619,6 +643,101 @@ def test_generate_kandinsky_image_bytes_uses_t2i_without_references(monkeypatch)
             "resolution": "1280x768",
         }
     }
+
+
+def test_generate_kandinsky_video_uses_k5_i2v_hd(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def __init__(self, payload=None, content: bytes = b"") -> None:
+            self.payload = payload or {}
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    def fake_post(url, **kwargs):
+        captured.update(url=url, request=kwargs)
+        return FakeResponse({"task_id": "video-task-1"})
+
+    def fake_get(url, **_kwargs):
+        if url.endswith("/tasks/video-task-1"):
+            return FakeResponse({"status": "done"})
+        if url.endswith("/tasks/video-task-1/result"):
+            return FakeResponse(content=b"kandinsky-video")
+        raise AssertionError(f"unexpected GET {url}")
+
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            kandinsky_api_key="kandinsky-token",
+            kandinsky_base_url="https://studio.kandinskylab.ai/api",
+            kandinsky_i2v_task_type="k5-i2v-hd",
+            kandinsky_video_timeout_seconds=900,
+            kandinsky_poll_interval_seconds=1,
+            openai_image_timeout_seconds=180,
+        ),
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+
+    result = generate_kandinsky_video_from_image_bytes(
+        b"source-image",
+        label="pet_creation/scene_video",
+        prompt="Только естественное моргание, камера неподвижна.",
+    )
+
+    assert result == b"kandinsky-video"
+    assert captured["url"] == "https://studio.kandinskylab.ai/api/tasks/k5-i2v-hd"
+    assert captured["request"]["json"] == {
+        "params": {
+            "query": "Только естественное моргание, камера неподвижна.",
+            "image": base64.b64encode(b"source-image").decode("utf-8"),
+            "beautificator": "disabled",
+        }
+    }
+
+
+def test_compact_kandinsky_prompt_preserves_subject_and_output_constraints() -> None:
+    prompt = "SUBJECT: copper dragon\n" + ("middle style detail\n" * 300) + "NO TEXT OR LOGO"
+
+    compacted = _compact_kandinsky_prompt(prompt)
+
+    assert len(compacted) <= 2048
+    assert compacted.startswith("SUBJECT: copper dragon")
+    assert compacted.endswith("NO TEXT OR LOGO")
+
+
+def test_compact_kandinsky_prompt_applies_collectible_style_frame() -> None:
+    prompt = build_pet_single_sprite_prompt(
+        "маленький паровой дракончик с фонарём",
+        {},
+        stage="teen",
+        state="idle",
+    )
+
+    compacted = _compact_kandinsky_prompt(prompt, task="pet_creation/image")
+
+    assert len(compacted) <= 2048
+    assert "маленький паровой дракончик с фонарём" in compacted
+    assert "коллекционную дизайнерскую арт-игрушку" in compacted
+    assert "полный рост без обрезки" in compacted
+    assert compacted.find("полный рост без обрезки") < 500
+    assert "точно сохрани вид существа" in compacted
+    assert "увеличенная округлая голова" in compacted.casefold()
+    assert "матовая окрашенная смола" in compacted
+    assert "минимум три слоя ручной одежды" in compacted
+    assert "один крупный носимый предмет" in compacted
+    assert "макрореализм фактур при полном росте" in compacted
+    assert "без яркой насыщенности" in compacted.casefold()
+    assert "normal/idle" not in compacted
+    assert "CHARACTER_COLOR_SCRIPT" not in compacted
 
 
 def test_generate_kandinsky_image_bytes_uses_i2i_with_reference(monkeypatch) -> None:
@@ -669,7 +788,7 @@ def test_generate_kandinsky_image_bytes_uses_i2i_with_reference(monkeypatch) -> 
 
     result = generate_kandinsky_image_bytes(
         "story prompt",
-        label="background_story/image",
+        label="smoke/image",
         input_references=[
             {
                 "type": "image_url",
@@ -686,6 +805,32 @@ def test_generate_kandinsky_image_bytes_uses_i2i_with_reference(monkeypatch) -> 
             "query": "story prompt",
         }
     }
+
+
+def test_kandinsky_reference_is_resized_and_compressed_before_base64(monkeypatch) -> None:
+    source = Image.new("RGBA", (2400, 1600), (40, 90, 140, 180))
+    source_bytes = png_bytes(source)
+
+    monkeypatch.setattr(
+        "app.services.image_service._reference_image_bytes",
+        lambda _url: source_bytes,
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            kandinsky_reference_max_side=1024,
+            kandinsky_reference_jpeg_quality=80,
+        ),
+    )
+
+    encoded = _kandinsky_reference_image_b64("https://example.test/source.png")
+    compressed = base64.b64decode(encoded)
+
+    assert compressed.startswith(b"\xff\xd8")
+    assert len(compressed) < len(source_bytes)
+    with Image.open(BytesIO(compressed)) as image:
+        assert image.format == "JPEG"
+        assert max(image.size) == 1024
 
 
 def test_generate_kandinsky_image_bytes_retries_create_timeout(monkeypatch) -> None:
@@ -753,34 +898,83 @@ def test_generate_kandinsky_image_bytes_retries_create_timeout(monkeypatch) -> N
     assert post_calls[1]["timeout"] == 180
 
 
-def test_generate_image_edit_bytes_uses_openai_image_edit(monkeypatch, tmp_path) -> None:
-    captured: dict[str, object] = {}
-    source_path = tmp_path / "teen-idle.png"
-    source_path.write_bytes(b"source-image")
+def test_generate_kandinsky_image_bytes_retries_transient_censor_result(monkeypatch) -> None:
+    result_calls = 0
+    retry_delays: list[float] = []
 
-    class FakeImages:
-        def edit(self, **kwargs):
-            captured.update(kwargs)
-            assert kwargs["image"].read() == b"source-image"
-            return SimpleNamespace(
-                data=[SimpleNamespace(b64_json=base64.b64encode(b"edited-image").decode())]
-            )
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def __init__(self, payload=None, content: bytes = b"") -> None:
+            self.payload = payload or {}
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class CensorUnavailableResponse(FakeResponse):
+        status_code = 422
+        text = '{"detail":"output censor service unavailable: GigaChat returned no response"}'
+
+        def raise_for_status(self):
+            request = httpx.Request("GET", "https://studio.test/tasks/task-3/result")
+            response = httpx.Response(422, request=request, text=self.text)
+            raise httpx.HTTPStatusError("censor unavailable", request=request, response=response)
+
+    def fake_get(url, **_kwargs):
+        nonlocal result_calls
+        if url.endswith("/tasks/task-3"):
+            return FakeResponse({"status": "done"})
+        if url.endswith("/tasks/task-3/result"):
+            result_calls += 1
+            if result_calls == 1:
+                return CensorUnavailableResponse()
+            return FakeResponse(content=b"kandinsky-image")
+        raise AssertionError(f"unexpected GET {url}")
 
     monkeypatch.setattr(
         "app.services.image_service.get_settings",
         lambda: SimpleNamespace(
-            ai_provider="openai",
-            openai_image_model="gpt-image-2",
-            openai_image_size="1536x1152",
-            openai_image_quality="medium",
-            openai_image_output_format="png",
+            kandinsky_api_key="kandinsky-token",
+            kandinsky_base_url="https://studio.kandinskylab.ai/api",
+            kandinsky_t2i_task_type="k6-image-t2i",
+            kandinsky_i2i_task_type="k6-i2i",
+            kandinsky_image_resolution="1280x768",
+            kandinsky_poll_interval_seconds=1,
             openai_image_timeout_seconds=180,
         ),
     )
     monkeypatch.setattr(
-        "app.services.image_service.get_openai_client",
-        lambda: SimpleNamespace(images=FakeImages()),
+        "app.services.image_service.httpx.post",
+        lambda _url, **_kwargs: FakeResponse({"task_id": "task-3"}),
     )
+    monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+    monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
+
+    result = generate_kandinsky_image_bytes("short prompt", label="smoke/image")
+
+    assert result == b"kandinsky-image"
+    assert result_calls == 2
+    assert retry_delays == [3.0]
+
+
+def test_generate_image_edit_bytes_routes_reference_through_media_gateway(
+    monkeypatch, tmp_path
+) -> None:
+    captured: dict[str, object] = {}
+    source_path = tmp_path / "teen-idle.png"
+    source_path.write_bytes(b"source-image")
+
+    class FakeGateway:
+        def generate_image(self, request):
+            captured["request"] = request
+            return b"edited-image"
+
+    monkeypatch.setattr("app.services.image_service.get_media_gateway", FakeGateway)
 
     result = generate_image_edit_bytes(
         "Закрой ему глаза",
@@ -789,9 +983,11 @@ def test_generate_image_edit_bytes_uses_openai_image_edit(monkeypatch, tmp_path)
     )
 
     assert result == b"edited-image"
-    assert captured["model"] == "gpt-image-2"
-    assert captured["prompt"] == "Закрой ему глаза"
-    assert captured["timeout"] == 180
+    request = captured["request"]
+    assert request.prompt == "Закрой ему глаза"
+    assert request.task == "pet_creation/edit"
+    assert request.required_capability.value == "image_to_image"
+    assert request.input_references[0]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
 def test_generate_openrouter_video_bytes_uses_fixed_aspect_ratio(monkeypatch, tmp_path) -> None:
@@ -1001,6 +1197,49 @@ def test_align_sprite_to_reference_canvas_matches_reference_bbox(tmp_path) -> No
     )
 
 
+def test_image_asset_set_can_reuse_bible_and_skip_tap_generation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    captured: dict[str, object] = {}
+    bible = {"species": "dragon"}
+    idle_path = tmp_path / "teen-idle.png"
+
+    monkeypatch.setattr(
+        "app.services.image_service.generated_dir_for",
+        lambda _asset_id: tmp_path,
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.create_character_bible",
+        lambda _description: pytest.fail("comparison must reuse the primary bible"),
+    )
+
+    def fake_generate_paths(_asset_id, _description, received_bible, **kwargs):
+        captured.update(bible=received_bible, kwargs=kwargs)
+        return {("teen", "idle"): (idle_path, "prompt")}
+
+    monkeypatch.setattr(
+        "app.services.image_service.generate_individual_sprite_image_paths",
+        fake_generate_paths,
+    )
+
+    result = generate_pet_image_asset_set(
+        "дракон",
+        image_provider="kandinsky",
+        character_bible=bible,
+        generate_tap_reaction=False,
+    )
+
+    assert result.character_bible == bible
+    assert captured == {
+        "bible": bible,
+        "kwargs": {
+            "image_provider": "kandinsky",
+            "generate_tap_reaction": False,
+        },
+    }
+
+
 def test_generate_pet_asset_set_generates_idle_scene(monkeypatch, tmp_path) -> None:
     generated_prompts: list[str] = []
     prompt_bibles: list[dict[str, Any]] = []
@@ -1028,14 +1267,14 @@ def test_generate_pet_asset_set_generates_idle_scene(monkeypatch, tmp_path) -> N
         prompt_bibles.append(received_bible)
         return f"single:{stage}:{state}"
 
-    def fake_image_bytes(prompt):
+    def fake_image_bytes(prompt, **_kwargs):
         generated_prompts.append(prompt)
         image = Image.new("RGBA", (100, 100), (255, 255, 255, 255))
         draw = ImageDraw.Draw(image)
         draw.rectangle((30, 30, 70, 70), fill=(20, 140, 70, 255))
         return png_bytes(image)
 
-    def fake_scene_bytes(source_path):
+    def fake_scene_bytes(source_path, **_kwargs):
         scene_sources.append(source_path.name)
         image = Image.new("RGBA", (100, 100), (255, 255, 255, 255))
         draw = ImageDraw.Draw(image)
@@ -1054,6 +1293,10 @@ def test_generate_pet_asset_set_generates_idle_scene(monkeypatch, tmp_path) -> N
     monkeypatch.setattr(
         "app.services.image_service.generate_pet_scene_video_bytes",
         lambda source_path: video_sources.append(source_path.name) or b"video-bytes",
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.generate_pet_tap_reaction_scene_path",
+        lambda *_args, **_kwargs: tmp_path / "teen-tap.png",
     )
 
     result = generate_pet_asset_set("электрический дракон")
@@ -1107,7 +1350,7 @@ def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, t
         lambda _asset_id: output_dir,
     )
 
-    def fake_image_edit(prompt, source_path, *, label):
+    def fake_image_edit(prompt, source_path, *, label, **_kwargs):
         image_calls.append((prompt, source_path.name, label))
         return png_bytes(Image.new("RGB", (1024, 1536), (60, 70, 80)))
 
@@ -1115,7 +1358,7 @@ def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, t
         video_calls.append((scene_path.name, prompt, label))
         return b"sad-video"
 
-    def fake_multi_image_edit(prompt, source_paths, *, label, size):
+    def fake_multi_image_edit(prompt, source_paths, *, label, size, **_kwargs):
         refinement_calls.append((prompt, [path.name for path in source_paths], label, size))
         return png_bytes(Image.new("RGB", (1024, 1536), (70, 80, 90)))
 
@@ -1175,7 +1418,7 @@ def test_generate_happy_assets_preserve_scene_and_reuse_normal_blink_prompt(
         lambda _asset_id: output_dir,
     )
 
-    def fake_image_edit(prompt, source_path, *, label):
+    def fake_image_edit(prompt, source_path, *, label, **_kwargs):
         image_calls.append((prompt, source_path.name, label))
         return png_bytes(Image.new("RGB", (1024, 1536), (60, 70, 80)))
 
@@ -1183,7 +1426,7 @@ def test_generate_happy_assets_preserve_scene_and_reuse_normal_blink_prompt(
         video_calls.append((scene_path.name, prompt, label))
         return b"happy-video"
 
-    def fake_multi_image_edit(prompt, source_paths, *, label, size):
+    def fake_multi_image_edit(prompt, source_paths, *, label, size, **_kwargs):
         refinement_calls.append((prompt, [path.name for path in source_paths], label, size))
         return png_bytes(Image.new("RGB", (1024, 1536), (70, 80, 90)))
 
@@ -1368,7 +1611,7 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
         lambda exc: "IMAGE_PROMPT_REJECTED" if str(exc) == "blocked" else "GENERATION_FAILED",
     )
 
-    def fake_image_bytes(prompt):
+    def fake_image_bytes(prompt, **_kwargs):
         calls.append(prompt)
         if prompt == "standard:teen:idle":
             raise RuntimeError("blocked")
@@ -1380,7 +1623,9 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
     monkeypatch.setattr("app.services.image_service.generate_image_bytes", fake_image_bytes)
     monkeypatch.setattr(
         "app.services.image_service.generate_pet_scene_image_bytes",
-        lambda _source_path: png_bytes(Image.new("RGBA", (100, 100), (255, 255, 255, 0))),
+        lambda _source_path, **_kwargs: png_bytes(
+            Image.new("RGBA", (100, 100), (255, 255, 255, 0))
+        ),
     )
     monkeypatch.setattr(
         "app.services.image_service.generate_pet_scene_video_bytes",
@@ -1388,7 +1633,7 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
     )
     monkeypatch.setattr(
         "app.services.image_service.generate_pet_tap_reaction_scene_path",
-        lambda *_args: tmp_path / "teen-tap.png",
+        lambda *_args, **_kwargs: tmp_path / "teen-tap.png",
     )
 
     result, video_path = generate_individual_sprite_paths(
@@ -1419,15 +1664,17 @@ def test_generate_individual_sprite_paths_requires_video(monkeypatch, tmp_path) 
     )
     monkeypatch.setattr(
         "app.services.image_service.generate_image_bytes",
-        lambda _prompt: png_bytes(Image.new("RGBA", (100, 100), (20, 140, 70, 255))),
+        lambda _prompt, **_kwargs: png_bytes(Image.new("RGBA", (100, 100), (20, 140, 70, 255))),
     )
     monkeypatch.setattr(
         "app.services.image_service.generate_pet_scene_image_bytes",
-        lambda _source_path: png_bytes(Image.new("RGBA", (100, 100), (40, 90, 190, 255))),
+        lambda _source_path, **_kwargs: png_bytes(
+            Image.new("RGBA", (100, 100), (40, 90, 190, 255))
+        ),
     )
     monkeypatch.setattr(
         "app.services.image_service.generate_pet_tap_reaction_scene_path",
-        lambda *_args: tmp_path / "teen-tap.png",
+        lambda *_args, **_kwargs: tmp_path / "teen-tap.png",
     )
 
     def fail_video(_source_path):
@@ -1476,8 +1723,15 @@ def test_create_character_bible_uses_character_timeout(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        "app.services.image_service.get_openai_client",
-        lambda: SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+        "app.llm.compat.get_llm_gateway",
+        lambda: OpenAICompatibleProvider(
+            name="test",
+            client=SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.resolve_llm_model",
+        lambda _task, fallback: fallback,
     )
     monkeypatch.setattr(
         "app.services.image_service.character_bible_quality_issues",
@@ -1526,6 +1780,20 @@ def test_character_bible_prompt_omits_curated_generation_context() -> None:
 
 def test_generation_error_code_defaults_to_generic() -> None:
     assert generation_error_code(RuntimeError("unknown")) == "GENERATION_FAILED"
+
+
+def test_generation_error_code_classifies_neutral_llm_provider_errors() -> None:
+    assert (
+        generation_error_code(LLMProviderError("rate limited", status_code=429)) == "LLM_RATE_LIMIT"
+    )
+
+    try:
+        raise httpx.ReadTimeout("timed out")
+    except httpx.ReadTimeout as cause:
+        wrapped = LLMProviderError("GigaChat request failed")
+        wrapped.__cause__ = cause
+
+    assert generation_error_code(wrapped) == "LLM_TIMEOUT"
 
 
 def test_generation_error_code_keeps_video_runtime_failures_generic() -> None:
@@ -1739,8 +2007,11 @@ def test_create_character_bible_does_not_run_repair_or_initial_overlay(monkeypat
         ),
     )
     monkeypatch.setattr(
-        "app.services.image_service.get_openai_client",
-        lambda: SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+        "app.llm.compat.get_llm_gateway",
+        lambda: OpenAICompatibleProvider(
+            name="test",
+            client=SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+        ),
     )
 
     result = create_character_bible("маленький паровой дракончик")

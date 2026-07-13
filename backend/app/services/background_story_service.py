@@ -11,6 +11,8 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from app.config import get_settings
+from app.llm.compat import complete_chat, response_log_value
+from app.llm.runtime import resolve_llm_model, resolve_llm_provider
 from app.prompts.style_direction import (
     DARK_MUTED_PASTEL_PALETTE_FAMILIES,
     VISUAL_CHARACTER_STYLE,
@@ -19,7 +21,7 @@ from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemor
 from app.services.character_dossier import story_character_data
 from app.services.image_service import (
     generate_image_bytes,
-    generate_openrouter_video_from_image_bytes,
+    generate_video_from_image_bytes,
 )
 from app.services.lite_overlay import (
     LITE_FACT_KINDS,
@@ -30,7 +32,6 @@ from app.services.lore_runtime import lore_prompt_block
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_chat_model,
-    get_openai_client,
 )
 from app.services.pet_reply_engine.context_plan import (
     CONTEXT_ROUTING_SOURCE_IDS,
@@ -1085,8 +1086,13 @@ def extract_background_story_image_scene(
     direction_output: dict[str, str] | None = None,
 ) -> str:
     settings = get_settings()
-    openai_client = client or get_openai_client()
-    model = model or get_chat_model(settings)
+    if model is None:
+        fallback_model = get_chat_model(settings)
+        model = (
+            fallback_model
+            if client is not None
+            else resolve_llm_model("background_story_image_scene", fallback_model)
+        )
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
     pose_families = _available_background_story_pose_families(recent_story_events)
     palette_families = _available_background_story_palette_families(recent_story_events)
@@ -1133,9 +1139,16 @@ def extract_background_story_image_scene(
     debug_entry = log_chat_completion_prompt("background_story/image_scene", request_kwargs)
     if prompt_debug is not None:
         prompt_debug.append(debug_entry)
-    completion = openai_client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("background_story/image_scene", completion)
-    content = completion.choices[0].message.content or "{}"
+    completion = complete_chat(
+        "background_story_image_scene",
+        request_kwargs,
+        client=client,
+    )
+    log_chat_completion_response(
+        "background_story/image_scene",
+        response_log_value(completion),
+    )
+    content = completion.content or "{}"
     payload = _json_record_from_text(content)
     scene = _text_value(payload.get("scene"), limit=BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS)
     if not scene:
@@ -1297,7 +1310,7 @@ def generate_background_story_image_bytes(
 
 
 def generate_background_story_video_bytes(image_bytes: bytes) -> bytes:
-    return generate_openrouter_video_from_image_bytes(
+    return generate_video_from_image_bytes(
         image_bytes,
         label="background_story/video",
         prompt=BACKGROUND_STORY_VIDEO_PROMPT,
@@ -1817,7 +1830,7 @@ def _plan_background_story_context(
     recent_replies: list[str] | None,
     now_iso: str | None,
     timezone: str | None,
-    client: Any,
+    client: Any | None,
     model: str,
     timeout: float,
 ) -> tuple[ContextPlan, dict[str, Any] | None]:
@@ -1865,14 +1878,15 @@ def _plan_background_story_context(
         **chat_reasoning_effort_kwargs("none"),
     }
     prompt_debug = log_chat_completion_prompt("background_story/context_routing", request_kwargs)
-    completion = client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("background_story/context_routing", completion)
+    completion = complete_chat("background_story", request_kwargs, client=client)
+    log_chat_completion_response(
+        "background_story/context_routing",
+        response_log_value(completion),
+    )
     return (
         _background_context_plan_from_routing(
             modes=modes,
-            routing=_parse_background_routing_payload(
-                completion.choices[0].message.content or "{}"
-            ),
+            routing=_parse_background_routing_payload(completion.content or "{}"),
         ),
         prompt_debug,
     )
@@ -2291,7 +2305,7 @@ def _extract_background_story_aftermath_patch(
     *,
     pet: LocalPetChatContext,
     story: BackgroundStoryResult,
-    client: Any,
+    client: Any | None,
     model: str,
     timeout: float,
     prompt_debug: list[dict[str, Any]],
@@ -2327,10 +2341,13 @@ def _extract_background_story_aftermath_patch(
     prompt_debug.append(
         log_chat_completion_prompt("background_story/aftermath_extraction", request_kwargs)
     )
-    completion = client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("background_story/aftermath_extraction", completion)
+    completion = complete_chat("background_story", request_kwargs, client=client)
+    log_chat_completion_response(
+        "background_story/aftermath_extraction",
+        response_log_value(completion),
+    )
     return _parse_aftermath_extraction_payload(
-        completion.choices[0].message.content or "{}",
+        completion.content or "{}",
         story=story,
     )
 
@@ -2363,7 +2380,7 @@ def _check_background_story_coherence(
     *,
     story_payload: dict[str, Any],
     story_direction: dict[str, str],
-    client: Any,
+    client: Any | None,
     model: str,
     timeout: float,
     prompt_debug: list[dict[str, Any]],
@@ -2404,9 +2421,12 @@ def _check_background_story_coherence(
     prompt_debug.append(
         log_chat_completion_prompt("background_story/coherence_check", request_kwargs)
     )
-    completion = client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("background_story/coherence_check", completion)
-    parsed = _json_record_from_text(completion.choices[0].message.content or "{}")
+    completion = complete_chat("background_story", request_kwargs, client=client)
+    log_chat_completion_response(
+        "background_story/coherence_check",
+        response_log_value(completion),
+    )
+    parsed = _json_record_from_text(completion.content or "{}")
     issues = _string_list(parsed.get("issues"), limit=4)
     retry_instruction = _text_value(parsed.get("retryInstruction"), limit=600)
     coherent = parsed.get("coherent") is not False
@@ -2452,9 +2472,20 @@ def generate_background_story(
     timeout: float | None = None,
 ) -> BackgroundStoryResult:
     settings = get_settings()
-    model = model or get_chat_model(settings)
+    if model is None:
+        fallback_model = get_chat_model(settings)
+        model = (
+            fallback_model
+            if client is not None
+            else resolve_llm_model("background_story", fallback_model)
+        )
+    llm_provider = (
+        resolve_llm_provider("background_story")
+        if client is None
+        else ("gigachat" if model.strip().lower().startswith("gigachat") else "injected")
+    )
     timeout = timeout if timeout is not None else settings.openai_chat_timeout_seconds
-    openai_client = client or get_openai_client()
+    llm_client = client
     context_plan, routing_debug = _plan_background_story_context(
         pet=pet,
         memory_context=memory_context,
@@ -2462,7 +2493,7 @@ def generate_background_story(
         recent_replies=recent_replies,
         now_iso=now_iso,
         timezone=timezone,
-        client=openai_client,
+        client=llm_client,
         model=model,
         timeout=timeout,
     )
@@ -2522,38 +2553,52 @@ def generate_background_story(
         }
     )
     prompt_debug.append(log_chat_completion_prompt("background_story/generate", request_kwargs))
-    completion = openai_client.chat.completions.create(**request_kwargs)
-    log_chat_completion_response("background_story/generate", completion)
-    content = completion.choices[0].message.content or "{}"
+    completion = complete_chat("background_story", request_kwargs, client=llm_client)
+    log_chat_completion_response(
+        "background_story/generate",
+        response_log_value(completion),
+    )
+    content = completion.content or "{}"
     raw_story_payload = _json_record_from_text(content)
-    try:
-        accepted, issues, retry_instruction = _check_background_story_coherence(
-            story_payload=raw_story_payload,
-            story_direction=story_direction,
-            client=openai_client,
-            model=model,
-            timeout=timeout,
-            prompt_debug=prompt_debug,
-        )
-    except Exception as exc:
-        logger.exception("background_story_coherence_check failed")
+    if llm_provider == "gigachat":
+        accepted = True
+        issues: list[str] = []
+        retry_instruction = ""
         prompt_debug.append(
             {
-                "event": "background_story_coherence_error",
-                "error": exc.__class__.__name__,
+                "event": "background_story_coherence_skipped",
+                "provider": llm_provider,
             }
         )
-        micro_unlock = _has_forbidden_micro_unlock_pattern(
-            raw_story_payload,
-            story_direction,
-        )
-        accepted = not micro_unlock
-        issues = (
-            ["Запрещённая схема маленькой улики и открывающегося скрытого прохода."]
-            if micro_unlock
-            else []
-        )
-        retry_instruction = "Замени микроголоволомку самостоятельным происшествием."
+    else:
+        try:
+            accepted, issues, retry_instruction = _check_background_story_coherence(
+                story_payload=raw_story_payload,
+                story_direction=story_direction,
+                client=llm_client,
+                model=model,
+                timeout=timeout,
+                prompt_debug=prompt_debug,
+            )
+        except Exception as exc:
+            logger.exception("background_story_coherence_check failed")
+            prompt_debug.append(
+                {
+                    "event": "background_story_coherence_error",
+                    "error": exc.__class__.__name__,
+                }
+            )
+            micro_unlock = _has_forbidden_micro_unlock_pattern(
+                raw_story_payload,
+                story_direction,
+            )
+            accepted = not micro_unlock
+            issues = (
+                ["Запрещённая схема маленькой улики и открывающегося скрытого прохода."]
+                if micro_unlock
+                else []
+            )
+            retry_instruction = "Замени микроголоволомку самостоятельным происшествием."
     if not accepted:
         issue_lines = "\n".join(f"- {issue}" for issue in issues)
         repair_instruction = retry_instruction or (
@@ -2580,16 +2625,21 @@ def generate_background_story(
                 retry_request_kwargs,
             )
         )
-        retry_completion = openai_client.chat.completions.create(**retry_request_kwargs)
-        log_chat_completion_response("background_story/generate_retry", retry_completion)
-        raw_story_payload = _json_record_from_text(
-            retry_completion.choices[0].message.content or "{}"
+        retry_completion = complete_chat(
+            "background_story",
+            retry_request_kwargs,
+            client=llm_client,
         )
+        log_chat_completion_response(
+            "background_story/generate_retry",
+            response_log_value(retry_completion),
+        )
+        raw_story_payload = _json_record_from_text(retry_completion.content or "{}")
         try:
             retry_accepted, _, _ = _check_background_story_coherence(
                 story_payload=raw_story_payload,
                 story_direction=story_direction,
-                client=openai_client,
+                client=llm_client,
                 model=model,
                 timeout=timeout,
                 prompt_debug=prompt_debug,
@@ -2630,7 +2680,7 @@ def generate_background_story(
         lite_overlay_patch, recent_story_event = _extract_background_story_aftermath_patch(
             pet=pet,
             story=result,
-            client=openai_client,
+            client=llm_client,
             model=model,
             timeout=timeout,
             prompt_debug=prompt_debug,

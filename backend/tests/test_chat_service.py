@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.llm.providers.openai_compatible import OpenAICompatibleProvider
 from app.schemas import (
     LiteFactExtractionRequest,
     LocalAmbientRequest,
@@ -14,7 +15,7 @@ from app.schemas import (
     MemoryExtractionRequest,
 )
 from app.services.chat_service import chat_with_local_pet
-from app.services.pet_reply_engine import speech_runtime
+from app.services.pet_reply_engine import lite_generator, speech_runtime
 from app.services.pet_reply_engine.lite_generator import (
     ContextRoutingDecision,
     build_ambient_messages,
@@ -254,8 +255,13 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
         SimpleNamespace(content="Я стою и слушаю. Говори.", tool_calls=None)
     )
     monkeypatch.setattr(
-        "app.services.pet_reply_engine.lite_generator.get_openai_client",
-        lambda: client,
+        "app.llm.compat.get_llm_gateway",
+        lambda: OpenAICompatibleProvider(name="test", client=client),
+    )
+    monkeypatch.setattr(
+        lite_generator,
+        "resolve_llm_model",
+        lambda _task, fallback: fallback,
     )
 
     response = chat_with_local_pet(lite_payload())
@@ -299,6 +305,39 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     ] == [-80, -60, -40, -20, 0, 30, 100]
     assert "tools" not in request
     assert "STORY_LIBRARY" not in system_message
+
+
+def test_world_seed_uses_gateway_when_no_client_override(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_world_seed(payload, **kwargs):
+        calls.append({"payload": payload, **kwargs})
+        return {
+            "facts": [{"text": "Мир держится на тёплых камнях."}],
+            "worldSeed": {"source": "llm"},
+        }
+
+    monkeypatch.setattr(lite_generator, "_world_seed_overlay_patch", fake_world_seed)
+    monkeypatch.setattr(lite_generator, "_source_enabled", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(lite_generator, "_existing_world_texts", lambda _payload: [])
+
+    result = lite_generator._read_character_json(
+        lite_payload(),
+        {"sections": ["characterBible"]},
+        context_routing=ContextRoutingDecision(
+            surface="chat",
+            enabled_sources=frozenset({"worldContext"}),
+        ),
+        client=None,
+        model="GigaChat-test",
+        timeout=30,
+        prompt_debug=[],
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["client"] is None
+    assert result["worldInfo"]["createdByLLM"] is True
+    assert result["worldInfo"]["patch"]["worldSeed"]["source"] == "llm"
 
 
 def test_chat_prompt_includes_matching_recent_events_before_world_context() -> None:
@@ -745,7 +784,8 @@ def test_chat_small_talk_keeps_core_character_but_suppresses_overlay_noise() -> 
         "просто и конкретно. Если мысль требует, используй несколько коротких предложений."
         in system_message
     )
-    assert "Персонаж:" not in system_message
+    assert "Кто я:" not in system_message
+    assert "Персонаж:" in system_message
     assert "CHARACTER_PROFILE" not in system_message
     assert "мокрыми ушами" in system_message
     assert "нюхать батарейки" in system_message
@@ -775,6 +815,29 @@ def test_lite_prompt_includes_dialogue_memory_episodes_only_when_present() -> No
     assert "владелец: Меня зовут Сергей." in system_message
     assert "персонаж: Запомнил, Сергей." in system_message
     assert "Опирайся на память только когда она реально помогает ответу." in system_message
+
+
+def test_lite_prompt_does_not_conflict_with_user_identity_recall() -> None:
+    payload = lite_payload(
+        message="кто я",
+        memoryContext={
+            "relevantMemories": [
+                {
+                    "id": "user-name",
+                    "kind": "user_fact",
+                    "text": "Пользователя зовут Серега.",
+                    "memoryClass": "core",
+                },
+            ],
+        },
+    )
+
+    system_message = build_lite_chat_messages(payload)[0]["content"]
+
+    assert "Кто я:" not in system_message
+    assert "Персонаж: Громм" in system_message
+    assert "Пользователя зовут Серега." in system_message
+    assert "Не отвечай в этот момент, кто ты сам как персонаж." in system_message
 
 
 def test_lite_prompt_keeps_visible_hook_out_of_message_history() -> None:
@@ -1104,6 +1167,38 @@ def test_lite_reads_structured_face_and_mood_hints() -> None:
     assert response.complimentKey == "надёжность и забота персонажа"
     assert response.debug is not None
     assert response.debug.structuredReplyDebug["normalizedResponse"]["faceHint"] == "content"
+
+
+def test_lite_removes_gigachat_generic_support_opener() -> None:
+    client, _completions = fake_lite_client(
+        SimpleNamespace(
+            content=json.dumps(
+                {
+                    "reply": "Я рядом, тебя зовут Серега.",
+                    "faceHint": "content",
+                    "moodHint": "happy",
+                    "happinessDelta": 0,
+                    "complimentKey": None,
+                },
+                ensure_ascii=False,
+            ),
+            tool_calls=None,
+        )
+    )
+
+    response = generate_lite_pet_reply(
+        lite_payload(),
+        client=client,
+        model="GigaChat-3.5-432B-A28B",
+        timeout=10,
+    )
+
+    assert response.reply == "Тебя зовут Серега"
+    assert response.debug is not None
+    assert "gigachat_generic_support_opener_removed" in response.debug.validationFlags
+    assert response.debug.structuredReplyDebug["normalizedResponse"]["reply"] == (
+        "Тебя зовут Серега"
+    )
 
 
 def test_lite_reads_severe_threat_happiness_delta() -> None:

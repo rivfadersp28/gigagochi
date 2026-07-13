@@ -1,0 +1,21 @@
+{
+  "activeProfile": "legacy",
+  "profiles": {
+    "legacy": {
+      "image": {"default": {"provider": "legacy"}, "tasks": {}},
+      "video": {"default": {"provider": "openrouter"}, "tasks": {}}
+    },
+    "openai": {
+      "image": {"default": {"provider": "openai"}, "tasks": {}},
+      "video": {"default": {"provider": "openrouter"}, "tasks": {}}
+    },
+    "openrouter": {
+      "image": {"default": {"provider": "openrouter"}, "tasks": {}},
+      "video": {"default": {"provider": "openrouter"}, "tasks": {}}
+    },
+    "kandinsky": {
+      "image": {"default": {"provider": "kandinsky"}, "tasks": {}},
+      "video": {"default": {"provider": "kandinsky"}, "tasks": {}}
+    }
+  }
+}

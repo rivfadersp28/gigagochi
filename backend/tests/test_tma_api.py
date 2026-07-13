@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.dependencies import get_telegram_user
+from app.llm import LLMProviderError
 from app.main import app
 from app.schemas import (
     GeneratePetAssetResponse,
@@ -74,6 +75,48 @@ def test_generate_pet_requires_auth(monkeypatch) -> None:
     assert response.status_code == 401
 
 
+def test_generate_pet_uses_default_parallel_pipeline(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    now = datetime.now(UTC)
+
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=False,
+            openai_api_key="test-openai-key",
+            kandinsky_api_key="test-kandinsky-key",
+        ),
+    )
+
+    def fake_submit(description, user):
+        captured.update(
+            description=description,
+            owner_id=user.telegram_id,
+        )
+        return {
+            "jobId": "job-kandinsky",
+            "status": "queued",
+            "phase": "queued",
+            "createdAt": now,
+            "updatedAt": now,
+        }
+
+    monkeypatch.setattr("app.routers.tma.submit_generation_job", fake_submit)
+    client = tma_client()
+
+    response = client.post(
+        "/api/generate-pet",
+        json={"description": "дракон", "imageProvider": "kandinsky"},
+    )
+
+    assert response.status_code == 202
+    assert captured == {
+        "description": "дракон",
+        "owner_id": 42,
+    }
+    app.dependency_overrides.clear()
+
+
 def test_chat_requires_auth(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.dependencies.get_settings",
@@ -112,7 +155,7 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(
             enable_in_memory_rate_limit=False,
-            openai_api_key=None,
+            openai_api_key="test-openai-key",
             openrouter_api_key="test-openrouter-key",
         ),
     )
@@ -121,7 +164,7 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
     def fake_generate_pet_image_asset_set(description: str, **kwargs):
         captured["description"] = description
         captured["kwargs"] = kwargs
-        return SimpleNamespace(asset_set_id="asset-1")
+        return SimpleNamespace(asset_set_id="asset-1", character_bible={"species": "dragon"})
 
     generated_response = {
         "assetSetId": "asset-1",
@@ -164,7 +207,7 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
     )
     monkeypatch.setattr(
         "app.routers.tma.generate_pet_sad_scene_path",
-        lambda _image_set: SimpleNamespace(name="teen-sad.png"),
+        lambda _image_set, **_kwargs: SimpleNamespace(name="teen-sad.png"),
     )
     monkeypatch.setattr(
         "app.routers.tma.generate_pet_sad_video_for_image_asset_set",
@@ -172,7 +215,7 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
     )
     monkeypatch.setattr(
         "app.routers.tma.generate_pet_happy_scene_path",
-        lambda _image_set: SimpleNamespace(name="teen-happy.png"),
+        lambda _image_set, **_kwargs: SimpleNamespace(name="teen-happy.png"),
     )
     monkeypatch.setattr(
         "app.routers.tma.generate_pet_happy_video_for_image_asset_set",
@@ -194,6 +237,14 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
         "app.routers.tma.build_pet_asset_set_response",
         fake_build_pet_asset_set_response,
     )
+    monkeypatch.setattr(
+        "app.routers.tma.generate_kandinsky_pet_comparison_assets",
+        lambda _description, _character_bible: {
+            "assetSetId": "asset-kandinsky",
+            "generatedAt": datetime(2026, 7, 3, 12, 1, tzinfo=UTC),
+            "images": generated_response["images"],
+        },
+    )
     client = tma_client()
 
     response = client.post("/api/generate-pet", json={"description": "маленький дракон"})
@@ -209,7 +260,7 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
     assert result["assetSetId"] == "asset-1"
     assert result["characterBible"]["species"] == "small dragon mascot"
     assert captured["description"] == "маленький дракон"
-    assert captured["kwargs"] == {}
+    assert captured["kwargs"] == {"image_provider": "openai"}
     assert result["sadVideoUrl"] == "/static/generated/asset-1/teen-sad.mp4"
     assert result["happyVideoUrl"] == "/static/generated/asset-1/teen-happy.mp4"
     for stage in ("baby", "teen", "adult"):
@@ -307,7 +358,7 @@ def test_travel_accepts_local_pet_state(monkeypatch) -> None:
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(
             enable_in_memory_rate_limit=False,
-            openai_api_key=None,
+            openai_api_key="test-openai-key",
             openrouter_api_key="test-openrouter-key",
         ),
     )
@@ -540,6 +591,18 @@ def test_provider_error_details_extracts_wrapped_provider_payload() -> None:
         }
 
 
+def test_provider_error_details_extracts_neutral_llm_error() -> None:
+    exc = LLMProviderError(
+        "GigaChat completion failed: quota exceeded",
+        status_code=429,
+    )
+
+    assert provider_error_details(exc) == {
+        "providerStatus": 429,
+        "providerMessage": "GigaChat completion failed: quota exceeded",
+    }
+
+
 def test_public_error_detail_exposes_diagnostics_only_when_requested() -> None:
     detail = error_detail(
         "chat_failed",
@@ -564,7 +627,7 @@ def test_generate_pet_job_records_provider_failure(monkeypatch, caplog, tmp_path
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(
             enable_in_memory_rate_limit=False,
-            openai_api_key=None,
+            openai_api_key="test-openai-key",
             openrouter_api_key="test-openrouter-key",
         ),
     )
@@ -574,7 +637,7 @@ def test_generate_pet_job_records_provider_failure(monkeypatch, caplog, tmp_path
     )
     caplog.set_level(logging.ERROR, logger="app.routers.tma")
 
-    def fail_generate(_description: str):
+    def fail_generate(_description: str, **_kwargs):
         request = httpx.Request("POST", "https://openrouter.ai/api/v1/images")
         response = httpx.Response(
             400,
@@ -841,7 +904,7 @@ def test_generation_rate_limit(monkeypatch) -> None:
         lambda: SimpleNamespace(
             enable_in_memory_rate_limit=True,
             generation_rate_limit_per_day=3,
-            openai_api_key=None,
+            openai_api_key="test-openai-key",
             openrouter_api_key="test-openrouter-key",
         ),
     )
@@ -881,7 +944,7 @@ def test_generation_rate_limit(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "app.routers.tma.generate_pet_sad_scene_path",
-        lambda _image_set: SimpleNamespace(name="teen-sad.png"),
+        lambda _image_set, **_kwargs: SimpleNamespace(name="teen-sad.png"),
     )
     monkeypatch.setattr(
         "app.routers.tma.generate_pet_sad_video_for_image_asset_set",
@@ -889,7 +952,7 @@ def test_generation_rate_limit(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "app.routers.tma.generate_pet_happy_scene_path",
-        lambda _image_set: SimpleNamespace(name="teen-happy.png"),
+        lambda _image_set, **_kwargs: SimpleNamespace(name="teen-happy.png"),
     )
     monkeypatch.setattr(
         "app.routers.tma.generate_pet_happy_video_for_image_asset_set",

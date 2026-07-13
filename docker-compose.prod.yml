@@ -66,6 +66,8 @@ services:
       - generated_assets:/app/static/generated
       - backend_logs:/app/logs
       - ./backend/data/speech_runtime.json:/app/data/speech_runtime.json:ro
+      - ./backend/data/llm_runtime.json:/app/data/llm_runtime.json:ro
+      - ./backend/data/media_runtime.json:/app/data/media_runtime.json:ro
       - ./backend/data/tone_runtime.json:/app/data/tone_runtime.json:ro
       - ./backend/data/lore_runtime.json:/app/data/lore_runtime.json:ro
       - ./backend/data/story_library.json:/app/data/story_library.json:ro
@@ -74,6 +76,7 @@ services:
       - ./backend/data/character_bible_template.json:/app/data/character_bible_template.json:ro
       - ./backend/data/age_speech_examples:/app/data/age_speech_examples:ro
       - ./backend/data/world_descriptions:/app/data/world_descriptions:ro
+      - ./deploy/ca:/app/ca:ro
       - push_data:/app/data/push
     healthcheck:
       test:
@@ -116,6 +119,8 @@ services:
     volumes:
       - backend_logs:/app/logs
       - ./backend/data/speech_runtime.json:/app/data/speech_runtime.json:ro
+      - ./backend/data/llm_runtime.json:/app/data/llm_runtime.json:ro
+      - ./backend/data/media_runtime.json:/app/data/media_runtime.json:ro
       - ./backend/data/tone_runtime.json:/app/data/tone_runtime.json:ro
       - ./backend/data/lore_runtime.json:/app/data/lore_runtime.json:ro
       - ./backend/data/story_library.json:/app/data/story_library.json:ro
@@ -124,6 +129,7 @@ services:
       - ./backend/data/character_bible_template.json:/app/data/character_bible_template.json:ro
       - ./backend/data/age_speech_examples:/app/data/age_speech_examples:ro
       - ./backend/data/world_descriptions:/app/data/world_descriptions:ro
+      - ./deploy/ca:/app/ca:ro
       - push_data:/app/data/push
     logging: *default-logging
 

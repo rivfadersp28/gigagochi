@@ -18,7 +18,6 @@ import { ErrorNotice } from "./ErrorNotice";
 const MAX_PROMPT_LENGTH = 300;
 const PROMPT_PLACEHOLDER = "Грозовой дракон с добрым характером";
 const PENDING_GENERATION_KEY = "gigagochi.pending-generation.v1";
-
 type PendingGeneration = { jobId: string; description: string };
 
 function readPendingGeneration(): PendingGeneration | null {
@@ -249,6 +248,7 @@ export function CreatePetForm() {
             placeholder={PROMPT_PLACEHOLDER}
             className={`create-pet-prompt ${hasDescription ? "create-pet-prompt--filled" : ""}`}
           />
+
         </div>
 
         {error ? (

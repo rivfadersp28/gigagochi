@@ -48,6 +48,7 @@ from app.services.generation_job_service import (
 from app.services.generation_notification_service import send_generation_ready_notification
 from app.services.image_service import (
     build_pet_asset_set_response,
+    generate_kandinsky_pet_comparison_assets,
     generate_pet_happy_scene_path,
     generate_pet_happy_video_for_image_asset_set,
     generate_pet_image_asset_set,
@@ -172,31 +173,47 @@ def _generation_job_service() -> GenerationJobService:
         generation_job_service = GenerationJobService(
             image_workers=getattr(settings, "generation_image_workers", 3),
             video_workers=getattr(settings, "generation_video_workers", 4),
-            generate_images=lambda description: generate_pet_image_asset_set(description),
+            generate_images=lambda description, image_provider: generate_pet_image_asset_set(
+                description,
+                image_provider=image_provider,
+            ),
             generate_video=lambda image_set: generate_pet_video_for_image_asset_set(image_set),
-            generate_background_image=lambda image_set: generate_pet_sad_scene_path(image_set),
+            generate_background_image=lambda image_set, image_provider: generate_pet_sad_scene_path(
+                image_set,
+                image_provider=image_provider,
+            ),
             generate_background_video=lambda image_set, sad_scene_path: (
                 generate_pet_sad_video_for_image_asset_set(image_set, sad_scene_path)
             ),
-            generate_happy_image=lambda image_set: generate_pet_happy_scene_path(image_set),
+            generate_happy_image=lambda image_set, image_provider: generate_pet_happy_scene_path(
+                image_set,
+                image_provider=image_provider,
+            ),
             generate_happy_video=lambda image_set, happy_scene_path: (
                 generate_pet_happy_video_for_image_asset_set(image_set, happy_scene_path)
             ),
             build_response=build_pet_asset_set_response,
             build_failure=_build_generation_failure,
+            generate_comparison_images=lambda description, primary_image_set: (
+                generate_kandinsky_pet_comparison_assets(
+                    description,
+                    primary_image_set.character_bible,
+                )
+            ),
             notify_ready=send_generation_ready_notification,
             store_path=getattr(settings, "generation_job_store_path", None),
             max_queued_jobs=getattr(settings, "generation_max_queued_jobs", 40),
-            stuck_after=timedelta(
-                seconds=getattr(settings, "generation_job_stuck_seconds", 1800)
-            ),
+            stuck_after=timedelta(seconds=getattr(settings, "generation_job_stuck_seconds", 1800)),
         )
     return generation_job_service
 
 
-def submit_generation_job(description: str, user: TelegramUserContext) -> GeneratePetJobResponse:
+def submit_generation_job(
+    description: str,
+    user: TelegramUserContext,
+) -> GeneratePetJobResponse:
     try:
-        return _generation_job_service().submit(description, user)
+        return _generation_job_service().submit(description, user, "openai")
     except GenerationQueueFullError:
         notify_ops(
             "generation:queue-full",
@@ -207,8 +224,7 @@ def submit_generation_job(description: str, user: TelegramUserContext) -> Genera
             detail={
                 "code": "GENERATION_QUEUE_FULL",
                 "message": (
-                    "Сейчас создаётся слишком много питомцев. "
-                    "Попробуйте через несколько минут."
+                    "Сейчас создаётся слишком много питомцев. Попробуйте через несколько минут."
                 ),
                 "retryAfterSeconds": 120,
             },
@@ -253,10 +269,7 @@ def generate_pet(payload: GeneratePetRequest, user: TelegramUser) -> GeneratePet
     check_rate_limit("generation", user)
     description = payload.description.strip()
     settings = get_settings()
-    has_ai_key = bool(
-        getattr(settings, "openai_api_key", None) or getattr(settings, "openrouter_api_key", None)
-    )
-    if not has_ai_key:
+    if not getattr(settings, "openai_api_key", None):
         raise public_error(
             "MISSING_OPENAI_API_KEY",
             status.HTTP_500_INTERNAL_SERVER_ERROR,

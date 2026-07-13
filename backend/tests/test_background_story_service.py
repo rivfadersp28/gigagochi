@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.llm.providers.openai_compatible import OpenAICompatibleProvider
 from app.schemas import LocalChatHistoryItem, LocalPetChatContext, LocalPetMemoryContext
 from app.services import background_story_service
 
@@ -346,7 +347,10 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
             webapp_url=None,
         ),
     )
-    monkeypatch.setattr(background_story_service, "get_openai_client", lambda: client)
+    monkeypatch.setattr(
+        "app.llm.compat.get_llm_gateway",
+        lambda: OpenAICompatibleProvider(name="test", client=client),
+    )
     monkeypatch.setattr(background_story_service, "generate_image_bytes", fake_generate_image_bytes)
     story = background_story_service.BackgroundStoryResult(
         title="След под кроной",
@@ -449,7 +453,7 @@ def test_background_story_video_uses_locked_16_by_9_contract(monkeypatch) -> Non
 
     monkeypatch.setattr(
         background_story_service,
-        "generate_openrouter_video_from_image_bytes",
+        "generate_video_from_image_bytes",
         fake_video,
     )
 
@@ -842,6 +846,74 @@ def test_background_story_retries_once_after_incoherent_verdict(monkeypatch) -> 
     ]
     assert len(story_calls) == 2
     assert "QUALITY_RETRY" in story_calls[1]["messages"][1]["content"]
+
+
+def test_background_story_skips_coherence_check_for_gigachat(monkeypatch) -> None:
+    story_content = json.dumps(
+        {
+            "causalPlan": TEST_CAUSAL_PLAN,
+            "title": "Обмен на переправе",
+            "summary": "Олег обменял светящийся желудь на безопасный проход.",
+            "storyParagraphs": [
+                "Речной дух удержал лодку у быстрого брода.",
+                "Олег отдал ему светящийся желудь в обмен на проход.",
+                "Дух отпустил лодку, но Олег остался без света до утра.",
+            ],
+            "eventType": "rescue_negotiation",
+            "valence": "mixed",
+            "tags": ["река", "обмен"],
+            "statImpacts": [],
+            "ragText": "Олег обменял светящийся желудь на проход через реку.",
+        },
+        ensure_ascii=False,
+    )
+    aftermath_content = json.dumps(
+        {
+            "facts": [],
+            "recentEvent": {
+                "summary": "Олег обменял светящийся желудь на проход через реку.",
+                "eventType": "rescue_negotiation",
+                "participants": ["Олег", "речной дух"],
+                "actions": ["обменял желудь на проход"],
+                "objects": ["светящийся желудь"],
+                "location": "быстрый брод",
+                "outcome": "лодка освобождена",
+                "compactText": "Олег обменял желудь на безопасный проход.",
+                "canonicalFacts": [],
+                "statusChanges": [],
+            },
+        },
+        ensure_ascii=False,
+    )
+    completions = FakeBackgroundStoryCompletions([story_content, aftermath_content])
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    monkeypatch.setattr(
+        background_story_service,
+        "context_source_mode",
+        lambda surface, source: "disabled",
+    )
+    monkeypatch.setattr(
+        background_story_service,
+        "get_settings",
+        lambda: SimpleNamespace(openai_chat_timeout_seconds=10, openai_chat_reasoning_effort=None),
+    )
+
+    result = background_story_service.generate_background_story(
+        pet=_pet(),
+        client=client,
+        model="GigaChat-3.5-432B-A28B",
+        timeout=10,
+    )
+
+    schema_names = [
+        call["response_format"]["json_schema"]["name"] for call in completions.calls
+    ]
+    assert result.title == "Обмен на переправе"
+    assert schema_names == ["background_story", "background_story_aftermath_extraction"]
+    assert any(
+        item == {"event": "background_story_coherence_skipped", "provider": "gigachat"}
+        for item in result.prompt_debug
+    )
 
 
 def test_background_story_keeps_stat_impacts_without_lexical_filter() -> None:

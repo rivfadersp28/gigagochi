@@ -225,7 +225,7 @@ def build_character_capsule(pet: Any, *, include_durable_facts: bool = True) -> 
             lines.append(f"{label}: {'; '.join(values)}")
 
     add(
-        "Кто я",
+        "Персонаж",
         [
             identity.get("name"),
             identity.get("species"),
