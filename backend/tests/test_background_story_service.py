@@ -1306,6 +1306,7 @@ def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) ->
     assert "древние леса, чащи и туманные луга" in system_prompt
     assert "Современная бытовая инфраструктура не является фоном" in system_prompt
     assert "материальная потеря, предмет и травма не обязательны" in system_prompt
+    assert "дорожные метки, вешки, указатели" in system_prompt
     assert "STORY_DIRECTION" in prompt
     assert "Не своди каждый сюжет к физической опасности" in prompt
     assert "Сравни новую историю с ANTI_REPEAT" in prompt

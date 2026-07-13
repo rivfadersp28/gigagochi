@@ -92,6 +92,8 @@ def test_travel_story_templates_include_background_valence_and_stat_signals() ->
     assert len(catalog["big_adventures"]["templates"]) >= 5
     assert len(catalog["background_events"]["positive"]) >= 8
     assert len(catalog["background_events"]["negative"]) >= 8
+    assert "метка обратной дороги" not in catalog["slots"]["key_item"]
+    assert "моток крепкой верёвки" in catalog["slots"]["key_item"]
 
     for event in catalog["background_events"]["positive"]:
         assert event["valence"] == "positive"
