@@ -227,7 +227,15 @@
 - Do not save one-off `/story` episodes as `lite_overlay` facts. `lite_overlay`
   is only for durable consequences that remain true after the episode. Store
   the episode itself in `recentStoryEvents` / `extensions.recent_story_events`
-  and pass it to `/story` only as `ANTI_REPEAT`.
+  and keep it out of the ordinary `/story` prompt. Use only its structured
+  direction metadata in backend selection/novelty code.
+- A negative `ANTI_REPEAT` prompt still primes the model with the forbidden
+  title, tags and imagery. Do not serialize prior story details into ordinary
+  `/story`; control diversity outside the generative prompt.
+- Do not pass mutable `lite_overlay` appearance facts into ordinary `/story`.
+  A story-created improvised action can otherwise be misclassified as a durable
+  ability and immediately reinforce itself in the next episode. Aftermath
+  appearance facts require the structured `lasting_injury` durability type.
 - Do not use memory `updatedAt` as the event time. `recordedAt` is storage time,
   `occurredAt` is factual event time, and legacy facts without reliable event
   time must keep `occurredAt` absent.

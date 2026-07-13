@@ -645,6 +645,16 @@ BACKGROUND_STORY_AFTERMATH_SCHEMA: dict[str, Any] = {
                     "text": {"type": "string", "maxLength": 500},
                     "pathHint": {"type": "string", "maxLength": 120},
                     "source": {"type": "string", "maxLength": 80},
+                    "durabilityType": {
+                        "type": "string",
+                        "enum": [
+                            "acquired_item",
+                            "lasting_injury",
+                            "ongoing_relationship",
+                            "persistent_status",
+                            "stable_location",
+                        ],
+                    },
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                 },
                 "required": [
@@ -653,6 +663,7 @@ BACKGROUND_STORY_AFTERMATH_SCHEMA: dict[str, Any] = {
                     "text",
                     "pathHint",
                     "source",
+                    "durabilityType",
                     "confidence",
                 ],
             },
@@ -1418,55 +1429,6 @@ def _recent_replies_brief(recent_replies: list[str] | None) -> list[str]:
     return [text for text in (_text_value(item, limit=500) for item in recent_replies[-6:]) if text]
 
 
-def _story_event_briefs(recent_story_events: list[dict[str, Any]] | None) -> list[str]:
-    if not recent_story_events:
-        return []
-    briefs: list[str] = []
-    for item in recent_story_events[-8:]:
-        if not _is_record(item):
-            continue
-        parts: list[str] = []
-        title = _text_value(item.get("title"), limit=120)
-        if title:
-            parts.append(f"название: {title}")
-        tags = _string_list(item.get("tags"), limit=6)
-        if tags:
-            parts.append(f"ключевые мотивы: {', '.join(tags)}")
-        structure = [
-            _text_value(item.get(field), limit=80)
-            for field in (
-                "incidentClass",
-                "causalOrigin",
-                "eventScale",
-                "resolutionFamily",
-            )
-        ]
-        structure = [value for value in structure if value]
-        if structure:
-            parts.append(f"структурный каркас: {', '.join(structure)}")
-        brief = "; ".join(parts)
-        if brief:
-            briefs.append(brief)
-    return briefs
-
-
-def _anti_repeat_block(recent_story_events: list[dict[str, Any]] | None) -> str:
-    briefs = _story_event_briefs(recent_story_events)
-    if not briefs:
-        return ""
-    lines = "\n".join(f"- {brief}" for brief in briefs)
-    return (
-        "ANTI_REPEAT: эти события уже происходили. "
-        "Используй список только как запрет на повтор, "
-        "не как источник новых деталей сюжета. "
-        "Не повторяй центральные слова, образы и мотивы из названий и тегов. "
-        "Не повторяй структурный каркас последних событий, "
-        "даже с другим прилагательным или в другой словоформе. "
-        "Не развивай и не комбинируй детали из этого списка; придумай независимое событие.\n"
-        f"{lines}"
-    )
-
-
 def _recent_story_directions(
     recent_story_events: list[dict[str, Any]] | None,
 ) -> list[dict[str, str]]:
@@ -1928,7 +1890,10 @@ def character_dossier_for_background_story(
         "timezone": timezone,
         "identitySeed": _background_story_identity_seed(pet),
         "currentState": current_state,
-        "characterCanon": story_character_data(pet),
+        "characterCanon": story_character_data(
+            pet,
+            include_durable_constraints=False,
+        ),
     }
 
     if enabled("characterProfile"):
@@ -2282,6 +2247,12 @@ def _parse_aftermath_extraction_payload(
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     parsed = _json_record_from_text(raw_content)
     raw_facts = parsed.get("facts")
+    allowed_durability_types = {
+        "character": {"persistent_status"},
+        "appearance": {"lasting_injury"},
+        "world": {"acquired_item", "persistent_status", "stable_location"},
+        "relationship": {"ongoing_relationship"},
+    }
 
     facts: list[dict[str, Any]] = []
     if isinstance(raw_facts, list):
@@ -2290,8 +2261,14 @@ def _parse_aftermath_extraction_payload(
                 continue
             if _clamp_float(raw_fact.get("confidence"), 0.0) < AFTERMATH_CONFIDENCE_THRESHOLD:
                 continue
+            sphere = _text_value(raw_fact.get("sphere"), limit=40)
+            durability_type = _text_value(raw_fact.get("durabilityType"), limit=40)
+            if durability_type not in allowed_durability_types.get(sphere, set()):
+                continue
             fact = dict(raw_fact)
             fact["source"] = "background_story_aftermath"
+            fact.pop("durabilityType", None)
+            fact.pop("confidence", None)
             facts.append(fact)
     patch = overlay_patch_from_extracted_facts(
         facts,
@@ -2520,9 +2497,6 @@ def generate_background_story(
         },
     )
     user_content = f"{user_content}\n\n{_story_direction_block(story_direction)}"
-    anti_repeat = _anti_repeat_block(recent_story_events)
-    if anti_repeat:
-        user_content = f"{user_content}\n\n{anti_repeat}"
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": [

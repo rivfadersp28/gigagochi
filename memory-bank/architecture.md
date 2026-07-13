@@ -298,9 +298,16 @@
   not source material for new `/story` events. Its `currentState` is intentionally
   minimal (`name`, `stage`, optional semantic `params`) and does not pass raw
   numeric `stats`.
-- `/story` receives `recentStoryEvents` only as an `ANTI_REPEAT` block. That
-  block is a negative constraint against repeating the same event shape, not
-  context to continue or reuse.
+- Ordinary `/story` generation never serializes `recentStoryEvents`, their
+  titles, tags or prose into the model prompt. Recent events are used only by
+  backend code to select a less-used structural direction and by the
+  post-generation lexical novelty check. Explicit serialized stories such as
+  `/full_story`, and conversational recall, remain separate continuity paths.
+- The ordinary `/story` character dossier excludes every mutable
+  `lite_overlay` durable constraint. Background-story aftermath may still
+  persist real consequences for dialogue, but an appearance consequence is
+  accepted only when typed as `lasting_injury`; an episode-invented ability
+  cannot become character canon.
 - Full-story generation is hierarchical: create a four-part event plan, reject
   weak plans, render first-person scenes from the accepted plan, then compare
   the prose with that plan. Each planned part has an SVO event, before/after

@@ -489,9 +489,7 @@ def test_background_story_palette_options_exclude_three_recent_families() -> Non
         {"imagePaletteFamily": "coastal_petrol"},
     ]
 
-    available = background_story_service._available_background_story_palette_families(
-        recent_events
-    )
+    available = background_story_service._available_background_story_palette_families(recent_events)
 
     assert "forest_sage" not in available
     assert "terracotta_teal" not in available
@@ -738,7 +736,7 @@ def test_generate_background_story_stores_recent_event_without_lite_patch(monkey
     assert '"value": 96' in prompt
     assert '"value": 100' in prompt
     assert '"value": 71' in prompt
-    assert "Листики выпускают запахи-сигналы опасности." in prompt
+    assert "Листики выпускают запахи-сигналы опасности." not in prompt
     assert len(completions.calls) == 4
     assert _call_by_schema(completions, "background_story_coherence_check")
     assert _call_by_schema(completions, "background_story_aftermath_extraction")
@@ -905,9 +903,7 @@ def test_background_story_skips_coherence_check_for_gigachat(monkeypatch) -> Non
         timeout=10,
     )
 
-    schema_names = [
-        call["response_format"]["json_schema"]["name"] for call in completions.calls
-    ]
+    schema_names = [call["response_format"]["json_schema"]["name"] for call in completions.calls]
     assert result.title == "Обмен на переправе"
     assert schema_names == ["background_story", "background_story_aftermath_extraction"]
     assert any(
@@ -1030,7 +1026,7 @@ def test_background_story_dossier_does_not_use_bible_as_plot_source() -> None:
     assert '"name": "Мяу"' in dossier
     assert '"species": "кошка-волшебница"' in dossier
     assert '"temperament": "смелая"' in dossier
-    assert "временно прихрамывает" in dossier
+    assert "временно прихрамывает" not in dossier
     assert "назвать ворота" not in dossier
     for forbidden in ("ритуалы", "травинка", "рисует знаки", "щель открывается"):
         assert forbidden not in dossier
@@ -1142,7 +1138,7 @@ def test_background_story_context_sources_policy_controls_dossier(monkeypatch) -
     assert "params" not in prompt
     assert "наевшийся" not in prompt
     assert "Лист на лице стук" not in prompt
-    assert "Листики выпускают запахи-сигналы опасности." in prompt
+    assert "Листики выпускают запахи-сигналы опасности." not in prompt
     assert "стеклянный шорох" not in prompt
     assert "Сергей принес листовой амулет" not in prompt
     assert "Каменная тропа" not in prompt
@@ -1264,7 +1260,7 @@ def test_background_story_auto_sources_use_context_router(monkeypatch) -> None:
     assert "Кристаллическая капля" in prompt
     assert "Каменная тропа" not in prompt
     assert "Лист на лице стук" not in prompt
-    assert "Листики выпускают запахи-сигналы опасности." in prompt
+    assert "Листики выпускают запахи-сигналы опасности." not in prompt
     assert "Сергей принес листовой амулет" not in prompt
 
 
@@ -1314,7 +1310,7 @@ def test_background_story_never_uses_previous_generated_stories(monkeypatch) -> 
     assert "Каменная тропа" not in prompt
 
 
-def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) -> None:
+def test_background_story_uses_recent_events_only_for_direction_selection(monkeypatch) -> None:
     content = json.dumps(
         {
             "causalPlan": TEST_CAUSAL_PLAN,
@@ -1381,14 +1377,13 @@ def test_background_story_uses_recent_events_only_as_anti_repeat(monkeypatch) ->
     assert "дорожные метки, вешки, указатели" in system_prompt
     assert "STORY_DIRECTION" in prompt
     assert "Не своди каждый сюжет к физической опасности" in prompt
-    assert "Сравни новую историю с ANTI_REPEAT" in prompt
+    assert "Сравни новую историю с ANTI_REPEAT" not in prompt
     assert "Центральное событие заверши внутри эпизода" in prompt
     assert "ровно 3 смысловых абзаца" in prompt
     assert "4–5 предложений" in prompt
-    assert "ANTI_REPEAT" in prompt
-    assert "Используй список только как запрет на повтор" in prompt
-    assert "название: Искра у миски" in prompt
-    assert "ключевые мотивы: искра, падение" in prompt
+    assert "ANTI_REPEAT" not in prompt
+    assert "Искра у миски" not in prompt
+    assert "искра, падение" not in prompt
     assert "тип: accident" not in prompt
     assert "тон исхода: смешанный" not in prompt
     assert "предметы: мягкий камень" not in prompt
@@ -1423,6 +1418,7 @@ def test_background_story_aftermath_keeps_episode_but_ignores_ephemeral_lite_fac
                     "text": "На Олега однажды напала меловая тень.",
                     "pathHint": "lite_overlay.spheres.world",
                     "source": "background_story_aftermath",
+                    "durabilityType": "stable_location",
                     "confidence": 0.4,
                 }
             ],
@@ -1471,6 +1467,54 @@ def test_background_story_aftermath_keeps_episode_but_ignores_ephemeral_lite_fac
     assert result.recent_story_event["canonicalFacts"] == ["на Олега напала меловая тень"]
 
 
+def test_background_story_aftermath_rejects_invented_ability_but_keeps_injury() -> None:
+    story = background_story_service._normalize_story_payload(
+        {
+            "title": "Ледяной переход",
+            "summary": "Олег перешёл провал и поранил лапу.",
+            "storyText": "Олег сделал крыло мостом, перешёл провал и поранил лапу.",
+            "eventType": "accident",
+            "valence": "negative",
+            "tags": ["переход"],
+            "statImpacts": [],
+        }
+    )
+    raw_content = json.dumps(
+        {
+            "facts": [
+                {
+                    "sphere": "appearance",
+                    "kind": "appearance_fact",
+                    "text": "Крыло Олега умеет становиться нескользящим мостом.",
+                    "pathHint": "appearance.wing_bridge",
+                    "source": "background_story_aftermath",
+                    "durabilityType": "persistent_status",
+                    "confidence": 0.99,
+                },
+                {
+                    "sphere": "appearance",
+                    "kind": "appearance_fact",
+                    "text": "На лапе Олега осталась незажившая рана.",
+                    "pathHint": "appearance.injuries.paw",
+                    "source": "background_story_aftermath",
+                    "durabilityType": "lasting_injury",
+                    "confidence": 0.95,
+                },
+            ],
+            "recentEvent": {},
+        },
+        ensure_ascii=False,
+    )
+
+    patch, _event = background_story_service._parse_aftermath_extraction_payload(
+        raw_content,
+        story=story,
+    )
+
+    assert patch is not None
+    assert [fact["text"] for fact in patch["facts"]] == ["На лапе Олега осталась незажившая рана."]
+
+
 def test_background_story_aftermath_persists_acquired_item_and_relationship(
     monkeypatch,
 ) -> None:
@@ -1500,6 +1544,7 @@ def test_background_story_aftermath_persists_acquired_item_and_relationship(
                     "text": "У Олега есть теплая искра — подарок фонарщика.",
                     "pathHint": "lite_overlay.spheres.world",
                     "source": "background_story_aftermath",
+                    "durabilityType": "acquired_item",
                     "confidence": 0.95,
                 },
                 {
@@ -1508,6 +1553,7 @@ def test_background_story_aftermath_persists_acquired_item_and_relationship(
                     "text": "Олег знаком с фонарщиком, которому помог выбраться из веток.",
                     "pathHint": "lite_overlay.spheres.relationship",
                     "source": "background_story_aftermath",
+                    "durabilityType": "ongoing_relationship",
                     "confidence": 0.9,
                 },
             ],

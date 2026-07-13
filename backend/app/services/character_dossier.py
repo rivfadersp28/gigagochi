@@ -163,7 +163,11 @@ def effective_character_data(pet: Any) -> dict[str, Any]:
     return compact(result)
 
 
-def story_character_data(pet: Any) -> dict[str, Any]:
+def story_character_data(
+    pet: Any,
+    *,
+    include_durable_constraints: bool = True,
+) -> dict[str, Any]:
     """Return identity constraints without using the bible as a plot generator."""
     data = effective_character_data(pet)
     identity = _record(data.get("identity"))
@@ -182,9 +186,11 @@ def story_character_data(pet: Any) -> dict[str, Any]:
         "narrationVoice": {
             "rhythm": voice.get("rhythm"),
         },
-        "durableConstraints": [
-            {"sphere": item.get("sphere"), "text": item.get("text")} for item in relevant_facts
-        ],
+        "durableConstraints": (
+            [{"sphere": item.get("sphere"), "text": item.get("text")} for item in relevant_facts]
+            if include_durable_constraints
+            else []
+        ),
     }
 
     def compact(value: Any) -> Any:
