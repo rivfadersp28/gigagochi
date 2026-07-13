@@ -284,6 +284,10 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert "Прямая угроза убийством" in system_message
     assert "используй update_pet_name" in system_message
     assert "Ответь на последнее сообщение как этот персонаж." in system_message
+    assert "задай один конкретный уточняющий вопрос" in system_message
+    assert "короткий симметричный вопрос" in system_message
+    assert "Не задавай больше одного вопроса за реплику" in system_message
+    assert "а не звучать как анкета" in system_message
     assert "Верни только JSON" not in system_message
     assert request["response_format"]["json_schema"]["name"] == "visible_pet_reply"
     assert (
@@ -1350,12 +1354,15 @@ def test_ambient_prompt_receives_one_selected_dialogue_impulse(monkeypatch) -> N
     prompt = build_ambient_messages(payload)[0]["content"]
 
     assert (
-        "Разговорный импульс этой реплики: поделись внезапной мыслью или вопросом, "
-        "который тебя занимает." in prompt
+        "Разговорный импульс этой реплики: поделись внезапной мыслью "
+        "и спроси мнение собеседника." in prompt
     )
     assert "1–3 законченных коротких предложений" in prompt
     assert "Каждое предложение — не длиннее 40 символов." in prompt
     assert "Не обрывай мысль многоточием." in prompt
+    assert "чаще всего закончи её одним естественным вопросом" in prompt
+    assert "Не задавай больше одного вопроса за реплику" in prompt
+    assert "Иногда оставляй реплику без вопроса" in prompt
     assert "поприветствуй и прояви интерес к собеседнику" not in prompt
 
 
