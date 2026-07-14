@@ -1,0 +1,73 @@
+.root {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #666;
+  pointer-events: none;
+}
+
+.rootReady,
+.rootFailed {
+  background: transparent;
+}
+
+.video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.videoReady {
+  opacity: 1;
+}
+
+.shimmer {
+  position: absolute;
+  z-index: 100;
+  inset: 0;
+  overflow: hidden;
+  background: #666;
+  opacity: 1;
+  transition: opacity 220ms ease-out;
+}
+
+.shimmer::after {
+  position: absolute;
+  inset: -20% -80%;
+  content: "";
+  background: linear-gradient(
+    105deg,
+    transparent 38%,
+    rgba(255, 255, 255, 0.14) 50%,
+    transparent 62%
+  );
+  transform: translate3d(-35%, 0, 0);
+  animation: video-shimmer 1.45s ease-in-out infinite;
+}
+
+.shimmerHidden {
+  opacity: 0;
+}
+
+@keyframes video-shimmer {
+  to {
+    transform: translate3d(35%, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .video,
+  .shimmer {
+    transition: none;
+  }
+
+  .shimmer::after {
+    animation: none;
+  }
+}

@@ -1,7 +1,6 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
-import { useGlimm } from "glimm/react";
 import { Bug, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { flushSync } from "react-dom";
@@ -43,6 +42,7 @@ import {
 import { runLocalPetChatTurn } from "@/lib/localPetChatTurn";
 import { foodReactionPrompt, type FoodId } from "@/lib/localPetFood";
 import { playPetFeedSound, primePetFeedSound } from "@/lib/petFeedAudio";
+import { SmoothBackgroundVideo } from "@/components/SmoothBackgroundVideo";
 import { applyPetVoice, type PetVoiceMode } from "@/lib/petVoice";
 import {
   appendRecentAmbientReply,
@@ -215,30 +215,6 @@ function preloadImage(src: string) {
   });
 }
 
-function preloadVideo(src: string) {
-  return new Promise<void>((resolve, reject) => {
-    const video = document.createElement("video");
-    const cleanup = () => {
-      video.onloadeddata = null;
-      video.onerror = null;
-    };
-
-    video.preload = "auto";
-    video.muted = true;
-    video.playsInline = true;
-    video.onloadeddata = () => {
-      cleanup();
-      resolve();
-    };
-    video.onerror = () => {
-      cleanup();
-      reject(new Error(`Failed to load video: ${src}`));
-    };
-    video.src = src;
-    video.load();
-  });
-}
-
 const feedFoodAssets = [
   {
     id: "berry-bowl",
@@ -274,7 +250,6 @@ function isPointNearRect(clientX: number, clientY: number, rect: DOMRect, paddin
 
 export function PetDashboard({ petId }: PetDashboardProps) {
   const router = useRouter();
-  const { sweep } = useGlimm();
   const localPet = useLocalPetState();
   const {
     canvasRef: petTapBulgeCanvasRef,
@@ -305,11 +280,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
   const [assetsReadyForPetId, setAssetsReadyForPetId] = useState<string | null>(null);
   const [assetLoadErrorForPetId, setAssetLoadErrorForPetId] = useState<string | null>(null);
-  const [loadedSceneMedia, setLoadedSceneMedia] = useState<{
-    petId: string;
-    backgroundSrc: string;
-    videoSrc: string | null;
-  } | null>(null);
   const proactiveAttemptedRef = useRef(false);
   const ambientRequestIdRef = useRef(0);
   const idleThinkingRequestIdRef = useRef(0);
@@ -412,12 +382,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const requestedSceneVideoSrc = visualPet && !isPetDead
     ? generatedSceneVideoUrl(visualPet, visualMode)
     : null;
-  const sceneBackgroundSrc = loadedSceneMedia?.petId === petId
-    ? loadedSceneMedia.backgroundSrc
-    : requestedSceneBackgroundSrc;
-  const sceneVideoSrc = loadedSceneMedia?.petId === petId
-    ? loadedSceneMedia.videoSrc
-    : requestedSceneVideoSrc;
+  const sceneBackgroundSrc = requestedSceneBackgroundSrc;
+  const sceneVideoSrc = requestedSceneVideoSrc;
   const conversationInputOffsetY = useConversationKeyboardOffset(isChatMode, sceneRef);
   usePetBackgroundAssets({
     assetSet: pet?.assetSet,
@@ -480,66 +446,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     pet,
     petId,
     sceneBackgroundSrc,
-  ]);
-
-  useEffect(() => {
-    if (
-      assetsReadyForPetId !== petId
-      || !requestedSceneBackgroundSrc
-      || (
-        loadedSceneMedia?.petId === petId
-        && loadedSceneMedia.backgroundSrc === requestedSceneBackgroundSrc
-        && loadedSceneMedia.videoSrc === requestedSceneVideoSrc
-      )
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-    const imageReady = preloadImage(requestedSceneBackgroundSrc);
-    const videoReady = requestedSceneVideoSrc
-      ? preloadVideo(requestedSceneVideoSrc)
-      : Promise.resolve();
-
-    void Promise.all([imageReady, videoReady]).then(() => {
-      if (cancelled) {
-        return;
-      }
-
-      const nextSceneMedia = {
-        petId,
-        backgroundSrc: requestedSceneBackgroundSrc,
-        videoSrc: requestedSceneVideoSrc,
-      };
-      const isVisibleReplacement = document.visibilityState === "visible"
-        && loadedSceneMedia?.petId === petId;
-
-      if (!isVisibleReplacement) {
-        setLoadedSceneMedia(nextSceneMedia);
-        return;
-      }
-
-      sweep(() => {
-        if (!cancelled) {
-          flushSync(() => {
-            setLoadedSceneMedia(nextSceneMedia);
-          });
-        }
-      });
-    }).catch(() => {
-      // Keep the currently rendered media if a generated variant cannot be preloaded.
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    assetsReadyForPetId,
-    loadedSceneMedia,
-    petId,
-    requestedSceneBackgroundSrc,
-    requestedSceneVideoSrc,
-    sweep,
   ]);
 
   const showPetReplyMessage = useCallback((
@@ -1529,16 +1435,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             draggable={false}
           />
           {sceneVideoSrc ? (
-            <video
-              ref={sceneVideoRef}
+            <SmoothBackgroundVideo
               src={sceneVideoSrc}
-              poster={sceneBackgroundSrc}
-              className="main-scene-background"
-              autoPlay
-              loop
-              muted
-              playsInline
-              preload="auto"
+              className="main-scene-video"
+              onActiveVideoChange={(video) => {
+                sceneVideoRef.current = video;
+              }}
             />
           ) : null}
           <canvas
