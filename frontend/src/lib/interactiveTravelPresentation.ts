@@ -9,6 +9,7 @@ import type {
 } from "./types";
 
 export const INTERACTIVE_TRAVEL_BUBBLE_MAX_CHARACTERS = 64;
+const CHARACTER_FOREGROUND_CACHE_VERSION = "20260714-1";
 
 export type ResolvedInteractiveTravelPart = InteractiveTravelPart & {
   result: InteractiveTravelResult;
@@ -102,7 +103,12 @@ export function interactiveTravelCharacterImageUrl(pet: LocalPetState): string |
     return null;
   }
 
-  return `${path.slice(0, slashIndex + 1)}teen-idle-foreground.png${suffix}`;
+  const foregroundUrl = `${path.slice(0, slashIndex + 1)}teen-idle-foreground.png${suffix}`;
+  const hashIndex = foregroundUrl.indexOf("#");
+  const hash = hashIndex >= 0 ? foregroundUrl.slice(hashIndex) : "";
+  const urlWithoutHash = hashIndex >= 0 ? foregroundUrl.slice(0, hashIndex) : foregroundUrl;
+  const separator = urlWithoutHash.includes("?") ? "&" : "?";
+  return `${urlWithoutHash}${separator}travel_foreground_v=${CHARACTER_FOREGROUND_CACHE_VERSION}${hash}`;
 }
 
 export function patchInteractiveTravelPartBackground(

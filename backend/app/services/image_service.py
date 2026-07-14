@@ -2259,6 +2259,27 @@ def normalize_single_sprite_image(image_bytes: bytes) -> bytes:
         return buffer.getvalue()
 
 
+def make_character_foreground_image_bytes(image_bytes: bytes) -> bytes:
+    with Image.open(BytesIO(image_bytes)) as image:
+        foreground = image.convert("RGBA")
+        transparent = (255, 255, 255, 0)
+        corners = (
+            (0, 0),
+            (foreground.width - 1, 0),
+            (0, foreground.height - 1),
+            (foreground.width - 1, foreground.height - 1),
+        )
+        for corner in corners:
+            if foreground.getpixel(corner)[3] > 0:
+                ImageDraw.floodfill(foreground, corner, transparent, thresh=48)
+
+        alpha = foreground.getchannel("A").filter(ImageFilter.GaussianBlur(radius=0.8))
+        foreground.putalpha(alpha)
+        buffer = BytesIO()
+        foreground.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
 def align_sprite_to_reference_canvas(image_bytes: bytes, reference_path: Path) -> bytes:
     with Image.open(BytesIO(image_bytes)) as image, Image.open(reference_path) as reference:
         sprite_image = image.convert("RGBA")
@@ -2401,6 +2422,8 @@ def generate_individual_sprite_image_paths(
 
         character_path = output_dir / f"{stage}-{state}-character.png"
         character_path.write_bytes(sprite_bytes)
+        foreground_path = output_dir / f"{stage}-{state}-foreground.png"
+        foreground_path.write_bytes(make_character_foreground_image_bytes(sprite_bytes))
 
         path = output_dir / f"{stage}-{state}.png"
         scene_bytes = generate_pet_scene_image_bytes(

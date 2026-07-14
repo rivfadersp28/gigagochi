@@ -136,7 +136,7 @@ describe("interactive travel assets", () => {
         pet("generated-pet", "https://cdn.example/pets/abc/teen-idle.png?token=one&v=2"),
       ),
     ).toBe(
-      "https://cdn.example/pets/abc/teen-idle-foreground.png?token=one&v=2",
+      "https://cdn.example/pets/abc/teen-idle-foreground.png?token=one&v=2&travel_foreground_v=20260714-1",
     );
   });
 

@@ -332,7 +332,7 @@ describe("InteractiveTravelScreen", () => {
     );
     expect(screen.getByRole("img", { name: "Листик" })).toHaveAttribute(
       "src",
-      "/teen-idle-foreground.png",
+      "/teen-idle-foreground.png?travel_foreground_v=20260714-1",
     );
     expect(screen.getByRole("button", { name: "Создать новую историю" })).toBeInTheDocument();
   });

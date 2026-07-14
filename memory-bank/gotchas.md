@@ -142,6 +142,9 @@
 - The dashboard background is now the generated composed pet scene. Do not add
   a separate centered pet sprite, shadow, blink overlay, tap animation, or
   background-removal step unless the visual pipeline is intentionally changed.
+- Interactive travel is the exception: its intro renders a separate transparent
+  pet layer. Generation must persist `teen-idle-foreground.png` alongside the
+  opaque `teen-idle-character.png`; existing pets need that foreground migrated.
 - Pet scene poster and video first frame must stay the same `720x1280` 9:16
   PNG. Do not send the raw composed `1024x1536` image directly to the video model or
   use it as the dashboard poster; the aspect mismatch can reintroduce initial
