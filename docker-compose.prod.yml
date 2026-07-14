@@ -55,6 +55,7 @@ services:
       GENERATION_VIDEO_WORKERS: "20"
       GENERATION_MAX_QUEUED_JOBS: "40"
       GENERATION_JOB_STORE_PATH: "/app/data/push/generation_jobs.sqlite3"
+      OPENROUTER_VIDEO_MODEL: "x-ai/grok-imagine-video"
       OPENAI_MAX_RETRIES: "2"
       OPS_ALERTS_ENABLED: "true"
       OPS_ALERT_TELEGRAM_IDS: "[62943754]"

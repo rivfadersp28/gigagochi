@@ -22,6 +22,7 @@ from app.services.character_dossier import story_character_data
 from app.services.image_service import (
     generate_image_bytes,
     generate_video_from_image_bytes,
+    strip_generated_video_auxiliary_streams,
 )
 from app.services.lite_overlay import (
     LITE_FACT_KINDS,
@@ -91,19 +92,21 @@ BACKGROUND_STORY_VIDEO_RESOLUTION = "720p"
 BACKGROUND_STORY_VIDEO_ASPECT_RATIO = "16:9"
 BACKGROUND_STORY_VIDEO_DURATION_SECONDS = 4
 BACKGROUND_STORY_VIDEO_PROMPT = (
-    "Static locked camera. Keep the exact same framing, composition, camera angle, "
-    "perspective, scale, lighting, colors, focus, depth of field, and background. The camera "
-    "never moves. No zoom, pan, tilt, rotation, handheld motion, or reframing.\n\n"
-    "Animate the scene with only very subtle natural life. A gentle breeze softly moves loose "
-    "fabric, scarves, grass, leaves, small plants, hanging ornaments, ropes, and tiny strands of "
-    "fur. The character occasionally performs a slow natural blink and a barely noticeable "
-    "breathing motion. Small environmental details may sway slightly, and water, dust, mist, or "
-    "tiny floating particles can move gently if present. Preserve the calm, melancholic "
-    "atmosphere.\n\n"
-    "No walking, no body movement, no head turns, no arm movement, no facial expression changes, "
-    "no lip movement, no object displacement, no new elements, no physics changes, and no "
-    "dramatic animation. Everything remains almost perfectly still, with only delicate ambient "
-    "motion that makes the scene feel quietly alive."
+    "Handcrafted stop-motion miniature animation with deliberately slow, restrained timing. "
+    "Animate in distinct held poses at about 6 frames per second while presenting the final "
+    "clip at 24 fps. Avoid smooth digital interpolation. Preserve the tactile clay, fabric, wood "
+    "and painted miniature materials of the source image.\n\n"
+    "Static locked camera. Keep the exact same framing, composition, camera angle, perspective, "
+    "scale, lighting, colors, focus, depth of field and background. No zoom, pan, tilt, rotation, "
+    "handheld motion or reframing.\n\n"
+    "Continue only the action already visible in the still image, and only by a very small amount: "
+    "a hand, tool or held object may advance a few millimeters over several stepped poses, then "
+    "settle. Do not invent a new action. The main character may perform one slow blink and barely "
+    "noticeable breathing. A gentle breeze may softly move loose fabric, grass, leaves, hanging "
+    "ornaments or fur. Water, dust, mist or tiny particles may move subtly if already present.\n\n"
+    "No walking, large body movement, head turn, broad arm gesture, expression change, lip movement, "
+    "object relocation, new element, physics change or dramatic animation. The scene should feel "
+    "quietly alive through sparse, slow, visibly handcrafted stop-motion beats."
 )
 BACKGROUND_STORY_IMAGE_POSE_FAMILIES = (
     "locomotion",
@@ -1321,13 +1324,15 @@ def generate_background_story_image_bytes(
 
 
 def generate_background_story_video_bytes(image_bytes: bytes) -> bytes:
-    return generate_video_from_image_bytes(
-        image_bytes,
-        label="background_story/video",
-        prompt=BACKGROUND_STORY_VIDEO_PROMPT,
-        resolution=BACKGROUND_STORY_VIDEO_RESOLUTION,
-        aspect_ratio=BACKGROUND_STORY_VIDEO_ASPECT_RATIO,
-        duration=BACKGROUND_STORY_VIDEO_DURATION_SECONDS,
+    return strip_generated_video_auxiliary_streams(
+        generate_video_from_image_bytes(
+            image_bytes,
+            label="background_story/video",
+            prompt=BACKGROUND_STORY_VIDEO_PROMPT,
+            resolution=BACKGROUND_STORY_VIDEO_RESOLUTION,
+            aspect_ratio=BACKGROUND_STORY_VIDEO_ASPECT_RATIO,
+            duration=BACKGROUND_STORY_VIDEO_DURATION_SECONDS,
+        )
     )
 
 

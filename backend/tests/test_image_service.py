@@ -64,6 +64,7 @@ from app.services.image_service import (
     normalize_pet_scene_video_frame_bytes,
     pet_character_region_box,
     render_ping_pong_video_bytes,
+    strip_generated_video_auxiliary_streams,
 )
 from app.services.tone_runtime import tone_context_payload
 
@@ -122,14 +123,39 @@ def test_ping_pong_video_trims_seedance_preroll_before_reversing(
     assert command[command.index("-video_track_timescale") + 1] == "12288"
 
 
+def test_strip_generated_video_auxiliary_streams_keeps_only_primary_video(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(command: list[str], **_kwargs: Any) -> SimpleNamespace:
+        captured["command"] = command
+        Path(command[-1]).write_bytes(b"main-video-only")
+        return SimpleNamespace()
+
+    monkeypatch.setattr("app.services.image_service.subprocess.run", fake_run)
+
+    assert strip_generated_video_auxiliary_streams(b"grok-video") == b"main-video-only"
+    command = captured["command"]
+    assert command[command.index("-map") + 1] == "0:v:0"
+    assert "-an" in command
+    assert command[command.index("-c:v") + 1] == "copy"
+    assert command[command.index("-movflags") + 1] == "+faststart"
+
+
 @pytest.mark.parametrize(
-    ("resolved_provider", "expected_start_offset"),
-    [("openrouter", 0.2), ("kandinsky", 0.1)],
+    ("resolved_provider", "video_model", "expected_start_offset"),
+    [
+        ("openrouter", "bytedance/seedance-2.0", 0.2),
+        ("openrouter", "x-ai/grok-imagine-video", 0.1),
+        ("kandinsky", "x-ai/grok-imagine-video", 0.1),
+    ],
 )
-def test_pet_scene_video_uses_provider_specific_preroll_trim(
+def test_pet_scene_video_uses_model_specific_preroll_trim(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     resolved_provider: str,
+    video_model: str,
     expected_start_offset: float,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -151,6 +177,10 @@ def test_pet_scene_video_uses_provider_specific_preroll_trim(
     monkeypatch.setattr("app.services.image_service.get_media_router", FakeRouter)
     monkeypatch.setattr("app.services.image_service.get_media_gateway", FakeGateway)
     monkeypatch.setattr("app.services.image_service.render_ping_pong_video_bytes", fake_render)
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(openrouter_video_model=video_model),
+    )
 
     assert generate_pet_scene_video_bytes(scene_path) == b"ping-pong-video"
     assert captured == {
@@ -1127,7 +1157,7 @@ def test_generate_openrouter_video_bytes_uses_fixed_aspect_ratio(monkeypatch, tm
     assert result == b"video-bytes"
     assert captured["url"] == "https://openrouter.ai/api/v1/videos"
     assert captured["timeout"] == 60
-    assert captured["json"]["resolution"] == "720p"
+    assert captured["json"]["resolution"] == "480p"
     assert captured["json"]["aspect_ratio"] == "9:16"
     assert "size" not in captured["json"]
     assert captured["json"]["frame_images"][0]["frame_type"] == "first_frame"

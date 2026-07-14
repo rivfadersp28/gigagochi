@@ -142,8 +142,8 @@
 - The dashboard background is now the generated composed pet scene. Do not add
   a separate centered pet sprite, shadow, blink overlay, tap animation, or
   background-removal step unless the visual pipeline is intentionally changed.
-- Pet scene image and Seedance first frame must stay the same `720x1280` 9:16
-  PNG. Do not send the raw composed `1024x1536` image directly to Seedance or
+- Pet scene poster and video first frame must stay the same `720x1280` 9:16
+  PNG. Do not send the raw composed `1024x1536` image directly to the video model or
   use it as the dashboard poster; the aspect mismatch can reintroduce initial
   reframe/jitter.
 - Seedance can preserve its input image for the first two frames and then
@@ -164,6 +164,9 @@
   Trim the provider video's low-motion final 0.35 seconds before reversing; removing only an exact
   duplicate endpoint frame still leaves a visible hold because i2v providers often settle before
   the nominal end. Production backend images therefore require the `ffmpeg` and `ffprobe` binaries.
+- Grok may return AAC audio and an attached MJPEG preview even with
+  `generate_audio=false`. Story videos must pass through
+  `strip_generated_video_auxiliary_streams` before persistence or Telegram delivery.
 - Pet creation waits only for the required OpenRouter idle video after image
   composition. Its failure still fails creation, but sad image/video failures
   are best-effort and must keep the base `result`. Keep each image stage in the

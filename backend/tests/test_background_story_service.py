@@ -456,10 +456,15 @@ def test_background_story_video_uses_locked_16_by_9_contract(monkeypatch) -> Non
         "generate_video_from_image_bytes",
         fake_video,
     )
+    monkeypatch.setattr(
+        background_story_service,
+        "strip_generated_video_auxiliary_streams",
+        lambda video_bytes: b"clean-" + video_bytes,
+    )
 
     result = background_story_service.generate_background_story_video_bytes(b"story-image")
 
-    assert result == b"story-video"
+    assert result == b"clean-story-video"
     assert captured["image_bytes"] == b"story-image"
     assert captured["aspect_ratio"] == "16:9"
     assert captured["resolution"] == "720p"

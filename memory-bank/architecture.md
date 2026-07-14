@@ -404,9 +404,9 @@
   to a multi-image edit prompt: `Добавь персонажа с первой картинки на вторую`.
   The raw composed image is center-cropped/resized to `720x1280` before saving as
   `teen-idle.png`; that exact PNG is also sent as the `first_frame` to OpenRouter
-  Videos API with `OPENROUTER_VIDEO_MODEL` (default `bytedance/seedance-2.0`),
-  `resolution=720p`, `aspect_ratio=9:16`, `duration=4`, `generate_audio=false`,
-  and a locked-camera blink-only prompt. The saved public `assetSet.images` point
+  Videos API with `OPENROUTER_VIDEO_MODEL` (default `x-ai/grok-imagine-video`),
+  `resolution=480p`, `aspect_ratio=9:16`, `duration=4`, `generate_audio=false`,
+  and a locked-camera prompt for one slow stepped stop-motion blink. The saved public `assetSet.images` point
   to the normalized scene PNG and `assetSet.videoUrl` points to the generated
   mp4. As soon as that required MP4 is saved, the running job exposes its base
   `result` and the frontend creates the pet and enters the dashboard. The same

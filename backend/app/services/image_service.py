@@ -254,14 +254,17 @@ PET_SCENE_BACKGROUND_PATH = (
     Path(__file__).resolve().parents[2] / "static" / "backgrounds" / "pet-generation-forest.png"
 )
 PET_SCENE_VIDEO_PROMPT = (
-    "Static locked camera. The character remains perfectly still in the exact same pose, "
-    "position, scale, composition, lighting, colors, facial expression, clothing, props, "
-    "background, focus, depth of field and camera angle. Do not move the head, body, ears, "
-    "tail, mouth, nose, hands, clothing or any object. Do not change the environment or "
-    "framing. The only animation is a natural blinks. No eye movement, no pupil movement, "
-    "no expression change, no camera motion, no lighting changes, no color shifts, no "
-    "additional effects. Preserve every pixel of the original image except for the eyelids "
-    "during the blink."
+    "Handcrafted stop-motion animation with a static locked camera and deliberately slow, "
+    "restrained timing. Hold each pose for several frames so the motion has a tactile stepped "
+    "cadence, like a puppet animated at about 6 frames per second and presented at 24 fps. "
+    "The character remains perfectly still in the exact same pose, position, scale, "
+    "composition, lighting, colors, facial expression, clothing, props, background, focus, "
+    "depth of field and camera angle. The only action is exactly one slow natural blink: the "
+    "eyelids close in three or four small stop-motion steps, hold closed for one short beat, "
+    "then reopen in three or four small steps. Keep the eyes open for the rest of the clip. "
+    "Do not move the pupils, head, body, ears, tail, mouth, nose, hands, clothing or any object. "
+    "No expression change, camera motion, reframing, lighting change, color shift, morphing, "
+    "new object or additional effect. Preserve the original image everywhere except the eyelids."
 )
 KANDINSKY_PET_SCENE_VIDEO_PROMPT = (
     "Статичная зафиксированная камера. Персонаж остаётся на том же месте, в том же масштабе и "
@@ -358,7 +361,7 @@ PET_SAD_SCENE_VIDEO_PROMPT = (
     "the subtle eyelid trembling."
 )
 PET_SCENE_VIDEO_SIZE = "720x1280"
-PET_SCENE_VIDEO_RESOLUTION = "720p"
+PET_SCENE_VIDEO_RESOLUTION = "480p"
 PET_SCENE_VIDEO_ASPECT_RATIO = "9:16"
 PET_SCENE_VIDEO_DURATION_SECONDS = 4
 SPRITE_FOREGROUND_DISTANCE = 28
@@ -1997,6 +2000,42 @@ def render_ping_pong_video_bytes(
         return output_bytes
 
 
+def strip_generated_video_auxiliary_streams(video_bytes: bytes) -> bytes:
+    """Keep only the primary video stream for Telegram-safe generated MP4 output."""
+    if not video_bytes:
+        raise ValueError("video_bytes must not be empty")
+
+    with TemporaryDirectory(prefix="generated-video-main-stream-") as temp_dir_value:
+        temp_dir = Path(temp_dir_value)
+        source_path = temp_dir / "source.mp4"
+        output_path = temp_dir / "main-stream.mp4"
+        source_path.write_bytes(video_bytes)
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(source_path),
+                "-map",
+                "0:v:0",
+                "-an",
+                "-c:v",
+                "copy",
+                "-movflags",
+                "+faststart",
+                str(output_path),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        output_bytes = output_path.read_bytes()
+        if not output_bytes:
+            raise RuntimeError("FFmpeg produced an empty primary-stream video")
+        return output_bytes
+
+
 def pet_character_region_box(scene_size: tuple[int, int]) -> tuple[int, int, int, int]:
     scene_width, scene_height = scene_size
     target_width, target_height = _parse_pixel_size(PET_CHARACTER_REGION_SIZE)
@@ -2321,6 +2360,7 @@ def generate_pet_scene_video_bytes(
     start_offset_seconds = (
         SEEDANCE_PET_SCENE_VIDEO_START_OFFSET_SECONDS
         if resolved_provider == "openrouter"
+        and "seedance" in get_openrouter_video_model(get_settings()).lower()
         else PET_SCENE_VIDEO_START_OFFSET_SECONDS
     )
     return render_ping_pong_video_bytes(
