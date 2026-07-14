@@ -403,15 +403,16 @@
 - Dashboard status arcs must render from live pet stats through
   `StatProgressRing`. The exported `status-*-new.svg` files contain baked arcs
   and cannot visually reflect chat, feeding, story, or decay changes.
-- Main-screen pet tap feedback uses the generated `teen-tap.png` scene for 180 ms
-  while pausing the video. Its generation must reuse the same two-pass fixed-crop
-  pipeline as `generate_pet_happy_scene_path`: edit the extracted character region,
-  refine it against the original region to restore composition/background, then
-  feather-composite it into the idle scene. A one-pass crop creates a visible square;
-  a full-scene edit shifts the character. The reaction has heart-shaped eyes and an
-  open mouth, with no client-side floating hearts. Legacy localStorage pets derive
-  the stable filename from their idle URL, so the corresponding file must be
-  backfilled before their reaction becomes available.
+- Main-screen pet tap feedback must not pause the mood video or swap it for the
+  generated `teen-tap.png` scene: separately generated frames visibly shift the
+  character and background. The dashboard now uploads the current active video
+  frame into a short-lived WebGL canvas and applies a circular radial bulge centered
+  on the tap for 180 ms, with a roughly 190 px screen-space radius. Keep the canvas
+  on the exact centered `9:16` media rectangle rather than stretching it to the
+  mobile scene, cap its device scale at 2, and stop every `requestAnimationFrame`
+  loop at the bounded deadline. Each tap may add an independent `partycles` burst,
+  stacked sound and light haptic feedback; reduced-motion mode suppresses particles
+  and weakens/shortens the distortion.
 - Server-generated story stat changes must sync back to Mini App through a
   partial `statsPatch`. Do not replace the whole stats object unless every
   `lastStatTickAt` key is also reset consistently; otherwise independent decay

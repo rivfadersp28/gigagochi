@@ -34,6 +34,7 @@ import {
   writeLocalPetMemory,
 } from "@/lib/localPetMemoryStorage";
 import { primePetSpeechAudio, stopPetSpeechAudio } from "@/lib/petSpeechAudio";
+import { playPetTapSound, primePetTapSound } from "@/lib/petTapAudio";
 import {
   recordMemoryContextDebug,
   recordReplyPromptDebug,
@@ -78,6 +79,7 @@ import { ErrorNotice } from "./ErrorNotice";
 import { DraggableFoodToken, type FoodAsset } from "./pet-dashboard/DraggableFoodToken";
 import type { PetReplyMessage } from "./pet-dashboard/PetCharacterMessage";
 import { PetSpeechBubble } from "./pet-dashboard/PetSpeechBubble";
+import { PetTapParticleBurst } from "./pet-dashboard/PetTapParticleBurst";
 import {
   PET_THINKING_FRAME_SOURCES,
   PET_THINKING_MIN_VISIBLE_MS,
@@ -85,13 +87,14 @@ import {
 } from "./pet-dashboard/PetThinkingIndicator";
 import { StatProgressRing } from "./pet-dashboard/StatProgressRing";
 import { TravelStoryOverlay } from "./pet-dashboard/TravelStoryOverlay";
+import { shouldReduceMotion } from "./pet-dashboard/motion";
 import { storyHistoryFromPet } from "./pet-dashboard/storyHistory";
+import { usePetTapBulge } from "./pet-dashboard/usePetTapBulge";
 import { useConversationKeyboardOffset } from "./pet-dashboard/useConversationKeyboardOffset";
 import { usePetBackgroundAssets } from "./pet-dashboard/usePetBackgroundAssets";
 import { usePetPushSnapshotSync } from "./pet-dashboard/usePetPushSnapshotSync";
 import {
   generatedSceneVideoUrl,
-  generatedTapReactionImageUrl,
   generatedVisualPosterUrl,
   hasGeneratedHappyAssets,
   hasGeneratedSadAssets,
@@ -116,6 +119,12 @@ type ShowPetReplyOptions = {
   voiceMode?: PetVoiceMode;
   maxPortions?: number;
   autoAdvanceDelayMs?: number;
+};
+
+type PetTapParticleBurstState = {
+  id: number;
+  x: number;
+  y: number;
 };
 
 type ConfirmationAction = "resetPet" | "resetStats" | "openTestPet" | "killPet";
@@ -159,7 +168,6 @@ const VIDEO_FILTER_CACHE_VERSION = "20260713-video-filter-lossless-webp-1";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
 const TRAVEL_ENTRY_BACKGROUND_VIDEO =
   "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-1";
-const TAP_REACTION_DURATION_MS = 180;
 const PET_SCENE_ASPECT_RATIO = 720 / 1280;
 const PET_TAP_REGION = {
   left: 120 / 720,
@@ -262,6 +270,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const router = useRouter();
   const { sweep } = useGlimm();
   const localPet = useLocalPetState();
+  const {
+    canvasRef: petTapBulgeCanvasRef,
+    isBulgeVisible: isPetTapBulgeVisible,
+    triggerPetTapBulge,
+  } = usePetTapBulge();
   const applyGeneratedAssets = localPet.applyGeneratedAssets;
   const [isFeeding, setIsFeeding] = useState(false);
   const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
@@ -280,8 +293,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [feedReplyMessageId, setFeedReplyMessageId] = useState<number | null>(null);
   const [feedError, setFeedError] = useState<PresentedError | null>(null);
   const [feedSuccessId, setFeedSuccessId] = useState(0);
-  const [isTapReactionVisible, setIsTapReactionVisible] = useState(false);
-  const [loadedTapReactionSrc, setLoadedTapReactionSrc] = useState<string | null>(null);
+  const [petTapParticleBursts, setPetTapParticleBursts] = useState<PetTapParticleBurstState[]>([]);
   const [includePromptDebug] = useState(() => readLocalPetSettings().includePromptDebug);
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
   const [assetsReadyForPetId, setAssetsReadyForPetId] = useState<string | null>(null);
@@ -303,9 +315,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const chatInputRef = useRef<HTMLInputElement>(null);
   const sceneRef = useRef<HTMLElement>(null);
   const sceneVideoRef = useRef<HTMLVideoElement>(null);
+  const petTapParticleBurstIdRef = useRef(0);
   const feedDropTargetRef = useRef<HTMLDivElement>(null);
-  const tapReactionTimeoutRef = useRef<number | null>(null);
-  const tapReactionWasPlayingRef = useRef(false);
   const foodReactionRequestIdRef = useRef(0);
   const foodReactionAbortRef = useRef<AbortController | null>(null);
   const isSendingChatRef = useRef(false);
@@ -321,17 +332,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     ambientRequestIdRef.current += 1;
     idleThinkingRequestIdRef.current += 1;
     setIsGeneratingIdleReply(false);
-  }, []);
-  const finishTapReaction = useCallback(() => {
-    if (tapReactionTimeoutRef.current !== null) {
-      window.clearTimeout(tapReactionTimeoutRef.current);
-      tapReactionTimeoutRef.current = null;
-    }
-    setIsTapReactionVisible(false);
-    if (tapReactionWasPlayingRef.current) {
-      void sceneVideoRef.current?.play().catch(() => undefined);
-    }
-    tapReactionWasPlayingRef.current = false;
   }, []);
   const beginIdleThinking = useCallback(() => {
     const requestId = idleThinkingRequestIdRef.current + 1;
@@ -400,12 +400,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const sceneVideoSrc = loadedSceneMedia?.petId === petId
     ? loadedSceneMedia.videoSrc
     : requestedSceneVideoSrc;
-  const requestedTapReactionSrc = pet && !isPetDead && effectiveVisualProvider === "openai"
-    ? generatedTapReactionImageUrl(pet)
-    : null;
-  const tapReactionSrc = loadedTapReactionSrc === requestedTapReactionSrc
-    ? loadedTapReactionSrc
-    : null;
   const conversationInputOffsetY = useConversationKeyboardOffset(isChatMode, sceneRef);
   usePetBackgroundAssets({
     assetSet: pet?.assetSet,
@@ -426,30 +420,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   useEffect(() => {
     ambientReplyHistoryRef.current = readRecentAmbientReplies(petId);
   }, [petId]);
-
-  useEffect(() => finishTapReaction, [finishTapReaction]);
-
-  useEffect(() => {
-    if (!requestedTapReactionSrc) {
-      return;
-    }
-
-    let cancelled = false;
-    void preloadImage(requestedTapReactionSrc)
-      .then(() => {
-        if (!cancelled) {
-          setLoadedTapReactionSrc(requestedTapReactionSrc);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLoadedTapReactionSrc(null);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [requestedTapReactionSrc]);
 
   useEffect(() => {
     if (
@@ -737,6 +707,20 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     setIsFeedMode(false);
   }, []);
 
+  const triggerPetTapParticles = useCallback((x: number, y: number) => {
+    if (shouldReduceMotion()) {
+      return;
+    }
+
+    const id = petTapParticleBurstIdRef.current + 1;
+    petTapParticleBurstIdRef.current = id;
+    setPetTapParticleBursts((current) => [...current, { id, x, y }]);
+  }, []);
+
+  const removePetTapParticleBurst = useCallback((burstId: number) => {
+    setPetTapParticleBursts((current) => current.filter((burst) => burst.id !== burstId));
+  }, []);
+
   const handleMainScreenTap = useCallback((event: MouseEvent<HTMLElement>) => {
     if (
       isChatMode
@@ -772,7 +756,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       || isStoryHistoryOpen
       || confirmationAction
       || isPetDead
-      || !tapReactionSrc
       || event.pointerType === "mouse" && event.button !== 0
     ) {
       return;
@@ -801,29 +784,25 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
 
-    if (tapReactionTimeoutRef.current === null) {
-      const video = sceneVideoRef.current;
-      tapReactionWasPlayingRef.current = Boolean(video && !video.paused && !video.ended);
-      video?.pause();
-    } else {
-      window.clearTimeout(tapReactionTimeoutRef.current);
-    }
-
-    setIsTapReactionVisible(true);
+    triggerPetTapBulge({
+      video: sceneVideoRef.current,
+      mediaWidth,
+      mediaHeight: sceneRect.height,
+      normalizedX,
+      normalizedY,
+    });
+    triggerPetTapParticles(event.clientX, event.clientY);
+    void playPetTapSound();
     hapticImpact("light");
-    tapReactionTimeoutRef.current = window.setTimeout(
-      finishTapReaction,
-      TAP_REACTION_DURATION_MS,
-    );
   }, [
     confirmationAction,
-    finishTapReaction,
     isChatMode,
     isDebugPanelOpen,
     isFeedMode,
     isPetDead,
     isStoryHistoryOpen,
-    tapReactionSrc,
+    triggerPetTapBulge,
+    triggerPetTapParticles,
   ]);
 
   const handleTelegramBack = useCallback(() => {
@@ -848,6 +827,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, []);
 
   useEffect(() => {
+    primePetTapSound();
     primePetFeedSound();
   }, []);
 
@@ -1476,16 +1456,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               preload="auto"
             />
           ) : null}
-          {isTapReactionVisible ? (
-            <div className="pet-tap-reaction" aria-hidden="true">
-              <img
-                src={tapReactionSrc ?? sceneBackgroundSrc}
-                alt=""
-                className="main-scene-background"
-                draggable={false}
-              />
-            </div>
-          ) : null}
+          <canvas
+            ref={petTapBulgeCanvasRef}
+            className={`main-scene-background pet-tap-bulge ${
+              isPetTapBulgeVisible ? "pet-tap-bulge--visible" : ""
+            }`}
+            aria-hidden="true"
+          />
           <img
             src={videoFilterSrc}
             alt=""
@@ -1493,6 +1470,16 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             draggable={false}
           />
         </div>
+
+        {petTapParticleBursts.map((burst) => (
+          <PetTapParticleBurst
+            key={burst.id}
+            id={burst.id}
+            x={burst.x}
+            y={burst.y}
+            onComplete={removePetTapParticleBurst}
+          />
+        ))}
 
         <div ref={feedDropTargetRef} className="feed-drop-target" aria-hidden="true" />
 

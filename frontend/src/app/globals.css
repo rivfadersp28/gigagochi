@@ -374,13 +374,17 @@ body {
   user-select: none;
 }
 
-.pet-tap-reaction {
-  position: absolute;
-  inset: 0;
+.pet-tap-bulge {
   z-index: 1;
-  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
   pointer-events: none;
   user-select: none;
+}
+
+.pet-tap-bulge--visible {
+  opacity: 1;
+  visibility: visible;
 }
 
 .feed-drop-target {
