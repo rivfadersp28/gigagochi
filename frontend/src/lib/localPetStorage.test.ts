@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyOfflineProgress, applyStatsPatch } from "./localPetStats";
+import { applyOfflineProgress, applyPetTap, applyStatsPatch } from "./localPetStats";
 import { createLocalPetState } from "./localPetStorage";
 import type { LocalPetState } from "./types";
 
@@ -36,6 +36,27 @@ describe("localPetStats", () => {
       happiness: 100,
       energy: 100,
     });
+    expect(createLocalPetState("мышонок").petTapProgress).toBe(0);
+  });
+
+  it("adds 15 happiness on every fifth pet tap and clamps at 100", () => {
+    let state: LocalPetState = { ...petState(), petTapProgress: 0 };
+
+    for (let tap = 1; tap <= 4; tap += 1) {
+      const result = applyPetTap(state);
+      state = result.state;
+      expect(result.rewarded).toBe(false);
+      expect(state.stats.happiness).toBe(80);
+      expect(state.petTapProgress).toBe(tap);
+    }
+
+    const fifthTap = applyPetTap(state);
+    expect(fifthTap.rewarded).toBe(true);
+    expect(fifthTap.state.stats.happiness).toBe(95);
+    expect(fifthTap.state.petTapProgress).toBe(0);
+
+    const nearMaximum = { ...state, petTapProgress: 4, stats: { ...state.stats, happiness: 95 } };
+    expect(applyPetTap(nearMaximum).state.stats.happiness).toBe(100);
   });
 
   it("decays each stat from its own tick and advances the life stage", () => {

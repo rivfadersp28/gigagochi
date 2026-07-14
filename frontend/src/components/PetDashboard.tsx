@@ -35,6 +35,7 @@ import {
 } from "@/lib/localPetMemoryStorage";
 import { primePetSpeechAudio, stopPetSpeechAudio } from "@/lib/petSpeechAudio";
 import { playPetTapSound, primePetTapSound } from "@/lib/petTapAudio";
+import { claimPetTapThanksForSession, petTapThanksReply } from "@/lib/petTapThanks";
 import {
   recordMemoryContextDebug,
   recordReplyPromptDebug,
@@ -815,6 +816,18 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     triggerPetTapParticles(event.clientX, event.clientY);
     void playPetTapSound();
     hapticImpact("light");
+
+    const tapResult = localPet.registerPetTap();
+    if (
+      tapResult?.rewarded
+      && claimPetTapThanksForSession(tapResult.pet.petId)
+    ) {
+      showPetReplyMessage(petTapThanksReply(), true, {
+        dialogueHook: true,
+        voiceMode: "local",
+        maxPortions: 1,
+      });
+    }
   }, [
     confirmationAction,
     isChatMode,
@@ -822,6 +835,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     isFeedMode,
     isPetDead,
     isStoryHistoryOpen,
+    localPet,
+    showPetReplyMessage,
     triggerPetTapBulge,
     triggerPetTapParticles,
   ]);

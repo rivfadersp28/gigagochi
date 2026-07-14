@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   applyOfflineProgress,
+  applyPetTap,
   applyLiteOverlayPatch as applyStoredLiteOverlayPatch,
   applyRecentStoryEventsPatch as applyStoredRecentStoryEventsPatch,
   applyStatsPatch as applyStoredStatsPatch,
@@ -38,6 +39,7 @@ type UseLocalPetStateResult = {
   create: (description: string, assetSet?: LocalPetAssetSet) => LocalPetState;
   feed: (foodId: FoodId) => LocalPetState | null;
   play: () => LocalPetState | null;
+  registerPetTap: () => { pet: LocalPetState; rewarded: boolean } | null;
   reset: () => void;
   resetStats: () => LocalPetState | null;
   kill: () => LocalPetState | null;
@@ -164,6 +166,22 @@ export function useLocalPetState(): UseLocalPetStateResult {
     );
     setPet(nextPet);
     return nextPet;
+  }, [pet]);
+
+  const registerPetTap = useCallback(() => {
+    if (!pet) {
+      return null;
+    }
+
+    const currentPet = readProgressedPet(pet);
+    if (!currentPet || currentPet.diedAt) {
+      return currentPet ? { pet: currentPet, rewarded: false } : null;
+    }
+
+    const result = applyPetTap(currentPet);
+    const nextPet = saveAndReturn(result.state);
+    setPet(nextPet);
+    return { pet: nextPet, rewarded: result.rewarded };
   }, [pet]);
 
   const reset = useCallback(() => {
@@ -432,6 +450,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
     create,
     feed,
     play,
+    registerPetTap,
     reset,
     resetStats,
     kill,

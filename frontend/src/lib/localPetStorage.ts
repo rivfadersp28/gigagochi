@@ -24,6 +24,7 @@ import {
 
 export {
   applyOfflineProgress,
+  applyPetTap,
   applyStatsPatch,
   calculatePetMood,
   calculatePetStage,
@@ -617,6 +618,10 @@ function normalizePetState(value: unknown): LocalPetStateV2 | null {
   return {
     version: 2,
     petId: value.petId,
+    petTapProgress:
+      typeof value.petTapProgress === "number" && Number.isFinite(value.petTapProgress)
+        ? Math.max(0, Math.min(4, Math.floor(value.petTapProgress)))
+        : 0,
     ...(value.introductionPending === true ? { introductionPending: true as const } : {}),
     name:
       typeof value.name === "string" && value.name.trim()
@@ -688,6 +693,7 @@ export function createLocalPetState(
   return {
     version: 2,
     petId: createLocalId("pet"),
+    petTapProgress: 0,
     introductionPending: true,
     name: characterNameFromAssetSet(characterAssetSet),
     description: description.trim(),

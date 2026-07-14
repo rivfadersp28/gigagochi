@@ -13,6 +13,8 @@ const MAX_STAT = 100;
 const STAT_FULL_DECAY_HOURS = 24;
 const STAT_DECAY_PER_HOUR = MAX_STAT / STAT_FULL_DECAY_HOURS;
 export const PET_DEATH_AFTER_ZERO_MS = 24 * 3_600_000;
+export const PET_TAPS_PER_HAPPINESS_REWARD = 5;
+export const PET_TAP_HAPPINESS_REWARD = 15;
 export const PET_STAT_KEYS = [
   "hunger",
   "happiness",
@@ -289,5 +291,27 @@ export function withPetInteraction(
     stage: calculatePetStage(state.createdAt, now),
     mood: calculatePetMood(stats),
     stats,
+  };
+}
+
+export function applyPetTap(state: LocalPetState): {
+  state: LocalPetState;
+  rewarded: boolean;
+} {
+  const currentProgress = Math.max(
+    0,
+    Math.min(PET_TAPS_PER_HAPPINESS_REWARD - 1, Math.floor(state.petTapProgress ?? 0)),
+  );
+  const nextProgress = (currentProgress + 1) % PET_TAPS_PER_HAPPINESS_REWARD;
+  const rewarded = nextProgress === 0;
+  const interactedState = withPetInteraction(state, (stats) => (
+    rewarded
+      ? { ...stats, happiness: stats.happiness + PET_TAP_HAPPINESS_REWARD }
+      : stats
+  ));
+
+  return {
+    state: { ...interactedState, petTapProgress: nextProgress },
+    rewarded,
   };
 }

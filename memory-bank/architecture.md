@@ -137,7 +137,10 @@
   decay and partial server stat patches.
 - Pet stat rules are isolated in `frontend/src/lib/localPetStats.ts`: clamping,
   independent ticks, offline decay, stage/mood derivation, server patches and
-  interaction updates. `localPetStorage.ts` re-exports the public functions for
+  interaction updates. Valid character taps persist `petTapProgress`; every fifth
+  tap adds 15 happiness with the normal interaction/tick semantics. The first such
+  reward per pet and browser session uses the standard voiced reply bubble, guarded
+  by `sessionStorage`. `localPetStorage.ts` re-exports the public functions for
   compatibility but owns only persistence/migration and non-stat overlays.
 - Dashboard browser effects are isolated from `PetDashboard.tsx`:
   `useConversationKeyboardOffset` owns Visual Viewport keyboard positioning and

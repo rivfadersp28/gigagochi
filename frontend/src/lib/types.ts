@@ -70,6 +70,7 @@ export type LocalPetStateV1 = {
 export type LocalPetStateV2 = {
   version: 2;
   petId: string;
+  petTapProgress?: number;
   introductionPending?: true;
   name?: string;
   description: string;
