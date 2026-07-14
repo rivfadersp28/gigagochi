@@ -131,6 +131,7 @@ type PetTapParticleBurstState = {
 
 const MAX_ACTIVE_PET_TAP_PARTICLE_BURSTS = 2;
 const PET_TAP_PARTICLE_INTERVAL_MS = 80;
+const PET_TAP_THANKS_VISIBLE_MS = 5_000;
 
 type ConfirmationAction = "resetPet" | "resetStats" | "openTestPet" | "killPet";
 
@@ -317,6 +318,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const petReplySentenceQueueRef = useRef<string[]>([]);
   const replyAutoAdvanceRef = useRef<{ messageId: number; delayMs: number } | null>(null);
   const replyAutoAdvanceTimeoutRef = useRef<number | null>(null);
+  const petTapThanksProtectionRef = useRef<{
+    messageId: number;
+    expiresAt: number;
+    timeoutId: number;
+  } | null>(null);
   const activeDialogueHookRef = useRef<string | null>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const sceneRef = useRef<HTMLElement>(null);
@@ -333,6 +339,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     }
     replyAutoAdvanceRef.current = null;
     petReplySentenceQueueRef.current = [];
+  }, []);
+  const cancelPetTapThanksProtection = useCallback(() => {
+    const protection = petTapThanksProtectionRef.current;
+    if (protection) {
+      window.clearTimeout(protection.timeoutId);
+      petTapThanksProtectionRef.current = null;
+    }
   }, []);
   const cancelIdleReplyGeneration = useCallback(() => {
     ambientRequestIdRef.current += 1;
@@ -532,6 +545,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     playSpeechAudio: boolean,
     options: ShowPetReplyOptions = {},
   ) => {
+    cancelPetTapThanksProtection();
     if (replyAutoAdvanceTimeoutRef.current !== null) {
       window.clearTimeout(replyAutoAdvanceTimeoutRef.current);
       replyAutoAdvanceTimeoutRef.current = null;
@@ -565,7 +579,29 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     if (options.showInFeed) {
       setFeedReplyMessageId(nextMessage.id);
     }
-  }, [pet]);
+    return nextMessage.id;
+  }, [cancelPetTapThanksProtection, pet]);
+
+  const protectPetTapThanksReply = useCallback((messageId: number) => {
+    cancelPetTapThanksProtection();
+    const timeoutId = window.setTimeout(() => {
+      const protection = petTapThanksProtectionRef.current;
+      if (!protection || protection.messageId !== messageId) {
+        return;
+      }
+      petTapThanksProtectionRef.current = null;
+      if (petReplyMessageRef.current?.id === messageId) {
+        setIsIdleSpeechBubbleDismissed(true);
+      }
+    }, PET_TAP_THANKS_VISIBLE_MS);
+    petTapThanksProtectionRef.current = {
+      messageId,
+      expiresAt: Date.now() + PET_TAP_THANKS_VISIBLE_MS,
+      timeoutId,
+    };
+  }, [cancelPetTapThanksProtection]);
+
+  useEffect(() => cancelPetTapThanksProtection, [cancelPetTapThanksProtection]);
 
   const advancePetReplySentence = useCallback(() => {
     const currentMessage = petReplyMessageRef.current;
@@ -759,6 +795,15 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
 
+    const protectedReply = petTapThanksProtectionRef.current;
+    if (
+      protectedReply
+      && protectedReply.messageId === petReplyMessageRef.current?.id
+      && Date.now() < protectedReply.expiresAt
+    ) {
+      return;
+    }
+
     cancelReplyAutoAdvance();
     setIsIdleSpeechBubbleDismissed(true);
   }, [
@@ -822,11 +867,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       tapResult?.rewarded
       && claimPetTapThanksForSession(tapResult.pet.petId)
     ) {
-      showPetReplyMessage(petTapThanksReply(), true, {
+      const messageId = showPetReplyMessage(petTapThanksReply(), true, {
         dialogueHook: true,
         voiceMode: "local",
         maxPortions: 1,
       });
+      protectPetTapThanksReply(messageId);
     }
   }, [
     confirmationAction,
@@ -836,6 +882,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     isPetDead,
     isStoryHistoryOpen,
     localPet,
+    protectPetTapThanksReply,
     showPetReplyMessage,
     triggerPetTapBulge,
     triggerPetTapParticles,

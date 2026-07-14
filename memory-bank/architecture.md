@@ -140,7 +140,8 @@
   interaction updates. Valid character taps persist `petTapProgress`; every fifth
   tap adds 15 happiness with the normal interaction/tick semantics. The first such
   reward per pet and browser session uses the standard voiced reply bubble, guarded
-  by `sessionStorage`. `localPetStorage.ts` re-exports the public functions for
+  by `sessionStorage`; scene taps cannot dismiss that reply, and its own timer hides
+  it after five seconds. `localPetStorage.ts` re-exports the public functions for
   compatibility but owns only persistence/migration and non-stat overlays.
 - Dashboard browser effects are isolated from `PetDashboard.tsx`:
   `useConversationKeyboardOffset` owns Visual Viewport keyboard positioning and
