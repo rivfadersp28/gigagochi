@@ -176,14 +176,9 @@
   opacity: 0.6;
 }
 
-.debugMenu svg,
-.debugSpinner {
+.debugMenu svg {
   width: 13px;
   height: 13px;
-}
-
-.debugSpinner {
-  animation: spin 800ms linear infinite;
 }
 
 .error {
@@ -205,24 +200,6 @@
 
 .error p {
   margin: 0;
-}
-
-.centerLoader {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 12px;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.centerLoader svg,
-.optionLoader {
-  width: 30px;
-  height: 30px;
-  animation: spin 800ms linear infinite;
 }
 
 .destinationPicker h1,
@@ -314,9 +291,6 @@
   color: #fff;
   background: rgb(255 255 255 / 50%);
   box-shadow: 0 -3.768px 8px rgb(1 1 1 / 40%) inset;
-  --tw-backdrop-blur: blur(10px);
-  -webkit-backdrop-filter: var(--tw-backdrop-blur);
-  backdrop-filter: var(--tw-backdrop-blur);
 }
 
 .storyGlassButton {
@@ -324,9 +298,6 @@
   color: #e8e8e8;
   background: rgb(255 255 255 / 20%);
   box-shadow: 0 -3.768px 8px rgb(1 1 1 / 40%) inset;
-  --tw-backdrop-blur: blur(10px);
-  -webkit-backdrop-filter: var(--tw-backdrop-blur);
-  backdrop-filter: var(--tw-backdrop-blur);
 }
 
 .customForm h1 {
@@ -357,8 +328,6 @@
   font-size: 23px;
   font-weight: 800;
   text-align: center;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 
 .promptInput::placeholder {
@@ -391,53 +360,6 @@
 
 .primaryButton:active {
   transform: translateX(-50%) scale(0.97);
-}
-
-.spinner {
-  width: 24px;
-  height: 24px;
-  margin: auto;
-  animation: spin 800ms linear infinite;
-}
-
-.answerCaption {
-  position: absolute;
-  z-index: 7;
-  left: 31px;
-  right: 31px;
-  bottom: 355px;
-  max-height: 84px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  margin: 0;
-  padding: 10px 14px;
-  border: 1px solid rgb(255 255 255 / 25%);
-  border-radius: 16px;
-  color: #fff;
-  background: rgb(20 20 20 / 42%);
-  font-size: 14px;
-  line-height: 18px;
-  text-align: center;
-  overflow-wrap: anywhere;
-  white-space: normal;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-
-.answerCaption span {
-  margin-right: 8px;
-  color: rgb(255 255 255 / 60%);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.answerCaption:focus-visible {
-  outline: 3px solid #fff;
-  outline-offset: 3px;
 }
 
 .bubbleAnchor {
@@ -493,11 +415,10 @@
   filter: contrast(1.08) saturate(0.92);
 }
 
-.travelThinkingIndicator {
+.travelLoadingIndicator {
   position: absolute;
   z-index: 30;
-  inset: 0;
-  transform: translate3d(0, 150px, 0);
+  inset: 50% 0 0;
   pointer-events: none;
 }
 
@@ -565,23 +486,6 @@
   white-space: nowrap;
 }
 
-.submittingOverlay {
-  position: absolute;
-  z-index: 18;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: rgb(0 0 0 / 12%);
-  backdrop-filter: blur(1px);
-  -webkit-backdrop-filter: blur(1px);
-}
-
-.submittingOverlay .spinner {
-  width: 42px;
-  height: 42px;
-  color: #fff;
-}
-
 @keyframes characterRise {
   from {
     opacity: 0;
@@ -625,12 +529,6 @@
   }
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @media (max-height: 760px) {
   .destinationPicker h1 {
     top: calc(51% - 86px);
@@ -667,11 +565,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .generatedBackground,
-  .debugSpinner,
-  .spinner,
-  .optionLoader,
-  .centerLoader svg {
+  .generatedBackground {
     animation-duration: 1ms;
   }
 

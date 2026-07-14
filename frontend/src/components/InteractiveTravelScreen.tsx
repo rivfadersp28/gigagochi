@@ -2,11 +2,10 @@
 
 /* eslint-disable @next/next/no-img-element */
 /* eslint-disable react-hooks/set-state-in-effect -- effects drive the persisted travel state machine */
-import { ArrowLeft, Loader2, RotateCcw } from "lucide-react";
+import { ArrowLeft, RotateCcw } from "lucide-react";
 import { useGlimm } from "glimm/react";
 import { useRouter } from "next/navigation";
 import {
-  type CSSProperties,
   type FormEvent,
   useCallback,
   useEffect,
@@ -67,10 +66,6 @@ const ENTRY_BACKGROUND_VIDEO = "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-
 const SPEECH_BUBBLE_SHAPE = "/figma/speech-bubble-new.svg";
 const VIDEO_FILTER = "/figma/video-filter-normal.webp?v=20260713-video-filter-lossless-webp-1";
 const SHOW_LOCAL_CONTROLS = process.env.NODE_ENV !== "production";
-const GLASS_CONTROL_BACKDROP_STYLE: CSSProperties = {
-  backdropFilter: "blur(10px)",
-  WebkitBackdropFilter: "blur(10px)",
-};
 const FALLBACK_DESTINATIONS = [
   "в подземелье",
   "на болото",
@@ -107,12 +102,18 @@ function partByNumber(parts: InteractiveTravelPart[], partNumber: number) {
 }
 
 function restoredBackgroundVideo(session: LocalInteractiveTravel | null) {
-  if (
-    !session ||
-    session.presentation.phase === "introReaction" ||
-    session.presentation.phase === "departureWait"
-  ) {
+  if (!session || session.presentation.phase === "introReaction") {
     return null;
+  }
+  if (session.presentation.phase === "departureWait") {
+    return (
+      [...session.travel.parts]
+        .reverse()
+        .find(
+          (part) =>
+            part.partNumber < session.presentation.partNumber && part.backgroundVideoUrl,
+        )?.backgroundVideoUrl ?? null
+    );
   }
   return (
     partByNumber(session.travel.parts, session.presentation.partNumber)?.backgroundVideoUrl ??
@@ -133,7 +134,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const [showCustomAction, setShowCustomAction] = useState(false);
   const [destination, setDestination] = useState("");
   const [advice, setAdvice] = useState("");
-  const [selectedDestination, setSelectedDestination] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<PresentedError | null>(null);
   const [failedIllustrations, setFailedIllustrations] = useState<string[]>([]);
@@ -448,9 +448,8 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const presentationPortionIndex = session?.presentation.portionIndex ?? 0;
   const introCharacterTravelId =
     phase === "introReaction" ? session?.travel.travelId ?? null : null;
-  const isStartingTravel = Boolean(isSubmitting && selectedDestination && !session);
   const showTravelCharacter = Boolean(
-    characterImageSrc && (isStartingTravel || introCharacterTravelId),
+    characterImageSrc && introCharacterTravelId,
   );
   const isIntroCharacterEntranceComplete =
     introCharacterTravelId === null || isCharacterEntranceComplete;
@@ -606,7 +605,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     }
     submittingRef.current = true;
     const requestEpoch = ++requestEpochRef.current;
-    setSelectedDestination(value);
     setIsSubmitting(true);
     setError(null);
     try {
@@ -643,7 +641,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       if (requestEpoch === requestEpochRef.current) {
         submittingRef.current = false;
         setIsSubmitting(false);
-        setSelectedDestination(null);
       }
     }
   }
@@ -721,7 +718,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     setShowCustomAction(false);
     setDestination("");
     setAdvice("");
-    setSelectedDestination(null);
     setIsSubmitting(false);
     setError(null);
     setFailedIllustrations([]);
@@ -795,9 +791,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       return;
     }
     const nextPart = currentPendingPart(session.travel);
-    if (nextPart) {
-      setVisibleBackgroundVideoUrl(null);
-    }
     updatePresentation({
       phase: nextPart ? "departureWait" : "completed",
       partNumber: nextPart?.partNumber ?? activePart.partNumber,
@@ -816,6 +809,8 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   }
 
   const isLoading = localPet.status === "loading" || !isRestored;
+  const isTravelLoading =
+    isLoading || isLoadingSuggestions || isSubmitting || isResettingTravel;
   const storyTextPortions = activePart ? storyPortions(activePart) : [];
   const resultTextPortions = activePart ? resultPortions(activePart) : [];
   const portionIndex = session?.presentation.portionIndex ?? 0;
@@ -867,11 +862,12 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       ? activePart.backgroundVideoUrl
       : null;
   const isChoices = phase === "choice" && !showCustomAction;
+  const hasChoiceBackground = phase === "choice";
   const isNarrative = phase === "story" || phase === "result";
   return (
     <main
       className={styles.viewport}
-      aria-busy={isLoading || isSubmitting || isResettingTravel}
+      aria-busy={isTravelLoading}
     >
       <section className={styles.scene} aria-label="Интерактивное путешествие">
         <video
@@ -889,7 +885,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           <video
             src={visibleBackgroundVideoUrl}
             className={`${styles.background} ${styles.generatedBackground} ${
-              isChoices ? styles.sharpBackground : ""
+              hasChoiceBackground ? styles.sharpBackground : ""
             } ${styles.generatedBackgroundReady}`}
             autoPlay
             loop
@@ -935,7 +931,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         ) : null}
         <img src={VIDEO_FILTER} alt="" className={styles.grain} aria-hidden="true" />
 
-        {SHOW_LOCAL_CONTROLS ? (
+        {SHOW_LOCAL_CONTROLS && !isTravelLoading ? (
           <>
             <button type="button" onClick={goBack} className={styles.backButton}>
               <ArrowLeft aria-hidden="true" />
@@ -955,7 +951,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           </>
         ) : null}
 
-        {canUseDebugMenu() ? (
+        {canUseDebugMenu() && !isTravelLoading ? (
           <div className={styles.debugMenu} aria-label="Debug путешествия">
             <span>Debug</span>
             <button
@@ -963,21 +959,17 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
               onClick={() => void handleDebugRestart()}
               disabled={isResettingTravel}
             >
-              {isResettingTravel ? (
-                <Loader2 className={styles.debugSpinner} aria-hidden="true" />
-              ) : (
-                <RotateCcw aria-hidden="true" />
-              )}
+              <RotateCcw aria-hidden="true" />
               <span>Перезапустить путешествие</span>
             </button>
           </div>
         ) : null}
 
-        {error ? (
+        {error && !isTravelLoading ? (
           <ErrorNotice id="interactive-travel-error" error={error} className={styles.error} />
         ) : null}
 
-        {showTravelCharacter && characterImageSrc ? (
+        {!isTravelLoading && showTravelCharacter && characterImageSrc ? (
           <img
             src={characterImageSrc}
             alt={petName}
@@ -990,19 +982,12 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           />
         ) : null}
 
-        {isStartingTravel ? (
-          <div className={styles.travelThinkingIndicator}>
+        {isTravelLoading ? (
+          <div className={styles.travelLoadingIndicator}>
             <PetThinkingIndicator />
           </div>
-        ) : null}
-
-        {isLoading ? (
-          <div className={styles.centerLoader}>
-            <Loader2 aria-hidden="true" />
-            <span>Готовим дорогу…</span>
-          </div>
         ) : !session ? (
-          isStartingTravel ? null : showCustomDestination ? (
+          showCustomDestination ? (
             <form className={styles.customForm} onSubmit={handleDestinationSubmit}>
               <h1>Куда отправим {petName}?</h1>
               <label className="sr-only" htmlFor="travel-destination">
@@ -1016,23 +1001,15 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
                   setError(null);
                 }}
                 className={styles.promptInput}
-                style={GLASS_CONTROL_BACKDROP_STYLE}
                 maxLength={DESTINATION_MAX_LENGTH}
                 placeholder="Свой вариант"
                 disabled={isSubmitting}
                 autoFocus
                 enterKeyHint="go"
               />
-              {destination.trim() || isSubmitting ? (
+              {destination.trim() ? (
                 <button type="submit" className={styles.primaryButton} disabled={isSubmitting}>
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className={styles.spinner} aria-hidden="true" />
-                      <span className="sr-only">Путешествие</span>
-                    </>
-                  ) : (
-                    "Путешествие"
-                  )}
+                  Путешествие
                 </button>
               ) : null}
             </form>
@@ -1040,43 +1017,29 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
             <div className={styles.destinationPicker}>
               <h1>Куда отправим {petName}?</h1>
               <div className={styles.destinationOptions}>
-                {isLoadingSuggestions ? (
-                  <Loader2 className={styles.optionLoader} aria-label="Генерируем варианты" />
-                ) : (
-                  suggestions.map((suggestion) => (
-                    <button
-                      key={suggestion}
-                      type="button"
-                      className={styles.optionButton}
-                      disabled={isSubmitting}
-                      onClick={() => void beginTravel(suggestion)}
-                    >
-                      {isSubmitting && selectedDestination === suggestion ? (
-                        <>
-                          <Loader2 className={styles.spinner} aria-hidden="true" />
-                          <span className="sr-only">{suggestion}</span>
-                        </>
-                      ) : (
-                        suggestion
-                      )}
-                    </button>
-                  ))
-                )}
-                {!isLoadingSuggestions ? (
+                {suggestions.map((suggestion) => (
                   <button
-                    ref={customDestinationTriggerRef}
+                    key={suggestion}
                     type="button"
-                    className={`${styles.optionButton} ${styles.secondaryButton}`}
-                    style={GLASS_CONTROL_BACKDROP_STYLE}
-                    onClick={() => {
-                      setShowCustomDestination(true);
-                      setError(null);
-                    }}
+                    className={styles.optionButton}
                     disabled={isSubmitting}
+                    onClick={() => void beginTravel(suggestion)}
                   >
-                    Свой вариант
+                    {suggestion}
                   </button>
-                ) : null}
+                ))}
+                <button
+                  ref={customDestinationTriggerRef}
+                  type="button"
+                  className={`${styles.optionButton} ${styles.secondaryButton}`}
+                  onClick={() => {
+                    setShowCustomDestination(true);
+                    setError(null);
+                  }}
+                  disabled={isSubmitting}
+                >
+                  Свой вариант
+                </button>
               </div>
             </div>
           )
@@ -1094,40 +1057,20 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
                 setError(null);
               }}
               className={styles.promptInput}
-              style={GLASS_CONTROL_BACKDROP_STYLE}
               maxLength={ADVICE_MAX_LENGTH}
               placeholder="Свой вариант"
               disabled={isSubmitting}
               autoFocus
               enterKeyHint="send"
             />
-            {advice.trim() || isSubmitting ? (
+            {advice.trim() ? (
               <button type="submit" className={styles.primaryButton} disabled={isSubmitting}>
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className={styles.spinner} aria-hidden="true" />
-                    <span className="sr-only">Подсказать</span>
-                  </>
-                ) : (
-                  "Подсказать"
-                )}
+                Подсказать
               </button>
             ) : null}
           </form>
         ) : (
           <>
-            {phase === "result" && activePart?.answer ? (
-              <p
-                className={styles.answerCaption}
-                role="region"
-                aria-label="Твой ответ"
-                tabIndex={0}
-              >
-                <span aria-hidden="true">Твой ответ</span>
-                {activePart.answer}
-              </p>
-            ) : null}
-
             <div
               className={`${styles.bubbleAnchor} ${
                 phase === "introReaction" || phase === "departureWait"
@@ -1157,7 +1100,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
                 type="button"
                 onClick={handleNext}
                 className={`${styles.nextButton} ${styles.storyGlassButton}`}
-                style={GLASS_CONTROL_BACKDROP_STYLE}
               >
                 Далее
               </button>
@@ -1181,7 +1123,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
                     ref={customActionTriggerRef}
                     type="button"
                     className={`${styles.actionButton} ${styles.storyGlassButton}`}
-                    style={GLASS_CONTROL_BACKDROP_STYLE}
                     disabled={isSubmitting}
                     onClick={() => {
                       setShowCustomAction(true);
@@ -1199,15 +1140,8 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
                 К персонажу
               </button>
             ) : null}
-
-            {isSubmitting ? (
-              <div className={styles.submittingOverlay}>
-                <Loader2 className={styles.spinner} aria-hidden="true" />
-              </div>
-            ) : null}
           </>
         )}
-
       </section>
     </main>
   );

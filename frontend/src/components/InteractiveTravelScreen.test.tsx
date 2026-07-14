@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { LocalInteractiveTravel } from "@/lib/localInteractiveTravel";
@@ -258,7 +258,7 @@ describe("InteractiveTravelScreen", () => {
     expect(cssRule("background")).toContain("object-fit: cover");
   });
 
-  it("shows the entry placeholder instead of the previous scene while continuing", async () => {
+  it("keeps the previous scene while preparing the next part", async () => {
     const firstPart = {
       ...pendingPart(1),
       backgroundVideoUrl: "/story-1.mp4",
@@ -270,11 +270,10 @@ describe("InteractiveTravelScreen", () => {
 
     render(<InteractiveTravelScreen petId="pet-1" />);
 
-    await waitFor(() =>
-      expect(document.querySelector('video[src^="/figma/travel-entry-bg.mp4"]')).not.toBeNull(),
-    );
-    expect(document.querySelector('video[src="/story-1.mp4"]')).toBeNull();
     expect(await screen.findByText(/Листик продолжает путешествие/u)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(document.querySelector('video[src="/story-1.mp4"]')).not.toBeNull(),
+    );
   });
 
   it("resets server generations and local travel from the debug menu", async () => {
@@ -384,7 +383,7 @@ describe("InteractiveTravelScreen", () => {
     expect(screen.getByRole("button", { name: "Свой вариант" })).toBeInTheDocument();
   });
 
-  it("shows the rising character and standard thinking animation while starting", async () => {
+  it("hides the travel interface and shows the standard thinking animation while starting", async () => {
     const response = deferred<{ travel: InteractiveTravelState }>();
     mocks.readLocalInteractiveTravel.mockReturnValue(null);
     mocks.startInteractiveTravel.mockReturnValue(response.promise);
@@ -397,15 +396,13 @@ describe("InteractiveTravelScreen", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Путешествие" }));
 
-    expect(screen.getByRole("img", { name: "Листик" })).toHaveAttribute(
-      "src",
-      "/teen-idle-foreground.png?travel_foreground_v=20260714-1",
-    );
+    expect(screen.queryByRole("img", { name: "Листик" })).not.toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Персонаж думает" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Путешествие" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Вернуться к персонажу" })).not.toBeInTheDocument();
   });
 
-  it("keeps the custom action submit button named while continuing", async () => {
+  it("hides the custom action interface behind the standard loader while continuing", async () => {
     const response = deferred<{ travel: InteractiveTravelState }>();
     mocks.readLocalInteractiveTravel.mockReturnValue(
       restoredSession(travel([pendingPart(1)]), "choice"),
@@ -420,13 +417,14 @@ describe("InteractiveTravelScreen", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Подсказать" }));
 
-    expect(screen.getByRole("button", { name: "Подсказать" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Подсказать" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Свой вариант действия")).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Персонаж думает" })).toBeInTheDocument();
   });
 
   it("keeps long choices and answers visually readable inside the fixed layout", () => {
     const actionRule = cssRule("actionButton");
     const actionsScrollRule = cssRule("actionsScroll");
-    const answerRule = cssRule("answerCaption");
     const glassRule = cssRule("storyGlassButton");
 
     expect(actionRule).toContain("white-space: nowrap");
@@ -435,12 +433,8 @@ describe("InteractiveTravelScreen", () => {
     expect(actionsScrollRule).toContain("overflow-x: auto");
     expect(actionsScrollRule).toContain("touch-action: pan-x");
     expect(actionsScrollRule).not.toContain("scroll-snap-type");
-    expect(answerRule).toContain("max-height: 84px");
-    expect(answerRule).toContain("overflow-y: auto");
-    expect(answerRule).toContain("white-space: normal");
     expect(glassRule).toContain("background: rgb(255 255 255 / 20%)");
-    expect(glassRule).toContain("--tw-backdrop-blur: blur(10px)");
-    expect(glassRule).toContain("backdrop-filter: var(--tw-backdrop-blur)");
+    expect(glassRule).not.toContain("backdrop-filter");
   });
 
   it("applies a resolved impact once and preloads the next illustration", async () => {
@@ -454,7 +448,7 @@ describe("InteractiveTravelScreen", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Идти вперёд" }));
 
     expect(await screen.findByText("Хорошая мысль!")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Твой ответ" })).toHaveAttribute("tabindex", "0");
+    expect(screen.queryByText("Твой ответ")).not.toBeInTheDocument();
     expect(mocks.applyStatsPatch).toHaveBeenCalledTimes(1);
     expect(mocks.applyStatsPatch).toHaveBeenCalledWith({
       stats: { hunger: 54, happiness: 50, energy: 50 },
@@ -472,7 +466,7 @@ describe("InteractiveTravelScreen", () => {
     });
   });
 
-  it("drops a stale continue response after Создать новую историю", async () => {
+  it("hides travel controls while a continue request is pending", async () => {
     const response = deferred<{ travel: InteractiveTravelState }>();
     mocks.readLocalInteractiveTravel.mockReturnValue(
       restoredSession(travel([pendingPart(1)]), "choice"),
@@ -481,14 +475,9 @@ describe("InteractiveTravelScreen", () => {
 
     render(<InteractiveTravelScreen petId="pet-1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Идти вперёд" }));
-    fireEvent.click(screen.getByRole("button", { name: "Создать новую историю" }));
-    await act(async () => {
-      response.resolve({ travel: resolvedFirstWithPendingSecond() });
-      await response.promise;
-    });
 
-    expect(mocks.clearLocalInteractiveTravel).toHaveBeenCalledWith("pet-1");
+    expect(screen.queryByRole("button", { name: "Создать новую историю" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Персонаж думает" })).toBeInTheDocument();
     expect(mocks.applyStatsPatch).not.toHaveBeenCalled();
-    expect(await screen.findByText("Куда отправим Листик?")).toBeInTheDocument();
   });
 });

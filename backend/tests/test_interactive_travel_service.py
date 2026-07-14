@@ -110,11 +110,11 @@ def _continued_payload(
                 "summary": (
                     "За четыре часа часы сдвинулись на один удар, а стража перекрыла верхний мост."
                 ),
-                "departureHook": "Я продолжаю путь к верхнему мосту.",
+                "departureHook": "Я сдвинула механизм и продолжаю путь к верхнему мосту.",
             },
             "title": f"Поздний поворот {number + 1}",
             "storyParagraphs": [
-                "Через 4 часа я добираюсь до закрытого моста.",
+                "К вечеру я добираюсь до закрытого моста.",
                 "За воротами снова грохочет главный механизм.",
             ],
             "challenge": "Как пройти мост?",
@@ -309,8 +309,10 @@ def test_continue_resolves_same_block_then_adds_later_pending_block(monkeypatch)
     assert pending.transition is not None
     assert pending.transition.elapsedHours == 4
     assert "стража перекрыла" in pending.transition.summary
-    assert pending.transition.departureHook == "Я продолжаю путь к верхнему мосту."
-    assert pending.storyText.startswith("Через 4 часа")
+    assert pending.transition.departureHook == (
+        "Я сдвинула механизм и продолжаю путь к верхнему мосту."
+    )
+    assert pending.storyText.startswith("К вечеру")
     assert response.travel.completed is False
     assert len(completions.calls) == 1
     call = completions.calls[0]
@@ -540,7 +542,7 @@ def test_invalid_or_missing_time_transition_is_rejected(monkeypatch) -> None:
     assert len(completions.calls) == 2
 
 
-def test_missing_visible_time_gap_is_normalized_without_retry(monkeypatch) -> None:
+def test_next_part_does_not_get_a_generic_visible_time_placeholder(monkeypatch) -> None:
     travel = _travel_with_pending_part(1)
     payload = _continued_payload(1)
     payload["nextPart"]["storyParagraphs"][0] = "Я подхожу к закрытым воротам."
@@ -550,9 +552,8 @@ def test_missing_visible_time_gap_is_normalized_without_retry(monkeypatch) -> No
         pet=_pet(), travel=travel, advice="ждать", client=client, model="test-model"
     )
 
-    assert response.travel.parts[1].storyText.startswith(
-        "Через 4 часа я продолжаю путь."
-    )
+    assert response.travel.parts[1].storyText.startswith("Я подхожу к закрытым воротам.")
+    assert "я продолжаю путь" not in response.travel.parts[1].storyText.casefold()
     assert len(completions.calls) == 1
 
 
