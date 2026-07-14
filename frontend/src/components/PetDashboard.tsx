@@ -766,11 +766,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       normalizedX,
       normalizedY,
     });
-    triggerPetTapParticles(event.clientX, event.clientY);
     void playPetTapSound();
     hapticImpact("light");
 
     const tapResult = localPet.registerPetTap();
+    if (tapResult?.rewarded) {
+      triggerPetTapParticles(event.clientX, event.clientY);
+    }
     if (
       tapResult?.rewarded
       && claimPetTapThanksForSession(tapResult.pet.petId)
