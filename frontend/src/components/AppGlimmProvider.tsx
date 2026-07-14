@@ -11,6 +11,8 @@ export function AppGlimmProvider({ children }: Readonly<{ children: React.ReactN
         c: [0.5, 0.5, 0.5],
         d: [0.93, 0.67, 0.42],
       }}
+      direction="ttb"
+      brightness={1.2}
       sweepMs={800}
       outroMs={350}
       midpoint={0.5}
