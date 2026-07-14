@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 
 from app.config import get_settings
 from app.dependencies import get_telegram_user
@@ -21,6 +22,7 @@ from app.schemas import (
     InteractiveTravelAnimationResponse,
     InteractiveTravelIllustrationResponse,
     InteractiveTravelResponse,
+    InteractiveTravelState,
     InteractiveTravelSuggestionsRequest,
     InteractiveTravelSuggestionsResponse,
     LiteFactExtractionRequest,
@@ -66,6 +68,7 @@ from app.services.image_service import (
     generate_pet_video_for_image_asset_set,
     generation_error_code,
 )
+from app.services.interactive_travel_finale_service import save_interactive_travel_finale
 from app.services.interactive_travel_service import (
     animate_interactive_travel_part,
     continue_interactive_travel,
@@ -101,6 +104,10 @@ DEFAULT_CHAT_RATE_LIMIT_PER_HOUR = 0
 DEFAULT_LITE_FACTS_RATE_LIMIT_PER_HOUR = 0
 DEFAULT_MEMORY_RATE_LIMIT_PER_HOUR = 0
 DEFAULT_INTERACTIVE_TRAVEL_RATE_LIMIT_PER_DAY = 30
+
+
+class CaptureInteractiveTravelFinaleRequest(BaseModel):
+    travel: InteractiveTravelState
 
 
 def check_rate_limit(bucket: str, user: TelegramUserContext) -> None:
@@ -699,7 +706,7 @@ def interactive_travel_continue(
     payload = _without_untrusted_debug(payload)
     prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel/interactive/continue"})
     try:
-        return continue_interactive_travel(
+        response = continue_interactive_travel(
             pet=payload.pet,
             travel=payload.travel,
             advice=payload.advice,
@@ -707,6 +714,20 @@ def interactive_travel_continue(
             memory_context=payload.memoryContext,
             include_debug=payload.includeDebug,
         )
+        if response.travel.completed:
+            try:
+                save_interactive_travel_finale(
+                    response.travel,
+                    telegram_id=user.telegram_id,
+                    username=user.username,
+                    first_name=user.first_name,
+                )
+            except (OSError, ValueError):
+                logger.exception(
+                    "interactive_travel_finale_save_failed travelId=%s",
+                    response.travel.travelId,
+                )
+        return response
     except HTTPException:
         raise
     except Exception as exc:
@@ -721,6 +742,29 @@ def interactive_travel_continue(
         ) from exc
     finally:
         reset_prompt_log_context(prompt_log_token)
+
+
+@router.post("/travel/interactive/finale/capture")
+def interactive_travel_finale_capture(
+    payload: CaptureInteractiveTravelFinaleRequest,
+    user: TelegramUser,
+) -> dict[str, bool]:
+    _require_interactive_travel_pilot(user)
+    if not payload.travel.completed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "INTERACTIVE_TRAVEL_NOT_COMPLETED",
+                "message": "Travel is not completed.",
+            },
+        )
+    save_interactive_travel_finale(
+        payload.travel,
+        telegram_id=user.telegram_id,
+        username=user.username,
+        first_name=user.first_name,
+    )
+    return {"saved": True}
 
 
 @router.post("/travel/interactive/{travel_id}/debug/reset")

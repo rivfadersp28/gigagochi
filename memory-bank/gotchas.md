@@ -1,5 +1,12 @@
 # Gotchas
 
+- Interactive-travel text and choices live in browser localStorage during the journey; generated
+  PNG/MP4 files alone cannot reconstruct them. Preserve the completed `finale.json` snapshot or
+  recover it by reopening the still-present completed client session before starting a new travel.
+- Finale reference-to-video needs public HTTPS asset URLs. A localhost static URL is not fetchable
+  by OpenRouter; keep the production asset origin in the snapshot or supply it as the lab's
+  reference base URL.
+
 - Do not add Uvicorn workers while generation jobs use the local SQLite-backed executor. Multiple
   API processes would each recover the same active jobs. Scale beyond one backend process only after
   moving execution ownership to a broker/worker system such as Redis plus a dedicated worker.

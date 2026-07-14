@@ -550,6 +550,18 @@
         "title": "AnimateInteractiveTravelPartRequest",
         "type": "object"
       },
+      "CaptureInteractiveTravelFinaleRequest": {
+        "properties": {
+          "travel": {
+            "$ref": "#/components/schemas/InteractiveTravelState"
+          }
+        },
+        "required": [
+          "travel"
+        ],
+        "title": "CaptureInteractiveTravelFinaleRequest",
+        "type": "object"
+      },
       "ContinueInteractiveTravelRequest": {
         "properties": {
           "advice": {
@@ -3246,6 +3258,84 @@
         "title": "StartInteractiveTravelRequest",
         "type": "object"
       },
+      "TravelFinaleGenerateRequest": {
+        "properties": {
+          "prompt": {
+            "maxLength": 16000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "referenceBaseUrl": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Referencebaseurl",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt",
+          "referenceBaseUrl"
+        ],
+        "title": "TravelFinaleGenerateRequest",
+        "type": "object"
+      },
+      "TravelFinaleImportRequest": {
+        "properties": {
+          "firstName": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firstname"
+          },
+          "telegramId": {
+            "default": 62943754,
+            "title": "Telegramid",
+            "type": "integer"
+          },
+          "travel": {
+            "$ref": "#/components/schemas/InteractiveTravelState"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "travel"
+        ],
+        "title": "TravelFinaleImportRequest",
+        "type": "object"
+      },
+      "TravelFinalePromptRequest": {
+        "properties": {
+          "direction": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Direction",
+            "type": "string"
+          }
+        },
+        "required": [
+          "direction"
+        ],
+        "title": "TravelFinalePromptRequest",
+        "type": "object"
+      },
       "TravelSceneImage": {
         "properties": {
           "imageUrl": {
@@ -3575,6 +3665,226 @@
           }
         },
         "summary": "Speech Admin Publish Job",
+        "tags": [
+          "local-admin"
+        ]
+      }
+    },
+    "/api/admin/travel-finales": {
+      "get": {
+        "operationId": "travel_finale_list_api_admin_travel_finales_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Travel Finale List Api Admin Travel Finales Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Travel Finale List",
+        "tags": [
+          "local-admin"
+        ]
+      }
+    },
+    "/api/admin/travel-finales/import": {
+      "post": {
+        "operationId": "travel_finale_import_api_admin_travel_finales_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TravelFinaleImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Travel Finale Import Api Admin Travel Finales Import Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Travel Finale Import",
+        "tags": [
+          "local-admin"
+        ]
+      }
+    },
+    "/api/admin/travel-finales/{travel_id}": {
+      "get": {
+        "operationId": "travel_finale_detail_api_admin_travel_finales__travel_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "travel_id",
+            "required": true,
+            "schema": {
+              "title": "Travel Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Travel Finale Detail Api Admin Travel Finales  Travel Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Travel Finale Detail",
+        "tags": [
+          "local-admin"
+        ]
+      }
+    },
+    "/api/admin/travel-finales/{travel_id}/generate": {
+      "post": {
+        "operationId": "travel_finale_generate_api_admin_travel_finales__travel_id__generate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "travel_id",
+            "required": true,
+            "schema": {
+              "title": "Travel Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TravelFinaleGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Travel Finale Generate Api Admin Travel Finales  Travel Id  Generate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Travel Finale Generate",
+        "tags": [
+          "local-admin"
+        ]
+      }
+    },
+    "/api/admin/travel-finales/{travel_id}/prompt": {
+      "post": {
+        "operationId": "travel_finale_prompt_api_admin_travel_finales__travel_id__prompt_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "travel_id",
+            "required": true,
+            "schema": {
+              "title": "Travel Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TravelFinalePromptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Travel Finale Prompt Api Admin Travel Finales  Travel Id  Prompt Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Travel Finale Prompt",
         "tags": [
           "local-admin"
         ]
@@ -4123,6 +4433,51 @@
           }
         },
         "summary": "Interactive Travel Continue",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/interactive/finale/capture": {
+      "post": {
+        "operationId": "interactive_travel_finale_capture_api_travel_interactive_finale_capture_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaptureInteractiveTravelFinaleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Interactive Travel Finale Capture Api Travel Interactive Finale Capture Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interactive Travel Finale Capture",
         "tags": [
           "telegram-mini-app"
         ]

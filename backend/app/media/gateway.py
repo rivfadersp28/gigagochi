@@ -6,7 +6,6 @@ from typing import Protocol
 from app.media.contracts import (
     ImageProvider,
     ImageRequest,
-    MediaCapability,
     MediaError,
     VideoProvider,
     VideoRequest,
@@ -53,6 +52,9 @@ class MediaGateway:
         provider = self._video_providers.get(route.provider.lower())
         if provider is None:
             raise MediaError(f"Video provider is not registered: {route.provider}")
-        if MediaCapability.IMAGE_TO_VIDEO not in provider.capabilities:
-            raise MediaError(f"Video provider {provider.name!r} does not support image_to_video")
+        if request.required_capability not in provider.capabilities:
+            raise MediaError(
+                f"Video provider {provider.name!r} does not support "
+                f"{request.required_capability.value}"
+            )
         return provider.generate_video(request)

@@ -16,6 +16,7 @@ import { flushSync } from "react-dom";
 
 import {
   animateInteractiveTravelPart,
+  captureInteractiveTravelFinale,
   continueInteractiveTravel,
   getInteractiveTravelSuggestions,
   illustrateInteractiveTravelPart,
@@ -126,6 +127,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const { sweep } = useGlimm();
   const localPet = useLocalPetState();
   const [session, setSession] = useState<LocalInteractiveTravel | null>(null);
+  const capturedFinaleTravelIdRef = useRef<string | null>(null);
   const [isRestored, setIsRestored] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [suggestionsNonce, setSuggestionsNonce] = useState(0);
@@ -208,6 +210,17 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     }, 0);
     return () => window.clearTimeout(timeoutId);
   }, [petId]);
+
+  useEffect(() => {
+    const travel = session?.travel;
+    if (!travel?.completed || capturedFinaleTravelIdRef.current === travel.travelId) {
+      return;
+    }
+    capturedFinaleTravelIdRef.current = travel.travelId;
+    void captureInteractiveTravelFinale(travel).catch(() => {
+      capturedFinaleTravelIdRef.current = null;
+    });
+  }, [session]);
 
   useEffect(() => {
     if (localPet.status === "empty") {

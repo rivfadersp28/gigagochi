@@ -56,6 +56,91 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/admin/travel-finales": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Travel Finale List */
+        readonly get: operations["travel_finale_list_api_admin_travel_finales_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/admin/travel-finales/import": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Travel Finale Import */
+        readonly post: operations["travel_finale_import_api_admin_travel_finales_import_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/admin/travel-finales/{travel_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Travel Finale Detail */
+        readonly get: operations["travel_finale_detail_api_admin_travel_finales__travel_id__get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/admin/travel-finales/{travel_id}/generate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Travel Finale Generate */
+        readonly post: operations["travel_finale_generate_api_admin_travel_finales__travel_id__generate_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/admin/travel-finales/{travel_id}/prompt": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Travel Finale Prompt */
+        readonly post: operations["travel_finale_prompt_api_admin_travel_finales__travel_id__prompt_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/chat": {
         readonly parameters: {
             readonly query?: never;
@@ -271,6 +356,23 @@ export interface paths {
         readonly put?: never;
         /** Interactive Travel Continue */
         readonly post: operations["interactive_travel_continue_api_travel_interactive_continue_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/travel/interactive/finale/capture": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Interactive Travel Finale Capture */
+        readonly post: operations["interactive_travel_finale_capture_api_travel_interactive_finale_capture_post"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -539,6 +641,10 @@ export interface components {
             readonly partNumber: number;
             /** Travelid */
             readonly travelId: string;
+        };
+        /** CaptureInteractiveTravelFinaleRequest */
+        readonly CaptureInteractiveTravelFinaleRequest: {
+            readonly travel: components["schemas"]["InteractiveTravelState"];
         };
         /** ContinueInteractiveTravelRequest */
         readonly ContinueInteractiveTravelRequest: {
@@ -1322,6 +1428,31 @@ export interface components {
             readonly memoryContext?: components["schemas"]["LocalPetMemoryContext"] | null;
             readonly pet: components["schemas"]["LocalPetChatContext"];
         };
+        /** TravelFinaleGenerateRequest */
+        readonly TravelFinaleGenerateRequest: {
+            /** Prompt */
+            readonly prompt: string;
+            /** Referencebaseurl */
+            readonly referenceBaseUrl: string;
+        };
+        /** TravelFinaleImportRequest */
+        readonly TravelFinaleImportRequest: {
+            /** Firstname */
+            readonly firstName?: string | null;
+            /**
+             * Telegramid
+             * @default 62943754
+             */
+            readonly telegramId: number;
+            readonly travel: components["schemas"]["InteractiveTravelState"];
+            /** Username */
+            readonly username?: string | null;
+        };
+        /** TravelFinalePromptRequest */
+        readonly TravelFinalePromptRequest: {
+            /** Direction */
+            readonly direction: string;
+        };
         /** TravelSceneImage */
         readonly TravelSceneImage: {
             /** Imageurl */
@@ -1493,6 +1624,170 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AdminPublishJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly travel_finale_list_api_admin_travel_finales_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly travel_finale_import_api_admin_travel_finales_import_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TravelFinaleImportRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly travel_finale_detail_api_admin_travel_finales__travel_id__get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly travel_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly travel_finale_generate_api_admin_travel_finales__travel_id__generate_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly travel_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TravelFinaleGenerateRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly travel_finale_prompt_api_admin_travel_finales__travel_id__prompt_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly travel_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TravelFinalePromptRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: string;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -1919,6 +2214,41 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["InteractiveTravelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly interactive_travel_finale_capture_api_travel_interactive_finale_capture_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CaptureInteractiveTravelFinaleRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: boolean;
+                    };
                 };
             };
             /** @description Validation Error */

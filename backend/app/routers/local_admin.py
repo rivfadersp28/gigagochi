@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -7,6 +8,17 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
+from app.schemas import InteractiveTravelState
+from app.services.interactive_travel_finale_service import (
+    DEFAULT_DIRECTION,
+    build_interactive_travel_story,
+    compile_interactive_travel_video_prompt,
+    generate_interactive_travel_finale_video,
+    list_interactive_travel_finale_attempts,
+    list_interactive_travel_finales,
+    read_interactive_travel_finale,
+    save_interactive_travel_finale,
+)
 from app.services.local_admin_publish import (
     AdminPublishError,
     get_admin_publish_job,
@@ -31,6 +43,22 @@ class AdminSaveRequest(BaseModel):
 class AdminPublishRequest(BaseModel):
     files: list[AdminFileUpdate] = Field(default_factory=list, max_length=16)
     message: str | None = Field(default=None, max_length=180)
+
+
+class TravelFinaleImportRequest(BaseModel):
+    travel: InteractiveTravelState
+    telegramId: int = 62943754
+    username: str | None = Field(default=None, max_length=64)
+    firstName: str | None = Field(default=None, max_length=64)
+
+
+class TravelFinalePromptRequest(BaseModel):
+    direction: str = Field(min_length=1, max_length=8000)
+
+
+class TravelFinaleGenerateRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=16000)
+    referenceBaseUrl: str = Field(min_length=1, max_length=1000)
 
 
 AdminSource = Literal["local", "production"]
@@ -152,6 +180,74 @@ router = APIRouter(
     tags=["local-admin"],
     dependencies=[Depends(require_local_admin)],
 )
+
+
+@router.get("/travel-finales")
+def travel_finale_list() -> dict[str, Any]:
+    return {"items": list_interactive_travel_finales()}
+
+
+@router.post("/travel-finales/import")
+def travel_finale_import(payload: TravelFinaleImportRequest) -> dict[str, Any]:
+    return save_interactive_travel_finale(
+        payload.travel,
+        telegram_id=payload.telegramId,
+        username=payload.username,
+        first_name=payload.firstName,
+    )
+
+
+@router.get("/travel-finales/{travel_id}")
+def travel_finale_detail(travel_id: str) -> dict[str, Any]:
+    try:
+        snapshot = read_interactive_travel_finale(travel_id)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Travel finale not found",
+        ) from exc
+    travel = InteractiveTravelState.model_validate(snapshot["travel"])
+    return {
+        **snapshot,
+        "story": build_interactive_travel_story(travel),
+        "defaultDirection": DEFAULT_DIRECTION,
+        "attempts": list_interactive_travel_finale_attempts(travel_id),
+    }
+
+
+@router.post("/travel-finales/{travel_id}/prompt")
+def travel_finale_prompt(travel_id: str, payload: TravelFinalePromptRequest) -> dict[str, str]:
+    try:
+        snapshot = read_interactive_travel_finale(travel_id)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Travel finale not found",
+        ) from exc
+    prompt = compile_interactive_travel_video_prompt(
+        InteractiveTravelState.model_validate(snapshot["travel"]),
+        direction=payload.direction,
+    )
+    return {"prompt": prompt}
+
+
+@router.post("/travel-finales/{travel_id}/generate")
+def travel_finale_generate(
+    travel_id: str,
+    payload: TravelFinaleGenerateRequest,
+) -> dict[str, Any]:
+    try:
+        snapshot = read_interactive_travel_finale(travel_id)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Travel finale not found",
+        ) from exc
+    return generate_interactive_travel_finale_video(
+        InteractiveTravelState.model_validate(snapshot["travel"]),
+        prompt=payload.prompt,
+        reference_base_url=payload.referenceBaseUrl,
+    )
 
 
 @router.get("/speech", response_model=AdminSpeechManifestResponse)

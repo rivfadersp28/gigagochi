@@ -98,6 +98,16 @@
 
 ## Media Routing
 
+- Completed interactive travels are snapshotted as `finale.json` beside their generated assets.
+  The normal final continuation saves the snapshot best-effort, and reopening a completed client
+  session uploads its localStorage copy so journeys completed before this persistence path can be
+  recovered. The local-only `/admin/travel-finale` lab reads these immutable source snapshots,
+  compiles an editable 15-second video prompt, and stores prompt-addressed finale attempts without
+  regenerating the journey.
+- Reference-to-video is an explicit media capability. OpenRouter requests may use either one frame
+  image or a set of reference assets; the finale lab uses the prior travel MP4 URLs with Seedance
+  2.0 while ordinary pet and story animation remains image-to-video on the configured model.
+
 - Image and video generation crosses the provider-neutral synchronous gateway in
   `backend/app/media`. Image requests declare t2i or i2i from the presence of reference
   images; video requests currently use i2v. Capability checks happen before transport calls.

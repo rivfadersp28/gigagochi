@@ -689,6 +689,25 @@ export async function continueInteractiveTravel(
   return withPublicInteractiveTravelImages(response);
 }
 
+export async function captureInteractiveTravelFinale(
+  travel: InteractiveTravelState,
+): Promise<void> {
+  await request(
+    "/api/travel/interactive/finale/capture",
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      body: { travel },
+    },
+    (payload) => {
+      if (!payload || typeof payload !== "object" || (payload as { saved?: unknown }).saved !== true) {
+        throw new ApiContractError("Invalid interactive travel finale capture response");
+      }
+      return undefined;
+    },
+  );
+}
+
 export async function illustrateInteractiveTravelPart(
   travel: InteractiveTravelState,
   part: InteractiveTravelPart,

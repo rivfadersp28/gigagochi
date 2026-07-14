@@ -2095,6 +2095,8 @@ def generate_openrouter_video_bytes(
     resolution: str = PET_SCENE_VIDEO_RESOLUTION,
     aspect_ratio: str = PET_SCENE_VIDEO_ASPECT_RATIO,
     duration: int = PET_SCENE_VIDEO_DURATION_SECONDS,
+    input_references: list[dict[str, Any]] | None = None,
+    model: str | None = None,
 ) -> bytes:
     if source_bytes is not None:
         source_data_url = f"data:image/png;base64,{base64.b64encode(source_bytes).decode('utf-8')}"
@@ -2102,11 +2104,14 @@ def generate_openrouter_video_bytes(
     elif source_path is not None:
         source_data_url = _image_path_data_url(source_path)
         source_label = source_path.name
+    elif input_references:
+        source_data_url = None
+        source_label = "<references>"
     else:
-        raise ValueError("source_path or source_bytes is required")
+        raise ValueError("source_path, source_bytes or input_references is required")
 
     settings = get_settings()
-    model = get_openrouter_video_model(settings)
+    model = (model or "").strip() or get_openrouter_video_model(settings)
     payload = {
         "model": model,
         "prompt": prompt,
@@ -2114,24 +2119,28 @@ def generate_openrouter_video_bytes(
         "resolution": resolution,
         "aspect_ratio": aspect_ratio,
         "generate_audio": False,
-        "frame_images": [
+    }
+    if source_data_url:
+        payload["frame_images"] = [
             {
                 "type": "image_url",
                 "image_url": {"url": source_data_url},
                 "frame_type": "first_frame",
             }
-        ],
-    }
-    log_payload = {
-        **payload,
-        "frame_images": [
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,<{source_label}>"},
-                "frame_type": "first_frame",
-            }
-        ],
-    }
+        ]
+        log_payload = {
+            **payload,
+            "frame_images": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,<{source_label}>"},
+                    "frame_type": "first_frame",
+                }
+            ],
+        }
+    else:
+        payload["input_references"] = input_references or []
+        log_payload = payload
     logger.info("OpenRouter video generation prompt label=%s payload=%s", label, log_payload)
 
     response = _submit_openrouter_video_job(settings, payload, label=label)
@@ -2162,13 +2171,15 @@ def generate_openrouter_video_bytes(
 
 
 def generate_openrouter_video_from_image_bytes(
-    image_bytes: bytes,
+    image_bytes: bytes | None,
     *,
     label: str,
     prompt: str,
     resolution: str,
     aspect_ratio: str,
     duration: int,
+    input_references: list[dict[str, Any]] | None = None,
+    model: str | None = None,
 ) -> bytes:
     return generate_openrouter_video_bytes(
         None,
@@ -2178,11 +2189,13 @@ def generate_openrouter_video_from_image_bytes(
         resolution=resolution,
         aspect_ratio=aspect_ratio,
         duration=duration,
+        input_references=input_references,
+        model=model,
     )
 
 
 def generate_video_from_image_bytes(
-    image_bytes: bytes,
+    image_bytes: bytes | None,
     *,
     label: str,
     prompt: str,
@@ -2190,6 +2203,8 @@ def generate_video_from_image_bytes(
     aspect_ratio: str,
     duration: int,
     provider: str | None = None,
+    input_references: list[dict[str, Any]] | None = None,
+    model: str | None = None,
 ) -> bytes:
     return get_media_gateway().generate_video(
         VideoRequest(
@@ -2200,6 +2215,8 @@ def generate_video_from_image_bytes(
             aspect_ratio=aspect_ratio,
             duration_seconds=duration,
             provider=provider,
+            input_references=tuple(input_references or ()),
+            model=model,
         )
     )
 

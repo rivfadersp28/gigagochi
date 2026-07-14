@@ -55,6 +55,8 @@ class KandinskyVideoProvider:
     def generate_video(self, request: VideoRequest) -> bytes:
         from app.services.image_service import generate_kandinsky_video_from_image_bytes
 
+        if request.source_image is None:
+            raise ValueError("Kandinsky video generation requires source_image")
         return generate_kandinsky_video_from_image_bytes(
             request.source_image,
             label=request.task,
@@ -64,7 +66,9 @@ class KandinskyVideoProvider:
 
 class OpenRouterVideoProvider:
     name = "openrouter"
-    capabilities = frozenset({MediaCapability.IMAGE_TO_VIDEO})
+    capabilities = frozenset(
+        {MediaCapability.IMAGE_TO_VIDEO, MediaCapability.REFERENCE_TO_VIDEO}
+    )
 
     def generate_video(self, request: VideoRequest) -> bytes:
         from app.services.image_service import generate_openrouter_video_from_image_bytes
@@ -76,4 +80,6 @@ class OpenRouterVideoProvider:
             resolution=request.resolution,
             aspect_ratio=request.aspect_ratio,
             duration=request.duration_seconds,
+            input_references=list(request.input_references),
+            model=request.model,
         )
