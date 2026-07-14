@@ -1,7 +1,11 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type {
+  AnimationEvent as ReactAnimationEvent,
+  CSSProperties,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import { useRef, useState } from "react";
 
 import type { FoodId } from "@/lib/localPetFood";
@@ -18,10 +22,13 @@ type FoodDragState = {
   x: number;
   y: number;
   isDragging: boolean;
+  animationPhase: "idle" | "consuming" | "reappearing";
 };
 
 type FeedFoodTokenStyle = CSSProperties & {
   "--feed-food-rotation": string;
+  "--feed-food-translate-x": string;
+  "--feed-food-translate-y": string;
 };
 
 type DraggableFoodTokenProps = {
@@ -42,6 +49,7 @@ export function DraggableFoodToken({
     x: 0,
     y: 0,
     isDragging: false,
+    animationPhase: "idle",
   });
   const dragOriginRef = useRef({ x: 0, y: 0 });
   const suppressClickRef = useRef(false);
@@ -62,6 +70,7 @@ export function DraggableFoodToken({
       x: 0,
       y: 0,
       isDragging: true,
+      animationPhase: "idle",
     });
   }
 
@@ -94,29 +103,63 @@ export function DraggableFoodToken({
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
 
-    setDragState({
+    setDragState((current) => ({
       pointerId: null,
-      x: 0,
-      y: 0,
+      x: didFeed ? current.x : 0,
+      y: didFeed ? current.y : 0,
       isDragging: false,
+      animationPhase: didFeed ? "consuming" : "idle",
+    }));
+  }
+
+  function handleAnimationEnd(event: ReactAnimationEvent<HTMLButtonElement>) {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+
+    setDragState((current) => {
+      if (current.animationPhase === "consuming") {
+        return {
+          ...current,
+          x: 0,
+          y: 0,
+          animationPhase: "reappearing",
+        };
+      }
+      if (current.animationPhase === "reappearing") {
+        return {
+          ...current,
+          animationPhase: "idle",
+        };
+      }
+      return current;
     });
   }
 
   const tokenStyle: FeedFoodTokenStyle = {
     "--feed-food-rotation": `${food.rotation}deg`,
-    transform: `translate3d(${dragState.x}px, ${dragState.y}px, 0) rotate(var(--feed-food-rotation))`,
+    "--feed-food-translate-x": `${dragState.x}px`,
+    "--feed-food-translate-y": `${dragState.y}px`,
   };
+
+  const animationClass =
+    dragState.animationPhase === "consuming"
+      ? "feed-food-token--consuming"
+      : dragState.animationPhase === "reappearing"
+        ? "feed-food-token--reappearing"
+        : "";
 
   return (
     <button
       type="button"
-      className={`feed-food-token ${dragState.isDragging ? "feed-food-token--dragging" : ""}`}
+      className={`feed-food-token ${dragState.isDragging ? "feed-food-token--dragging" : ""} ${animationClass}`}
       style={tokenStyle}
       disabled={disabled}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={finishPointerDrag}
       onPointerCancel={finishPointerDrag}
+      onAnimationEnd={handleAnimationEnd}
       onClick={(event) => {
         if (suppressClickRef.current) {
           suppressClickRef.current = false;

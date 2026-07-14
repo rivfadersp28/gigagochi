@@ -1114,6 +1114,12 @@ body {
     inset 0 2px 4px rgba(255, 255, 255, 0.09);
   cursor: grab;
   touch-action: none;
+  transform: translate3d(
+      var(--feed-food-translate-x, 0),
+      var(--feed-food-translate-y, 0),
+      0
+    )
+    rotate(var(--feed-food-rotation)) scale(1);
   transition:
     transform 180ms ease-out,
     background-color 160ms ease,
@@ -1143,6 +1149,17 @@ body {
 
 .feed-food-token--dragging img {
   transform: scale(1.18);
+}
+
+.feed-food-token--consuming {
+  z-index: 8;
+  pointer-events: none;
+  animation: feed-food-consume 180ms cubic-bezier(0.55, 0, 1, 0.45) forwards;
+}
+
+.feed-food-token--reappearing {
+  pointer-events: none;
+  animation: feed-food-reappear 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .feed-food-token:disabled {
@@ -1347,6 +1364,38 @@ button:enabled:active {
   }
 }
 
+@keyframes feed-food-consume {
+  from {
+    transform: translate3d(
+        var(--feed-food-translate-x, 0),
+        var(--feed-food-translate-y, 0),
+        0
+      )
+      rotate(var(--feed-food-rotation)) scale(1);
+  }
+
+  to {
+    transform: translate3d(
+        var(--feed-food-translate-x, 0),
+        var(--feed-food-translate-y, 0),
+        0
+      )
+      rotate(var(--feed-food-rotation)) scale(0);
+  }
+}
+
+@keyframes feed-food-reappear {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) rotate(var(--feed-food-rotation)) scale(0.7);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) rotate(var(--feed-food-rotation)) scale(1);
+  }
+}
+
 .creating-friend-shimmer {
   color: transparent;
   background-image: linear-gradient(
@@ -1393,6 +1442,11 @@ button:enabled:active {
 
   .feed-drop-pulse {
     animation: none;
+  }
+
+  .feed-food-token--consuming,
+  .feed-food-token--reappearing {
+    animation-duration: 0.01ms;
   }
 
   button {
