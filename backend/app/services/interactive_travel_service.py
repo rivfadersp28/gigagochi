@@ -36,7 +36,7 @@ from app.services.travel_service import (
 )
 
 MIN_PART_COUNT = 3
-MAX_PART_COUNT = 6
+MAX_PART_COUNT = 7
 MIN_TIMEOUT_SECONDS = 120.0
 COMPACT_SENTENCE_MAX_CHARS = 80
 COMPACT_SENTENCE_MAX_WORDS = 15
@@ -47,8 +47,36 @@ RESOLUTION_MAX_CHARS = COMPACT_SENTENCE_MAX_CHARS
 CHALLENGE_MAX_CHARS = COMPACT_SENTENCE_MAX_CHARS
 SUGGESTION_MAX_CHARS = 40
 SUGGESTION_MAX_WORDS = 2
-ELAPSED_MIN_HOURS = 2
+ELAPSED_MIN_HOURS = 0
 ELAPSED_MAX_HOURS = 8
+PLAIN_LANGUAGE_REPLACEMENTS = (
+    (re.compile(r"(?iu)\bна гать\b"), "на деревянную дорожку"),
+    (re.compile(r"(?iu)\bпо гати\b"), "по деревянной дорожке"),
+    (re.compile(r"(?iu)\bгать\b"), "деревянная дорожка"),
+    (re.compile(r"(?iu)\bгати\b"), "деревянной дорожки"),
+    (re.compile(r"(?iu)\bна околице\b"), "на краю деревни"),
+    (re.compile(r"(?iu)\bу околицы\b"), "у края деревни"),
+    (re.compile(r"(?iu)\bоколица\b"), "край деревни"),
+    (re.compile(r"(?iu)\bказемат(?:ы|ах|ами)?\b"), "подвал"),
+    (re.compile(r"(?iu)\bkaç\b"), "непонятное слово"),
+)
+UNSUPPORTED_FOREIGN_LETTER_RE = re.compile(r"(?iu)[çğıöşüñáéíóúàèìòùâêîôû]")
+CONTINUITY_STOP_WORDS = {
+    "будет",
+    "дальше",
+    "двое",
+    "иду",
+    "идёт",
+    "меня",
+    "мне",
+    "она",
+    "они",
+    "потом",
+    "там",
+    "этот",
+    "эта",
+    "это",
+}
 REACTION_TONES = (
     "enthusiastic",
     "confused",
@@ -79,34 +107,6 @@ ACTION_FALLBACKS = (
     "Осмотреться",
     "Позвать помощь",
     "Рискнуть напрямик",
-)
-FINAL_RESOLUTION_MARKERS = (
-    "побед",
-    "спас",
-    "разгад",
-    "решен",
-    "решён",
-    "заверш",
-    "законч",
-    "останов",
-    "вернул",
-    "снова",
-    "освобод",
-    "разруш",
-    "провал",
-    "не удалось",
-    "навсегда",
-    "теперь",
-    "исчез",
-    "возвращ",
-    "ожил",
-    "ожива",
-    "достиг",
-    "добил",
-    "нашел",
-    "нашёл",
-    "выбрался",
-    "получил",
 )
 FINAL_CLIFFHANGER_MARKERS = (
     "но вдруг",
@@ -165,17 +165,14 @@ class InteractiveTravelGenerationError(RuntimeError):
         self.text_overflow = text_overflow
 
 
-def _arc_beat(part_number: int) -> str:
+def _arc_beat(part_number: int, target_part_count: int) -> str:
     if part_number == 1:
         return "первый решающий поступок и его заметное последствие для основной цели"
-    if part_number == 2:
+    if part_number < target_part_count - 1:
         return "эскалация: препятствие и цена ошибки заметно выше, чем в первой части"
-    if part_number < MAX_PART_COUNT:
-        return (
-            "поворот или кульминация: если центральный конфликт созрел, полноценно заверши его; "
-            "иначе усили кризис, не вводя новый несвязанный сюжет"
-        )
-    return "обязательная кульминация и окончательная развязка центральной цели"
+    if part_number == target_part_count - 1:
+        return "кризис перед кульминацией: последнее крупное препятствие исходной цели"
+    return "кульминация или её прямое продолжение до окончательной развязки исходной цели"
 
 
 SUGGESTION_ITEM_SCHEMA: dict[str, Any] = {
@@ -224,6 +221,23 @@ START_SCHEMA: dict[str, Any] = {
                 "crisis": {"type": "string", "maxLength": 240},
                 "climax": {"type": "string", "maxLength": 240},
                 "resolution": {"type": "string", "maxLength": 240},
+                "targetPartCount": {
+                    "type": "integer",
+                    "minimum": MIN_PART_COUNT,
+                    "maximum": MAX_PART_COUNT,
+                },
+                "goalKeywords": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {"type": "string", "minLength": 3, "maxLength": 40},
+                },
+                "partBeats": {
+                    "type": "array",
+                    "minItems": MIN_PART_COUNT,
+                    "maxItems": MAX_PART_COUNT,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 180},
+                },
             },
             "required": [
                 "goal",
@@ -232,6 +246,9 @@ START_SCHEMA: dict[str, Any] = {
                 "crisis",
                 "climax",
                 "resolution",
+                "targetPartCount",
+                "goalKeywords",
+                "partBeats",
             ],
         },
         "part": {
@@ -381,8 +398,17 @@ NEXT_PART_SCHEMA: dict[str, Any] = {
                         "к уже известной цели. Не упоминает число прошедших часов."
                     ),
                 },
+                "continuityAnchor": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 60,
+                    "description": (
+                        "Обычное место или участник, явно названный и в departureHook, "
+                        "и в первом storyParagraph следующей части."
+                    ),
+                },
             },
-            "required": ["elapsedHours", "summary", "departureHook"],
+            "required": ["elapsedHours", "summary", "departureHook", "continuityAnchor"],
         },
         "title": {"type": "string", "maxLength": 120},
         "storyParagraphs": {
@@ -428,6 +454,20 @@ def _result_schema(*, statuses: list[str], include_resolution: bool) -> dict[str
             ),
         }
         required.append("resolution")
+        properties["goalStatus"] = {
+            "type": "string",
+            "enum": ["in_progress", "achieved", "failed"],
+        }
+        properties["goalOutcome"] = {"type": "string", "maxLength": 240}
+        properties["goalEvidence"] = {
+            "type": "string",
+            "maxLength": COMPACT_SENTENCE_MAX_CHARS,
+            "description": (
+                "Для completed — точная видимая фраза из resultParagraphs или resolution, "
+                "которая доказывает судьбу исходной цели. Для continue — пустая строка."
+            ),
+        }
+        required.extend(("goalStatus", "goalOutcome", "goalEvidence"))
     return {
         "type": "object",
         "additionalProperties": False,
@@ -436,8 +476,8 @@ def _result_schema(*, statuses: list[str], include_resolution: bool) -> dict[str
     }
 
 
-def _continue_schema(part_number: int) -> tuple[str, dict[str, Any]]:
-    if part_number < MIN_PART_COUNT:
+def _continue_schema(part_number: int, target_part_count: int) -> tuple[str, dict[str, Any]]:
+    if part_number < target_part_count:
         return (
             "interactive_travel_continue_intermediate",
             {
@@ -483,18 +523,22 @@ SYSTEM_PROMPT = "\n".join(
     (
         "Ты ведущий интерактивной истории про одного персонажа.",
         "Пиши по-русски, от первого лица персонажа, обычным современным языком.",
+        "Используй только понятные повседневные слова. Не пиши архаизмы и редкие слова вроде "
+        "«гать», «околица», «каземат», «фолиант»; заменяй их на «деревянная дорожка», "
+        "«край деревни», «подвал», «книга» или другое простое описание. Не вставляй случайные "
+        "иностранные слова или буквы.",
         "Весь видимый текст пиши телеграфно и конкретно. Каждая строка — одно простое "
         "законченное предложение до 80 символов и 15 слов. Одна строка сообщает только один "
         "факт: где персонаж, что случилось, что он сделал или что изменилось. Не расписывай "
         "атмосферу, декорации, ощущения и литературные подробности. Не объединяй два события "
-        "сложным предложением.",
+        "сложным предложением и не убирай нужную запятую или точку ради лимита.",
         "Не придумывай именованные предметы, артефакты, силы, организации, титулы или понятия. "
         "Слово с особым смыслом и заглавной буквы допустимо только при точном совпадении с "
         "KNOWN_CONTEXT. Нельзя внезапно вводить «Сердце», «Источник», «Орден» и похожий термин. "
         "Если нужной детали нет в KNOWN_CONTEXT, назови её обычными строчными словами и сразу "
         "объясни конкретное назначение.",
         "История состоит из динамического числа эпизодических блоков: минимум три, максимум "
-        "шесть. Каждый блок строго устроен так: ситуация и вопрос -> ответ владельца -> "
+        "семь. Каждый блок строго устроен так: ситуация и вопрос -> ответ владельца -> "
         "реальное действие персонажа и результат. Не смешивай следующую ситуацию с результатом "
         "текущего ответа.",
         "Часть 1 — интро всей истории и начало путешествия сразу после того, как персонаж "
@@ -509,8 +553,10 @@ SYSTEM_PROMPT = "\n".join(
         "Часть останавливается перед первым решением владельца; исход и изменения параметров "
         "появляются только после его ответа.",
         "Это единая крупная арка, а не набор мелких случаев: часть 1 задаёт цель и ставки, часть 2 "
-        "заметно повышает риск, а начиная с части 3 история либо естественно приходит к "
-        "кульминации, либо продолжает наращивать кризис. Часть 6 всегда окончательная.",
+        "заметно повышает риск, а следующие части ведут к кульминации по arcPlan.targetPartCount. "
+        "До выбранной целевой части история не завершается. Если из-за решений владельца в ней "
+        "ещё нельзя честно закрыть исходную цель, продли арку, но не дальше части 7. "
+        "Часть 7 всегда окончательная.",
         "Результат каждого получившего ответ блока обязан иметь однозначный положительный или "
         "отрицательный итог. "
         "Не используй нейтральные итоги и не компенсируй провал успехом в том же эпизоде.",
@@ -546,27 +592,35 @@ SYSTEM_PROMPT = "\n".join(
         "повторяют, "
         "не отменяют и не ставят действие под сомнение. Последствия могут быть хорошими или "
         "плохими, но свершившееся действие не отменяется результатом.",
+        "Последствие должно причинно следовать из действия и уже показанных фактов. В социальном "
+        "эпизоде действие убеждает другого участника только если даёт наблюдаемое доказательство, "
+        "отвечает на его конкретное сомнение или меняет его практический интерес. Рана, эмоция, "
+        "красивая фраза или смелость сами по себе не доказывают чужое утверждение.",
         "Никогда не используй null в контракте продолжения. Точная форма JSON задана схемой "
         "текущей фазы: промежуточная схема содержит nextPart и не содержит resolution; финальная "
         "содержит resolution и не содержит nextPart; динамическая технически содержит оба поля, "
         "но при storyStatus=continue resolution остаётся пустой строкой, а при completed nextPart "
         "будет отброшен приложением. "
-        "Финал допустим после ответа в части 3; части 1–2 всегда продолжают арку, часть 6 всегда "
-        "финальная.",
-        "Каждый nextPart происходит через 2–8 сюжетных часов после результата текущей части. "
-        "transition.elapsedHours хранит этот разрыв, а transition.summary кратко фиксирует, что "
-        "изменилось за это время. transition.departureHook завершает текущую подисторию короткой "
-        "репликой от первого лица: персонаж называет конкретный результат своего последнего "
-        "действия и говорит, что продолжает путь к уже известной цели. Не пиши в этой реплике "
-        "«Через N часов» и не сообщай длительность перехода. Первая строка "
-        "nextPart.storyParagraphs сразу показывает новую более позднюю ситуацию без служебной "
-        "заглушки о продолжении пути. Непосредственная сцена закончилась: изменились время "
-        "суток, положение героев, ход пути или состояние конфликта. Это не мгновенное продолжение "
-        "той же секунды. При этом сохраняй причинность, последствия и центральную цель.",
+        "Финал допустим только начиная с arcPlan.targetPartCount; часть 7 всегда финальная.",
+        "Каждый nextPart прямо вырастает из результата предыдущей части. Если персонаж сразу идёт "
+        "дальше по тому же месту, ставь transition.elapsedHours=0. Значение 1–8 используй только "
+        "когда в истории действительно прошёл час или больше. transition.summary кратко фиксирует "
+        "причинный мост. transition.departureHook одной репликой от первого лица показывает "
+        "путь от результата к следующей сцене: куда персонаж пошёл, через что прошёл или к кому "
+        "подошёл. "
+        "В continuityAnchor назови простыми словами одно место или участника этой связки. Тот же "
+        "якорь явно назови в departureHook и первом nextPart.storyParagraphs. Например: "
+        "«Я спускаюсь в тоннель и иду по нему дальше» -> continuityAnchor «тоннель» -> "
+        "«В тоннеле мне преграждают "
+        "путь двое хранителей». Не перескакивай сразу к новой сцене без показанного пути к ней.",
         "Каждый элемент nextPart.storyParagraphs сообщает один новый факт о более поздней "
         "ситуации до нового решения. После них идёт challenge. Не выполняй ответ заранее и не "
         "выдавай результат нового блока.",
-        "Финальная часть обязана показать кульминацию, однозначную судьбу центральной цели и "
+        "Финальная часть обязана буквально ответить на обещание из openingContext и arcPlan.goal: "
+        "покажи, достигнута исходная цель или окончательно провалена, а не только устранено "
+        "последнее препятствие. Победа над монстром, побег или уход не являются финалом сами "
+        "по себе. "
+        "Финальная часть также обязана показать кульминацию, однозначную судьбу центральной цели и "
         "спокойное последствие после неё. Последней видимой фразой становится resolution. Она не "
         "может быть вопросом, новой угрозой, внезапным открытием, приглашением к следующему шагу "
         "или намёком «это только начало». Никаких cliffhanger и незакрытых обещаний продолжения.",
@@ -580,6 +634,78 @@ SYSTEM_PROMPT = "\n".join(
 
 def _clean_text(value: Any, limit: int) -> str:
     return " ".join(str(value or "").split())[:limit].rstrip()
+
+
+def _target_part_count(arc_plan: dict[str, str]) -> int:
+    try:
+        value = int(arc_plan.get("targetPartCount") or MIN_PART_COUNT)
+    except (TypeError, ValueError):
+        value = MIN_PART_COUNT
+    return max(MIN_PART_COUNT, min(MAX_PART_COUNT, value))
+
+
+def _goal_keywords(arc_plan: dict[str, str]) -> list[str]:
+    raw = arc_plan.get("goalKeywords") or ""
+    values = [item.strip() for item in raw.split(",") if item.strip()]
+    if values:
+        return values[:4]
+    return [arc_plan.get("goal", "")]
+
+
+def _word_stems(value: str) -> set[str]:
+    stop_words = {
+        "все",
+        "всех",
+        "чтобы",
+        "после",
+        "перед",
+        "свою",
+        "свой",
+        "этой",
+        "этого",
+        "окончательно",
+    }
+    stems: set[str] = set()
+    for token in re.findall(r"(?u)[а-яё]{4,}", value.casefold()):
+        if token in stop_words:
+            continue
+        stems.add(token[:5] if len(token) >= 5 else token)
+    return stems
+
+
+def _continuity_stems(value: str) -> set[str]:
+    stems: set[str] = set()
+    for token in re.findall(r"(?u)[а-яёa-z]{3,}", value.casefold()):
+        if token in CONTINUITY_STOP_WORDS:
+            continue
+        root = _named_token_root(token)
+        stems.add(root[:5] if len(root) >= 5 else root)
+    return stems
+
+
+def _merged_continuity_hook(departure_hook: str, first_paragraph: str) -> str:
+    route = departure_hook.rstrip(" .!?…")
+    arrival = first_paragraph.rstrip(" .!?…")
+    if arrival:
+        arrival = arrival[0].lower() + arrival[1:]
+    return f"{route} — и там {arrival}."
+
+
+def _goal_relevance_stems(arc_plan: dict[str, str]) -> set[str]:
+    return _word_stems(" ".join(_goal_keywords(arc_plan))) or _word_stems(
+        arc_plan.get("goal", "")
+    )
+
+
+def _planned_part_beat(arc_plan: dict[str, str], part_number: int) -> str | None:
+    raw = arc_plan.get("partBeats") or ""
+    try:
+        values = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(values, list) or not 1 <= part_number <= len(values):
+        return None
+    return _clean_text(values[part_number - 1], 180) or None
 
 
 def _known_context_text(
@@ -607,8 +733,19 @@ def _named_tokens(text: str) -> set[str]:
     }
 
 
+def _named_token_root(value: str) -> str:
+    token = value.casefold()
+    for ending in ("ами", "ями", "ого", "ему", "ому", "ой", "ей", "ом", "ем", "ах", "ях"):
+        if token.endswith(ending) and len(token) - len(ending) >= 3:
+            return token[: -len(ending)]
+    if len(token) >= 4 and token[-1] in "аяыиуюе":
+        return token[:-1]
+    return token
+
+
 def _validate_known_named_terms(value: Any, *, known_context: str) -> None:
     allowed = _named_tokens(known_context)
+    allowed_roots = {_named_token_root(token) for token in allowed}
 
     def visit(item: Any) -> None:
         if isinstance(item, dict):
@@ -621,17 +758,29 @@ def _validate_known_named_terms(value: Any, *, known_context: str) -> None:
             return
         if not isinstance(item, str):
             return
-        first_text_offset = len(item) - len(item.lstrip(" «„\"'"))
         for match in re.finditer(r"(?u)\b[А-ЯЁ][а-яё-]{2,}\b", item):
             token = match.group(0).casefold()
-            if match.start() == first_text_offset and "«" not in item[: match.start() + 1]:
+            prefix = item[: match.start()].rstrip(" «„\"'—–-:;,()[]")
+            if not prefix or prefix[-1] in ".!?…":
                 continue
-            if token not in allowed:
+            if token not in allowed and _named_token_root(token) not in allowed_roots:
                 raise InteractiveTravelGenerationError(
                     f"INTERACTIVE_TRAVEL_UNEXPLAINED_NAMED_TERM:{match.group(0)}"
                 )
 
     visit(value)
+
+
+def _plain_language_text(value: str) -> str:
+    text = value
+    for pattern, replacement in PLAIN_LANGUAGE_REPLACEMENTS:
+        text = pattern.sub(replacement, text)
+    foreign = UNSUPPORTED_FOREIGN_LETTER_RE.search(text)
+    if foreign is not None:
+        raise InteractiveTravelGenerationError(
+            f"INTERACTIVE_TRAVEL_LANGUAGE_NOT_PLAIN:{foreign.group(0)}"
+        )
+    return text
 
 
 def _compact_sentence(
@@ -640,7 +789,7 @@ def _compact_sentence(
     allow_empty: bool = False,
     allow_text_overflow: bool = False,
 ) -> str:
-    text = " ".join(str(value or "").split())
+    text = _plain_language_text(" ".join(str(value or "").split()))
     if not text and allow_empty:
         return ""
     if len(text) > COMPACT_SENTENCE_MAX_CHARS or len(text.split()) > COMPACT_SENTENCE_MAX_WORDS:
@@ -657,6 +806,14 @@ def _compact_sentence(
     ):
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_SENTENCE_NOT_COMPACT")
     return text
+
+
+def _reaction_sentence(value: Any, *, allow_text_overflow: bool = False) -> str:
+    text = " ".join(str(value or "").split())
+    first = re.match(r"^.*?[.!?…](?:\s|$)", text)
+    if first is not None:
+        text = first.group(0).strip()
+    return _compact_sentence(text, allow_text_overflow=allow_text_overflow)
 
 
 def _unique_suggestions(
@@ -818,6 +975,27 @@ def _request(
                     f"Удали или замени обычными строчными словами новый именованный термин "
                     f"«{term}». Не вводи другие новые имена, титулы, артефакты или понятия."
                 )
+            elif str(exc).startswith("INTERACTIVE_TRAVEL_FINAL_GOAL_"):
+                repair_rule = (
+                    "Перепиши финальный видимый результат так, чтобы он прямо назвал судьбу "
+                    "исходной ARC_PLAN.goal и её смысловых goalKeywords. Устранение последнего "
+                    "препятствия само по себе недостаточно. goalEvidence должна дословно "
+                    "совпадать с доказывающей фразой из resultParagraphs или resolution."
+                )
+            elif str(exc).startswith("INTERACTIVE_TRAVEL_LANGUAGE_NOT_PLAIN:"):
+                word = str(exc).split(":", 1)[1]
+                repair_rule = (
+                    f"Замени непонятное или иностранное слово «{word}» обычными современными "
+                    "русскими словами. Проверь весь видимый текст и не добавляй другие архаизмы, "
+                    "редкие термины или случайные иностранные буквы."
+                )
+            elif str(exc) == "INTERACTIVE_TRAVEL_CONTINUITY_INVALID":
+                repair_rule = (
+                    "Перепиши nextPart с прямой связкой от результата. Выбери один простой "
+                    "continuityAnchor; явно назови его и в departureHook, и в первом "
+                    "storyParagraph. departureHook показывает путь, а первая строка — прибытие "
+                    "или встречу в том же месте."
+                )
             retry_kwargs = {
                 **kwargs,
                 "messages": [
@@ -877,21 +1055,48 @@ def _pending_part_from_payload(
             allow_empty=True,
             allow_text_overflow=allow_text_overflow,
         )
+        continuity_anchor = _plain_language_text(
+            _clean_text(raw_transition.get("continuityAnchor"), 60)
+        )
+        raw_paragraphs = raw.get("storyParagraphs")
+        first_paragraph = (
+            _compact_sentence(
+                raw_paragraphs[0],
+                allow_text_overflow=allow_text_overflow,
+            )
+            if isinstance(raw_paragraphs, list) and raw_paragraphs
+            else ""
+        )
+        story_paragraphs = raw_paragraphs
+        anchor_stems = _continuity_stems(continuity_anchor)
+        bridge_stems = _continuity_stems(departure_hook).intersection(
+            _continuity_stems(first_paragraph)
+        )
         if (
             isinstance(elapsed_hours, bool)
             or not isinstance(elapsed_hours, int)
             or not ELAPSED_MIN_HOURS <= elapsed_hours <= ELAPSED_MAX_HOURS
-            or not transition_summary
-            or not departure_hook
         ):
             raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_TIME_GAP_INVALID")
+        if (
+            not transition_summary
+            or not departure_hook
+            or not continuity_anchor
+            or not anchor_stems
+            or not first_paragraph
+        ):
+            raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_CONTINUITY_INVALID")
+        if not bridge_stems:
+            departure_hook = _merged_continuity_hook(departure_hook, first_paragraph)
+            story_paragraphs = raw_paragraphs[1:]
         transition = {
             "elapsedHours": elapsed_hours,
             "summary": transition_summary,
             "departureHook": departure_hook,
+            "continuityAnchor": continuity_anchor,
         }
         story_text = _story_text(
-            raw.get("storyParagraphs"),
+            story_paragraphs,
             allow_text_overflow=allow_text_overflow,
         )
     return InteractiveTravelPart(
@@ -920,7 +1125,7 @@ def _resolved_part_from_payload(
     assessment = raw.get("adviceAssessment")
     if assessment not in {"helpful", "harmful", "ambiguous"}:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_ASSESSMENT_INVALID")
-    reaction = _compact_sentence(
+    reaction = _reaction_sentence(
         raw.get("reaction"),
         allow_text_overflow=allow_text_overflow,
     )
@@ -1039,6 +1244,21 @@ def _start_payload_postcondition(
         for key in ("goal", "stakes", "escalation", "crisis", "climax", "resolution")
     ):
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_START_STRUCTURE_INVALID")
+    target_part_count = raw_arc.get("targetPartCount")
+    goal_keywords = raw_arc.get("goalKeywords")
+    part_beats = raw_arc.get("partBeats")
+    if (
+        isinstance(target_part_count, bool)
+        or not isinstance(target_part_count, int)
+        or not MIN_PART_COUNT <= target_part_count <= MAX_PART_COUNT
+        or not isinstance(goal_keywords, list)
+        or not 1 <= len(goal_keywords) <= 4
+        or any(not _clean_text(item, 40) for item in goal_keywords)
+        or not isinstance(part_beats, list)
+        or len(part_beats) != target_part_count
+        or any(not _clean_text(item, 180) for item in part_beats)
+    ):
+        raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_START_GOAL_CONTRACT_INVALID")
     _intro_reaction(
         payload.get("introReaction"),
         allow_text_overflow=allow_text_overflow,
@@ -1048,6 +1268,10 @@ def _start_payload_postcondition(
         raw_part.get("openingContext"), OPENING_CONTEXT_MAX_CHARS
     ):
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_START_STRUCTURE_INVALID")
+    opening_stems = _word_stems(str(raw_part.get("openingContext") or ""))
+    keyword_stems = _word_stems(" ".join(str(item) for item in goal_keywords))
+    if keyword_stems and not opening_stems.intersection(keyword_stems):
+        raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_OPENING_GOAL_MISSING")
     suggestions = raw_part.get("actionSuggestions")
     if not isinstance(suggestions, list) or len(suggestions) != 3:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_START_STRUCTURE_INVALID")
@@ -1067,6 +1291,7 @@ def _start_payload_postcondition(
 def _final_result_postcondition(
     raw_result: Any,
     *,
+    arc_plan: dict[str, str],
     allow_text_overflow: bool = False,
 ) -> None:
     if not isinstance(raw_result, dict) or raw_result.get("storyStatus") != "completed":
@@ -1091,11 +1316,18 @@ def _final_result_postcondition(
             resolution,
         )
     ).casefold()
+    goal_status = raw_result.get("goalStatus")
+    goal_outcome = _clean_text(raw_result.get("goalOutcome"), 240)
+    goal_evidence = _clean_text(raw_result.get("goalEvidence"), COMPACT_SENTENCE_MAX_CHARS)
+    if goal_status not in {"achieved", "failed"} or not goal_outcome or not goal_evidence:
+        raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_FINAL_GOAL_UNRESOLVED")
+    if goal_evidence.casefold() not in visible_text:
+        raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_FINAL_GOAL_EVIDENCE_MISSING")
+    goal_stems = _goal_relevance_stems(arc_plan)
+    if goal_stems and not goal_stems.intersection(_word_stems(visible_text)):
+        raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_FINAL_GOAL_IRRELEVANT")
     if any(marker in visible_text for marker in FINAL_CLIFFHANGER_MARKERS):
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_FINAL_CLIFFHANGER")
-    normalized_resolution = resolution.casefold()
-    if not any(marker in normalized_resolution for marker in FINAL_RESOLUTION_MARKERS):
-        raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_FINAL_RESOLUTION_UNGROUNDED")
 
 
 def _continue_payload_postcondition(
@@ -1103,6 +1335,8 @@ def _continue_payload_postcondition(
     *,
     current_part: InteractiveTravelPart,
     advice: str,
+    arc_plan: dict[str, str],
+    target_part_count: int,
     known_context: str,
     allow_text_overflow: bool = False,
 ) -> None:
@@ -1111,18 +1345,27 @@ def _continue_payload_postcondition(
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_RESULT_INVALID")
     current_number = current_part.partNumber
     story_status = raw_result.get("storyStatus")
-    if current_number < MIN_PART_COUNT and story_status != "continue":
-        raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_INTERMEDIATE_STATUS_INVALID")
-    if current_number == MAX_PART_COUNT and story_status != "completed":
+    if current_number < target_part_count:
+        story_status = "continue"
+    elif current_number == MAX_PART_COUNT and story_status != "completed":
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_FINAL_STATUS_INVALID")
-    if story_status not in {"continue", "completed"}:
+    elif story_status not in {"continue", "completed"}:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_STATUS_INVALID")
-    is_final = story_status == "completed"
+    is_final = current_number >= target_part_count and story_status == "completed"
     if is_final:
         _final_result_postcondition(
             raw_result,
+            arc_plan=arc_plan,
             allow_text_overflow=allow_text_overflow,
         )
+    elif current_number >= target_part_count and "goalStatus" in raw_result and any(
+        (
+            raw_result.get("goalStatus") != "in_progress",
+            bool(_clean_text(raw_result.get("goalOutcome"), 240)),
+            bool(_clean_text(raw_result.get("goalEvidence"), COMPACT_SENTENCE_MAX_CHARS)),
+        )
+    ):
+        raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_GOAL_STATUS_INVALID")
     _resolved_part_from_payload(
         current_part,
         raw_result,
@@ -1214,19 +1457,28 @@ def start_interactive_travel(
         memory_context=memory_context,
     )
     user_content = (
-        "Создай скрытый гибкий план единой значительной истории на 3–6 частей, а не маленького "
+        "Создай скрытый гибкий план единой значительной истории на 3–7 частей, а не маленького "
         "бытового эпизода. Точное число частей заранее не фиксируй: дальнейшие советы владельца "
         "могут естественно ускорить или продлить путь к развязке. Место из DESTINATION обязательно "
         "сделай главным пространством истории. "
         "Заранее задай отдельные escalation, crisis, climax и resolution: риск должен "
         "нарастать до кульминации, а финал — решать центральный конфликт через битву, "
         "финальную загадку, спасение, побег, противостояние или равноценную кульминацию. "
+        "Выбери targetPartCount от 3 до 7 по реальной сложности именно этой цели: простой "
+        "сюжет не растягивай, сложный не ужимай. Это самая ранняя часть, в которой допустим "
+        "финал. В goalKeywords дай 1–4 коротких смысловых якоря исходной цели — предмет, место "
+        "или участника, чья судьба обязана быть явно названа в финале. "
+        "В partBeats дай ровно targetPartCount последовательных этапов. Каждый этап должен "
+        "причинно продолжать предыдущий и заметно менять положение относительно goal. Не повторяй "
+        "в соседних этапах одинаковые следы, двери, развилки или поиск прохода. Последний этап "
+        "прямо закрывает исходную цель, а не только последнее препятствие. "
         "В introReaction дай одну короткую законченную реплику от первого лица: персонаж "
         "говорит, что сейчас подготовится и отправится именно в выбранное DESTINATION. "
         "Обязательно явно назови DESTINATION с естественным предлогом и падежом. "
         "Уложись в 12 слов и варьируй формулировку под характер персонажа. Не упоминай "
         "интерфейс, пользователя и генерацию истории. "
         "Создай часть 1 как интро путешествия сразу после того, как персонаж отправился в путь. "
+        "Её события должны реализовать первый элемент partBeats. "
         "Не бросай читателя в середину уже начавшегося события и не начинай с необъяснённых "
         "последствий. В openingContext естественно скажи, куда персонаж пришёл или направляется, "
         "почему он отправился именно туда и чего хочет добиться. В storyParagraphs дай 2–3 "
@@ -1271,6 +1523,11 @@ def start_interactive_travel(
         "crisis": _clean_text(raw_arc.get("crisis"), 240),
         "climax": _clean_text(raw_arc.get("climax"), 240),
         "resolution": _clean_text(raw_arc.get("resolution"), 240),
+        "targetPartCount": str(raw_arc.get("targetPartCount")),
+        "goalKeywords": ", ".join(
+            _clean_text(item, 40) for item in raw_arc.get("goalKeywords", [])
+        ),
+        "partBeats": json.dumps(raw_arc.get("partBeats", []), ensure_ascii=False),
     }
     part = _pending_part_from_payload(
         payload.get("part"),
@@ -1316,6 +1573,8 @@ def continue_interactive_travel(
     if current_part.result is not None:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_PENDING_PART_MISSING")
     current_number = current_part.partNumber
+    target_part_count = _target_part_count(travel.arcPlan)
+    planned_beat = _planned_part_beat(travel.arcPlan, current_number)
     model, timeout = _model_and_timeout(client=client, model=model, timeout=timeout)
     tie_break = tie_break_valence or random.choice(("positive", "negative"))
     if tie_break not in {"positive", "negative"}:
@@ -1330,31 +1589,43 @@ def continue_interactive_travel(
         memory_context=memory_context,
         transcript=transcript,
     ) + f"\nCURRENT_USER_ADVICE:\n{json.dumps(advice.strip(), ensure_ascii=False)}"
+    validation_context = (
+        known_context
+        + "\nARC_PLAN:\n"
+        + json.dumps(travel.arcPlan, ensure_ascii=False, indent=2)
+    )
     if current_number == MAX_PART_COUNT:
         finish_rules = (
             "Это обязательный финальный результат: storyStatus=completed. Поля nextPart в ответе "
             "нет. Разыграй "
             "полноценную кульминацию из ARC_PLAN, окончательно реши центральную цель явным успехом "
-            "или провалом и закончи непустым resolution без новой развилки."
+            "или провалом и закончи непустым resolution без новой развилки. Укажи goalStatus как "
+            "achieved или failed, кратко опиши goalOutcome и скопируй в goalEvidence точную фразу "
+            "из resultParagraphs или resolution, которая доказывает судьбу исходной цели."
         )
-    elif current_number < MIN_PART_COUNT:
+    elif current_number < target_part_count:
         finish_rules = (
             "Это обязательный промежуточный результат: storyStatus=continue. Поля resolution в "
-            "ответе нет, nextPart обязателен. До финала пользователь должен ответить минимум в "
-            "трёх блоках."
+            "ответе нет, nextPart обязателен. ARC_PLAN.targetPartCount задаёт самую раннюю часть "
+            "финала; не пытайся завершить историю раньше."
         )
     else:
         finish_rules = (
             "Динамически реши, завершилась ли центральная арка после этого действия. Если конфликт "
-            "созрел для кульминации, верни storyStatus=completed и непустой resolution. Иначе "
-            "верни storyStatus=continue и resolution как пустую строку. В этой технической схеме "
+            "созрел для кульминации и видимый текст прямо отвечает на ARC_PLAN.goal, верни "
+            "storyStatus=completed, goalStatus=achieved или failed, непустые goalOutcome, "
+            "goalEvidence и resolution. goalEvidence дословно копирует доказывающую фразу из "
+            "resultParagraphs или resolution. Победа над текущим препятствием без ответа на "
+            "исходную цель не считается завершением. Иначе верни storyStatus=continue, "
+            "goalStatus=in_progress, "
+            "а resolution, goalOutcome и goalEvidence как пустые строки. В этой технической схеме "
             "nextPart всегда обязателен: при completed он будет отброшен, но всё равно заполни его "
             "как правдоподобное продолжение без изменения финального решения. "
             "Не продлевай готовую "
             "к завершению историю искусственным новым конфликтом только ради шестой части."
         )
     user_content = (
-        f"Разреши ожидающую ответа часть {current_number}; всего может быть не больше шести "
+        f"Разреши ожидающую ответа часть {current_number}; всего может быть не больше семи "
         "блоков. ADVICE_DATA — уже принятое и обязательное действие персонажа. Оно буквально "
         "происходит в видимом результате этого же блока. "
         "Не проверяй "
@@ -1374,21 +1645,23 @@ def continue_interactive_travel(
         f"правдоподобны, используй скрытый жребий {tie_break}. Добавь 0–2 statImpacts по 3–12, "
         "только если resultParagraphs прямо показывает изменение состояния и содержит точную "
         "evidence-цитату.\n"
-        f"EXPECTED_ARC_BEAT: {_arc_beat(current_number)}\n"
+        f"EXPECTED_ARC_BEAT: {planned_beat or _arc_beat(current_number, target_part_count)}\n"
+        "Отыграй именно EXPECTED_ARC_BEAT с учётом уже совершённого ADVICE_DATA. Не перепрыгивай "
+        "к более позднему этапу и не завершай всю историю раньше последнего запланированного "
+        "этапа.\n"
         "До кульминации повышай значительность и риск; в финальной части после пика обязательно "
         "дай ровно два коротких resultParagraphs, снизь напряжение и покажи устойчивое новое "
         "состояние. Не превращай арку в ещё один "
         "маленький похожий эпизод.\n"
-        "Если история продолжается, nextPart происходит через 2–8 часов сюжетного времени. В "
-        "transition.summary зафиксируй причинный мост: что изменилось в мире, положении героев или "
-        "ходе конфликта за этот промежуток. transition.departureHook дай одним коротким "
-        "предложением от первого лица: персонаж конкретно говорит, что только что сделал или "
-        "изменил, и что продолжает путь к уже известной цели. Не упоминай в departureHook число "
-        "часов и не используй общую заглушку «я продолжаю путь». Первая строка "
-        "nextPart.storyParagraphs сразу показывает новую более позднюю ситуацию без фразы "
-        "«Через N часов я продолжаю путь». Затем дай ещё 1–2 коротких предложения, каждое с "
-        "одним фактом о более поздней ситуации до нового решения. "
-        "Нельзя продолжать ту же секунду или ту же непосредственную реакцию. Для "
+        "Если история продолжается, соедини результат и nextPart видимым причинным маршрутом. "
+        "Для непосредственного продолжения ставь transition.elapsedHours=0; значение 1–8 допустимо "
+        "только для реально показанного долгого перехода. В transition.summary зафиксируй, как "
+        "персонаж пришёл из результата в следующую сцену. transition.departureHook дай одним "
+        "коротким предложением от первого лица с конкретным движением к следующему месту или "
+        "участнику. В continuityAnchor назови это место или участника простыми словами. Дословно "
+        "назови тот же смысловой якорь в departureHook и первой строке nextPart.storyParagraphs. "
+        "Первая строка обязана показать прибытие или встречу, а не начинать новую сцену без связи. "
+        "Затем дай ещё 1–2 коротких предложения с фактами до нового решения. Для "
         "nextPart.challenge сделай одним простым прямым вопросом до 8 слов, без перечислений и "
         "двойных условий. Для nextPart.actionSuggestions придумай ровно три заметно разных "
         "ответа, каждый строго из одного или двух слов. Не добавляй «Свой вариант» и не "
@@ -1401,7 +1674,7 @@ def continue_interactive_travel(
         f"ADVICE_DATA:\n{json.dumps(advice.strip(), ensure_ascii=False)}\n\n"
         f"KNOWN_CONTEXT:\n{known_context}"
     )
-    schema_name, continue_schema = _continue_schema(current_number)
+    schema_name, continue_schema = _continue_schema(current_number, target_part_count)
     payload, debug, allow_text_overflow = _request(
         label=f"interactive_travel/part_{current_number}_result",
         schema_name=schema_name,
@@ -1414,13 +1687,17 @@ def continue_interactive_travel(
             candidate,
             current_part=current_part,
             advice=advice,
-            known_context=known_context,
+            arc_plan=travel.arcPlan,
+            target_part_count=target_part_count,
+            known_context=validation_context,
         ),
         overflow_payload_validator=lambda candidate: _continue_payload_postcondition(
             candidate,
             current_part=current_part,
             advice=advice,
-            known_context=known_context,
+            arc_plan=travel.arcPlan,
+            target_part_count=target_part_count,
+            known_context=validation_context,
             allow_text_overflow=True,
         ),
     )
@@ -1429,7 +1706,7 @@ def continue_interactive_travel(
         isinstance(raw_result, dict) and raw_result.get("storyStatus") == "completed"
     )
     completed = current_number == MAX_PART_COUNT or (
-        current_number >= MIN_PART_COUNT and requested_completion
+        current_number >= target_part_count and requested_completion
     )
     resolved_part = _resolved_part_from_payload(
         current_part,

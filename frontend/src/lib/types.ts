@@ -227,6 +227,7 @@ export type InteractiveTravelTransition = {
   elapsedHours: number;
   summary: string;
   departureHook?: string;
+  continuityAnchor?: string;
 };
 
 export type InteractiveTravelPart = {

@@ -65,7 +65,7 @@ function parsedPresentation(
     !phases.has(raw.phase as InteractiveTravelPresentationPhase) ||
     !Number.isInteger(raw.partNumber) ||
     Number(raw.partNumber) < 1 ||
-    Number(raw.partNumber) > 6 ||
+    Number(raw.partNumber) > 7 ||
     !Number.isInteger(raw.portionIndex) ||
     Number(raw.portionIndex) < 0
   ) {
@@ -85,7 +85,7 @@ function parseStoredTravel(raw: string): LocalInteractiveTravel {
     travel: response.travel,
     appliedResultParts: Array.isArray(parsed.appliedResultParts)
       ? parsed.appliedResultParts.filter(
-          (value): value is number => Number.isInteger(value) && value >= 1 && value <= 6,
+          (value): value is number => Number.isInteger(value) && value >= 1 && value <= 7,
         )
       : [],
     presentation: parsedPresentation(parsed.presentation, response.travel),

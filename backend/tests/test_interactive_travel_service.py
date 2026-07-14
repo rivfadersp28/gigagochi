@@ -76,6 +76,13 @@ def _start_payload() -> dict:
             "crisis": "Главный механизм срывается над городом.",
             "climax": "Мяу останавливает сорвавшийся механизм.",
             "resolution": "Часы запускаются или город остаётся без времени.",
+            "targetPartCount": 3,
+            "goalKeywords": ["городские часы"],
+            "partBeats": [
+                "Найти причину остановки часов.",
+                "Добраться до главного механизма.",
+                "Запустить часы и показать результат городу.",
+            ],
         },
         "part": {
             "partNumber": 1,
@@ -111,6 +118,7 @@ def _continued_payload(
                     "За четыре часа часы сдвинулись на один удар, а стража перекрыла верхний мост."
                 ),
                 "departureHook": "Я сдвинула механизм и продолжаю путь к верхнему мосту.",
+                "continuityAnchor": "мост",
             },
             "title": f"Поздний поворот {number + 1}",
             "storyParagraphs": [
@@ -124,16 +132,33 @@ def _continued_payload(
                 "Отвлечь звоном",
             ],
         }
+    result_paragraphs = [
+        "За механизмом показалась причина поломки.",
+        "Я обрадовалась найденной причине.",
+    ]
+    resolution = None
+    goal_status = "in_progress"
+    goal_outcome = ""
+    goal_evidence = ""
+    if final:
+        result_paragraphs = [
+            "Главный механизм запускает городские часы.",
+            "Я радуюсь их ровному звону над площадью.",
+        ]
+        resolution = "Городские часы снова идут."
+        goal_status = "achieved"
+        goal_outcome = "Городские часы снова работают."
+        goal_evidence = "Главный механизм запускает городские часы."
     return {
         "result": {
             "partNumber": number,
             "actionSentence": action_sentence,
-            "resultParagraphs": [
-                "За механизмом показалась причина поломки.",
-                "Я обрадовалась найденной причине.",
-            ],
+            "resultParagraphs": result_paragraphs,
             "storyStatus": "completed" if final else "continue",
-            "resolution": "Город снова живёт." if final else None,
+            "resolution": resolution,
+            "goalStatus": goal_status,
+            "goalOutcome": goal_outcome,
+            "goalEvidence": goal_evidence,
             "adviceAssessment": "helpful" if final else "ambiguous",
             "reaction": "Вот это мысль, сейчас сделаю!",
             "reactionTone": "enthusiastic",
@@ -192,7 +217,11 @@ def _travel_with_pending_part(part_count: int) -> InteractiveTravelState:
             "generatedAt": "2026-07-13T12:00:00Z",
             "destination": "облачный город",
             "overallTitle": "Часы облачного города",
-            "arcPlan": {"goal": "Запустить часы."},
+            "arcPlan": {
+                "goal": "Запустить часы.",
+                "targetPartCount": "3",
+                "goalKeywords": "городские часы",
+            },
             "parts": [
                 _part_payload(number, resolved=number < part_count)
                 for number in range(1, part_count + 1)
@@ -312,13 +341,15 @@ def test_continue_resolves_same_block_then_adds_later_pending_block(monkeypatch)
     assert pending.transition.departureHook == (
         "Я сдвинула механизм и продолжаю путь к верхнему мосту."
     )
+    assert pending.transition.continuityAnchor == "мост"
     assert pending.storyText.startswith("К вечеру")
     assert response.travel.completed is False
     assert len(completions.calls) == 1
     call = completions.calls[0]
     prompt = call["messages"][1]["content"]
     assert '"зацепить цепь длинным шарфом"' in prompt
-    assert "2–8 часов сюжетного времени" in prompt
+    assert "transition.elapsedHours=0" in prompt
+    assert "continuityAnchor" in prompt
     assert "Не проверяй возможности персонажа" in prompt
 
 
@@ -356,9 +387,9 @@ def test_duplicate_suggestions_are_filled_with_unique_fallbacks() -> None:
 
 
 def test_continue_schemas_have_no_nullable_fields() -> None:
-    intermediate_name, intermediate = interactive_travel_service._continue_schema(1)
-    dynamic_name, dynamic = interactive_travel_service._continue_schema(3)
-    final_name, final = interactive_travel_service._continue_schema(6)
+    intermediate_name, intermediate = interactive_travel_service._continue_schema(1, 3)
+    dynamic_name, dynamic = interactive_travel_service._continue_schema(3, 3)
+    final_name, final = interactive_travel_service._continue_schema(7, 3)
 
     assert intermediate_name.endswith("intermediate")
     assert intermediate["properties"]["nextPart"]["type"] == "object"
@@ -486,7 +517,7 @@ def test_third_answer_can_finish_story_and_keeps_original_question(monkeypatch) 
     assert len(response.travel.parts) == 3
     assert final_part.challenge == travel.parts[-1].challenge
     assert final_part.result is not None
-    assert final_part.result.text.endswith("Город снова живёт.")
+    assert final_part.result.text.endswith("Городские часы снова идут.")
 
 
 def test_fourth_answer_can_continue_with_a_fifth_pending_block(monkeypatch) -> None:
@@ -503,9 +534,9 @@ def test_fourth_answer_can_continue_with_a_fifth_pending_block(monkeypatch) -> N
     assert response.travel.parts[-1].result is None
 
 
-def test_sixth_part_retries_then_rejects_non_final_provider_result(monkeypatch) -> None:
-    travel = _travel_with_pending_part(6)
-    payload = _continued_payload(6)
+def test_seventh_part_retries_then_rejects_non_final_provider_result(monkeypatch) -> None:
+    travel = _travel_with_pending_part(7)
+    payload = _continued_payload(7)
     payload["result"]["storyStatus"] = "continue"
     payload["result"]["resolution"] = None
     client, completions = _client(monkeypatch, [payload, payload])
@@ -528,7 +559,7 @@ def test_sixth_part_retries_then_rejects_non_final_provider_result(monkeypatch) 
 def test_invalid_or_missing_time_transition_is_rejected(monkeypatch) -> None:
     travel = _travel_with_pending_part(1)
     payload = _continued_payload(1)
-    payload["nextPart"]["transition"] = {"elapsedHours": 1, "summary": "Слишком быстро."}
+    payload["nextPart"]["transition"] = {"elapsedHours": -1, "summary": "Слишком быстро."}
     client, completions = _client(monkeypatch, [payload, payload])
 
     with pytest.raises(
@@ -542,17 +573,73 @@ def test_invalid_or_missing_time_transition_is_rejected(monkeypatch) -> None:
     assert len(completions.calls) == 2
 
 
+def test_immediate_transition_keeps_one_anchor_visible_on_both_sides() -> None:
+    payload = _continued_payload(1)["nextPart"]
+    payload["transition"].update(
+        {
+            "elapsedHours": 0,
+            "departureHook": "Я спускаюсь в тоннель и иду по нему дальше.",
+            "continuityAnchor": "тоннель",
+        }
+    )
+    payload["storyParagraphs"][0] = "В тоннеле мне преграждают путь двое хранителей."
+
+    part = interactive_travel_service._pending_part_from_payload(payload, expected_number=2)
+
+    assert part.transition is not None
+    assert part.transition.elapsedHours == 0
+    assert part.transition.continuityAnchor == "тоннель"
+
+
+def test_disconnected_next_part_is_joined_into_visible_bridge() -> None:
+    payload = _continued_payload(1)["nextPart"]
+    payload["transition"]["continuityAnchor"] = "тоннель"
+    payload["transition"]["departureHook"] = "Я спускаюсь в тоннель и иду дальше."
+    payload["storyParagraphs"][0] = "На площади меня встречают двое хранителей."
+
+    part = interactive_travel_service._pending_part_from_payload(payload, expected_number=2)
+
+    assert part.transition is not None
+    assert part.transition.departureHook == (
+        "Я спускаюсь в тоннель и иду дальше — и там на площади меня встречают двое хранителей."
+    )
+    assert "На площади" not in part.storyText
+
+
+def test_transition_joins_anchor_present_only_on_story_side() -> None:
+    payload = _continued_payload(1)["nextPart"]
+    payload["transition"]["continuityAnchor"] = "тоннель"
+    payload["transition"]["departureHook"] = "Я спускаюсь ниже и иду дальше."
+    payload["storyParagraphs"][0] = "В тоннеле мне преграждают путь двое хранителей."
+
+    part = interactive_travel_service._pending_part_from_payload(payload, expected_number=2)
+
+    assert part.transition is not None
+    assert "и там в тоннеле" in part.transition.departureHook.lower()
+
+
+def test_transition_accepts_shared_visible_place_if_model_mislabeled_anchor() -> None:
+    payload = _continued_payload(1)["nextPart"]
+    payload["transition"]["continuityAnchor"] = "дорога"
+    payload["transition"]["departureHook"] = "Я перехожу мост и замечаю впереди свет."
+    payload["storyParagraphs"][0] = "На мосту меня догоняют двое хранителей."
+
+    part = interactive_travel_service._pending_part_from_payload(payload, expected_number=2)
+
+    assert part.transition is not None
+
+
 def test_next_part_does_not_get_a_generic_visible_time_placeholder(monkeypatch) -> None:
     travel = _travel_with_pending_part(1)
     payload = _continued_payload(1)
-    payload["nextPart"]["storyParagraphs"][0] = "Я подхожу к закрытым воротам."
+    payload["nextPart"]["storyParagraphs"][0] = "Я подхожу к закрытому мосту."
     client, completions = _client(monkeypatch, [payload])
 
     response = interactive_travel_service.continue_interactive_travel(
         pet=_pet(), travel=travel, advice="ждать", client=client, model="test-model"
     )
 
-    assert response.travel.parts[1].storyText.startswith("Я подхожу к закрытым воротам.")
+    assert response.travel.parts[1].storyText.startswith("Я подхожу к закрытому мосту.")
     assert "я продолжаю путь" not in response.travel.parts[1].storyText.casefold()
     assert len(completions.calls) == 1
 
@@ -597,6 +684,68 @@ def test_final_cliffhanger_is_retried_before_visible_success(monkeypatch) -> Non
     assert response.travel.completed is True
     assert response.travel.parts[-1].result is not None
     assert len(completions.calls) == 2
+
+
+def test_final_rejects_defeated_monster_when_original_mystery_is_unresolved() -> None:
+    final_result = _continued_payload(3, final=True)["result"]
+    final_result.update(
+        {
+            "actionSentence": "Я бросаюсь на чудовище и сбиваю его с ног.",
+            "resultParagraphs": [
+                "Чудовище падает, и дорога из подвала становится свободной.",
+                "Я выбираюсь наружу без новых ран и потерь.",
+            ],
+            "resolution": "Я победила чудовище и вернулась домой.",
+            "goalOutcome": "Я покинула деревню после победы.",
+            "goalEvidence": "Я победила чудовище и вернулась домой.",
+        }
+    )
+
+    with pytest.raises(
+        interactive_travel_service.InteractiveTravelGenerationError,
+        match="FINAL_GOAL_IRRELEVANT",
+    ):
+        interactive_travel_service._final_result_postcondition(
+            final_result,
+            arc_plan={
+                "goal": "Раскрыть тайны старой деревни.",
+                "goalKeywords": "тайны деревни",
+            },
+        )
+
+
+def test_target_part_count_ignores_a_premature_completion_flag() -> None:
+    travel = _travel_with_pending_part(3)
+    final_payload = _continued_payload(3, final=True)
+    final_payload["nextPart"] = _continued_payload(3)["nextPart"]
+
+    interactive_travel_service._continue_payload_postcondition(
+        final_payload,
+        current_part=travel.parts[-1],
+        advice="победить чудовище",
+        arc_plan={
+            "goal": "Раскрыть тайны деревни.",
+            "goalKeywords": "тайны деревни",
+            "targetPartCount": "5",
+        },
+        target_part_count=5,
+        known_context=json.dumps(final_payload, ensure_ascii=False),
+    )
+
+
+def test_target_part_count_ignores_a_missing_intermediate_status() -> None:
+    travel = _travel_with_pending_part(1)
+    payload = _continued_payload(1)
+    payload["result"].pop("storyStatus")
+
+    interactive_travel_service._continue_payload_postcondition(
+        payload,
+        current_part=travel.parts[-1],
+        advice="проверить механизм",
+        arc_plan={"goal": "Запустить часы.", "targetPartCount": "3"},
+        target_part_count=3,
+        known_context=json.dumps(payload, ensure_ascii=False),
+    )
 
 
 def test_generated_part_numbers_are_normalized_from_state(monkeypatch) -> None:
@@ -716,6 +865,27 @@ def test_accepts_a_single_sentence_with_the_relaxed_compact_limit() -> None:
     assert interactive_travel_service._compact_sentence(sentence) == sentence
 
 
+def test_reaction_keeps_only_the_first_complete_sentence() -> None:
+    assert (
+        interactive_travel_service._reaction_sentence("Смело! Я уже бегу к двери.")
+        == "Смело!"
+    )
+
+
+@pytest.mark.parametrize(
+    ("sentence", "expected"),
+    [
+        ("Я вышла на гать через болото.", "Я вышла на деревянную дорожку через болото."),
+        (
+            "На другой стороне написано kaç.",
+            "На другой стороне написано непонятное слово.",
+        ),
+    ],
+)
+def test_replaces_obscure_or_foreign_visible_words(sentence: str, expected: str) -> None:
+    assert interactive_travel_service._compact_sentence(sentence) == expected
+
+
 def test_rejects_unexplained_named_term() -> None:
     with pytest.raises(
         interactive_travel_service.InteractiveTravelGenerationError,
@@ -729,10 +899,38 @@ def test_rejects_unexplained_named_term() -> None:
     assert str(caught.value).endswith(":Сердце")
 
 
+def test_allows_capitalized_word_after_sentence_boundary() -> None:
+    interactive_travel_service._validate_known_named_terms(
+        "Я вижу закрытую дверь. Она медленно открывается.",
+        known_context="Мяу исследует дом.",
+    )
+
+
 def test_allows_named_term_already_seen_in_lowercase() -> None:
     interactive_travel_service._validate_known_named_terms(
         {"story": "Я отправляюсь искать Сердце города."},
         known_context='{"dialogue": "ты уже видел сердце города"}',
+    )
+
+
+def test_allows_named_term_from_the_arc_plan() -> None:
+    interactive_travel_service._validate_known_named_terms(
+        {"story": "Я открываю Дверь в подвал."},
+        known_context='ARC_PLAN: {"goalKeywords": "дверь, тайна"}',
+    )
+
+
+def test_allows_an_ordinary_capitalized_word_after_leading_punctuation() -> None:
+    interactive_travel_service._validate_known_named_terms(
+        {"story": "— Внизу тихо скрипит доска."},
+        known_context="{}",
+    )
+
+
+def test_allows_an_inflected_known_character_name() -> None:
+    interactive_travel_service._validate_known_named_terms(
+        {"title": "Путь Искры к маяку"},
+        known_context='{"characterName": "Искра"}',
     )
 
 

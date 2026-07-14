@@ -287,13 +287,14 @@ class InteractiveTravelResult(BaseModel):
 
 
 class InteractiveTravelTransition(BaseModel):
-    elapsedHours: int = Field(ge=2, le=8)
+    elapsedHours: int = Field(ge=0, le=8)
     summary: str = Field(min_length=1, max_length=240)
     departureHook: str | None = Field(default=None, min_length=1)
+    continuityAnchor: str | None = Field(default=None, min_length=1, max_length=60)
 
 
 class InteractiveTravelPart(BaseModel):
-    partNumber: int = Field(ge=1, le=6)
+    partNumber: int = Field(ge=1, le=7)
     title: str = Field(min_length=1, max_length=120)
     storyText: str = Field(min_length=1, max_length=700)
     transition: InteractiveTravelTransition | None = None
@@ -326,7 +327,7 @@ class InteractiveTravelState(BaseModel):
     overallTitle: str = Field(min_length=1, max_length=120)
     arcPlan: dict[str, str]
     introReaction: InteractiveTravelIntroReaction | None = None
-    parts: list[InteractiveTravelPart] = Field(min_length=1, max_length=6)
+    parts: list[InteractiveTravelPart] = Field(min_length=1, max_length=7)
     completed: bool = False
     outcomeValence: Literal["positive", "negative"] | None = None
     statImpact: InteractiveTravelStatImpact | None = None
@@ -380,23 +381,23 @@ class IllustrateInteractiveTravelPartRequest(BaseModel):
     pet: LocalPetChatContext
     travelId: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
     destination: str = Field(min_length=1, max_length=500)
-    partNumber: int = Field(ge=1, le=6)
+    partNumber: int = Field(ge=1, le=7)
     title: str = Field(min_length=1, max_length=120)
     storyText: str = Field(min_length=1, max_length=700)
 
 
 class InteractiveTravelIllustrationResponse(BaseModel):
-    partNumber: int = Field(ge=1, le=6)
+    partNumber: int = Field(ge=1, le=7)
     imageUrl: str = Field(min_length=1, max_length=1000)
 
 
 class AnimateInteractiveTravelPartRequest(BaseModel):
     travelId: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
-    partNumber: int = Field(ge=1, le=6)
+    partNumber: int = Field(ge=1, le=7)
 
 
 class InteractiveTravelAnimationResponse(BaseModel):
-    partNumber: int = Field(ge=1, le=6)
+    partNumber: int = Field(ge=1, le=7)
     videoUrl: str = Field(min_length=1, max_length=1000)
 
 

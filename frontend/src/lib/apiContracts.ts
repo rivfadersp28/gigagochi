@@ -326,8 +326,8 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
   const payload = record(value, "interactiveTravelResponse");
   const travel = record(payload.travel, "interactiveTravelResponse.travel");
   const rawParts = array(travel.parts, "interactiveTravelResponse.travel.parts");
-  if (rawParts.length < 1 || rawParts.length > 6) {
-    return fail("interactiveTravelResponse.travel.parts", "1–6 parts");
+  if (rawParts.length < 1 || rawParts.length > 7) {
+    return fail("interactiveTravelResponse.travel.parts", "1–7 parts");
   }
   const parts = rawParts.map((item, index) => {
     const partPath = `interactiveTravelResponse.travel.parts[${index}]`;
@@ -336,7 +336,7 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
       part.partNumber,
       `${partPath}.partNumber`,
       1,
-      6,
+      7,
     );
     if (partNumber !== index + 1) {
       return fail(`${partPath}.partNumber`, `${index + 1}`);
@@ -347,7 +347,7 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
           elapsedHours: integerInRange(
             transitionValue.elapsedHours,
             `${partPath}.transition.elapsedHours`,
-            2,
+            0,
             8,
           ),
           summary: boundedString(transitionValue.summary, `${partPath}.transition.summary`, {
@@ -356,6 +356,10 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
           departureHook: optionalString(
             transitionValue.departureHook,
             `${partPath}.transition.departureHook`,
+          ),
+          continuityAnchor: optionalString(
+            transitionValue.continuityAnchor,
+            `${partPath}.transition.continuityAnchor`,
           ),
         }
       : undefined;

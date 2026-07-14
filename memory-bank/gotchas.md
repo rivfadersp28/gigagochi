@@ -464,6 +464,15 @@
   cacheable. `preload="auto"` on the travel screen starts too late, while the generic `/figma/*`
   `no-store` header otherwise discards the warm download. Keep the scene at full viewport size;
   a fixed `402px` cap leaves side gutters in wider Telegram WebViews.
-- Interactive travel needs 9–18 text/image/video calls for a complete 3–6-part route. Never charge
+- Interactive travel needs 9–21 text/image/video calls for a complete 3–7-part route. Never charge
   them to the pet-generation `3/day` bucket. The debug reset must invalidate the travel ID before
   deleting its directory; deleting files alone lets an already-running provider call write them back.
+- GigaChat structured output is prompt-only and may emit `completed` or omit `storyStatus` before
+  the planned travel finale even when the intermediate schema permits only `continue`. Do not let
+  that flag shorten the arc: before `arcPlan.targetPartCount`, backend state plus a validated
+  `nextPart` is authoritative.
+- Do not require a GigaChat continuity anchor to match both visible fields literally: valid Russian
+  synonyms and inflections can exhaust both repair attempts. Keep the prompt strict, but merge the
+  departure route with the first next-part event when no meaningful shared stem is found.
+- Named-term validation must treat every sentence boundary as a possible capitalized common word,
+  not only the start of the whole string; otherwise ordinary pronouns such as `Она` are rejected.

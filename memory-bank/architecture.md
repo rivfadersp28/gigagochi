@@ -502,10 +502,20 @@
 
 ## Interactive Travel Pilot
 
-- `/pet/[id]/travel` is the production travel flow: simple curated destination choices, character reaction, compact one-sentence portions, user action, generated result, and a later substory after a visible 2–8 hour story-time gap.
+- `/pet/[id]/travel` is the production travel flow: simple curated destination choices, character reaction, compact one-sentence portions, user action, generated result, and a causally linked next part. Immediate continuation uses a zero-hour gap; real longer travel may use 1–8 hours.
 - The backend owns story validation plus illustration/video generation; the frontend persists
   presentation progress locally and renders video-only backgrounds across the full Telegram
   viewport. Generated PNGs are intermediate video sources, not visible background fallbacks.
+- Interactive travel chooses a `targetPartCount` from 3–7 at start and stores exactly that many
+  causal `partBeats` plus goal keywords in `arcPlan`. Before the target part the backend owns the
+  continuation decision and ignores premature or malformed model completion flags as long as a
+  valid next part exists. A final result must expose achieved/failed goal status and an exact
+  visible evidence sentence tied to the opening goal; defeating the last obstacle alone is not a
+  valid ending.
+- Every continued part carries a `continuityAnchor`. The model is asked to repeat a concrete place
+  or participant across the departure hook and the next opening. If lexical validation cannot see
+  that link, the backend merges the route and first event into one visible hook instead of failing
+  the entire generation. Known opaque words are normalized to plain Russian at the output boundary.
 - Interactive travel uses its own daily rate-limit bucket. A diagnostic reset tombstones the
   current travel ID, deletes its generated directory and clears that diagnostic user's travel
   bucket so late image/video completions cannot restore stale assets.

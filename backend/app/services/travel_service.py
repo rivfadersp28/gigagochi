@@ -1231,7 +1231,7 @@ def generate_interactive_travel_part_image(
     _validate_interactive_travel_id(travel_id)
     with _INTERACTIVE_TRAVEL_GENERATION_LOCK:
         _assert_interactive_travel_generation_active(travel_id)
-    if not 1 <= part_number <= 6:
+    if not 1 <= part_number <= 7:
         raise ValueError("Invalid interactive travel part number")
     image_story = BackgroundStoryResult(
         title=title,
@@ -1276,7 +1276,7 @@ def generate_interactive_travel_part_video(
     _validate_interactive_travel_id(travel_id)
     with _INTERACTIVE_TRAVEL_GENERATION_LOCK:
         _assert_interactive_travel_generation_active(travel_id)
-    if not 1 <= part_number <= 6:
+    if not 1 <= part_number <= 7:
         raise ValueError("Invalid interactive travel part number")
     output_dir = generated_dir_for(travel_id)
     source_path = output_dir / f"interactive-travel-part-{part_number:02d}-video-source.png"

@@ -530,7 +530,7 @@
       "AnimateInteractiveTravelPartRequest": {
         "properties": {
           "partNumber": {
-            "maximum": 6.0,
+            "maximum": 7.0,
             "minimum": 1.0,
             "title": "Partnumber",
             "type": "integer"
@@ -1190,7 +1190,7 @@
             "type": "string"
           },
           "partNumber": {
-            "maximum": 6.0,
+            "maximum": 7.0,
             "minimum": 1.0,
             "title": "Partnumber",
             "type": "integer"
@@ -1232,7 +1232,7 @@
       "InteractiveTravelAnimationResponse": {
         "properties": {
           "partNumber": {
-            "maximum": 6.0,
+            "maximum": 7.0,
             "minimum": 1.0,
             "title": "Partnumber",
             "type": "integer"
@@ -1260,7 +1260,7 @@
             "type": "string"
           },
           "partNumber": {
-            "maximum": 6.0,
+            "maximum": 7.0,
             "minimum": 1.0,
             "title": "Partnumber",
             "type": "integer"
@@ -1360,7 +1360,7 @@
             "type": "string"
           },
           "partNumber": {
-            "maximum": 6.0,
+            "maximum": 7.0,
             "minimum": 1.0,
             "title": "Partnumber",
             "type": "integer"
@@ -1591,7 +1591,7 @@
             "items": {
               "$ref": "#/components/schemas/InteractiveTravelPart"
             },
-            "maxItems": 6,
+            "maxItems": 7,
             "minItems": 1,
             "title": "Parts",
             "type": "array"
@@ -1673,6 +1673,19 @@
       },
       "InteractiveTravelTransition": {
         "properties": {
+          "continuityAnchor": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continuityanchor"
+          },
           "departureHook": {
             "anyOf": [
               {
@@ -1687,7 +1700,7 @@
           },
           "elapsedHours": {
             "maximum": 8.0,
-            "minimum": 2.0,
+            "minimum": 0.0,
             "title": "Elapsedhours",
             "type": "integer"
           },

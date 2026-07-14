@@ -992,6 +992,8 @@ export interface components {
         };
         /** InteractiveTravelTransition */
         readonly InteractiveTravelTransition: {
+            /** Continuityanchor */
+            readonly continuityAnchor?: string | null;
             /** Departurehook */
             readonly departureHook?: string | null;
             /** Elapsedhours */

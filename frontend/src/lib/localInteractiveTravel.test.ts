@@ -44,14 +44,14 @@ describe("local interactive travel storage", () => {
     window.localStorage.clear();
   });
 
-  it("keeps applied results through the sixth part and ignores invalid indexes", () => {
+  it("keeps applied results through the seventh part and ignores invalid indexes", () => {
     writeLocalInteractiveTravel("pet-1", {
       travel: completedTravel(),
       appliedResultParts: [1, 5, 6, 7],
       presentation: { phase: "completed", partNumber: 6, portionIndex: 0 },
     });
 
-    expect(readLocalInteractiveTravel("pet-1")?.appliedResultParts).toEqual([1, 5, 6]);
+    expect(readLocalInteractiveTravel("pet-1")?.appliedResultParts).toEqual([1, 5, 6, 7]);
   });
 
   it("does not restore an incompatible v1 story", () => {
