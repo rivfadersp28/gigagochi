@@ -365,7 +365,7 @@ describe("InteractiveTravelScreen", () => {
     expect(screen.getByRole("button", { name: "Свой вариант" })).toBeInTheDocument();
   });
 
-  it("keeps loading submit buttons named for assistive technology", async () => {
+  it("shows the rising character and standard thinking animation while starting", async () => {
     const response = deferred<{ travel: InteractiveTravelState }>();
     mocks.readLocalInteractiveTravel.mockReturnValue(null);
     mocks.startInteractiveTravel.mockReturnValue(response.promise);
@@ -378,7 +378,12 @@ describe("InteractiveTravelScreen", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Путешествие" }));
 
-    expect(screen.getByRole("button", { name: "Путешествие" })).toBeDisabled();
+    expect(screen.getByRole("img", { name: "Листик" })).toHaveAttribute(
+      "src",
+      "/teen-idle-foreground.png?travel_foreground_v=20260714-1",
+    );
+    expect(screen.getByRole("status", { name: "Персонаж думает" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Путешествие" })).not.toBeInTheDocument();
   });
 
   it("keeps the custom action submit button named while continuing", async () => {

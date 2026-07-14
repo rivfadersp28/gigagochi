@@ -54,6 +54,7 @@ import { useLocalPetState } from "@/lib/useLocalPetState";
 
 import { ErrorNotice } from "./ErrorNotice";
 import { PetSpeechBubble } from "./pet-dashboard/PetSpeechBubble";
+import { PetThinkingIndicator } from "./pet-dashboard/PetThinkingIndicator";
 import styles from "./InteractiveTravelScreen.module.css";
 
 const DESTINATION_MAX_LENGTH = 500;
@@ -142,7 +143,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     null,
   );
   const [characterImageSrc, setCharacterImageSrc] = useState<string | null>(null);
-  const [enteredCharacterTravelId, setEnteredCharacterTravelId] = useState<string | null>(null);
+  const [isCharacterEntranceComplete, setIsCharacterEntranceComplete] = useState(false);
   const [exitingCharacterTravelId, setExitingCharacterTravelId] = useState<string | null>(null);
   const [isResettingTravel, setIsResettingTravel] = useState(false);
   const submittingRef = useRef(false);
@@ -423,7 +424,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     if (
       !session ||
       !activePart ||
-      (phase !== "introReaction" && phase !== "departureWait")
+      phase !== "departureWait"
     ) {
       return;
     }
@@ -431,11 +432,16 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   }, [activePart, ensureIllustration, phase, session]);
 
   useEffect(() => {
-    if (!session || !activePart?.backgroundImageUrl || activePart.backgroundVideoUrl) {
+    if (
+      !session ||
+      phase === "introReaction" ||
+      !activePart?.backgroundImageUrl ||
+      activePart.backgroundVideoUrl
+    ) {
       return;
     }
     void ensureAnimation(session, activePart);
-  }, [activePart, ensureAnimation, session]);
+  }, [activePart, ensureAnimation, phase, session]);
 
   const introText =
     session?.travel.introReaction?.text ??
@@ -444,20 +450,25 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const presentationPortionIndex = session?.presentation.portionIndex ?? 0;
   const introCharacterTravelId =
     phase === "introReaction" ? session?.travel.travelId ?? null : null;
+  const isStartingTravel = Boolean(isSubmitting && selectedDestination && !session);
+  const showTravelCharacter = Boolean(
+    characterImageSrc && (isStartingTravel || introCharacterTravelId),
+  );
   const isIntroCharacterEntranceComplete =
-    introCharacterTravelId === null || enteredCharacterTravelId === introCharacterTravelId;
+    introCharacterTravelId === null || isCharacterEntranceComplete;
   const isIntroCharacterExiting =
     introCharacterTravelId !== null && exitingCharacterTravelId === introCharacterTravelId;
 
   useEffect(() => {
-    if (!introCharacterTravelId) {
+    if (!showTravelCharacter) {
+      setIsCharacterEntranceComplete(false);
       return;
     }
     const timeoutId = window.setTimeout(() => {
-      setEnteredCharacterTravelId(introCharacterTravelId);
+      setIsCharacterEntranceComplete(true);
     }, CHARACTER_TRANSITION_DURATION_MS);
     return () => window.clearTimeout(timeoutId);
-  }, [introCharacterTravelId]);
+  }, [showTravelCharacter]);
 
   useEffect(() => {
     if (
@@ -723,6 +734,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     setWaitElapsedKey(null);
     setBrokenVideos([]);
     setVisibleBackgroundVideoUrl(null);
+    setIsCharacterEntranceComplete(false);
   }
 
   function handleNewTravel() {
@@ -971,13 +983,28 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           <ErrorNotice id="interactive-travel-error" error={error} className={styles.error} />
         ) : null}
 
+        {showTravelCharacter && characterImageSrc ? (
+          <img
+            src={characterImageSrc}
+            alt={petName}
+            className={`${styles.character} ${
+              characterImageSrc === "/test-pet/character-transparent.png"
+                ? styles.transparentCharacter
+                : styles.generatedCharacter
+            } ${isIntroCharacterExiting ? styles.characterExiting : ""}`}
+            onError={() => setCharacterImageSrc(null)}
+          />
+        ) : null}
+
+        {isStartingTravel ? <PetThinkingIndicator /> : null}
+
         {isLoading ? (
           <div className={styles.centerLoader}>
             <Loader2 aria-hidden="true" />
             <span>Готовим дорогу…</span>
           </div>
         ) : !session ? (
-          showCustomDestination ? (
+          isStartingTravel ? null : showCustomDestination ? (
             <form className={styles.customForm} onSubmit={handleDestinationSubmit}>
               <h1>Куда отправим {petName}?</h1>
               <label className="sr-only" htmlFor="travel-destination">
@@ -1126,19 +1153,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
                 minFontSize={20}
               />
             </div>
-
-            {phase === "introReaction" && characterImageSrc ? (
-              <img
-                src={characterImageSrc}
-                alt={petName}
-                className={`${styles.character} ${
-                  characterImageSrc === "/test-pet/character-transparent.png"
-                    ? styles.transparentCharacter
-                    : styles.generatedCharacter
-                } ${isIntroCharacterExiting ? styles.characterExiting : ""}`}
-                onError={() => setCharacterImageSrc(null)}
-              />
-            ) : null}
 
             {isNarrative ? (
               <button
