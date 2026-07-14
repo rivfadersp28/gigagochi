@@ -862,7 +862,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       ? activePart.backgroundVideoUrl
       : null;
   const isChoices = phase === "choice" && !showCustomAction;
-  const hasChoiceBackground = phase === "choice";
   const isNarrative = phase === "story" || phase === "result";
   return (
     <main
@@ -884,9 +883,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         {visibleBackgroundVideoUrl ? (
           <video
             src={visibleBackgroundVideoUrl}
-            className={`${styles.background} ${styles.generatedBackground} ${
-              hasChoiceBackground ? styles.sharpBackground : ""
-            } ${styles.generatedBackgroundReady}`}
+            className={`${styles.background} ${styles.generatedBackground} ${styles.generatedBackgroundReady}`}
             autoPlay
             loop
             muted

@@ -55,8 +55,6 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: blur(1.5px);
-  transform: scale(1.01);
 }
 
 .generatedBackground {
@@ -75,14 +73,6 @@
   pointer-events: none;
 }
 
-.entryBackgroundVideo {
-  filter: none;
-}
-
-.sharpBackground {
-  filter: none;
-}
-
 .backButton,
 .newStoryButton {
   position: absolute;
@@ -93,8 +83,6 @@
   color: #fff;
   background: rgb(18 18 18 / 35%);
   box-shadow: 0 6px 24px rgb(0 0 0 / 14%);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 
 .backButton {
@@ -153,8 +141,6 @@
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 
 .debugMenu button {
@@ -194,8 +180,6 @@
   background: rgb(22 10 10 / 76%);
   font-size: 13px;
   line-height: 1.25;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 
 .error p {
@@ -418,7 +402,8 @@
 .travelLoadingIndicator {
   position: absolute;
   z-index: 30;
-  inset: 50% 0 0;
+  inset: 0;
+  transform: translate3d(0, 38%, 0);
   pointer-events: none;
 }
 
