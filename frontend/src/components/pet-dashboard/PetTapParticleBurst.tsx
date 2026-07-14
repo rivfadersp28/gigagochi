@@ -39,7 +39,7 @@ type PetTapParticleBurstProps = {
 export function PetTapParticleBurst({ id, x, y, isExiting, onComplete }: PetTapParticleBurstProps) {
   const targetRef = useRef<HTMLSpanElement>(null);
   const particleContainerRef = useRef<HTMLElement | null>(null);
-  const { reward } = useReward(targetRef as RefObject<HTMLElement>, "bubbles", petTapParticleConfig);
+  const { reward } = useReward(targetRef as RefObject<HTMLElement>, "hearts", petTapParticleConfig);
   const rewardRef = useRef(reward);
 
   useEffect(() => {
