@@ -499,6 +499,10 @@
   filter: contrast(1.08) saturate(0.92);
 }
 
+.characterExiting {
+  animation: characterExit 500ms cubic-bezier(0.32, 0, 0.67, 0) both;
+}
+
 .nextButton,
 .completionButton {
   position: absolute;
@@ -605,6 +609,17 @@
   }
   50% {
     transform: translate3d(0, -1.2%, 0) rotate(0.25deg);
+  }
+}
+
+@keyframes characterExit {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 72%, 0);
   }
 }
 

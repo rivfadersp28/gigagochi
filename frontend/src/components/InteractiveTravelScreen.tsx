@@ -57,7 +57,7 @@ import styles from "./InteractiveTravelScreen.module.css";
 const DESTINATION_MAX_LENGTH = 500;
 const ADVICE_MAX_LENGTH = 1000;
 const INTRO_PORTION_DURATION_MS = 3_200;
-const CHARACTER_ENTRANCE_DURATION_MS = 500;
+const CHARACTER_TRANSITION_DURATION_MS = 500;
 const MINIMUM_WAIT_DURATION_MS = 1_600;
 const FALLBACK_BACKGROUND = "/figma/travel-entry-bg.png";
 const ENTRY_BACKGROUND_VIDEO = "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-1";
@@ -119,6 +119,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const [brokenVideos, setBrokenVideos] = useState<string[]>([]);
   const [characterImageSrc, setCharacterImageSrc] = useState<string | null>(null);
   const [enteredCharacterTravelId, setEnteredCharacterTravelId] = useState<string | null>(null);
+  const [exitingCharacterTravelId, setExitingCharacterTravelId] = useState<string | null>(null);
   const [isResettingTravel, setIsResettingTravel] = useState(false);
   const submittingRef = useRef(false);
   const requestEpochRef = useRef(0);
@@ -418,6 +419,8 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     phase === "introReaction" ? session?.travel.travelId ?? null : null;
   const isIntroCharacterEntranceComplete =
     introCharacterTravelId === null || enteredCharacterTravelId === introCharacterTravelId;
+  const isIntroCharacterExiting =
+    introCharacterTravelId !== null && exitingCharacterTravelId === introCharacterTravelId;
 
   useEffect(() => {
     if (!introCharacterTravelId) {
@@ -425,12 +428,16 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     }
     const timeoutId = window.setTimeout(() => {
       setEnteredCharacterTravelId(introCharacterTravelId);
-    }, CHARACTER_ENTRANCE_DURATION_MS);
+    }, CHARACTER_TRANSITION_DURATION_MS);
     return () => window.clearTimeout(timeoutId);
   }, [introCharacterTravelId]);
 
   useEffect(() => {
-    if (phase !== "introReaction" || !isIntroCharacterEntranceComplete) {
+    if (
+      phase !== "introReaction" ||
+      !isIntroCharacterEntranceComplete ||
+      isIntroCharacterExiting
+    ) {
       return;
     }
     const timeoutId = window.setTimeout(() => {
@@ -443,21 +450,35 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         });
         return;
       }
-      updatePresentation({
-        phase: "departureWait",
-        partNumber: activePartNumber,
-        portionIndex: 0,
-      });
+      if (introCharacterTravelId) {
+        setExitingCharacterTravelId(introCharacterTravelId);
+      }
     }, INTRO_PORTION_DURATION_MS);
     return () => window.clearTimeout(timeoutId);
   }, [
     activePartNumber,
     introPortions.length,
+    introCharacterTravelId,
     isIntroCharacterEntranceComplete,
+    isIntroCharacterExiting,
     phase,
     presentationPortionIndex,
     updatePresentation,
   ]);
+
+  useEffect(() => {
+    if (!isIntroCharacterExiting) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      updatePresentation({
+        phase: "departureWait",
+        partNumber: activePartNumber,
+        portionIndex: 0,
+      });
+    }, CHARACTER_TRANSITION_DURATION_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [activePartNumber, isIntroCharacterExiting, updatePresentation]);
 
   useEffect(() => {
     if (phase !== "departureWait" || !activeIllustrationKey) {
@@ -1009,7 +1030,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
               } ${phase === "departureWait" ? styles.mutedBubble : ""}`}
             >
               <PetSpeechBubble
-                isVisible={isIntroCharacterEntranceComplete}
+                isVisible={isIntroCharacterEntranceComplete && !isIntroCharacterExiting}
                 message={{
                   id: messageId,
                   text: messageText,
@@ -1033,7 +1054,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
                   characterImageSrc === "/test-pet/character-transparent.png"
                     ? styles.transparentCharacter
                     : styles.generatedCharacter
-                }`}
+                } ${isIntroCharacterExiting ? styles.characterExiting : ""}`}
                 onError={() => setCharacterImageSrc(null)}
               />
             ) : null}
