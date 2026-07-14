@@ -630,8 +630,8 @@ body {
 }
 
 .stat-progress-ring--high {
-  --stat-ring-progress: #58a965;
-  --stat-ring-track: rgba(88, 169, 101, 0.25);
+  --stat-ring-progress: #3fff8f;
+  --stat-ring-track: rgba(63, 255, 143, 0.25);
 }
 
 .stat-progress-ring__glyph {
