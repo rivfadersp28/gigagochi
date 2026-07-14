@@ -138,8 +138,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const [error, setError] = useState<PresentedError | null>(null);
   const [failedIllustrations, setFailedIllustrations] = useState<string[]>([]);
   const [failedAnimations, setFailedAnimations] = useState<string[]>([]);
-  const [illustratingKeys, setIllustratingKeys] = useState<string[]>([]);
-  const [animatingKeys, setAnimatingKeys] = useState<string[]>([]);
   const [loadedVideos, setLoadedVideos] = useState<string[]>([]);
   const [waitElapsedKey, setWaitElapsedKey] = useState<string | null>(null);
   const [brokenVideos, setBrokenVideos] = useState<string[]>([]);
@@ -322,7 +320,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         return;
       }
       animationRequestsRef.current.add(key);
-      setAnimatingKeys((current) => [...new Set([...current, key])]);
       const requestEpoch = requestEpochRef.current;
       try {
         const response = await animateInteractiveTravelPart(travelSession.travel, part);
@@ -354,7 +351,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         }
       } finally {
         animationRequestsRef.current.delete(key);
-        setAnimatingKeys((current) => current.filter((candidate) => candidate !== key));
       }
     },
     [petId],
@@ -373,7 +369,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         return;
       }
       illustrationRequestsRef.current.add(key);
-      setIllustratingKeys((current) => [...new Set([...current, key])]);
       const requestEpoch = requestEpochRef.current;
       try {
         const response = await illustrateInteractiveTravelPart(
@@ -409,7 +404,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         }
       } finally {
         illustrationRequestsRef.current.delete(key);
-        setIllustratingKeys((current) => current.filter((candidate) => candidate !== key));
       }
     },
     [pet, petId],
@@ -732,8 +726,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     setError(null);
     setFailedIllustrations([]);
     setFailedAnimations([]);
-    setIllustratingKeys([]);
-    setAnimatingKeys([]);
     setLoadedVideos([]);
     setWaitElapsedKey(null);
     setBrokenVideos([]);
@@ -876,11 +868,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       : null;
   const isChoices = phase === "choice" && !showCustomAction;
   const isNarrative = phase === "story" || phase === "result";
-  const isWaitingForMedia =
-    Boolean(activeIllustrationKey) &&
-    (illustratingKeys.includes(activeIllustrationKey ?? "") ||
-      animatingKeys.includes(activeIllustrationKey ?? ""));
-
   return (
     <main
       className={styles.viewport}
@@ -1211,10 +1198,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
               <button type="button" onClick={goBack} className={styles.completionButton}>
                 К персонажу
               </button>
-            ) : null}
-
-            {phase === "departureWait" && isWaitingForMedia ? (
-              <Loader2 className={styles.waitSpinner} aria-hidden="true" />
             ) : null}
 
             {isSubmitting ? (

@@ -565,17 +565,6 @@
   white-space: nowrap;
 }
 
-.waitSpinner {
-  position: absolute;
-  z-index: 9;
-  top: 61%;
-  left: calc(50% - 12px);
-  width: 24px;
-  height: 24px;
-  color: rgb(255 255 255 / 55%);
-  animation: spin 800ms linear infinite;
-}
-
 .submittingOverlay {
   position: absolute;
   z-index: 18;
@@ -682,8 +671,7 @@
   .debugSpinner,
   .spinner,
   .optionLoader,
-  .centerLoader svg,
-  .waitSpinner {
+  .centerLoader svg {
     animation-duration: 1ms;
   }
 
