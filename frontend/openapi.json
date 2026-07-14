@@ -1664,7 +1664,6 @@
           "departureHook": {
             "anyOf": [
               {
-                "maxLength": 64,
                 "minLength": 1,
                 "type": "string"
               },
@@ -4247,6 +4246,52 @@
           }
         },
         "summary": "Interactive Travel Suggestions",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/interactive/{travel_id}/debug/reset": {
+      "post": {
+        "operationId": "interactive_travel_debug_reset_api_travel_interactive__travel_id__debug_reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "travel_id",
+            "required": true,
+            "schema": {
+              "title": "Travel Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Interactive Travel Debug Reset Api Travel Interactive  Travel Id  Debug Reset Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interactive Travel Debug Reset",
         "tags": [
           "telegram-mini-app"
         ]

@@ -400,6 +400,10 @@
   exporter and `npm run contracts`. `make check` deliberately fails on stale
   `frontend/openapi.json` or `src/lib/generated/openapi.d.ts`.
 - Interactive-travel provider output may omit the visible time-gap prefix even when transition metadata is valid. Normalize the next part with a deterministic `Через N часов…` sentence instead of returning a 502 after repeated LLM repair.
+- Interactive-travel's 80-character sentence limit is a generation-quality target, not a hard
+  response-contract limit. Retry one compactness violation, but if the retry is still over the
+  length/word target, preserve the complete sentence. Do not reintroduce a smaller Pydantic or
+  frontend-parser cap for `departureHook`, or the lenient fallback will become a 502 again.
 - User-facing "здоровье" still uses the legacy internal stat key `energy`.
   Keep API/storage compatibility and translate only at prompt/UI boundaries
   unless a deliberate migration is planned.

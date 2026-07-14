@@ -353,10 +353,9 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
           summary: boundedString(transitionValue.summary, `${partPath}.transition.summary`, {
             max: 240,
           }),
-          departureHook: optionalBoundedString(
+          departureHook: optionalString(
             transitionValue.departureHook,
             `${partPath}.transition.departureHook`,
-            { max: 64 },
           ),
         }
       : undefined;

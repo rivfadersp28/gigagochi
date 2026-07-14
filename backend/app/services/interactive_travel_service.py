@@ -23,8 +23,8 @@ from app.schemas import (
     InteractiveTravelStatImpact,
     InteractiveTravelSuggestionsResponse,
     LocalChatHistoryItem,
-    LocalPetMemoryContext,
     LocalPetChatContext,
+    LocalPetMemoryContext,
 )
 from app.services.character_dossier import story_character_data
 from app.services.openai_service import chat_reasoning_effort_kwargs, get_chat_model
@@ -160,7 +160,9 @@ STAT_EVIDENCE_MARKERS = {
 
 
 class InteractiveTravelGenerationError(RuntimeError):
-    pass
+    def __init__(self, code: str, *, text_overflow: bool = False) -> None:
+        super().__init__(code)
+        self.text_overflow = text_overflow
 
 
 def _arc_beat(part_number: int) -> str:
@@ -500,7 +502,8 @@ SYSTEM_PROMPT = "\n".join(
         "персонаж пришёл или направляется, почему он выбрал этот путь и какой цели хочет достичь. "
         "Затем storyParagraphs последовательно показывают первое наблюдаемое событие и возникшее "
         "из него препятствие. Не начинай с необъяснённого состояния вроде ранения, плена, потери "
-        "вещи или переноски другого персонажа: сначала покажи в тексте, как и почему это произошло. "
+        "вещи или переноски другого персонажа: сначала покажи в тексте, как и почему это "
+        "произошло. "
         "Каждый элемент storyParagraphs — ровно одно короткое предложение с одним новым фактом. "
         "Часть останавливается перед первым решением владельца; исход и изменения параметров "
         "появляются только после его ответа.",
@@ -628,14 +631,24 @@ def _validate_known_named_terms(value: Any, *, known_context: str) -> None:
     visit(value)
 
 
-def _compact_sentence(value: Any, *, allow_empty: bool = False) -> str:
+def _compact_sentence(
+    value: Any,
+    *,
+    allow_empty: bool = False,
+    allow_text_overflow: bool = False,
+) -> str:
     text = " ".join(str(value or "").split())
     if not text and allow_empty:
         return ""
+    if len(text) > COMPACT_SENTENCE_MAX_CHARS or len(text.split()) > COMPACT_SENTENCE_MAX_WORDS:
+        if allow_text_overflow:
+            return text
+        raise InteractiveTravelGenerationError(
+            "INTERACTIVE_TRAVEL_SENTENCE_NOT_COMPACT",
+            text_overflow=True,
+        )
     if (
         not text
-        or len(text) > COMPACT_SENTENCE_MAX_CHARS
-        or len(text.split()) > COMPACT_SENTENCE_MAX_WORDS
         or text[-1:] not in {".", "!", "?", "…", "»"}
         or any(mark in text[:-1] for mark in (". ", "! ", "? ", "… "))
     ):
@@ -674,18 +687,24 @@ def _unique_suggestions(
     return result
 
 
-def _intro_reaction(raw: Any) -> InteractiveTravelIntroReaction:
+def _intro_reaction(
+    raw: Any,
+    *,
+    allow_text_overflow: bool = False,
+) -> InteractiveTravelIntroReaction:
     source = raw if isinstance(raw, dict) else {}
-    text = _compact_sentence(source.get("text"))
+    text = _compact_sentence(source.get("text"), allow_text_overflow=allow_text_overflow)
     tone = source.get("tone")
     if not text or tone not in REACTION_TONES:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_INTRO_REACTION_INVALID")
     return InteractiveTravelIntroReaction(text=text, tone=tone)
 
 
-def _story_text(value: Any) -> str:
+def _story_text(value: Any, *, allow_text_overflow: bool = False) -> str:
     paragraphs = value if isinstance(value, list) else []
-    text = "\n\n".join(_compact_sentence(item) for item in paragraphs)
+    text = "\n\n".join(
+        _compact_sentence(item, allow_text_overflow=allow_text_overflow) for item in paragraphs
+    )
     if not text:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_TEXT_EMPTY")
     return text
@@ -697,12 +716,17 @@ def _story_with_lead(
     *,
     lead_limit: int,
     resolution: Any = None,
+    allow_text_overflow: bool = False,
 ) -> str:
     del lead_limit
-    lead_text = _compact_sentence(lead)
-    story_text = _story_text(paragraphs)
+    lead_text = _compact_sentence(lead, allow_text_overflow=allow_text_overflow)
+    story_text = _story_text(paragraphs, allow_text_overflow=allow_text_overflow)
     sections = [section for section in (lead_text, story_text) if section]
-    resolution_text = _compact_sentence(resolution, allow_empty=True)
+    resolution_text = _compact_sentence(
+        resolution,
+        allow_empty=True,
+        allow_text_overflow=allow_text_overflow,
+    )
     if resolution_text:
         sections.append(resolution_text)
     return "\n\n".join(sections)
@@ -741,7 +765,8 @@ def _request(
     timeout: float,
     system_prompt: str = SYSTEM_PROMPT,
     payload_validator: Callable[[dict[str, Any]], None] | None = None,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    overflow_payload_validator: Callable[[dict[str, Any]], None] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]], bool]:
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -763,13 +788,15 @@ def _request(
     ) -> dict[str, Any]:
         completion = complete_chat("full_story", request_kwargs, client=client)
         debug.append(log_chat_completion_response(request_label, response_log_value(completion)))
-        payload = _completion_payload(completion)
+        return _completion_payload(completion)
+
+    def validate_payload(payload: dict[str, Any]) -> None:
         if payload_validator is not None:
             payload_validator(payload)
-        return payload
 
     try:
         payload = complete_and_parse(label, kwargs)
+        validate_payload(payload)
     except (LLMProviderError, InteractiveTravelGenerationError) as exc:
         retry_label = f"{label}_technical_retry"
         retry_kwargs = kwargs
@@ -804,17 +831,28 @@ def _request(
             }
         debug.append(log_chat_completion_prompt(retry_label, retry_kwargs))
         payload = complete_and_parse(retry_label, retry_kwargs)
-    return payload, debug
+        try:
+            validate_payload(payload)
+        except InteractiveTravelGenerationError as retry_exc:
+            if not retry_exc.text_overflow or overflow_payload_validator is None:
+                raise
+            overflow_payload_validator(payload)
+            return payload, debug, True
+    return payload, debug, False
 
 
 def _pending_part_from_payload(
     raw: Any,
     *,
     expected_number: int,
+    allow_text_overflow: bool = False,
 ) -> InteractiveTravelPart:
     if not isinstance(raw, dict):
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_PART_INVALID")
-    challenge = _compact_sentence(raw.get("challenge"))
+    challenge = _compact_sentence(
+        raw.get("challenge"),
+        allow_text_overflow=allow_text_overflow,
+    )
     if not challenge:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_CHALLENGE_EMPTY")
     if expected_number == 1:
@@ -823,6 +861,7 @@ def _pending_part_from_payload(
             raw.get("openingContext"),
             raw.get("storyParagraphs"),
             lead_limit=OPENING_CONTEXT_MAX_CHARS,
+            allow_text_overflow=allow_text_overflow,
         )
     else:
         raw_transition = raw.get("transition")
@@ -830,7 +869,11 @@ def _pending_part_from_payload(
             raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_TIME_GAP_INVALID")
         elapsed_hours = raw_transition.get("elapsedHours")
         transition_summary = _clean_text(raw_transition.get("summary"), 240)
-        departure_hook = _compact_sentence(raw_transition.get("departureHook"), allow_empty=True)
+        departure_hook = _compact_sentence(
+            raw_transition.get("departureHook"),
+            allow_empty=True,
+            allow_text_overflow=allow_text_overflow,
+        )
         if (
             isinstance(elapsed_hours, bool)
             or not isinstance(elapsed_hours, int)
@@ -846,7 +889,10 @@ def _pending_part_from_payload(
         }
         raw_story_paragraphs = raw.get("storyParagraphs")
         first_story_line = (
-            _compact_sentence(raw_story_paragraphs[0])
+            _compact_sentence(
+                raw_story_paragraphs[0],
+                allow_text_overflow=allow_text_overflow,
+            )
             if isinstance(raw_story_paragraphs, list) and raw_story_paragraphs
             else ""
         )
@@ -856,7 +902,10 @@ def _pending_part_from_payload(
                 f"Через {elapsed_hours} {hour_word} я продолжаю путь.",
                 *(raw_story_paragraphs if isinstance(raw_story_paragraphs, list) else []),
             ]
-        story_text = _story_text(raw_story_paragraphs)
+        story_text = _story_text(
+            raw_story_paragraphs,
+            allow_text_overflow=allow_text_overflow,
+        )
     return InteractiveTravelPart(
         partNumber=expected_number,
         title=_clean_text(raw.get("title"), 120) or f"Часть {expected_number}",
@@ -876,13 +925,17 @@ def _resolved_part_from_payload(
     *,
     advice: str,
     is_final: bool,
+    allow_text_overflow: bool = False,
 ) -> InteractiveTravelPart:
     if not isinstance(raw, dict):
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_RESULT_INVALID")
     assessment = raw.get("adviceAssessment")
     if assessment not in {"helpful", "harmful", "ambiguous"}:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_ASSESSMENT_INVALID")
-    reaction = _compact_sentence(raw.get("reaction"))
+    reaction = _compact_sentence(
+        raw.get("reaction"),
+        allow_text_overflow=allow_text_overflow,
+    )
     reaction_tone = raw.get("reactionTone")
     if reaction_tone not in {
         "enthusiastic",
@@ -898,13 +951,17 @@ def _resolved_part_from_payload(
     if not reaction or not consequence:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_RESULT_FIELDS_EMPTY")
     resolution = raw.get("resolution") if is_final else None
-    if is_final and not _compact_sentence(resolution):
+    if is_final and not _compact_sentence(
+        resolution,
+        allow_text_overflow=allow_text_overflow,
+    ):
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_FINAL_RESOLUTION_INVALID")
     result_text = _story_with_lead(
         raw.get("actionSentence"),
         raw.get("resultParagraphs"),
         lead_limit=ACTION_SENTENCE_MAX_CHARS,
         resolution=resolution,
+        allow_text_overflow=allow_text_overflow,
     )
     valence = raw.get("outcomeValence")
     if valence not in {"positive", "negative"}:
@@ -980,7 +1037,12 @@ def _normalized_impacts(
     return result
 
 
-def _start_payload_postcondition(payload: dict[str, Any], *, known_context: str) -> None:
+def _start_payload_postcondition(
+    payload: dict[str, Any],
+    *,
+    known_context: str,
+    allow_text_overflow: bool = False,
+) -> None:
     if not _clean_text(payload.get("overallTitle"), 120):
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_START_STRUCTURE_INVALID")
     raw_arc = payload.get("arcPlan")
@@ -989,7 +1051,10 @@ def _start_payload_postcondition(payload: dict[str, Any], *, known_context: str)
         for key in ("goal", "stakes", "escalation", "crisis", "climax", "resolution")
     ):
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_START_STRUCTURE_INVALID")
-    _intro_reaction(payload.get("introReaction"))
+    _intro_reaction(
+        payload.get("introReaction"),
+        allow_text_overflow=allow_text_overflow,
+    )
     raw_part = payload.get("part")
     if not isinstance(raw_part, dict) or not _clean_text(
         raw_part.get("openingContext"), OPENING_CONTEXT_MAX_CHARS
@@ -1003,18 +1068,32 @@ def _start_payload_postcondition(payload: dict[str, Any], *, known_context: str)
     ]
     if any(not item for item in normalized_suggestions) or len(set(normalized_suggestions)) != 3:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_START_STRUCTURE_INVALID")
-    _pending_part_from_payload(raw_part, expected_number=1)
+    _pending_part_from_payload(
+        raw_part,
+        expected_number=1,
+        allow_text_overflow=allow_text_overflow,
+    )
     _validate_known_named_terms(payload, known_context=known_context)
 
 
-def _final_result_postcondition(raw_result: Any) -> None:
+def _final_result_postcondition(
+    raw_result: Any,
+    *,
+    allow_text_overflow: bool = False,
+) -> None:
     if not isinstance(raw_result, dict) or raw_result.get("storyStatus") != "completed":
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_FINAL_STATUS_INVALID")
-    resolution = _compact_sentence(raw_result.get("resolution"))
+    resolution = _compact_sentence(
+        raw_result.get("resolution"),
+        allow_text_overflow=allow_text_overflow,
+    )
     if len(resolution) < 16 or resolution[-1:] not in {".", "!", "…", "»"} or "?" in resolution:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_FINAL_RESOLUTION_INVALID")
     paragraphs = raw_result.get("resultParagraphs")
-    consequence_text = _story_text(paragraphs)
+    consequence_text = _story_text(
+        paragraphs,
+        allow_text_overflow=allow_text_overflow,
+    )
     if len(consequence_text) < 60:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_FINAL_CULMINATION_INVALID")
     visible_text = " ".join(
@@ -1037,6 +1116,7 @@ def _continue_payload_postcondition(
     current_part: InteractiveTravelPart,
     advice: str,
     known_context: str,
+    allow_text_overflow: bool = False,
 ) -> None:
     raw_result = payload.get("result")
     if not isinstance(raw_result, dict):
@@ -1051,17 +1131,22 @@ def _continue_payload_postcondition(
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_STATUS_INVALID")
     is_final = story_status == "completed"
     if is_final:
-        _final_result_postcondition(raw_result)
+        _final_result_postcondition(
+            raw_result,
+            allow_text_overflow=allow_text_overflow,
+        )
     _resolved_part_from_payload(
         current_part,
         raw_result,
         advice=advice,
         is_final=is_final,
+        allow_text_overflow=allow_text_overflow,
     )
     if not is_final:
         _pending_part_from_payload(
             payload.get("nextPart"),
             expected_number=current_number + 1,
+            allow_text_overflow=allow_text_overflow,
         )
     _validate_known_named_terms(payload, known_context=known_context)
 
@@ -1172,7 +1257,7 @@ def start_interactive_travel(
         f"DESTINATION_DATA:\n{json.dumps(destination.strip(), ensure_ascii=False)}\n\n"
         f"KNOWN_CONTEXT:\n{known_context}"
     )
-    payload, debug = _request(
+    payload, debug, allow_text_overflow = _request(
         label="interactive_travel/start",
         schema_name="interactive_travel_start",
         schema=START_SCHEMA,
@@ -1184,6 +1269,11 @@ def start_interactive_travel(
             candidate,
             known_context=known_context,
         ),
+        overflow_payload_validator=lambda candidate: _start_payload_postcondition(
+            candidate,
+            known_context=known_context,
+            allow_text_overflow=True,
+        ),
     )
     raw_arc = payload.get("arcPlan") if isinstance(payload.get("arcPlan"), dict) else {}
     arc_plan = {
@@ -1194,8 +1284,15 @@ def start_interactive_travel(
         "climax": _clean_text(raw_arc.get("climax"), 240),
         "resolution": _clean_text(raw_arc.get("resolution"), 240),
     }
-    part = _pending_part_from_payload(payload.get("part"), expected_number=1)
-    intro_reaction = _intro_reaction(payload.get("introReaction"))
+    part = _pending_part_from_payload(
+        payload.get("part"),
+        expected_number=1,
+        allow_text_overflow=allow_text_overflow,
+    )
+    intro_reaction = _intro_reaction(
+        payload.get("introReaction"),
+        allow_text_overflow=allow_text_overflow,
+    )
     travel = InteractiveTravelState(
         travelId=f"interactive-travel-{uuid4().hex}",
         generatedAt=datetime.now(UTC),
@@ -1315,7 +1412,7 @@ def continue_interactive_travel(
         f"KNOWN_CONTEXT:\n{known_context}"
     )
     schema_name, continue_schema = _continue_schema(current_number)
-    payload, debug = _request(
+    payload, debug, allow_text_overflow = _request(
         label=f"interactive_travel/part_{current_number}_result",
         schema_name=schema_name,
         schema=continue_schema,
@@ -1328,6 +1425,13 @@ def continue_interactive_travel(
             current_part=current_part,
             advice=advice,
             known_context=known_context,
+        ),
+        overflow_payload_validator=lambda candidate: _continue_payload_postcondition(
+            candidate,
+            current_part=current_part,
+            advice=advice,
+            known_context=known_context,
+            allow_text_overflow=True,
         ),
     )
     raw_result = payload.get("result")
@@ -1342,12 +1446,14 @@ def continue_interactive_travel(
         raw_result,
         advice=advice,
         is_final=completed,
+        allow_text_overflow=allow_text_overflow,
     )
     parts = [*travel.parts[:-1], resolved_part]
     if not completed:
         next_part = _pending_part_from_payload(
             payload.get("nextPart"),
             expected_number=current_number + 1,
+            allow_text_overflow=allow_text_overflow,
         )
         parts.append(next_part)
     final_result = resolved_part.result

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   parseGeneratePetJobResponse,
+  parseInteractiveTravelResponse,
   parseLocalChatResponse,
   parseMemoryExtractionResponse,
   parsePushSnapshotResponse,
@@ -76,6 +77,52 @@ describe("API response contracts", () => {
         operations: [{ type: "erase_everything" }],
       }),
     ).toThrow(ApiContractError);
+  });
+
+  it("accepts an overlong departure hook after the backend retry fallback", () => {
+    const departureHook =
+      "Я снова склоняюсь над картой и продолжаю долгий путь к верхнему мосту через провал.";
+    const resolvedResult = {
+      text: "Я перешла мост.",
+      adviceAssessment: "helpful",
+      reaction: "Хороший план!",
+      reactionTone: "enthusiastic",
+      consequence: "Путь открыт.",
+      outcomeValence: "positive",
+      statImpacts: [],
+    };
+
+    const parsed = parseInteractiveTravelResponse({
+      travel: {
+        travelId: "travel-1",
+        generatedAt: "2026-07-14T12:00:00Z",
+        destination: "гора",
+        overallTitle: "Путь",
+        arcPlan: {},
+        parts: [
+          {
+            partNumber: 1,
+            title: "Начало",
+            storyText: "Я подошла к мосту.",
+            challenge: "Что делать?",
+            actionSuggestions: [],
+            answer: "Идти",
+            result: resolvedResult,
+          },
+          {
+            partNumber: 2,
+            title: "Продолжение",
+            storyText: "Через 4 часа я иду дальше.",
+            transition: { elapsedHours: 4, summary: "Мир изменился.", departureHook },
+            challenge: "Куда идти?",
+            actionSuggestions: [],
+          },
+        ],
+        completed: false,
+      },
+    });
+
+    expect(parsed.travel.parts[1].transition?.departureHook).toBe(departureHook);
   });
 
   it("maps an invalid successful payload to a safe API error", async () => {

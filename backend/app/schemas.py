@@ -289,7 +289,7 @@ class InteractiveTravelResult(BaseModel):
 class InteractiveTravelTransition(BaseModel):
     elapsedHours: int = Field(ge=2, le=8)
     summary: str = Field(min_length=1, max_length=240)
-    departureHook: str | None = Field(default=None, min_length=1, max_length=64)
+    departureHook: str | None = Field(default=None, min_length=1)
 
 
 class InteractiveTravelPart(BaseModel):

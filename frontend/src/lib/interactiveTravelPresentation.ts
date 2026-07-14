@@ -8,7 +8,7 @@ import type {
   LocalPetState,
 } from "./types";
 
-export const INTERACTIVE_TRAVEL_BUBBLE_MAX_CHARACTERS = 64;
+export const INTERACTIVE_TRAVEL_BUBBLE_MAX_CHARACTERS = 80;
 const CHARACTER_FOREGROUND_CACHE_VERSION = "20260714-1";
 
 export type ResolvedInteractiveTravelPart = InteractiveTravelPart & {

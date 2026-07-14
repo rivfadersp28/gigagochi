@@ -769,6 +769,27 @@ def test_continue_retry_explains_compact_sentence_validation_error(monkeypatch) 
     assert "80 символов" in repair_message["content"]
 
 
+def test_continue_keeps_overlong_text_when_retry_is_still_over_limit(monkeypatch) -> None:
+    travel = _travel_with_pending_part(1)
+    first = _continued_payload(1)
+    retry = _continued_payload(1)
+    long_departure_hook = (
+        "Я снова склоняюсь над картой и продолжаю долгий путь к верхнему мосту "
+        "через провал."
+    )
+    first["nextPart"]["transition"]["departureHook"] = long_departure_hook
+    retry["nextPart"]["transition"]["departureHook"] = long_departure_hook
+    client, completions = _client(monkeypatch, [first, retry])
+
+    response = interactive_travel_service.continue_interactive_travel(
+        pet=_pet(), travel=travel, advice="ждать", client=client, model="test-model"
+    )
+
+    assert response.travel.parts[1].transition is not None
+    assert response.travel.parts[1].transition.departureHook == long_departure_hook
+    assert len(completions.calls) == 2
+
+
 def test_completed_travel_cannot_continue() -> None:
     with pytest.raises(
         interactive_travel_service.InteractiveTravelGenerationError,
