@@ -2,10 +2,9 @@ const PET_TAP_THANKS_SESSION_PREFIX = "tamagochi:pet-tap-thanks";
 const claimedPetIds = new Set<string>();
 
 const PET_TAP_THANKS_REPLIES = [
-  "Мне приятно!",
-  "Ой, как приятно!",
-  "Мне нравится, когда ты так делаешь.",
-  "Ещё немножко — это так приятно!",
+  "Приятно!",
+  "Щекотно!",
+  "Мне нравится!",
 ] as const;
 
 export function petTapThanksReply(randomValue = Math.random()) {

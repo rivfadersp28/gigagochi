@@ -12,7 +12,7 @@ describe("pet tap thanks", () => {
   });
 
   it("selects different predefined replies", () => {
-    expect(petTapThanksReply(0)).toBe("Мне приятно!");
-    expect(petTapThanksReply(0.99)).toBe("Ещё немножко — это так приятно!");
+    expect(petTapThanksReply(0)).toBe("Приятно!");
+    expect(petTapThanksReply(0.99)).toBe("Мне нравится!");
   });
 });
