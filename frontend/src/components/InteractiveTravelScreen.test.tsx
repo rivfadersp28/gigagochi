@@ -29,12 +29,17 @@ const mocks = vi.hoisted(() => ({
   replace: vi.fn(),
   startInteractiveTravel: vi.fn(),
   resetInteractiveTravelGeneration: vi.fn(),
+  sweep: vi.fn((callback: () => void) => callback()),
   canUseDebugMenu: false,
   writeLocalInteractiveTravel: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.push, replace: mocks.replace }),
+}));
+
+vi.mock("glimm/react", () => ({
+  useGlimm: () => ({ sweep: mocks.sweep }),
 }));
 
 vi.mock("@/lib/api", () => ({

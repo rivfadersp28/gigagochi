@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 /* eslint-disable react-hooks/set-state-in-effect -- effects drive the persisted travel state machine */
 import { ArrowLeft, Loader2, RotateCcw } from "lucide-react";
+import { useGlimm } from "glimm/react";
 import { useRouter } from "next/navigation";
 import {
   type CSSProperties,
@@ -12,6 +13,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 
 import {
   animateInteractiveTravelPart,
@@ -95,8 +97,27 @@ function partByNumber(parts: InteractiveTravelPart[], partNumber: number) {
   return parts.find((part) => part.partNumber === partNumber) ?? null;
 }
 
+function restoredBackgroundVideo(session: LocalInteractiveTravel | null) {
+  if (!session || session.presentation.phase === "introReaction") {
+    return null;
+  }
+  if (session.presentation.phase === "departureWait") {
+    return (
+      [...session.travel.parts]
+        .filter((part) => part.partNumber < session.presentation.partNumber)
+        .sort((left, right) => right.partNumber - left.partNumber)[0]
+        ?.backgroundVideoUrl ?? null
+    );
+  }
+  return (
+    partByNumber(session.travel.parts, session.presentation.partNumber)?.backgroundVideoUrl ??
+    null
+  );
+}
+
 export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps) {
   const router = useRouter();
+  const { sweep } = useGlimm();
   const localPet = useLocalPetState();
   const [session, setSession] = useState<LocalInteractiveTravel | null>(null);
   const [isRestored, setIsRestored] = useState(false);
@@ -117,6 +138,9 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const [loadedVideos, setLoadedVideos] = useState<string[]>([]);
   const [waitElapsedKey, setWaitElapsedKey] = useState<string | null>(null);
   const [brokenVideos, setBrokenVideos] = useState<string[]>([]);
+  const [visibleBackgroundVideoUrl, setVisibleBackgroundVideoUrl] = useState<string | null>(
+    null,
+  );
   const [characterImageSrc, setCharacterImageSrc] = useState<string | null>(null);
   const [enteredCharacterTravelId, setEnteredCharacterTravelId] = useState<string | null>(null);
   const [exitingCharacterTravelId, setExitingCharacterTravelId] = useState<string | null>(null);
@@ -127,6 +151,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const failedIllustrationsRef = useRef(new Set<string>());
   const animationRequestsRef = useRef(new Set<string>());
   const failedAnimationsRef = useRef(new Set<string>());
+  const backgroundTransitionsRef = useRef(new Set<string>());
   const customDestinationTriggerRef = useRef<HTMLButtonElement>(null);
   const customActionTriggerRef = useRef<HTMLButtonElement>(null);
   const wasCustomDestinationOpenRef = useRef(false);
@@ -173,7 +198,9 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
-      setSession(readLocalInteractiveTravel(petId));
+      const restoredSession = readLocalInteractiveTravel(petId);
+      setSession(restoredSession);
+      setVisibleBackgroundVideoUrl(restoredBackgroundVideo(restoredSession));
       setIsRestored(true);
     }, 0);
     return () => window.clearTimeout(timeoutId);
@@ -500,16 +527,44 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     ) {
       return;
     }
+    const backgroundVideoUrl = activePart.backgroundVideoUrl;
     const videoReady = Boolean(
-      activePart.backgroundVideoUrl &&
-        (loadedVideos.includes(activePart.backgroundVideoUrl) ||
-          brokenVideos.includes(activePart.backgroundVideoUrl)),
+      backgroundVideoUrl && loadedVideos.includes(backgroundVideoUrl),
+    );
+    const videoFailed = Boolean(
+      backgroundVideoUrl && brokenVideos.includes(backgroundVideoUrl),
     );
     const mediaFailed = activeIllustrationKey
       ? failedIllustrations.includes(activeIllustrationKey) ||
         failedAnimations.includes(activeIllustrationKey)
       : false;
-    if (videoReady || mediaFailed) {
+    if (videoReady && backgroundVideoUrl) {
+      const transitionKey = `${activeIllustrationKey}:${backgroundVideoUrl}`;
+      if (backgroundTransitionsRef.current.has(transitionKey)) {
+        return;
+      }
+      backgroundTransitionsRef.current.add(transitionKey);
+      if (visibleBackgroundVideoUrl === backgroundVideoUrl) {
+        updatePresentation({
+          phase: "story",
+          partNumber: activePart.partNumber,
+          portionIndex: 0,
+        });
+        return;
+      }
+      sweep(() => {
+        flushSync(() => {
+          setVisibleBackgroundVideoUrl(backgroundVideoUrl);
+          updatePresentation({
+            phase: "story",
+            partNumber: activePart.partNumber,
+            portionIndex: 0,
+          });
+        });
+      });
+      return;
+    }
+    if (videoFailed || mediaFailed) {
       updatePresentation({
         phase: "story",
         partNumber: activePart.partNumber,
@@ -525,7 +580,9 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     loadedVideos,
     phase,
     session,
+    sweep,
     updatePresentation,
+    visibleBackgroundVideoUrl,
     waitElapsedKey,
   ]);
 
@@ -562,6 +619,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           portionIndex: 0,
         },
       });
+      setVisibleBackgroundVideoUrl(null);
       persistSession(next);
       setShowCustomDestination(false);
       setDestination("");
@@ -645,6 +703,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     failedIllustrationsRef.current.clear();
     animationRequestsRef.current.clear();
     failedAnimationsRef.current.clear();
+    backgroundTransitionsRef.current.clear();
     clearLocalInteractiveTravel(petId);
     setSession(null);
     setSuggestions([]);
@@ -663,6 +722,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     setLoadedVideos([]);
     setWaitElapsedKey(null);
     setBrokenVideos([]);
+    setVisibleBackgroundVideoUrl(null);
   }
 
   function handleNewTravel() {
@@ -789,14 +849,12 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       phase ?? "story"
     ] ?? 0) +
     portionIndex;
-  const showGeneratedVideo = Boolean(
+  const preloadBackgroundVideoUrl =
     activePart?.backgroundVideoUrl &&
-      !brokenVideos.includes(activePart.backgroundVideoUrl),
-  );
-  const generatedVideoLoaded = Boolean(
-    activePart?.backgroundVideoUrl && loadedVideos.includes(activePart.backgroundVideoUrl),
-  );
-  const showGeneratedScene = showGeneratedVideo && phase !== "introReaction";
+    activePart.backgroundVideoUrl !== visibleBackgroundVideoUrl &&
+    !brokenVideos.includes(activePart.backgroundVideoUrl)
+      ? activePart.backgroundVideoUrl
+      : null;
   const isChoices = phase === "choice" && !showCustomAction;
   const isNarrative = phase === "story" || phase === "result";
   const isWaitingForMedia =
@@ -821,12 +879,12 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           preload="auto"
           aria-hidden="true"
         />
-        {showGeneratedScene && showGeneratedVideo && activePart?.backgroundVideoUrl ? (
+        {visibleBackgroundVideoUrl ? (
           <video
-            src={activePart.backgroundVideoUrl}
+            src={visibleBackgroundVideoUrl}
             className={`${styles.background} ${styles.generatedBackground} ${
               isChoices ? styles.sharpBackground : ""
-            } ${generatedVideoLoaded ? styles.generatedBackgroundReady : ""}`}
+            } ${styles.generatedBackgroundReady}`}
             autoPlay
             loop
             muted
@@ -835,12 +893,36 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
             aria-hidden="true"
             onCanPlay={() =>
               setLoadedVideos((current) => [
-                ...new Set([...current, activePart.backgroundVideoUrl ?? ""]),
+                ...new Set([...current, visibleBackgroundVideoUrl]),
+              ])
+            }
+            onError={() => {
+              setBrokenVideos((current) => [
+                ...new Set([...current, visibleBackgroundVideoUrl]),
+              ]);
+              setVisibleBackgroundVideoUrl(null);
+            }}
+          />
+        ) : null}
+        {preloadBackgroundVideoUrl ? (
+          <video
+            key={preloadBackgroundVideoUrl}
+            src={preloadBackgroundVideoUrl}
+            className={`${styles.background} ${styles.backgroundPreloader}`}
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload="auto"
+            aria-hidden="true"
+            onCanPlay={() =>
+              setLoadedVideos((current) => [
+                ...new Set([...current, preloadBackgroundVideoUrl]),
               ])
             }
             onError={() =>
               setBrokenVideos((current) => [
-                ...new Set([...current, activePart.backgroundVideoUrl ?? ""]),
+                ...new Set([...current, preloadBackgroundVideoUrl]),
               ])
             }
           />

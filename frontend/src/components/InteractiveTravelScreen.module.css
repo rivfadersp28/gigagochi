@@ -63,12 +63,16 @@
   z-index: -3;
   opacity: 0;
   animation: none;
-  transition: opacity 300ms ease-out;
 }
 
 .generatedBackgroundReady {
   opacity: 1;
-  animation: backgroundEnter 500ms ease-out both;
+}
+
+.backgroundPreloader {
+  z-index: -5;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .entryBackgroundVideo {
