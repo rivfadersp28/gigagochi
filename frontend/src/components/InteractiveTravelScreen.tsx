@@ -61,6 +61,7 @@ const FALLBACK_BACKGROUND = "/figma/travel-entry-bg.png";
 const ENTRY_BACKGROUND_VIDEO = "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-1";
 const SPEECH_BUBBLE_SHAPE = "/figma/speech-bubble-new.svg";
 const VIDEO_FILTER = "/figma/video-filter-normal.webp?v=20260713-video-filter-lossless-webp-1";
+const SHOW_LOCAL_CONTROLS = process.env.NODE_ENV !== "production";
 const GLASS_CONTROL_BACKDROP_STYLE: CSSProperties = {
   backdropFilter: "blur(10px)",
   WebkitBackdropFilter: "blur(10px)",
@@ -142,7 +143,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     router.push(`/pet/${petId}`);
   }, [petId, router, showCustomAction, showCustomDestination]);
 
-  useTelegramBackButton(goBack, true);
+  useTelegramBackButton(goBack, SHOW_LOCAL_CONTROLS);
 
   useEffect(() => {
     setTelegramBackgroundColor("#000000");
@@ -797,20 +798,24 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         <img src={VIDEO_FILTER} alt="" className={styles.grain} aria-hidden="true" />
         <div className={styles.scrim} />
 
-        <button type="button" onClick={goBack} className={styles.backButton}>
-          <ArrowLeft aria-hidden="true" />
-          <span className="sr-only">
-            {showCustomDestination || showCustomAction
-              ? "Вернуться к вариантам"
-              : "Вернуться к персонажу"}
-          </span>
-        </button>
+        {SHOW_LOCAL_CONTROLS ? (
+          <>
+            <button type="button" onClick={goBack} className={styles.backButton}>
+              <ArrowLeft aria-hidden="true" />
+              <span className="sr-only">
+                {showCustomDestination || showCustomAction
+                  ? "Вернуться к вариантам"
+                  : "Вернуться к персонажу"}
+              </span>
+            </button>
 
-        {(session || isSubmitting) ? (
-          <button type="button" onClick={handleNewTravel} className={styles.newStoryButton}>
-            <RotateCcw aria-hidden="true" />
-            <span>Создать новую историю</span>
-          </button>
+            {session || isSubmitting ? (
+              <button type="button" onClick={handleNewTravel} className={styles.newStoryButton}>
+                <RotateCcw aria-hidden="true" />
+                <span>Создать новую историю</span>
+              </button>
+            ) : null}
+          </>
         ) : null}
 
         {error ? (

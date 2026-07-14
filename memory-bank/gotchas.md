@@ -442,3 +442,7 @@
   native keyboard and make the composer jump. Keep the dashboard root on
   `overflow: clip`; `overflow: hidden` is still programmatically scrollable, so
   focus can change its `scrollTop` and shift the whole fixed scene.
+- The interactive-travel entry MP4 must be warmed from the dashboard and keep its versioned URL
+  cacheable. `preload="auto"` on the travel screen starts too late, while the generic `/figma/*`
+  `no-store` header otherwise discards the warm download. Keep the scene at full viewport size;
+  a fixed `402px` cap leaves side gutters in wider Telegram WebViews.

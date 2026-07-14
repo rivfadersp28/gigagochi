@@ -157,6 +157,8 @@ const UNNAMED_STATUS_NAME = "Без имени";
 const ACTION_ICON_CACHE_VERSION = "20260710-figma-142-1509-1";
 const VIDEO_FILTER_CACHE_VERSION = "20260713-video-filter-lossless-webp-1";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
+const TRAVEL_ENTRY_BACKGROUND_VIDEO =
+  "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-1";
 const TAP_REACTION_DURATION_MS = 180;
 const PET_SCENE_ASPECT_RATIO = 720 / 1280;
 const PET_TAP_REGION = {
@@ -848,6 +850,19 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   useEffect(() => {
     primePetFeedSound();
   }, []);
+
+  useEffect(() => {
+    if (!canShowInteractiveTravel) {
+      return;
+    }
+    const preload = document.createElement("link");
+    preload.rel = "preload";
+    preload.as = "video";
+    preload.href = TRAVEL_ENTRY_BACKGROUND_VIDEO;
+    preload.type = "video/mp4";
+    document.head.appendChild(preload);
+    return () => preload.remove();
+  }, [canShowInteractiveTravel]);
 
   useEffect(() => () => {
     foodReactionAbortRef.current?.abort();

@@ -10,8 +10,8 @@
 
 .scene {
   position: relative;
-  width: min(100vw, 402px);
-  height: min(100svh, 874px);
+  width: 100vw;
+  height: 100svh;
   min-height: 620px;
   overflow: hidden;
   isolation: isolate;
