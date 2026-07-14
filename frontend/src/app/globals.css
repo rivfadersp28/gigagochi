@@ -502,13 +502,17 @@ body {
   border: 0;
   border-radius: 24px;
   background: var(--main-scene-surface-strong);
+  backdrop-filter: blur(18.5px);
+  -webkit-backdrop-filter: blur(18.5px);
   font-family: "SF Pro Rounded", "SF Pro Display", var(--font-open-runde), ui-rounded,
     system-ui, sans-serif;
   font-size: 23.445px;
   font-weight: 800;
   line-height: normal;
   color: var(--main-scene-ink);
-  box-shadow: inset 0 3px 12px rgba(255, 255, 255, 0.3);
+  box-shadow:
+    inset 1px 2px 3px rgba(255, 255, 255, 0.2),
+    inset -4px -4px 2px rgba(0, 0, 0, 0.2);
   text-align: center;
   text-decoration: none;
   white-space: nowrap;
@@ -518,6 +522,10 @@ body {
     background-color 160ms ease,
     box-shadow 160ms ease,
     opacity 160ms ease;
+}
+
+.main-actions-row {
+  box-shadow: inset 0 0 0 1px rgba(41, 41, 41, 0.04);
 }
 
 .main-action-button.pet-death-restart {

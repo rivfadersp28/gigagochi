@@ -169,7 +169,7 @@ const IDLE_REPLY_MAX_PORTIONS = 3;
 const FOOD_REPLY_MAX_CHARS = 60;
 const REPLY_AUTO_ADVANCE_MS = 3_000;
 const UNNAMED_STATUS_NAME = "Без имени";
-const ACTION_ICON_CACHE_VERSION = "20260710-figma-142-1509-1";
+const ACTION_ICON_CACHE_VERSION = "20260714-figma-218-1907-1";
 const VIDEO_FILTER_CACHE_VERSION = "20260713-video-filter-lossless-webp-1";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
 const TRAVEL_ENTRY_BACKGROUND_VIDEO =
@@ -1695,7 +1695,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           isChatMode || isFeedMode ? "conversation-fade-target--hidden" : ""
         }`}
       >
-        <div className="flex w-max gap-[19px] pr-[29px]">
+        <div className="main-actions-row flex w-max gap-[19px] pr-[29px]">
           <button
             type="button"
             className="main-action-button main-action-button--chat"
