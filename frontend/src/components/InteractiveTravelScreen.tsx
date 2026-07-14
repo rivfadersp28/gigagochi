@@ -57,6 +57,7 @@ import styles from "./InteractiveTravelScreen.module.css";
 const DESTINATION_MAX_LENGTH = 500;
 const ADVICE_MAX_LENGTH = 1000;
 const INTRO_PORTION_DURATION_MS = 3_200;
+const CHARACTER_ENTRANCE_DURATION_MS = 500;
 const MINIMUM_WAIT_DURATION_MS = 1_600;
 const FALLBACK_BACKGROUND = "/figma/travel-entry-bg.png";
 const ENTRY_BACKGROUND_VIDEO = "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-1";
@@ -117,6 +118,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const [waitElapsedKey, setWaitElapsedKey] = useState<string | null>(null);
   const [brokenVideos, setBrokenVideos] = useState<string[]>([]);
   const [characterImageSrc, setCharacterImageSrc] = useState<string | null>(null);
+  const [enteredCharacterTravelId, setEnteredCharacterTravelId] = useState<string | null>(null);
   const [isResettingTravel, setIsResettingTravel] = useState(false);
   const submittingRef = useRef(false);
   const requestEpochRef = useRef(0);
@@ -191,7 +193,12 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       setCharacterImageSrc(null);
       return;
     }
-    setCharacterImageSrc(interactiveTravelCharacterImageUrl(pet));
+    const nextCharacterImageSrc = interactiveTravelCharacterImageUrl(pet);
+    setCharacterImageSrc(nextCharacterImageSrc);
+    if (nextCharacterImageSrc) {
+      const preload = new Image();
+      preload.src = nextCharacterImageSrc;
+    }
   }, [pet]);
 
   const persistSession = useCallback(
@@ -407,9 +414,23 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     `Вот это маршрут! Отправляюсь в ${session?.travel.destination ?? "путешествие"}.`;
   const introPortions = splitInteractiveTravelText(introText);
   const presentationPortionIndex = session?.presentation.portionIndex ?? 0;
+  const introCharacterTravelId =
+    phase === "introReaction" ? session?.travel.travelId ?? null : null;
+  const isIntroCharacterEntranceComplete =
+    introCharacterTravelId === null || enteredCharacterTravelId === introCharacterTravelId;
 
   useEffect(() => {
-    if (phase !== "introReaction") {
+    if (!introCharacterTravelId) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setEnteredCharacterTravelId(introCharacterTravelId);
+    }, CHARACTER_ENTRANCE_DURATION_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [introCharacterTravelId]);
+
+  useEffect(() => {
+    if (phase !== "introReaction" || !isIntroCharacterEntranceComplete) {
       return;
     }
     const timeoutId = window.setTimeout(() => {
@@ -432,6 +453,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   }, [
     activePartNumber,
     introPortions.length,
+    isIntroCharacterEntranceComplete,
     phase,
     presentationPortionIndex,
     updatePresentation,
@@ -987,7 +1009,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
               } ${phase === "departureWait" ? styles.mutedBubble : ""}`}
             >
               <PetSpeechBubble
-                isVisible
+                isVisible={isIntroCharacterEntranceComplete}
                 message={{
                   id: messageId,
                   text: messageText,

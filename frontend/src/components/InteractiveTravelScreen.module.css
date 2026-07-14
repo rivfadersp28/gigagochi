@@ -487,8 +487,8 @@
   pointer-events: none;
   user-select: none;
   animation:
-    characterRise 720ms cubic-bezier(0.16, 1, 0.3, 1) both,
-    characterIdle 3200ms cubic-bezier(0.65, 0, 0.35, 1) 720ms infinite;
+    characterRise 500ms cubic-bezier(0.33, 1, 0.68, 1) both,
+    characterIdle 3200ms cubic-bezier(0.65, 0, 0.35, 1) 500ms infinite;
 }
 
 .transparentCharacter {
@@ -590,7 +590,7 @@
 @keyframes characterRise {
   from {
     opacity: 0;
-    transform: translate3d(0, 28%, 0);
+    transform: translate3d(0, 72%, 0);
   }
   to {
     opacity: 1;
