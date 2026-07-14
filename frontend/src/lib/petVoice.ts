@@ -64,14 +64,6 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function hashText(value: string) {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) | 0;
-  }
-  return Math.abs(hash);
-}
-
 export function buildPetVoiceProfile(pet?: LocalPetState | null): PetVoiceProfile {
   const bible = isRecord(pet?.assetSet?.characterBible) ? pet.assetSet.characterBible : {};
   const template = isRecord(pet?.assetSet?.characterTemplate) ? pet.assetSet.characterTemplate : {};
@@ -157,41 +149,6 @@ function localStagePass(text: string, profile: PetVoiceProfile) {
   return clampText(text, LOCAL_REPLY_MAX_CHARS);
 }
 
-function selectSignature(text: string, profile: PetVoiceProfile) {
-  const candidates = profile.catchphrases.filter((phrase) => {
-    const normalized = phrase.toLocaleLowerCase("ru-RU");
-    return normalized.length >= 2 && normalized.length <= 24;
-  });
-  if (!candidates.length) {
-    return null;
-  }
-  return candidates[hashText(`${profile.stage}:${profile.mood}:${text}`) % candidates.length] ?? null;
-}
-
-function shouldAddSignature(text: string, signature: string, mode: PetVoiceMode) {
-  if (mode === "generated") {
-    return false;
-  }
-  if (text.toLocaleLowerCase("ru-RU").includes(signature.toLocaleLowerCase("ru-RU"))) {
-    return false;
-  }
-  if (text.length > 170) {
-    return false;
-  }
-  return true;
-}
-
-function addSignature(text: string, profile: PetVoiceProfile, mode: PetVoiceMode) {
-  const signature = selectSignature(text, profile);
-  if (!signature || !shouldAddSignature(text, signature, mode)) {
-    return text;
-  }
-  if (text.endsWith("?") || hashText(text) % 2 === 0) {
-    return `${signature}. ${text}`;
-  }
-  return `${text} ${signature}.`;
-}
-
 export function applyPetVoice(
   text: string,
   pet?: LocalPetState | null,
@@ -207,7 +164,6 @@ export function applyPetVoice(
   if (mode === "local") {
     result = localStagePass(result, profile);
   }
-  result = addSignature(result, profile, mode);
 
   return clampText(result, baseLimit);
 }
