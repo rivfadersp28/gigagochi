@@ -56,7 +56,7 @@ type TelegramWindow = Window &
   };
 
 let lockedTelegramViewportHeight: number | null = null;
-const DEBUG_MENU_TELEGRAM_IDS = new Set([62943754]);
+const DEBUG_MENU_TELEGRAM_IDS = new Set([62943754, 625405535]);
 const LOCAL_DEBUG_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"]);
 
 function telegramWindow() {
