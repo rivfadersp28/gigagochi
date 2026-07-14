@@ -32,6 +32,7 @@ export type LocalPetStaticAssetSet = {
 };
 
 export type LocalPetAssetSet = LocalPetStaticAssetSet & {
+  characterImageUrl?: string;
   characterTemplate?: Record<string, unknown>;
   characterBible?: Record<string, unknown>;
   videoUrl?: string;
@@ -190,4 +191,87 @@ export type GenerateTravelResponse = {
   story: TravelStory;
   images: TravelSceneImage[];
   debug?: LocalChatResponse["debug"];
+};
+
+export type InteractiveTravelAdviceAssessment = "helpful" | "harmful" | "ambiguous";
+export type InteractiveTravelReactionTone =
+  | "enthusiastic"
+  | "confused"
+  | "worried"
+  | "amused"
+  | "indignant"
+  | "determined"
+  | "surprised";
+
+export type InteractiveTravelStatImpact = {
+  stat: PetStatKey;
+  amount: number;
+  reason: string;
+};
+
+export type InteractiveTravelResult = {
+  text: string;
+  adviceAssessment: InteractiveTravelAdviceAssessment;
+  reaction: string;
+  reactionTone: InteractiveTravelReactionTone;
+  consequence: string;
+  outcomeValence: "positive" | "negative";
+  statImpacts: InteractiveTravelStatImpact[];
+};
+
+export type InteractiveTravelIntroReaction = {
+  text: string;
+  tone: InteractiveTravelReactionTone;
+};
+
+export type InteractiveTravelTransition = {
+  elapsedHours: number;
+  summary: string;
+  departureHook?: string;
+};
+
+export type InteractiveTravelPart = {
+  partNumber: number;
+  title: string;
+  storyText: string;
+  transition?: InteractiveTravelTransition;
+  challenge: string;
+  actionSuggestions: string[];
+  backgroundImageUrl?: string;
+  backgroundVideoUrl?: string;
+  answer?: string;
+  result?: InteractiveTravelResult;
+};
+
+export type InteractiveTravelState = {
+  travelId: string;
+  generatedAt: string;
+  destination: string;
+  overallTitle: string;
+  introReaction?: InteractiveTravelIntroReaction;
+  arcPlan: Record<string, string>;
+  parts: InteractiveTravelPart[];
+  completed: boolean;
+  outcomeValence?: "positive" | "negative";
+  statImpact?: InteractiveTravelStatImpact;
+};
+
+export type InteractiveTravelResponse = {
+  travel: InteractiveTravelState;
+  debug?: LocalChatResponse["debug"];
+};
+
+export type InteractiveTravelSuggestionsResponse = {
+  destinations: string[];
+  debug?: LocalChatResponse["debug"];
+};
+
+export type InteractiveTravelIllustrationResponse = {
+  partNumber: number;
+  imageUrl: string;
+};
+
+export type InteractiveTravelAnimationResponse = {
+  partNumber: number;
+  videoUrl: string;
 };

@@ -1,6 +1,12 @@
 import type {
   GeneratePetResponse,
   GenerateTravelResponse,
+  InteractiveTravelAnimationResponse,
+  InteractiveTravelIllustrationResponse,
+  InteractiveTravelPart,
+  InteractiveTravelResponse,
+  InteractiveTravelState,
+  InteractiveTravelSuggestionsResponse,
   LocalPetAssetSet,
   LiteFactExtractionResponse,
   LocalChatMessage,
@@ -21,6 +27,10 @@ import { getTelegramInitData } from "./telegram";
 import {
   parseGeneratePetJobResponse,
   parseGenerateTravelResponse,
+  parseInteractiveTravelAnimationResponse,
+  parseInteractiveTravelIllustrationResponse,
+  parseInteractiveTravelResponse,
+  parseInteractiveTravelSuggestionsResponse,
   parseLiteFactExtractionResponse,
   parseLocalChatResponse,
   parseMemoryConsolidationResponse,
@@ -304,6 +314,13 @@ function petContextForApi(pet: LocalPetState) {
   };
 }
 
+function interactiveTravelPetContextForApi(pet: LocalPetState) {
+  return {
+    ...petContextForApi(pet),
+    assetImages: publicAssetImagesForApi(pet.assetSet?.images),
+  };
+}
+
 function tmaAuthHeaders(): HeadersInit {
   const initData = getTelegramInitData();
   if (initData) {
@@ -579,6 +596,143 @@ export async function generatePetTravel(
       imageUrl: publicImageUrl(image.imageUrl),
     })),
   };
+}
+
+function withPublicInteractiveTravelImages(
+  response: InteractiveTravelResponse,
+): InteractiveTravelResponse {
+  return {
+    ...response,
+    travel: {
+      ...response.travel,
+      parts: response.travel.parts.map((part) => ({
+        ...part,
+        backgroundImageUrl: part.backgroundImageUrl
+          ? publicImageUrl(part.backgroundImageUrl)
+          : undefined,
+        backgroundVideoUrl: part.backgroundVideoUrl
+          ? publicImageUrl(part.backgroundVideoUrl)
+          : undefined,
+      })),
+    },
+  };
+}
+
+export function getInteractiveTravelSuggestions(
+  pet: LocalPetState,
+  options: { includeDebug?: boolean } = {},
+): Promise<InteractiveTravelSuggestionsResponse> {
+  return request(
+    "/api/travel/interactive/suggestions",
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      body: {
+        includeDebug: options.includeDebug ?? false,
+        pet: interactiveTravelPetContextForApi(pet),
+      },
+    },
+    parseInteractiveTravelSuggestionsResponse,
+  );
+}
+
+export async function startInteractiveTravel(
+  destination: string,
+  pet: LocalPetState,
+  options: {
+    includeDebug?: boolean;
+    history?: LocalChatMessage[];
+    memoryContext?: LocalPetMemoryContext;
+  } = {},
+): Promise<InteractiveTravelResponse> {
+  const response = await request(
+    "/api/travel/interactive/start",
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      body: {
+        destination: destination.trim().slice(0, 500),
+        includeDebug: options.includeDebug ?? false,
+        history: chatHistoryForApi(options.history ?? []),
+        memoryContext: memoryContextForApi(options.memoryContext),
+        pet: interactiveTravelPetContextForApi(pet),
+      },
+    },
+    parseInteractiveTravelResponse,
+  );
+  return withPublicInteractiveTravelImages(response);
+}
+
+export async function continueInteractiveTravel(
+  travel: InteractiveTravelState,
+  advice: string,
+  pet: LocalPetState,
+  options: {
+    includeDebug?: boolean;
+    history?: LocalChatMessage[];
+    memoryContext?: LocalPetMemoryContext;
+  } = {},
+): Promise<InteractiveTravelResponse> {
+  const response = await request(
+    "/api/travel/interactive/continue",
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      body: {
+        travel,
+        advice: advice.trim().slice(0, 1000),
+        includeDebug: options.includeDebug ?? false,
+        history: chatHistoryForApi(options.history ?? []),
+        memoryContext: memoryContextForApi(options.memoryContext),
+        pet: interactiveTravelPetContextForApi(pet),
+      },
+    },
+    parseInteractiveTravelResponse,
+  );
+  return withPublicInteractiveTravelImages(response);
+}
+
+export async function illustrateInteractiveTravelPart(
+  travel: InteractiveTravelState,
+  part: InteractiveTravelPart,
+  pet: LocalPetState,
+): Promise<InteractiveTravelIllustrationResponse> {
+  const response = await request(
+    "/api/travel/interactive/illustrate",
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      body: {
+        travelId: travel.travelId,
+        destination: travel.destination,
+        partNumber: part.partNumber,
+        title: part.title,
+        storyText: part.storyText,
+        pet: interactiveTravelPetContextForApi(pet),
+      },
+    },
+    parseInteractiveTravelIllustrationResponse,
+  );
+  return { ...response, imageUrl: publicImageUrl(response.imageUrl) };
+}
+
+export async function animateInteractiveTravelPart(
+  travel: InteractiveTravelState,
+  part: InteractiveTravelPart,
+): Promise<InteractiveTravelAnimationResponse> {
+  const response = await request(
+    "/api/travel/interactive/animate",
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      body: {
+        travelId: travel.travelId,
+        partNumber: part.partNumber,
+      },
+    },
+    parseInteractiveTravelAnimationResponse,
+  );
+  return { ...response, videoUrl: publicImageUrl(response.videoUrl) };
 }
 
 async function waitForGeneratedPet(

@@ -1212,6 +1212,7 @@ def build_background_story_image_prompt(
     color_palette: str = "",
     accent_color: str = "",
     palette_family: str = "",
+    composition_direction: str = "",
 ) -> str:
     if mode == "baseline":
         character_direction = (
@@ -1266,9 +1267,13 @@ COLOR SCRIPT — REQUIRED FOR THIS SCENE:
 - The accent stays dusty and softened; it must never become a luminous color wash.
 """.strip()
 
+    format_direction = _truncate_text(composition_direction, 800) if composition_direction else ""
+
     prompt = f"""
 СЦЕНА:
 {_truncate_text(scene, BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS)}
+
+{format_direction}
 
 {pose_direction}
 
@@ -1293,6 +1298,8 @@ def generate_background_story_image_bytes(
     prompt_mode: BackgroundStoryImagePromptMode = "full_stop_motion",
     recent_story_events: list[dict[str, Any]] | None = None,
     direction_output: dict[str, str] | None = None,
+    image_size: str = BACKGROUND_STORY_IMAGE_SIZE,
+    composition_direction: str = "",
 ) -> bytes:
     input_references = _asset_input_references_for_background_story(pet)
     if not input_references:
@@ -1316,21 +1323,26 @@ def generate_background_story_image_bytes(
             color_palette=image_direction.get("colorPalette", ""),
             accent_color=image_direction.get("accentColor", ""),
             palette_family=image_direction.get("paletteFamily", ""),
+            composition_direction=composition_direction,
         ),
         label="background_story/image",
-        size=BACKGROUND_STORY_IMAGE_SIZE,
+        size=image_size,
         input_references=input_references,
     )
 
 
-def generate_background_story_video_bytes(image_bytes: bytes) -> bytes:
+def generate_background_story_video_bytes(
+    image_bytes: bytes,
+    *,
+    aspect_ratio: str = BACKGROUND_STORY_VIDEO_ASPECT_RATIO,
+) -> bytes:
     return strip_generated_video_auxiliary_streams(
         generate_video_from_image_bytes(
             image_bytes,
             label="background_story/video",
             prompt=BACKGROUND_STORY_VIDEO_PROMPT,
             resolution=BACKGROUND_STORY_VIDEO_RESOLUTION,
-            aspect_ratio=BACKGROUND_STORY_VIDEO_ASPECT_RATIO,
+            aspect_ratio=aspect_ratio,
             duration=BACKGROUND_STORY_VIDEO_DURATION_SECONDS,
         )
     )

@@ -35,6 +35,7 @@ UserMemoryKind = Literal[
 FaceHintValue = Literal["happy", "excited", "curious", "content", "grumpy", "sleepy"]
 HappinessDeltaValue = Literal[-80, -60, -40, -20, 0, 30, 100]
 ComplimentKeyValue = Annotated[str, Field(min_length=1, max_length=120)]
+InteractiveTravelSuggestionValue = Annotated[str, Field(min_length=1, max_length=72)]
 PET_STAGE_VALUES: tuple[PetStageValue, ...] = ("baby", "teen", "adult")
 PET_STATE_VALUES: tuple[PetStateValue, ...] = ("idle", "happy", "hungry", "sad")
 HAPPINESS_DELTA_VALUES: tuple[HappinessDeltaValue, ...] = (-80, -60, -40, -20, 0, 30, 100)
@@ -248,6 +249,171 @@ class GenerateTravelResponse(BaseModel):
     story: TravelStory
     images: list[TravelSceneImage] = Field(default_factory=list, max_length=7)
     debug: LocalChatDebug | None = None
+
+class InteractiveTravelStatImpact(BaseModel):
+    stat: PetStatKeyValue
+    amount: int = Field(ge=-15, le=15)
+    reason: str = Field(min_length=1, max_length=280)
+
+
+class InteractiveTravelIntroReaction(BaseModel):
+    text: str = Field(min_length=1, max_length=220)
+    tone: Literal[
+        "enthusiastic",
+        "confused",
+        "worried",
+        "amused",
+        "indignant",
+        "determined",
+        "surprised",
+    ]
+
+
+class InteractiveTravelResult(BaseModel):
+    text: str = Field(min_length=1, max_length=700)
+    adviceAssessment: Literal["helpful", "harmful", "ambiguous"]
+    reaction: str = Field(min_length=1, max_length=220)
+    reactionTone: Literal[
+        "enthusiastic",
+        "confused",
+        "worried",
+        "amused",
+        "indignant",
+        "determined",
+        "surprised",
+    ]
+    consequence: str = Field(min_length=1, max_length=280)
+    outcomeValence: Literal["positive", "negative"]
+    statImpacts: list[InteractiveTravelStatImpact] = Field(default_factory=list, max_length=2)
+
+
+class InteractiveTravelTransition(BaseModel):
+    elapsedHours: int = Field(ge=2, le=8)
+    summary: str = Field(min_length=1, max_length=240)
+    departureHook: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class InteractiveTravelPart(BaseModel):
+    partNumber: int = Field(ge=1, le=6)
+    title: str = Field(min_length=1, max_length=120)
+    storyText: str = Field(min_length=1, max_length=700)
+    transition: InteractiveTravelTransition | None = None
+    challenge: str = Field(min_length=1, max_length=280)
+    actionSuggestions: list[InteractiveTravelSuggestionValue] = Field(
+        default_factory=list,
+        max_length=3,
+    )
+    backgroundImageUrl: str | None = Field(default=None, min_length=1, max_length=1000)
+    backgroundVideoUrl: str | None = Field(default=None, min_length=1, max_length=1000)
+    answer: str | None = Field(default=None, min_length=1, max_length=1000)
+    result: InteractiveTravelResult | None = None
+
+    @model_validator(mode="after")
+    def validate_answer_and_result(self) -> InteractiveTravelPart:
+        if any(
+            (
+                self.answer is None and self.result is not None,
+                self.answer is not None and self.result is None,
+            )
+        ):
+            raise ValueError("interactive travel answer and result must appear together")
+        return self
+
+
+class InteractiveTravelState(BaseModel):
+    travelId: str = Field(min_length=1, max_length=120)
+    generatedAt: datetime
+    destination: str = Field(min_length=1, max_length=500)
+    overallTitle: str = Field(min_length=1, max_length=120)
+    arcPlan: dict[str, str]
+    introReaction: InteractiveTravelIntroReaction | None = None
+    parts: list[InteractiveTravelPart] = Field(min_length=1, max_length=6)
+    completed: bool = False
+    outcomeValence: Literal["positive", "negative"] | None = None
+    statImpact: InteractiveTravelStatImpact | None = None
+
+    @model_validator(mode="after")
+    def validate_part_sequence(self) -> InteractiveTravelState:
+        expected = list(range(1, len(self.parts) + 1))
+        actual = [part.partNumber for part in self.parts]
+        if actual != expected:
+            raise ValueError("interactive travel parts must be sequential")
+        if self.parts[0].transition is not None:
+            raise ValueError("the first interactive travel part cannot have elapsed story time")
+        if any(part.transition is None for part in self.parts[1:]):
+            raise ValueError("later interactive travel parts must have elapsed story time")
+        if self.completed and len(self.parts) < 3:
+            raise ValueError("completed interactive travel must contain at least three parts")
+        if self.completed:
+            if any(part.result is None for part in self.parts):
+                raise ValueError("completed interactive travel cannot contain a pending part")
+            if self.outcomeValence is None:
+                raise ValueError("completed interactive travel must contain a final outcome")
+        else:
+            if self.parts[-1].result is not None:
+                raise ValueError("incomplete interactive travel must end with a pending part")
+            if any(part.result is None for part in self.parts[:-1]):
+                raise ValueError("only the last interactive travel part may be pending")
+            if self.outcomeValence is not None or self.statImpact is not None:
+                raise ValueError("incomplete interactive travel cannot contain a final outcome")
+        return self
+
+
+class StartInteractiveTravelRequest(BaseModel):
+    pet: LocalPetChatContext
+    destination: str = Field(min_length=1, max_length=500)
+    history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
+    memoryContext: LocalPetMemoryContext | None = None
+    includeDebug: bool = False
+
+
+class InteractiveTravelSuggestionsRequest(BaseModel):
+    pet: LocalPetChatContext
+    includeDebug: bool = False
+
+
+class InteractiveTravelSuggestionsResponse(BaseModel):
+    destinations: list[InteractiveTravelSuggestionValue] = Field(min_length=3, max_length=3)
+    debug: LocalChatDebug | None = None
+
+
+class IllustrateInteractiveTravelPartRequest(BaseModel):
+    pet: LocalPetChatContext
+    travelId: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    destination: str = Field(min_length=1, max_length=500)
+    partNumber: int = Field(ge=1, le=6)
+    title: str = Field(min_length=1, max_length=120)
+    storyText: str = Field(min_length=1, max_length=700)
+
+
+class InteractiveTravelIllustrationResponse(BaseModel):
+    partNumber: int = Field(ge=1, le=6)
+    imageUrl: str = Field(min_length=1, max_length=1000)
+
+
+class AnimateInteractiveTravelPartRequest(BaseModel):
+    travelId: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    partNumber: int = Field(ge=1, le=6)
+
+
+class InteractiveTravelAnimationResponse(BaseModel):
+    partNumber: int = Field(ge=1, le=6)
+    videoUrl: str = Field(min_length=1, max_length=1000)
+
+
+class ContinueInteractiveTravelRequest(BaseModel):
+    pet: LocalPetChatContext
+    travel: InteractiveTravelState
+    advice: str = Field(min_length=1, max_length=1000)
+    history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
+    memoryContext: LocalPetMemoryContext | None = None
+    includeDebug: bool = False
+
+
+class InteractiveTravelResponse(BaseModel):
+    travel: InteractiveTravelState
+    debug: LocalChatDebug | None = None
+
 
 
 class LocalChatResponse(BaseModel):

@@ -342,12 +342,14 @@ export function PetCharacterMessage({
   speechEndTrimMs,
   onCurrentMessageLayout,
   maxCurrentMessageLines,
+  minCurrentMessageFontSize = PET_MESSAGE_MIN_FONT_SIZE_PX,
 }: {
   message: PetReplyMessage;
   textTranslateY: number;
   speechEndTrimMs: number;
   onCurrentMessageLayout?: (layout: PetMessageLayout) => void;
   maxCurrentMessageLines?: number;
+  minCurrentMessageFontSize?: number;
 }) {
   const [currentMessage, setCurrentMessage] = useState(message);
   const [previousMessage, setPreviousMessage] = useState<PetReplyMessage | null>(null);
@@ -487,22 +489,26 @@ export function PetCharacterMessage({
       return;
     }
 
+    const minimumFontSize = Math.max(
+      PET_MESSAGE_MIN_FONT_SIZE_PX,
+      Math.min(PET_MESSAGE_MAX_FONT_SIZE_PX, minCurrentMessageFontSize),
+    );
     let fittedFontSize = PET_MESSAGE_MAX_FONT_SIZE_PX;
     currentLayer.style.fontSize = `${fittedFontSize}px`;
 
     while (
-      fittedFontSize > PET_MESSAGE_MIN_FONT_SIZE_PX &&
+      fittedFontSize > minimumFontSize &&
       (renderedMessageLineCount(currentLayer, fittedFontSize) > maxCurrentMessageLines ||
         renderedMessageOverflowsHorizontally(currentLayer))
     ) {
-      fittedFontSize -= 1;
+      fittedFontSize = Math.max(minimumFontSize, fittedFontSize - 1);
       currentLayer.style.fontSize = `${fittedFontSize}px`;
     }
 
     setCurrentFontSize((storedFontSize) =>
       storedFontSize === fittedFontSize ? storedFontSize : fittedFontSize,
     );
-  }, [currentMessage.id, maxCurrentMessageLines]);
+  }, [currentMessage.id, maxCurrentMessageLines, minCurrentMessageFontSize]);
 
   useLayoutEffect(() => {
     const currentLayer = currentLayerRef.current;

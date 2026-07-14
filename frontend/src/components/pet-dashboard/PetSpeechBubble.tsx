@@ -32,6 +32,8 @@ type PetSpeechBubbleProps = {
   message: PetReplyMessage;
   scaleOrigin: "top" | "bottom";
   shapeSrc: string;
+  maxLines?: number;
+  minFontSize?: number;
 };
 
 function clampedBubbleHeight(contentHeight: number) {
@@ -58,6 +60,8 @@ export function PetSpeechBubble({
   message,
   scaleOrigin,
   shapeSrc,
+  maxLines = BUBBLE_MAX_TEXT_LINES,
+  minFontSize,
 }: PetSpeechBubbleProps) {
   const [contentLayout, setContentLayout] = useState<PetMessageLayout>({
     width: 158,
@@ -221,7 +225,8 @@ export function PetSpeechBubble({
         textTranslateY={0}
         speechEndTrimMs={0}
         onCurrentMessageLayout={handleCurrentMessageLayout}
-        maxCurrentMessageLines={BUBBLE_MAX_TEXT_LINES}
+        maxCurrentMessageLines={maxLines}
+        minCurrentMessageFontSize={minFontSize}
       />
     </div>
   );

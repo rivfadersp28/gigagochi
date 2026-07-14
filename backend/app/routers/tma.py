@@ -10,11 +10,19 @@ from app.config import get_settings
 from app.dependencies import get_telegram_user
 from app.errors import public_error
 from app.schemas import (
+    AnimateInteractiveTravelPartRequest,
+    ContinueInteractiveTravelRequest,
     GeneratePetJobResponse,
     GeneratePetRequest,
     GenerateTravelRequest,
     GenerateTravelResponse,
     GenerationStatsResponse,
+    IllustrateInteractiveTravelPartRequest,
+    InteractiveTravelAnimationResponse,
+    InteractiveTravelIllustrationResponse,
+    InteractiveTravelResponse,
+    InteractiveTravelSuggestionsRequest,
+    InteractiveTravelSuggestionsResponse,
     LiteFactExtractionRequest,
     LiteFactExtractionResponse,
     LocalAmbientRequest,
@@ -28,6 +36,7 @@ from app.schemas import (
     MemoryConsolidationResponse,
     MemoryExtractionRequest,
     MemoryExtractionResponse,
+    StartInteractiveTravelRequest,
 )
 from app.services.ai_error_service import (
     ai_failure_http_exception,
@@ -56,6 +65,13 @@ from app.services.image_service import (
     generate_pet_sad_video_for_image_asset_set,
     generate_pet_video_for_image_asset_set,
     generation_error_code,
+)
+from app.services.interactive_travel_service import (
+    animate_interactive_travel_part,
+    continue_interactive_travel,
+    generate_interactive_travel_suggestions,
+    illustrate_interactive_travel_part,
+    start_interactive_travel,
 )
 from app.services.openai_service import MissingOpenAIAPIKey
 from app.services.ops_alert_service import notify_ops
@@ -137,6 +153,22 @@ def _without_untrusted_debug(payload: Any) -> Any:
 
 def _is_diagnostic_user(user_id: int) -> bool:
     return user_id in getattr(get_settings(), "diagnostic_telegram_ids", {62943754})
+
+
+def _require_interactive_travel_pilot(user: TelegramUser) -> None:
+    settings = get_settings()
+    if getattr(settings, "allow_dev_tma_auth", False) and user.telegram_id == 0:
+        return
+    allowed_ids = getattr(settings, "interactive_travel_pilot_telegram_ids", {62943754})
+    if user.telegram_id in allowed_ids:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "INTERACTIVE_TRAVEL_NOT_AVAILABLE",
+            "message": "Путешествия пока недоступны для этого пользователя.",
+        },
+    )
 
 
 def _build_generation_failure(
@@ -488,3 +520,180 @@ def proactive_chat(
             exc,
             include_diagnostic=_is_diagnostic_user(user.telegram_id),
         ) from exc
+
+
+@router.post(
+    "/travel/interactive/suggestions",
+    response_model=InteractiveTravelSuggestionsResponse,
+    response_model_exclude_none=True,
+)
+def interactive_travel_suggestions(
+    payload: InteractiveTravelSuggestionsRequest,
+    user: TelegramUser,
+) -> InteractiveTravelSuggestionsResponse:
+    _require_interactive_travel_pilot(user)
+    check_rate_limit("chat", user)
+    payload = _without_untrusted_debug(payload)
+    prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel/interactive/suggestions"})
+    try:
+        return generate_interactive_travel_suggestions(
+            pet=payload.pet,
+            include_debug=payload.includeDebug,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        code = chat_error_code(exc)
+        raise ai_failure_http_exception(
+            "/api/travel/interactive/suggestions",
+            "interactive_travel_suggestions_failed",
+            code,
+            travel_error_message(code),
+            exc,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
+        ) from exc
+    finally:
+        reset_prompt_log_context(prompt_log_token)
+
+
+@router.post(
+    "/travel/interactive/start",
+    response_model=InteractiveTravelResponse,
+    response_model_exclude_none=True,
+)
+def interactive_travel_start(
+    payload: StartInteractiveTravelRequest,
+    user: TelegramUser,
+) -> InteractiveTravelResponse:
+    _require_interactive_travel_pilot(user)
+    check_rate_limit("generation", user)
+    payload = _without_untrusted_debug(payload)
+    prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel/interactive/start"})
+    try:
+        return start_interactive_travel(
+            pet=payload.pet,
+            destination=payload.destination,
+            history=payload.history,
+            memory_context=payload.memoryContext,
+            include_debug=payload.includeDebug,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        code = chat_error_code(exc)
+        raise ai_failure_http_exception(
+            "/api/travel/interactive/start",
+            "interactive_travel_start_failed",
+            code,
+            travel_error_message(code),
+            exc,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
+        ) from exc
+    finally:
+        reset_prompt_log_context(prompt_log_token)
+
+
+@router.post(
+    "/travel/interactive/illustrate",
+    response_model=InteractiveTravelIllustrationResponse,
+)
+def interactive_travel_illustrate(
+    payload: IllustrateInteractiveTravelPartRequest,
+    user: TelegramUser,
+) -> InteractiveTravelIllustrationResponse:
+    _require_interactive_travel_pilot(user)
+    check_rate_limit("generation", user)
+    prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel/interactive/illustrate"})
+    try:
+        return illustrate_interactive_travel_part(
+            pet=payload.pet,
+            travel_id=payload.travelId,
+            destination=payload.destination,
+            part_number=payload.partNumber,
+            title=payload.title,
+            story_text=payload.storyText,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        code = chat_error_code(exc)
+        raise ai_failure_http_exception(
+            "/api/travel/interactive/illustrate",
+            "interactive_travel_illustration_failed",
+            code,
+            travel_error_message(code),
+            exc,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
+        ) from exc
+    finally:
+        reset_prompt_log_context(prompt_log_token)
+
+
+@router.post(
+    "/travel/interactive/animate",
+    response_model=InteractiveTravelAnimationResponse,
+)
+def interactive_travel_animate(
+    payload: AnimateInteractiveTravelPartRequest,
+    user: TelegramUser,
+) -> InteractiveTravelAnimationResponse:
+    _require_interactive_travel_pilot(user)
+    check_rate_limit("generation", user)
+    prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel/interactive/animate"})
+    try:
+        return animate_interactive_travel_part(
+            travel_id=payload.travelId,
+            part_number=payload.partNumber,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        code = chat_error_code(exc)
+        raise ai_failure_http_exception(
+            "/api/travel/interactive/animate",
+            "interactive_travel_animation_failed",
+            code,
+            travel_error_message(code),
+            exc,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
+        ) from exc
+    finally:
+        reset_prompt_log_context(prompt_log_token)
+
+
+@router.post(
+    "/travel/interactive/continue",
+    response_model=InteractiveTravelResponse,
+    response_model_exclude_none=True,
+)
+def interactive_travel_continue(
+    payload: ContinueInteractiveTravelRequest,
+    user: TelegramUser,
+) -> InteractiveTravelResponse:
+    _require_interactive_travel_pilot(user)
+    check_rate_limit("generation", user)
+    payload = _without_untrusted_debug(payload)
+    prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel/interactive/continue"})
+    try:
+        return continue_interactive_travel(
+            pet=payload.pet,
+            travel=payload.travel,
+            advice=payload.advice,
+            history=payload.history,
+            memory_context=payload.memoryContext,
+            include_debug=payload.includeDebug,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        code = chat_error_code(exc)
+        raise ai_failure_http_exception(
+            "/api/travel/interactive/continue",
+            "interactive_travel_continue_failed",
+            code,
+            travel_error_message(code),
+            exc,
+            include_diagnostic=_is_diagnostic_user(user.telegram_id),
+        ) from exc
+    finally:
+        reset_prompt_log_context(prompt_log_token)

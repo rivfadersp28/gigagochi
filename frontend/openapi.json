@@ -527,6 +527,75 @@
         "title": "AdminSyncResponse",
         "type": "object"
       },
+      "AnimateInteractiveTravelPartRequest": {
+        "properties": {
+          "partNumber": {
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Partnumber",
+            "type": "integer"
+          },
+          "travelId": {
+            "maxLength": 120,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Travelid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "travelId",
+          "partNumber"
+        ],
+        "title": "AnimateInteractiveTravelPartRequest",
+        "type": "object"
+      },
+      "ContinueInteractiveTravelRequest": {
+        "properties": {
+          "advice": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Advice",
+            "type": "string"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/LocalChatHistoryItem"
+            },
+            "maxItems": 12,
+            "title": "History",
+            "type": "array"
+          },
+          "includeDebug": {
+            "default": false,
+            "title": "Includedebug",
+            "type": "boolean"
+          },
+          "memoryContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalPetMemoryContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pet": {
+            "$ref": "#/components/schemas/LocalPetChatContext"
+          },
+          "travel": {
+            "$ref": "#/components/schemas/InteractiveTravelState"
+          }
+        },
+        "required": [
+          "pet",
+          "travel",
+          "advice"
+        ],
+        "title": "ContinueInteractiveTravelRequest",
+        "type": "object"
+      },
       "GeneratePetAssetResponse": {
         "properties": {
           "assetSetId": {
@@ -1109,6 +1178,531 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IllustrateInteractiveTravelPartRequest": {
+        "properties": {
+          "destination": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Destination",
+            "type": "string"
+          },
+          "partNumber": {
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Partnumber",
+            "type": "integer"
+          },
+          "pet": {
+            "$ref": "#/components/schemas/LocalPetChatContext"
+          },
+          "storyText": {
+            "maxLength": 700,
+            "minLength": 1,
+            "title": "Storytext",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "travelId": {
+            "maxLength": 120,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Travelid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pet",
+          "travelId",
+          "destination",
+          "partNumber",
+          "title",
+          "storyText"
+        ],
+        "title": "IllustrateInteractiveTravelPartRequest",
+        "type": "object"
+      },
+      "InteractiveTravelAnimationResponse": {
+        "properties": {
+          "partNumber": {
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Partnumber",
+            "type": "integer"
+          },
+          "videoUrl": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Videourl",
+            "type": "string"
+          }
+        },
+        "required": [
+          "partNumber",
+          "videoUrl"
+        ],
+        "title": "InteractiveTravelAnimationResponse",
+        "type": "object"
+      },
+      "InteractiveTravelIllustrationResponse": {
+        "properties": {
+          "imageUrl": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Imageurl",
+            "type": "string"
+          },
+          "partNumber": {
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Partnumber",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "partNumber",
+          "imageUrl"
+        ],
+        "title": "InteractiveTravelIllustrationResponse",
+        "type": "object"
+      },
+      "InteractiveTravelIntroReaction": {
+        "properties": {
+          "text": {
+            "maxLength": 220,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "tone": {
+            "enum": [
+              "enthusiastic",
+              "confused",
+              "worried",
+              "amused",
+              "indignant",
+              "determined",
+              "surprised"
+            ],
+            "title": "Tone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "tone"
+        ],
+        "title": "InteractiveTravelIntroReaction",
+        "type": "object"
+      },
+      "InteractiveTravelPart": {
+        "properties": {
+          "actionSuggestions": {
+            "items": {
+              "maxLength": 72,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Actionsuggestions",
+            "type": "array"
+          },
+          "answer": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
+          },
+          "backgroundImageUrl": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backgroundimageurl"
+          },
+          "backgroundVideoUrl": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backgroundvideourl"
+          },
+          "challenge": {
+            "maxLength": 280,
+            "minLength": 1,
+            "title": "Challenge",
+            "type": "string"
+          },
+          "partNumber": {
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Partnumber",
+            "type": "integer"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InteractiveTravelResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "storyText": {
+            "maxLength": 700,
+            "minLength": 1,
+            "title": "Storytext",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "transition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InteractiveTravelTransition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "partNumber",
+          "title",
+          "storyText",
+          "challenge"
+        ],
+        "title": "InteractiveTravelPart",
+        "type": "object"
+      },
+      "InteractiveTravelResponse": {
+        "properties": {
+          "debug": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalChatDebug"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "travel": {
+            "$ref": "#/components/schemas/InteractiveTravelState"
+          }
+        },
+        "required": [
+          "travel"
+        ],
+        "title": "InteractiveTravelResponse",
+        "type": "object"
+      },
+      "InteractiveTravelResult": {
+        "properties": {
+          "adviceAssessment": {
+            "enum": [
+              "helpful",
+              "harmful",
+              "ambiguous"
+            ],
+            "title": "Adviceassessment",
+            "type": "string"
+          },
+          "consequence": {
+            "maxLength": 280,
+            "minLength": 1,
+            "title": "Consequence",
+            "type": "string"
+          },
+          "outcomeValence": {
+            "enum": [
+              "positive",
+              "negative"
+            ],
+            "title": "Outcomevalence",
+            "type": "string"
+          },
+          "reaction": {
+            "maxLength": 220,
+            "minLength": 1,
+            "title": "Reaction",
+            "type": "string"
+          },
+          "reactionTone": {
+            "enum": [
+              "enthusiastic",
+              "confused",
+              "worried",
+              "amused",
+              "indignant",
+              "determined",
+              "surprised"
+            ],
+            "title": "Reactiontone",
+            "type": "string"
+          },
+          "statImpacts": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveTravelStatImpact"
+            },
+            "maxItems": 2,
+            "title": "Statimpacts",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 700,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "adviceAssessment",
+          "reaction",
+          "reactionTone",
+          "consequence",
+          "outcomeValence"
+        ],
+        "title": "InteractiveTravelResult",
+        "type": "object"
+      },
+      "InteractiveTravelStatImpact": {
+        "properties": {
+          "amount": {
+            "maximum": 15.0,
+            "minimum": -15.0,
+            "title": "Amount",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 280,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "stat": {
+            "enum": [
+              "hunger",
+              "happiness",
+              "energy"
+            ],
+            "title": "Stat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stat",
+          "amount",
+          "reason"
+        ],
+        "title": "InteractiveTravelStatImpact",
+        "type": "object"
+      },
+      "InteractiveTravelState": {
+        "properties": {
+          "arcPlan": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Arcplan",
+            "type": "object"
+          },
+          "completed": {
+            "default": false,
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "destination": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Destination",
+            "type": "string"
+          },
+          "generatedAt": {
+            "format": "date-time",
+            "title": "Generatedat",
+            "type": "string"
+          },
+          "introReaction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InteractiveTravelIntroReaction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outcomeValence": {
+            "anyOf": [
+              {
+                "enum": [
+                  "positive",
+                  "negative"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcomevalence"
+          },
+          "overallTitle": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Overalltitle",
+            "type": "string"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveTravelPart"
+            },
+            "maxItems": 6,
+            "minItems": 1,
+            "title": "Parts",
+            "type": "array"
+          },
+          "statImpact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InteractiveTravelStatImpact"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "travelId": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Travelid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "travelId",
+          "generatedAt",
+          "destination",
+          "overallTitle",
+          "arcPlan",
+          "parts"
+        ],
+        "title": "InteractiveTravelState",
+        "type": "object"
+      },
+      "InteractiveTravelSuggestionsRequest": {
+        "properties": {
+          "includeDebug": {
+            "default": false,
+            "title": "Includedebug",
+            "type": "boolean"
+          },
+          "pet": {
+            "$ref": "#/components/schemas/LocalPetChatContext"
+          }
+        },
+        "required": [
+          "pet"
+        ],
+        "title": "InteractiveTravelSuggestionsRequest",
+        "type": "object"
+      },
+      "InteractiveTravelSuggestionsResponse": {
+        "properties": {
+          "debug": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalChatDebug"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "destinations": {
+            "items": {
+              "maxLength": 72,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Destinations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "destinations"
+        ],
+        "title": "InteractiveTravelSuggestionsResponse",
+        "type": "object"
+      },
+      "InteractiveTravelTransition": {
+        "properties": {
+          "departureHook": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Departurehook"
+          },
+          "elapsedHours": {
+            "maximum": 8.0,
+            "minimum": 2.0,
+            "title": "Elapsedhours",
+            "type": "integer"
+          },
+          "summary": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "elapsedHours",
+          "summary"
+        ],
+        "title": "InteractiveTravelTransition",
         "type": "object"
       },
       "LiteFactExtractionRequest": {
@@ -2622,6 +3216,48 @@
         "title": "MemoryExtractionResponse",
         "type": "object"
       },
+      "StartInteractiveTravelRequest": {
+        "properties": {
+          "destination": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Destination",
+            "type": "string"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/LocalChatHistoryItem"
+            },
+            "maxItems": 12,
+            "title": "History",
+            "type": "array"
+          },
+          "includeDebug": {
+            "default": false,
+            "title": "Includedebug",
+            "type": "boolean"
+          },
+          "memoryContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalPetMemoryContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pet": {
+            "$ref": "#/components/schemas/LocalPetChatContext"
+          }
+        },
+        "required": [
+          "pet",
+          "destination"
+        ],
+        "title": "StartInteractiveTravelRequest",
+        "type": "object"
+      },
       "TravelSceneImage": {
         "properties": {
           "imageUrl": {
@@ -3417,6 +4053,211 @@
           }
         },
         "summary": "Travel",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/interactive/animate": {
+      "post": {
+        "operationId": "interactive_travel_animate_api_travel_interactive_animate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnimateInteractiveTravelPartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InteractiveTravelAnimationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interactive Travel Animate",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/interactive/continue": {
+      "post": {
+        "operationId": "interactive_travel_continue_api_travel_interactive_continue_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContinueInteractiveTravelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InteractiveTravelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interactive Travel Continue",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/interactive/illustrate": {
+      "post": {
+        "operationId": "interactive_travel_illustrate_api_travel_interactive_illustrate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IllustrateInteractiveTravelPartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InteractiveTravelIllustrationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interactive Travel Illustrate",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/interactive/start": {
+      "post": {
+        "operationId": "interactive_travel_start_api_travel_interactive_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartInteractiveTravelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InteractiveTravelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interactive Travel Start",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/interactive/suggestions": {
+      "post": {
+        "operationId": "interactive_travel_suggestions_api_travel_interactive_suggestions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InteractiveTravelSuggestionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InteractiveTravelSuggestionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interactive Travel Suggestions",
         "tags": [
           "telegram-mini-app"
         ]

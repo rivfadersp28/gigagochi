@@ -243,6 +243,91 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/travel/interactive/animate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Interactive Travel Animate */
+        readonly post: operations["interactive_travel_animate_api_travel_interactive_animate_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/travel/interactive/continue": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Interactive Travel Continue */
+        readonly post: operations["interactive_travel_continue_api_travel_interactive_continue_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/travel/interactive/illustrate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Interactive Travel Illustrate */
+        readonly post: operations["interactive_travel_illustrate_api_travel_interactive_illustrate_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/travel/interactive/start": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Interactive Travel Start */
+        readonly post: operations["interactive_travel_start_api_travel_interactive_start_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/travel/interactive/suggestions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Interactive Travel Suggestions */
+        readonly post: operations["interactive_travel_suggestions_api_travel_interactive_suggestions_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/health": {
         readonly parameters: {
             readonly query?: never;
@@ -431,6 +516,28 @@ export interface components {
             /** Updatedat */
             readonly updatedAt: string;
         };
+        /** AnimateInteractiveTravelPartRequest */
+        readonly AnimateInteractiveTravelPartRequest: {
+            /** Partnumber */
+            readonly partNumber: number;
+            /** Travelid */
+            readonly travelId: string;
+        };
+        /** ContinueInteractiveTravelRequest */
+        readonly ContinueInteractiveTravelRequest: {
+            /** Advice */
+            readonly advice: string;
+            /** History */
+            readonly history?: readonly components["schemas"]["LocalChatHistoryItem"][];
+            /**
+             * Includedebug
+             * @default false
+             */
+            readonly includeDebug: boolean;
+            readonly memoryContext?: components["schemas"]["LocalPetMemoryContext"] | null;
+            readonly pet: components["schemas"]["LocalPetChatContext"];
+            readonly travel: components["schemas"]["InteractiveTravelState"];
+        };
         /** GeneratePetAssetResponse */
         readonly GeneratePetAssetResponse: {
             /** Assetsetid */
@@ -615,6 +722,161 @@ export interface components {
         readonly HTTPValidationError: {
             /** Detail */
             readonly detail?: readonly components["schemas"]["ValidationError"][];
+        };
+        /** IllustrateInteractiveTravelPartRequest */
+        readonly IllustrateInteractiveTravelPartRequest: {
+            /** Destination */
+            readonly destination: string;
+            /** Partnumber */
+            readonly partNumber: number;
+            readonly pet: components["schemas"]["LocalPetChatContext"];
+            /** Storytext */
+            readonly storyText: string;
+            /** Title */
+            readonly title: string;
+            /** Travelid */
+            readonly travelId: string;
+        };
+        /** InteractiveTravelAnimationResponse */
+        readonly InteractiveTravelAnimationResponse: {
+            /** Partnumber */
+            readonly partNumber: number;
+            /** Videourl */
+            readonly videoUrl: string;
+        };
+        /** InteractiveTravelIllustrationResponse */
+        readonly InteractiveTravelIllustrationResponse: {
+            /** Imageurl */
+            readonly imageUrl: string;
+            /** Partnumber */
+            readonly partNumber: number;
+        };
+        /** InteractiveTravelIntroReaction */
+        readonly InteractiveTravelIntroReaction: {
+            /** Text */
+            readonly text: string;
+            /**
+             * Tone
+             * @enum {string}
+             */
+            readonly tone: "enthusiastic" | "confused" | "worried" | "amused" | "indignant" | "determined" | "surprised";
+        };
+        /** InteractiveTravelPart */
+        readonly InteractiveTravelPart: {
+            /** Actionsuggestions */
+            readonly actionSuggestions?: readonly string[];
+            /** Answer */
+            readonly answer?: string | null;
+            /** Backgroundimageurl */
+            readonly backgroundImageUrl?: string | null;
+            /** Backgroundvideourl */
+            readonly backgroundVideoUrl?: string | null;
+            /** Challenge */
+            readonly challenge: string;
+            /** Partnumber */
+            readonly partNumber: number;
+            readonly result?: components["schemas"]["InteractiveTravelResult"] | null;
+            /** Storytext */
+            readonly storyText: string;
+            /** Title */
+            readonly title: string;
+            readonly transition?: components["schemas"]["InteractiveTravelTransition"] | null;
+        };
+        /** InteractiveTravelResponse */
+        readonly InteractiveTravelResponse: {
+            readonly debug?: components["schemas"]["LocalChatDebug"] | null;
+            readonly travel: components["schemas"]["InteractiveTravelState"];
+        };
+        /** InteractiveTravelResult */
+        readonly InteractiveTravelResult: {
+            /**
+             * Adviceassessment
+             * @enum {string}
+             */
+            readonly adviceAssessment: "helpful" | "harmful" | "ambiguous";
+            /** Consequence */
+            readonly consequence: string;
+            /**
+             * Outcomevalence
+             * @enum {string}
+             */
+            readonly outcomeValence: "positive" | "negative";
+            /** Reaction */
+            readonly reaction: string;
+            /**
+             * Reactiontone
+             * @enum {string}
+             */
+            readonly reactionTone: "enthusiastic" | "confused" | "worried" | "amused" | "indignant" | "determined" | "surprised";
+            /** Statimpacts */
+            readonly statImpacts?: readonly components["schemas"]["InteractiveTravelStatImpact"][];
+            /** Text */
+            readonly text: string;
+        };
+        /** InteractiveTravelStatImpact */
+        readonly InteractiveTravelStatImpact: {
+            /** Amount */
+            readonly amount: number;
+            /** Reason */
+            readonly reason: string;
+            /**
+             * Stat
+             * @enum {string}
+             */
+            readonly stat: "hunger" | "happiness" | "energy";
+        };
+        /** InteractiveTravelState */
+        readonly InteractiveTravelState: {
+            /** Arcplan */
+            readonly arcPlan: {
+                readonly [key: string]: string;
+            };
+            /**
+             * Completed
+             * @default false
+             */
+            readonly completed: boolean;
+            /** Destination */
+            readonly destination: string;
+            /**
+             * Generatedat
+             * Format: date-time
+             */
+            readonly generatedAt: string;
+            readonly introReaction?: components["schemas"]["InteractiveTravelIntroReaction"] | null;
+            /** Outcomevalence */
+            readonly outcomeValence?: ("positive" | "negative") | null;
+            /** Overalltitle */
+            readonly overallTitle: string;
+            /** Parts */
+            readonly parts: readonly components["schemas"]["InteractiveTravelPart"][];
+            readonly statImpact?: components["schemas"]["InteractiveTravelStatImpact"] | null;
+            /** Travelid */
+            readonly travelId: string;
+        };
+        /** InteractiveTravelSuggestionsRequest */
+        readonly InteractiveTravelSuggestionsRequest: {
+            /**
+             * Includedebug
+             * @default false
+             */
+            readonly includeDebug: boolean;
+            readonly pet: components["schemas"]["LocalPetChatContext"];
+        };
+        /** InteractiveTravelSuggestionsResponse */
+        readonly InteractiveTravelSuggestionsResponse: {
+            readonly debug?: components["schemas"]["LocalChatDebug"] | null;
+            /** Destinations */
+            readonly destinations: readonly string[];
+        };
+        /** InteractiveTravelTransition */
+        readonly InteractiveTravelTransition: {
+            /** Departurehook */
+            readonly departureHook?: string | null;
+            /** Elapsedhours */
+            readonly elapsedHours: number;
+            /** Summary */
+            readonly summary: string;
         };
         /** LiteFactExtractionRequest */
         readonly LiteFactExtractionRequest: {
@@ -1030,6 +1292,20 @@ export interface components {
             readonly operations?: readonly {
                 readonly [key: string]: unknown;
             }[];
+        };
+        /** StartInteractiveTravelRequest */
+        readonly StartInteractiveTravelRequest: {
+            /** Destination */
+            readonly destination: string;
+            /** History */
+            readonly history?: readonly components["schemas"]["LocalChatHistoryItem"][];
+            /**
+             * Includedebug
+             * @default false
+             */
+            readonly includeDebug: boolean;
+            readonly memoryContext?: components["schemas"]["LocalPetMemoryContext"] | null;
+            readonly pet: components["schemas"]["LocalPetChatContext"];
         };
         /** TravelSceneImage */
         readonly TravelSceneImage: {
@@ -1562,6 +1838,171 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["GenerateTravelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly interactive_travel_animate_api_travel_interactive_animate_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AnimateInteractiveTravelPartRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InteractiveTravelAnimationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly interactive_travel_continue_api_travel_interactive_continue_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ContinueInteractiveTravelRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InteractiveTravelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly interactive_travel_illustrate_api_travel_interactive_illustrate_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["IllustrateInteractiveTravelPartRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InteractiveTravelIllustrationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly interactive_travel_start_api_travel_interactive_start_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["StartInteractiveTravelRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InteractiveTravelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly interactive_travel_suggestions_api_travel_interactive_suggestions_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["InteractiveTravelSuggestionsRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InteractiveTravelSuggestionsResponse"];
                 };
             };
             /** @description Validation Error */

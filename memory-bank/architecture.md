@@ -486,6 +486,13 @@
   exposes `update_character_json`. Stable mutable facts are saved by the
   separate `/api/chat/lite-facts` post-reply extractor.
 
+## Interactive Travel Pilot
+
+- `/pet/[id]/travel` is the production travel flow: simple curated destination choices, character reaction, compact one-sentence portions, user action, generated result, and a later substory after a visible 2–8 hour story-time gap.
+- The backend owns story validation plus illustration/video generation; the frontend persists presentation progress locally and renders generated vertical media inside a 402px-wide mobile viewport.
+- Access is canaried on both UI and API through `INTERACTIVE_TRAVEL_PILOT_TELEGRAM_IDS`; the initial production allowlist contains only Telegram ID `62943754`.
+- Destination suggestions are sampled from a small server-side vocabulary without an LLM call.
+
 ## Local Admin
 
 - Local speech admin UI lives at `frontend/src/app/admin/speech/page.tsx` and

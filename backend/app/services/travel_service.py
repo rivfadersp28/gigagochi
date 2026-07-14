@@ -26,8 +26,14 @@ from app.schemas import (
     GenerateTravelRequest,
     GenerateTravelResponse,
     LocalChatDebug,
+    LocalPetChatContext,
     TravelSceneImage,
     TravelStory,
+)
+from app.services.background_story_service import (
+    BackgroundStoryResult,
+    generate_background_story_image_bytes,
+    generate_background_story_video_bytes,
 )
 from app.services.image_service import generate_image_bytes, generated_dir_for
 from app.services.openai_service import (
@@ -47,6 +53,20 @@ from app.services.tone_runtime import tone_prompt_block, tone_visual_style
 
 ADVENTURE_SCENE_COUNT = 7
 TRAVEL_CARD_OUTPUT_HEIGHT = 1080
+INTERACTIVE_TRAVEL_BACKGROUND_SIZE = (402, 874)
+INTERACTIVE_TRAVEL_VIDEO_SOURCE_SIZE = (720, 1280)
+INTERACTIVE_TRAVEL_VIDEO_ASPECT_RATIO = "9:16"
+INTERACTIVE_TRAVEL_PROVIDER_SIZE = "1024x1536"
+INTERACTIVE_TRAVEL_VERTICAL_COMPOSITION = """
+VERTICAL FORMAT — COMPOSITION ONLY:
+- Compose for a tall 2:3 provider canvas that will be center-cropped to 201:437.
+- Keep the complete main character, the decisive action and every required story object inside
+  the central 65% of the canvas width.
+- Use the outer side areas only for expendable atmosphere and scenery; do not put required objects
+  or body parts near the left or right edge.
+- Preserve the same art direction, materials, palette, lighting and character treatment as the
+  standard story illustration. Change framing only.
+""".strip()
 IMAGE_PROVIDER_SIZE_MULTIPLE = 16
 DEFAULT_IMAGE_ASPECT_RATIO = "322:540"
 TRAVEL_CHAT_MAX_ATTEMPTS = 3
@@ -1146,6 +1166,105 @@ Composition rules:
   and the story beat.
 - No violence, intimidation, harm-focused props, horror, adult themes or copyrighted characters.
 """.strip()
+
+
+def _normalize_interactive_travel_background_image(image_bytes: bytes) -> bytes:
+    with Image.open(BytesIO(image_bytes)) as image:
+        normalized = ImageOps.exif_transpose(image).convert("RGB")
+        fitted = ImageOps.fit(
+            normalized,
+            INTERACTIVE_TRAVEL_BACKGROUND_SIZE,
+            method=Image.Resampling.LANCZOS,
+            centering=(0.5, 0.5),
+        )
+        buffer = BytesIO()
+        fitted.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
+def _normalize_interactive_travel_video_source(image_bytes: bytes) -> bytes:
+    with Image.open(BytesIO(image_bytes)) as image:
+        normalized = ImageOps.exif_transpose(image).convert("RGB")
+        fitted = ImageOps.fit(
+            normalized,
+            INTERACTIVE_TRAVEL_VIDEO_SOURCE_SIZE,
+            method=Image.Resampling.LANCZOS,
+            centering=(0.5, 0.5),
+        )
+        buffer = BytesIO()
+        fitted.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
+def generate_interactive_travel_part_image(
+    *,
+    pet: LocalPetChatContext,
+    travel_id: str,
+    destination: str,
+    part_number: int,
+    title: str,
+    story_text: str,
+) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", travel_id):
+        raise ValueError("Invalid interactive travel id")
+    if not 1 <= part_number <= 6:
+        raise ValueError("Invalid interactive travel part number")
+    image_story = BackgroundStoryResult(
+        title=title,
+        summary=f"Путешествие в место «{destination}». Часть {part_number}.",
+        story_text=story_text,
+        event_type="interactive_travel_part",
+        valence="mixed",
+        tags=(destination,),
+        rag_text=story_text,
+        story_library_patch=None,
+        lite_overlay_patch=None,
+        recent_story_event=None,
+        prompt_debug=[],
+    )
+    raw_image_bytes = generate_background_story_image_bytes(
+        pet=pet,
+        story=image_story,
+        image_size=INTERACTIVE_TRAVEL_PROVIDER_SIZE,
+        composition_direction=INTERACTIVE_TRAVEL_VERTICAL_COMPOSITION,
+    )
+    image_bytes = _normalize_interactive_travel_background_image(raw_image_bytes)
+    video_source_bytes = _normalize_interactive_travel_video_source(raw_image_bytes)
+    output_dir = generated_dir_for(travel_id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / f"interactive-travel-part-{part_number:02d}.png"
+    video_source_path = output_dir / f"interactive-travel-part-{part_number:02d}-video-source.png"
+    path.write_bytes(image_bytes)
+    video_source_path.write_bytes(video_source_bytes)
+    version = int(datetime.now(UTC).timestamp())
+    return f"/static/generated/{travel_id}/{path.name}?v={version}"
+
+
+def generate_interactive_travel_part_video(
+    *,
+    travel_id: str,
+    part_number: int,
+) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", travel_id):
+        raise ValueError("Invalid interactive travel id")
+    if not 1 <= part_number <= 6:
+        raise ValueError("Invalid interactive travel part number")
+    output_dir = generated_dir_for(travel_id)
+    source_path = output_dir / f"interactive-travel-part-{part_number:02d}-video-source.png"
+    if not source_path.is_file():
+        poster_path = output_dir / f"interactive-travel-part-{part_number:02d}.png"
+        if not poster_path.is_file():
+            raise FileNotFoundError("Interactive travel poster is missing")
+        source_bytes = _normalize_interactive_travel_video_source(poster_path.read_bytes())
+    else:
+        source_bytes = source_path.read_bytes()
+    video_bytes = generate_background_story_video_bytes(
+        source_bytes,
+        aspect_ratio=INTERACTIVE_TRAVEL_VIDEO_ASPECT_RATIO,
+    )
+    path = output_dir / f"interactive-travel-part-{part_number:02d}.mp4"
+    path.write_bytes(video_bytes)
+    version = int(datetime.now(UTC).timestamp())
 
 
 def _normalize_travel_card_image(image_bytes: bytes) -> bytes:

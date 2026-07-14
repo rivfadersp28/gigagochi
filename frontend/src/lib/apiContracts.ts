@@ -9,6 +9,10 @@ import type {
 import type {
   ConversationHappinessDelta,
   GenerateTravelResponse,
+  InteractiveTravelAnimationResponse,
+  InteractiveTravelIllustrationResponse,
+  InteractiveTravelResponse,
+  InteractiveTravelSuggestionsResponse,
   LiteFactExtractionResponse,
   LocalChatResponse,
   PetMood,
@@ -51,6 +55,19 @@ const TRAVEL_ARCS = new Set<GenerateTravelResponse["story"]["scenes"][number]["a
   "reward",
   "final",
 ]);
+const INTERACTIVE_TRAVEL_ASSESSMENTS = new Set(["helpful", "harmful", "ambiguous"] as const);
+const INTERACTIVE_TRAVEL_VALENCES = new Set(["positive", "negative"] as const);
+const INTERACTIVE_TRAVEL_REACTION_TONES = new Set(
+  [
+    "enthusiastic",
+    "confused",
+    "worried",
+    "amused",
+    "indignant",
+    "determined",
+    "surprised",
+  ] as const,
+);
 const JOB_STATUSES = new Set(["queued", "running", "succeeded", "failed"]);
 const JOB_PHASES = new Set([
   "queued",
@@ -111,8 +128,38 @@ function string(value: unknown, path: string): string {
   return value;
 }
 
+function boundedString(
+  value: unknown,
+  path: string,
+  { min = 1, max }: { min?: number; max: number },
+): string {
+  const parsed = string(value, path);
+  if (parsed.length < min || parsed.length > max) {
+    return fail(path, `string with length ${min}–${max}`);
+  }
+  return parsed;
+}
+
+function integerInRange(value: unknown, path: string, min: number, max: number): number {
+  const parsed = number(value, path);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    return fail(path, `integer ${min}–${max}`);
+  }
+  return parsed;
+}
+
 function optionalString(value: unknown, path: string): string | undefined {
   return value === null || value === undefined ? undefined : string(value, path);
+}
+
+function optionalBoundedString(
+  value: unknown,
+  path: string,
+  bounds: { min?: number; max: number },
+): string | undefined {
+  return value === null || value === undefined
+    ? undefined
+    : boundedString(value, path, bounds);
 }
 
 function number(value: unknown, path: string): number {
@@ -273,6 +320,289 @@ export function parseGenerateTravelResponse(value: unknown): GenerateTravelRespo
     },
     images,
     debug: parseDebug(payload.debug, "travel.debug"),
+  };
+}
+
+export function parseInteractiveTravelResponse(value: unknown): InteractiveTravelResponse {
+  const payload = record(value, "interactiveTravelResponse");
+  const travel = record(payload.travel, "interactiveTravelResponse.travel");
+  const rawParts = array(travel.parts, "interactiveTravelResponse.travel.parts");
+  if (rawParts.length < 1 || rawParts.length > 6) {
+    return fail("interactiveTravelResponse.travel.parts", "1–6 parts");
+  }
+  const parts = rawParts.map((item, index) => {
+    const partPath = `interactiveTravelResponse.travel.parts[${index}]`;
+    const part = record(item, partPath);
+    const partNumber = integerInRange(
+      part.partNumber,
+      `${partPath}.partNumber`,
+      1,
+      6,
+    );
+    if (partNumber !== index + 1) {
+      return fail(`${partPath}.partNumber`, `${index + 1}`);
+    }
+    const transitionValue = optionalRecord(part.transition, `${partPath}.transition`);
+    const transition = transitionValue
+      ? {
+          elapsedHours: integerInRange(
+            transitionValue.elapsedHours,
+            `${partPath}.transition.elapsedHours`,
+            2,
+            8,
+          ),
+          summary: boundedString(transitionValue.summary, `${partPath}.transition.summary`, {
+            max: 240,
+          }),
+          departureHook: optionalBoundedString(
+            transitionValue.departureHook,
+            `${partPath}.transition.departureHook`,
+            { max: 64 },
+          ),
+        }
+      : undefined;
+    if (index === 0 && transition) {
+      return fail(`${partPath}.transition`, "no transition for the first part");
+    }
+    if (index > 0 && !transition) {
+      return fail(`${partPath}.transition`, "elapsed story transition");
+    }
+    const answer = optionalBoundedString(part.answer, `${partPath}.answer`, { max: 1000 });
+    const rawActionSuggestions = optionalArray(
+      part.actionSuggestions,
+      `${partPath}.actionSuggestions`,
+    );
+    if (rawActionSuggestions.length > 3) {
+      return fail(`${partPath}.actionSuggestions`, "0–3 suggestions");
+    }
+    const actionSuggestions = rawActionSuggestions.map((suggestion, suggestionIndex) =>
+      boundedString(
+        suggestion,
+        `${partPath}.actionSuggestions[${suggestionIndex}]`,
+        { max: 72 },
+      ),
+    );
+    const backgroundImageUrl = optionalBoundedString(
+      part.backgroundImageUrl,
+      `${partPath}.backgroundImageUrl`,
+      { max: 1000 },
+    );
+    const backgroundVideoUrl = optionalBoundedString(
+      part.backgroundVideoUrl,
+      `${partPath}.backgroundVideoUrl`,
+      { max: 1000 },
+    );
+    const resultValue = optionalRecord(part.result, `${partPath}.result`);
+    if ((answer === undefined) !== (resultValue === undefined)) {
+      return fail(partPath, "answer and result together");
+    }
+    const result = resultValue
+      ? (() => {
+          const resultPath = `${partPath}.result`;
+          const rawStatImpacts = array(
+            resultValue.statImpacts,
+            `${resultPath}.statImpacts`,
+          );
+          if (rawStatImpacts.length > 2) {
+            return fail(`${resultPath}.statImpacts`, "0–2 impacts");
+          }
+          const statImpacts = rawStatImpacts.map((impactItem, impactIndex) => {
+            const impactPath = `${resultPath}.statImpacts[${impactIndex}]`;
+            const impact = record(impactItem, impactPath);
+            return {
+              stat: enumValue(impact.stat, new Set(PET_STAT_KEYS), `${impactPath}.stat`),
+              amount: integerInRange(impact.amount, `${impactPath}.amount`, -15, 15),
+              reason: boundedString(impact.reason, `${impactPath}.reason`, { max: 280 }),
+            };
+          });
+          return {
+            text: boundedString(resultValue.text, `${resultPath}.text`, { max: 700 }),
+            adviceAssessment: enumValue(
+              resultValue.adviceAssessment,
+              INTERACTIVE_TRAVEL_ASSESSMENTS,
+              `${resultPath}.adviceAssessment`,
+            ),
+            reaction: boundedString(resultValue.reaction, `${resultPath}.reaction`, {
+              max: 220,
+            }),
+            reactionTone: enumValue(
+              resultValue.reactionTone,
+              INTERACTIVE_TRAVEL_REACTION_TONES,
+              `${resultPath}.reactionTone`,
+            ),
+            consequence: boundedString(resultValue.consequence, `${resultPath}.consequence`, {
+              max: 280,
+            }),
+            outcomeValence: enumValue(
+              resultValue.outcomeValence,
+              INTERACTIVE_TRAVEL_VALENCES,
+              `${resultPath}.outcomeValence`,
+            ),
+            statImpacts,
+          };
+        })()
+      : undefined;
+    return {
+      partNumber,
+      title: boundedString(part.title, `${partPath}.title`, { max: 120 }),
+      storyText: boundedString(part.storyText, `${partPath}.storyText`, { max: 700 }),
+      transition,
+      challenge: boundedString(part.challenge, `${partPath}.challenge`, { max: 280 }),
+      actionSuggestions,
+      backgroundImageUrl,
+      backgroundVideoUrl,
+      answer,
+      result,
+    };
+  });
+  const completed = boolean(travel.completed, "interactiveTravelResponse.travel.completed");
+  if (completed && parts.length < 3) {
+    return fail("interactiveTravelResponse.travel.completed", "at least three completed parts");
+  }
+  if (completed && parts.some((part) => !part.result)) {
+    return fail("interactiveTravelResponse.travel.parts", "all completed parts resolved");
+  }
+  if (!completed) {
+    if (parts.at(-1)?.result) {
+      return fail("interactiveTravelResponse.travel.parts", "pending final part");
+    }
+    if (parts.slice(0, -1).some((part) => !part.result)) {
+      return fail("interactiveTravelResponse.travel.parts", "only the final part pending");
+    }
+  }
+  const arcPlanValue = record(travel.arcPlan, "interactiveTravelResponse.travel.arcPlan");
+  const arcPlan = Object.fromEntries(
+    Object.entries(arcPlanValue).map(([key, item]) => [
+      key,
+      string(item, `interactiveTravelResponse.travel.arcPlan.${key}`),
+    ]),
+  );
+  const impactValue = optionalRecord(
+    travel.statImpact,
+    "interactiveTravelResponse.travel.statImpact",
+  );
+  const statImpact = impactValue
+    ? {
+        stat: enumValue(
+          impactValue.stat,
+          new Set(PET_STAT_KEYS),
+          "interactiveTravelResponse.travel.statImpact.stat",
+        ),
+        amount: number(
+          impactValue.amount,
+          "interactiveTravelResponse.travel.statImpact.amount",
+        ),
+        reason: string(
+          impactValue.reason,
+          "interactiveTravelResponse.travel.statImpact.reason",
+        ),
+      }
+    : undefined;
+  const outcomeValence = optionalEnumValue(
+    travel.outcomeValence,
+    INTERACTIVE_TRAVEL_VALENCES,
+    "interactiveTravelResponse.travel.outcomeValence",
+  );
+  if (completed && !outcomeValence) {
+    return fail("interactiveTravelResponse.travel.outcomeValence", "completed outcome");
+  }
+  if (!completed && (outcomeValence || statImpact)) {
+    return fail("interactiveTravelResponse.travel", "no final outcome before completion");
+  }
+  const introReactionValue = optionalRecord(
+    travel.introReaction,
+    "interactiveTravelResponse.travel.introReaction",
+  );
+  const introReaction = introReactionValue
+    ? {
+        text: boundedString(
+          introReactionValue.text,
+          "interactiveTravelResponse.travel.introReaction.text",
+          { max: 220 },
+        ),
+        tone: enumValue(
+          introReactionValue.tone,
+          INTERACTIVE_TRAVEL_REACTION_TONES,
+          "interactiveTravelResponse.travel.introReaction.tone",
+        ),
+      }
+    : undefined;
+  return {
+    travel: {
+      travelId: string(travel.travelId, "interactiveTravelResponse.travel.travelId"),
+      generatedAt: string(travel.generatedAt, "interactiveTravelResponse.travel.generatedAt"),
+      destination: string(travel.destination, "interactiveTravelResponse.travel.destination"),
+      overallTitle: string(
+        travel.overallTitle,
+        "interactiveTravelResponse.travel.overallTitle",
+      ),
+      introReaction,
+      arcPlan,
+      parts,
+      completed,
+      outcomeValence,
+      statImpact,
+    },
+    debug: parseDebug(payload.debug, "interactiveTravelResponse.debug"),
+  };
+}
+
+export function parseInteractiveTravelSuggestionsResponse(
+  value: unknown,
+): InteractiveTravelSuggestionsResponse {
+  const payload = record(value, "interactiveTravelSuggestions");
+  const rawDestinations = array(
+    payload.destinations,
+    "interactiveTravelSuggestions.destinations",
+  );
+  if (rawDestinations.length !== 3) {
+    return fail("interactiveTravelSuggestions.destinations", "exactly 3 destinations");
+  }
+  return {
+    destinations: rawDestinations.map((destination, index) =>
+      boundedString(
+        destination,
+        `interactiveTravelSuggestions.destinations[${index}]`,
+        { max: 72 },
+      ),
+    ),
+    debug: parseDebug(payload.debug, "interactiveTravelSuggestions.debug"),
+  };
+}
+
+export function parseInteractiveTravelIllustrationResponse(
+  value: unknown,
+): InteractiveTravelIllustrationResponse {
+  const payload = record(value, "interactiveTravelIllustration");
+  return {
+    partNumber: integerInRange(
+      payload.partNumber,
+      "interactiveTravelIllustration.partNumber",
+      1,
+      6,
+    ),
+    imageUrl: boundedString(
+      payload.imageUrl,
+      "interactiveTravelIllustration.imageUrl",
+      { max: 1000 },
+    ),
+  };
+}
+
+export function parseInteractiveTravelAnimationResponse(
+  value: unknown,
+): InteractiveTravelAnimationResponse {
+  const payload = record(value, "interactiveTravelAnimation");
+  return {
+    partNumber: integerInRange(
+      payload.partNumber,
+      "interactiveTravelAnimation.partNumber",
+      1,
+      6,
+    ),
+    videoUrl: boundedString(payload.videoUrl, "interactiveTravelAnimation.videoUrl", {
+      max: 1000,
+    }),
   };
 }
 

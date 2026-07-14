@@ -54,6 +54,7 @@ import {
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import {
   canUseDebugMenu,
+  canUseInteractiveTravel,
   hapticImpact,
   hapticNotification,
   setTelegramBackgroundColor,
@@ -371,6 +372,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const isPetDead = Boolean(pet?.diedAt);
   const storyHistory = pet ? storyHistoryFromPet(pet) : [];
   const canShowDebugMenu = canUseDebugMenu();
+  const canShowInteractiveTravel = canUseInteractiveTravel();
   const derivedAssetsEnabled = true;
   const hasSadAssets = derivedAssetsEnabled && visualPet
     ? hasGeneratedSadAssets(visualPet)
@@ -983,7 +985,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     setIsIdleSpeechBubbleDismissed(true);
     setIsFeedMode(false);
     setIsDebugPanelOpen(false);
-    setIsStoryHistoryOpen(true);
+    router.push(`/pet/${petId}/travel`);
   }
 
   function focusChatInput() {
@@ -1640,20 +1642,22 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             <span>Покормить</span>
           </button>
 
-          <button
-            type="button"
-            onClick={handleTravel}
-            className="main-action-button main-action-button--travel"
-          >
-            <img
-              src={actionIconSrc.travel}
-              alt=""
-              aria-hidden="true"
-              className="main-action-button__icon"
-              draggable={false}
-            />
-            <span>В путешествие</span>
-          </button>
+          {canShowInteractiveTravel ? (
+            <button
+              type="button"
+              onClick={handleTravel}
+              className="main-action-button main-action-button--travel"
+            >
+              <img
+                src={actionIconSrc.travel}
+                alt=""
+                aria-hidden="true"
+                className="main-action-button__icon"
+                draggable={false}
+              />
+              <span>В путешествие</span>
+            </button>
+          ) : null}
         </div>
       </div>
       {isStoryHistoryOpen ? (

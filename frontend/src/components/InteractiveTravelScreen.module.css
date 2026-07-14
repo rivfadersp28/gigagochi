@@ -1,0 +1,637 @@
+.viewport {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  font-family: var(--font-open-runde), "SF Pro Rounded", ui-rounded, system-ui, sans-serif;
+}
+
+.scene {
+  position: relative;
+  width: min(100vw, 402px);
+  height: min(100svh, 874px);
+  min-height: 620px;
+  overflow: hidden;
+  isolation: isolate;
+  background: #111;
+}
+
+.scene.experimentScene {
+  width: min(100vw, 402px);
+  height: min(100svh, 874px);
+}
+
+.background.experimentBackground {
+  z-index: -4;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: none;
+  animation: none;
+}
+
+.grain {
+  position: absolute;
+  z-index: -3;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.7;
+  pointer-events: none;
+  user-select: none;
+}
+
+.background {
+  position: absolute;
+  z-index: -4;
+  top: -0.6%;
+  left: -5.5%;
+  display: block;
+  width: 109.5%;
+  height: 101.2%;
+  object-fit: cover;
+  filter: blur(1.5px);
+  transform: scale(1.008);
+}
+
+.generatedBackground {
+  z-index: -3;
+  animation: backgroundEnter 500ms ease-out both;
+}
+
+.entryBackgroundVideo {
+  filter: none;
+}
+
+.backgroundPreloader {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sharpBackground {
+  filter: none;
+}
+
+.scrim {
+  position: absolute;
+  z-index: -2;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgb(0 0 0 / 20%) 0%, transparent 34%),
+    linear-gradient(0deg, rgb(0 0 0 / 28%) 0%, transparent 42%);
+  pointer-events: none;
+}
+
+.backButton,
+.newStoryButton {
+  position: absolute;
+  z-index: 20;
+  top: max(12px, env(safe-area-inset-top));
+  height: 36px;
+  border: 1px solid rgb(255 255 255 / 26%);
+  color: #fff;
+  background: rgb(18 18 18 / 35%);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 14%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.backButton {
+  left: 12px;
+  width: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+
+.backButton svg {
+  width: 19px;
+  height: 19px;
+}
+
+.newStoryButton {
+  right: 12px;
+  max-width: 214px;
+  padding: 0 12px;
+  border-radius: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.newStoryButton svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.newStoryButton:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.error {
+  position: absolute;
+  z-index: 40;
+  top: max(58px, calc(env(safe-area-inset-top) + 52px));
+  left: 21px;
+  right: 21px;
+  padding: 9px 12px;
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 14px;
+  color: #fff;
+  background: rgb(22 10 10 / 76%);
+  font-size: 13px;
+  line-height: 1.25;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.error p {
+  margin: 0;
+}
+
+.centerLoader {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.centerLoader svg,
+.optionLoader {
+  width: 30px;
+  height: 30px;
+  animation: spin 800ms linear infinite;
+}
+
+.destinationPicker h1,
+.customForm h1 {
+  position: absolute;
+  left: 21px;
+  right: 21px;
+  margin: 0;
+  color: #fff;
+  text-align: center;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 21px;
+  text-shadow: 0 2px 14px rgb(0 0 0 / 34%);
+}
+
+.destinationPicker h1 {
+  top: calc(57.1% - 94px);
+  left: 50%;
+  right: auto;
+  width: min(261px, calc(100% - 42px));
+  transform: translateX(-50%);
+  font-size: 26px;
+  line-height: normal;
+}
+
+.destinationOptions {
+  position: absolute;
+  z-index: 5;
+  top: 57.1%;
+  left: 21px;
+  right: 21px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.optionButton,
+.primaryButton,
+.nextButton,
+.actionButton,
+.completionButton {
+  box-sizing: border-box;
+  min-height: 62px;
+  border: 0;
+  border-radius: 24px;
+  color: #080808;
+  background: #fff;
+  box-shadow:
+    0 2px 0 rgb(255 255 255 / 70%) inset,
+    0 -4px 9px rgb(0 0 0 / 25%) inset,
+    0 8px 24px rgb(0 0 0 / 16%);
+  font-family: "SF Pro Rounded", "SF Pro Display", var(--font-open-runde), ui-rounded,
+    system-ui, sans-serif;
+  font-size: 23px;
+  font-weight: 800;
+  line-height: 28px;
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    opacity 140ms ease;
+}
+
+.optionButton {
+  width: fit-content;
+  max-width: 100%;
+  padding: 15px 25px 17px;
+}
+
+.optionButton:active,
+.primaryButton:active,
+.nextButton:active,
+.actionButton:active,
+.completionButton:active {
+  transform: scale(0.97);
+}
+
+.optionButton:disabled,
+.primaryButton:disabled,
+.actionButton:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.secondaryButton,
+.promptInput {
+  border: 0;
+  color: #fff;
+  background: rgb(255 255 255 / 50%);
+  box-shadow: 0 -3.768px 8px rgb(1 1 1 / 40%) inset;
+  --tw-backdrop-blur: blur(10px);
+  -webkit-backdrop-filter: var(--tw-backdrop-blur);
+  backdrop-filter: var(--tw-backdrop-blur);
+}
+
+.storyGlassButton {
+  border: 2px solid rgb(0 0 0 / 4%);
+  color: #e8e8e8;
+  background: rgb(255 255 255 / 20%);
+  box-shadow: 0 -3.768px 8px rgb(1 1 1 / 40%) inset;
+  --tw-backdrop-blur: blur(10px);
+  -webkit-backdrop-filter: var(--tw-backdrop-blur);
+  backdrop-filter: var(--tw-backdrop-blur);
+}
+
+.customForm h1 {
+  top: 25.4%;
+  left: 50%;
+  right: auto;
+  width: min(348px, calc(100% - 42px));
+  transform: translateX(-50%);
+  font-size: 26px;
+  font-weight: 900;
+  line-height: 30px;
+}
+
+.promptInput {
+  position: absolute;
+  z-index: 5;
+  top: 31.5%;
+  left: 50%;
+  box-sizing: border-box;
+  width: min(213px, calc(100% - 42px));
+  height: 62px;
+  transform: translateX(-50%);
+  border-radius: 24px;
+  outline: none;
+  padding: 0 24px;
+  font-family: "SF Pro Rounded", "SF Pro Display", var(--font-open-runde), ui-rounded,
+    system-ui, sans-serif;
+  font-size: 23px;
+  font-weight: 800;
+  text-align: center;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.promptInput::placeholder {
+  color: rgb(255 255 255 / 40%);
+  opacity: 1;
+}
+
+.backButton:focus-visible,
+.newStoryButton:focus-visible,
+.optionButton:focus-visible,
+.primaryButton:focus-visible,
+.nextButton:focus-visible,
+.actionButton:focus-visible,
+.completionButton:focus-visible,
+.promptInput:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 2px #111;
+}
+
+.primaryButton {
+  position: absolute;
+  z-index: 5;
+  top: 51.7%;
+  left: 50%;
+  min-width: 220px;
+  padding: 15px 25px 17px;
+  transform: translateX(-50%);
+}
+
+.primaryButton:active {
+  transform: translateX(-50%) scale(0.97);
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  margin: auto;
+  animation: spin 800ms linear infinite;
+}
+
+.answerCaption {
+  position: absolute;
+  z-index: 7;
+  left: 31px;
+  right: 31px;
+  bottom: 355px;
+  max-height: 84px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 16px;
+  color: #fff;
+  background: rgb(20 20 20 / 42%);
+  font-size: 14px;
+  line-height: 18px;
+  text-align: center;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.answerCaption span {
+  margin-right: 8px;
+  color: rgb(255 255 255 / 60%);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.answerCaption:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+
+.bubbleAnchor {
+  position: absolute;
+  z-index: 8;
+  left: 50%;
+  width: 360px;
+  max-width: calc(100% - 42px);
+  transform: translateX(-50%);
+}
+
+.bubbleAnchorCenter {
+  top: auto;
+  bottom: 41.2%;
+}
+
+.bubbleAnchorBottom {
+  top: auto;
+  bottom: 16.7%;
+}
+
+.bubbleAnchor :global(.main-speech-bubble) {
+  max-width: 100%;
+}
+
+.mutedBubble :global(.main-speech-bubble__message) {
+  opacity: 0.4;
+}
+
+.character {
+  position: absolute;
+  z-index: 4;
+  top: 55.5%;
+  left: -18.4%;
+  display: block;
+  width: 136.8%;
+  max-width: none;
+  height: 63%;
+  object-fit: contain;
+  object-position: center top;
+  pointer-events: none;
+  user-select: none;
+  animation:
+    characterRise 720ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    characterIdle 3200ms cubic-bezier(0.65, 0, 0.35, 1) 720ms infinite;
+}
+
+.transparentCharacter {
+  filter: drop-shadow(0 18px 28px rgb(0 0 0 / 18%));
+}
+
+.generatedCharacter {
+  filter: contrast(1.08) saturate(0.92);
+}
+
+.nextButton,
+.completionButton {
+  position: absolute;
+  z-index: 10;
+  top: 86.15%;
+  right: 30px;
+  min-width: 130px;
+  padding: 15px 24px 17px;
+}
+
+.nextButton.secondaryButton {
+  color: #fff;
+}
+
+.completionButton {
+  right: 50%;
+  min-width: 180px;
+  transform: translateX(50%);
+}
+
+.completionButton:active {
+  transform: translateX(50%) scale(0.97);
+}
+
+.actionsScroll {
+  position: absolute;
+  z-index: 10;
+  top: 86.15%;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0 0 18px 21px;
+  scroll-padding-left: 21px;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: none;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+}
+
+.actionsScroll::-webkit-scrollbar {
+  display: none;
+}
+
+.actionsRow {
+  display: flex;
+  width: max-content;
+  gap: 19px;
+  padding-right: 21px;
+}
+
+.actionButton {
+  padding: 15px 24px 17px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.waitSpinner {
+  position: absolute;
+  z-index: 9;
+  top: 61%;
+  left: calc(50% - 12px);
+  width: 24px;
+  height: 24px;
+  color: rgb(255 255 255 / 55%);
+  animation: spin 800ms linear infinite;
+}
+
+.submittingOverlay {
+  position: absolute;
+  z-index: 18;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 12%);
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
+}
+
+.submittingOverlay .spinner {
+  width: 42px;
+  height: 42px;
+  color: #fff;
+}
+
+@keyframes characterRise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 28%, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes characterIdle {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(-0.25deg);
+  }
+  50% {
+    transform: translate3d(0, -1.2%, 0) rotate(0.25deg);
+  }
+}
+
+@keyframes backgroundEnter {
+  from {
+    opacity: 0;
+    transform: scale(1.035);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.008);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-height: 760px) {
+  .scene {
+    min-height: 100svh;
+  }
+
+  .destinationPicker h1 {
+    top: calc(51% - 86px);
+  }
+
+  .destinationOptions {
+    top: 51%;
+    gap: 12px;
+  }
+
+  .optionButton,
+  .primaryButton,
+  .nextButton,
+  .actionButton,
+  .completionButton,
+  .promptInput {
+    min-height: 54px;
+    height: 54px;
+    font-size: 20px;
+    line-height: 24px;
+  }
+
+  .bubbleAnchorBottom {
+    top: auto;
+    bottom: 17%;
+  }
+
+  .nextButton,
+  .completionButton,
+  .actionsScroll {
+    top: auto;
+    bottom: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .generatedBackground,
+  .spinner,
+  .optionLoader,
+  .centerLoader svg,
+  .waitSpinner {
+    animation-duration: 1ms;
+  }
+
+  .character {
+    animation: none;
+  }
+
+  .optionButton,
+  .primaryButton,
+  .nextButton,
+  .actionButton,
+  .completionButton {
+    transition: none;
+  }
+}
