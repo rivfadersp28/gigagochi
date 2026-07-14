@@ -4,8 +4,10 @@ import { useReward, type AnimationConfig } from "partycles";
 import type { RefObject } from "react";
 import { useEffect, useRef } from "react";
 
+export const PET_TAP_PARTICLE_FADE_MS = 120;
+
 const petTapParticleConfig = {
-  particleCount: 24,
+  particleCount: 16,
   spread: 92,
   startVelocity: 16,
   elementSize: 28,
@@ -30,11 +32,13 @@ type PetTapParticleBurstProps = {
   id: number;
   x: number;
   y: number;
+  isExiting: boolean;
   onComplete: (id: number) => void;
 };
 
-export function PetTapParticleBurst({ id, x, y, onComplete }: PetTapParticleBurstProps) {
+export function PetTapParticleBurst({ id, x, y, isExiting, onComplete }: PetTapParticleBurstProps) {
   const targetRef = useRef<HTMLSpanElement>(null);
+  const particleContainerRef = useRef<HTMLElement | null>(null);
   const { reward } = useReward(targetRef as RefObject<HTMLElement>, "bubbles", petTapParticleConfig);
   const rewardRef = useRef(reward);
 
@@ -45,7 +49,17 @@ export function PetTapParticleBurst({ id, x, y, onComplete }: PetTapParticleBurs
   useEffect(() => {
     let shouldComplete = true;
     const timeoutId = window.setTimeout(() => {
-      void rewardRef.current().finally(() => {
+      const existingBodyChildren = new Set(document.body.children);
+      const rewardPromise = rewardRef.current();
+      particleContainerRef.current = Array.from(document.body.children).find(
+        (child): child is HTMLElement =>
+          child instanceof HTMLElement
+          && !existingBodyChildren.has(child)
+          && child.style.position === "fixed"
+          && child.style.zIndex === "9999",
+      ) ?? null;
+
+      void rewardPromise.finally(() => {
         if (shouldComplete) {
           onComplete(id);
         }
@@ -57,6 +71,21 @@ export function PetTapParticleBurst({ id, x, y, onComplete }: PetTapParticleBurs
       window.clearTimeout(timeoutId);
     };
   }, [id, onComplete]);
+
+  useEffect(() => {
+    if (!isExiting) {
+      return;
+    }
+
+    const container = particleContainerRef.current;
+    if (container) {
+      container.style.transition = `opacity ${PET_TAP_PARTICLE_FADE_MS}ms ease-out`;
+      container.style.opacity = "0";
+    }
+
+    const timeoutId = window.setTimeout(() => onComplete(id), PET_TAP_PARTICLE_FADE_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [id, isExiting, onComplete]);
 
   return (
     <span
@@ -73,4 +102,3 @@ export function PetTapParticleBurst({ id, x, y, onComplete }: PetTapParticleBurs
     />
   );
 }
-

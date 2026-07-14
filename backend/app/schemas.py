@@ -74,7 +74,6 @@ class GeneratePetAssetResponse(GeneratePetStaticAssetResponse):
     videoUrl: str | None = None
     sadVideoUrl: str | None = None
     happyVideoUrl: str | None = None
-    tapReactionImageUrl: str | None = None
     blinkImageUrl: str | None = None
     spriteSheetUrl: str | None = None
     characterBible: dict[str, Any] | None = None

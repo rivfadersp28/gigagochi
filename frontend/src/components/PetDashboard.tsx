@@ -125,7 +125,11 @@ type PetTapParticleBurstState = {
   id: number;
   x: number;
   y: number;
+  isExiting: boolean;
 };
+
+const MAX_ACTIVE_PET_TAP_PARTICLE_BURSTS = 2;
+const PET_TAP_PARTICLE_INTERVAL_MS = 80;
 
 type ConfirmationAction = "resetPet" | "resetStats" | "openTestPet" | "killPet";
 
@@ -294,6 +298,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [feedError, setFeedError] = useState<PresentedError | null>(null);
   const [feedSuccessId, setFeedSuccessId] = useState(0);
   const [petTapParticleBursts, setPetTapParticleBursts] = useState<PetTapParticleBurstState[]>([]);
+  const lastPetTapParticleBurstAtRef = useRef(Number.NEGATIVE_INFINITY);
   const [includePromptDebug] = useState(() => readLocalPetSettings().includePromptDebug);
   const [petReplyMessage, setPetReplyMessage] = useState<PetReplyMessage | null>(null);
   const [assetsReadyForPetId, setAssetsReadyForPetId] = useState<string | null>(null);
@@ -366,7 +371,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           videoUrl: kandinskyAssets.videoUrl,
           sadVideoUrl: undefined,
           happyVideoUrl: undefined,
-          tapReactionImageUrl: undefined,
           blinkImageUrl: undefined,
         },
       }
@@ -710,9 +714,28 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
 
+    const now = performance.now();
+    if (now - lastPetTapParticleBurstAtRef.current < PET_TAP_PARTICLE_INTERVAL_MS) {
+      return;
+    }
+    lastPetTapParticleBurstAtRef.current = now;
+
     const id = petTapParticleBurstIdRef.current + 1;
     petTapParticleBurstIdRef.current = id;
-    setPetTapParticleBursts((current) => [...current, { id, x, y }]);
+    setPetTapParticleBursts((current) => {
+      const activeBursts = current.filter((burst) => !burst.isExiting);
+      if (activeBursts.length < MAX_ACTIVE_PET_TAP_PARTICLE_BURSTS) {
+        return [...current, { id, x, y, isExiting: false }];
+      }
+
+      const oldestActiveId = activeBursts[0]?.id;
+      const retainedBursts = current
+        .filter((burst) => !burst.isExiting)
+        .map((burst) => (
+          burst.id === oldestActiveId ? { ...burst, isExiting: true } : burst
+        ));
+      return [...retainedBursts, { id, x, y, isExiting: false }];
+    });
   }, []);
 
   const removePetTapParticleBurst = useCallback((burstId: number) => {
@@ -1475,6 +1498,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             id={burst.id}
             x={burst.x}
             y={burst.y}
+            isExiting={burst.isExiting}
             onComplete={removePetTapParticleBurst}
           />
         ))}

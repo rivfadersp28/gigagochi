@@ -561,8 +561,6 @@ export interface components {
             readonly sadVideoUrl?: string | null;
             /** Spritesheeturl */
             readonly spriteSheetUrl?: string | null;
-            /** Tapreactionimageurl */
-            readonly tapReactionImageUrl?: string | null;
             /** Videourl */
             readonly videoUrl?: string | null;
         };

@@ -495,9 +495,6 @@ function generatedPetResponseFromJob(job: GeneratePetJobResponse): GeneratePetRe
     videoUrl: response.videoUrl ? publicImageUrl(response.videoUrl) : undefined,
     sadVideoUrl: response.sadVideoUrl ? publicImageUrl(response.sadVideoUrl) : undefined,
     happyVideoUrl: response.happyVideoUrl ? publicImageUrl(response.happyVideoUrl) : undefined,
-    tapReactionImageUrl: response.tapReactionImageUrl
-      ? publicImageUrl(response.tapReactionImageUrl)
-      : undefined,
     blinkImageUrl: response.blinkImageUrl ? publicImageUrl(response.blinkImageUrl) : undefined,
     spriteSheetUrl: response.spriteSheetUrl ? publicImageUrl(response.spriteSheetUrl) : undefined,
     kandinskyAssets: response.kandinskyAssets

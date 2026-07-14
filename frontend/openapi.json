@@ -676,17 +676,6 @@
             ],
             "title": "Spritesheeturl"
           },
-          "tapReactionImageUrl": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tapreactionimageurl"
-          },
           "videoUrl": {
             "anyOf": [
               {

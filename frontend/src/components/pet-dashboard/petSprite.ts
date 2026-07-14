@@ -20,7 +20,6 @@ export const stateLabels: Record<PetState, string> = {
 
 const SAD_ASSET_CACHE_VERSION = "20260710-2";
 const HAPPY_ASSET_CACHE_VERSION = "20260710-2";
-const TAP_REACTION_ASSET_CACHE_VERSION = "20260710-3";
 const VIDEO_PING_PONG_CACHE_VERSION = "20260713-safari-3";
 
 function versionedPingPongVideoUrl(url: string) {
@@ -82,27 +81,6 @@ export function generatedSceneVideoUrl(
     return versionedPingPongVideoUrl(versionedHappyAssetUrl(videoUrl));
   }
   return versionedPingPongVideoUrl(videoUrl);
-}
-
-export function generatedTapReactionImageUrl(pet: LocalPetState) {
-  const assetSet = assetSetForPet(pet);
-  const explicitUrl = assetSet?.tapReactionImageUrl;
-  if (explicitUrl) {
-    return `${explicitUrl}${explicitUrl.includes("?") ? "&" : "?"}tap_asset_v=${TAP_REACTION_ASSET_CACHE_VERSION}`;
-  }
-
-  const idleUrl = assetSet?.images[pet.stage]?.idle;
-  if (!idleUrl) {
-    return null;
-  }
-  const [path, query] = idleUrl.split("?", 2);
-  const slashIndex = path.lastIndexOf("/");
-  if (slashIndex < 0) {
-    return null;
-  }
-  const reactionPath = `${path.slice(0, slashIndex + 1)}teen-tap.png`;
-  const reactionQuery = query ? `${query}&` : "";
-  return `${reactionPath}?${reactionQuery}tap_asset_v=${TAP_REACTION_ASSET_CACHE_VERSION}`;
 }
 
 export function isPetInRedZone(pet: LocalPetState) {

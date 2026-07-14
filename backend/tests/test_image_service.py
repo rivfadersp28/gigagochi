@@ -29,8 +29,6 @@ from app.services.image_service import (
     PET_SAD_SCENE_IMAGE_PROMPT,
     PET_SAD_SCENE_VIDEO_PROMPT,
     PET_SCENE_VIDEO_PROMPT,
-    PET_TAP_REACTION_COMPOSITION_REFINEMENT_PROMPT,
-    PET_TAP_REACTION_IMAGE_PROMPT,
     PetAssetImageSet,
     _character_reasoning_effort_kwargs,
     _compact_kandinsky_prompt,
@@ -59,7 +57,6 @@ from app.services.image_service import (
     generate_pet_sad_scene_path,
     generate_pet_sad_video_for_image_asset_set,
     generate_pet_scene_video_bytes,
-    generate_pet_tap_reaction_scene_path,
     generation_error_code,
     normalize_pet_scene_video_frame_bytes,
     pet_character_region_box,
@@ -221,65 +218,6 @@ def test_normalize_pet_scene_video_frame_bytes_crops_to_seedance_frame() -> None
 
 def test_pet_character_region_uses_fixed_centered_two_by_three_crop() -> None:
     assert pet_character_region_box((720, 1280)) == (120, 320, 600, 1040)
-
-
-def test_generate_pet_tap_reaction_reuses_happy_crop_refinement_pipeline(
-    monkeypatch,
-    tmp_path,
-) -> None:
-    asset_id = uuid.uuid4()
-    output_dir = tmp_path / str(asset_id)
-    output_dir.mkdir()
-    scene_path = output_dir / "teen-idle.png"
-    Image.new("RGB", (720, 1280), (10, 20, 30)).save(scene_path)
-    edit_calls: list[tuple[str, str, str, tuple[int, int]]] = []
-    refinement_calls: list[tuple[str, list[str], str, str]] = []
-
-    monkeypatch.setattr(
-        "app.services.image_service.generated_dir_for",
-        lambda _asset_id: output_dir,
-    )
-
-    def fake_image_edit(prompt, source_path, *, label, **_kwargs):
-        with Image.open(source_path) as source:
-            edit_calls.append((prompt, source_path.name, label, source.size))
-        return png_bytes(Image.new("RGB", (1024, 1536), (200, 80, 100)))
-
-    def fake_multi_image_edit(prompt, source_paths, *, label, size, **_kwargs):
-        refinement_calls.append((prompt, [path.name for path in source_paths], label, size))
-        return png_bytes(Image.new("RGB", (1024, 1536), (90, 110, 130)))
-
-    monkeypatch.setattr("app.services.image_service.generate_image_edit_bytes", fake_image_edit)
-    monkeypatch.setattr(
-        "app.services.image_service.generate_multi_image_edit_bytes",
-        fake_multi_image_edit,
-    )
-
-    result_path = generate_pet_tap_reaction_scene_path(asset_id, scene_path)
-    result = Image.open(result_path)
-
-    assert edit_calls == [
-        (
-            PET_TAP_REACTION_IMAGE_PROMPT,
-            "teen-tap-source-region.png",
-            "pet_creation/tap_reaction",
-            (480, 720),
-        )
-    ]
-    assert refinement_calls == [
-        (
-            PET_TAP_REACTION_COMPOSITION_REFINEMENT_PROMPT,
-            ["teen-tap-source-region.png", "teen-tap-pose.png"],
-            "pet_creation/tap_reaction_refinement",
-            "1024x1536",
-        )
-    ]
-    assert result_path.name == "teen-tap.png"
-    assert result.size == (720, 1280)
-    assert result.getpixel((0, 0)) == (10, 20, 30)
-    assert result.getpixel((360, 680)) == (90, 110, 130)
-    assert not (output_dir / "teen-tap-pose.png").exists()
-    assert not (output_dir / "teen-tap-source-region.png").exists()
 
 
 def test_composite_pet_character_region_preserves_pixels_outside_fixed_crop(tmp_path) -> None:
@@ -1304,7 +1242,7 @@ def test_align_sprite_to_reference_canvas_matches_reference_bbox(tmp_path) -> No
     )
 
 
-def test_image_asset_set_can_reuse_bible_and_skip_tap_generation(
+def test_image_asset_set_can_reuse_bible(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -1334,7 +1272,6 @@ def test_image_asset_set_can_reuse_bible_and_skip_tap_generation(
         "дракон",
         image_provider="kandinsky",
         character_bible=bible,
-        generate_tap_reaction=False,
     )
 
     assert result.character_bible == bible
@@ -1342,7 +1279,6 @@ def test_image_asset_set_can_reuse_bible_and_skip_tap_generation(
         "bible": bible,
         "kwargs": {
             "image_provider": "kandinsky",
-            "generate_tap_reaction": False,
         },
     }
 
@@ -1401,11 +1337,6 @@ def test_generate_pet_asset_set_generates_idle_scene(monkeypatch, tmp_path) -> N
         "app.services.image_service.generate_pet_scene_video_bytes",
         lambda source_path: video_sources.append(source_path.name) or b"video-bytes",
     )
-    monkeypatch.setattr(
-        "app.services.image_service.generate_pet_tap_reaction_scene_path",
-        lambda *_args, **_kwargs: tmp_path / "teen-tap.png",
-    )
-
     result = generate_pet_asset_set("электрический дракон")
 
     assert generated_prompts == ["single:teen:idle"]
@@ -1646,32 +1577,6 @@ def test_asset_response_switches_happy_urls_only_when_both_happy_assets_are_read
     assert ready["images"]["teen"]["happy"].endswith("teen-happy.png?v=7")
 
 
-def test_asset_response_includes_ready_tap_reaction(tmp_path, monkeypatch) -> None:
-    asset_id = uuid.uuid4()
-    output_dir = tmp_path / str(asset_id)
-    output_dir.mkdir()
-    idle_path = output_dir / "teen-idle.png"
-    idle_video_path = output_dir / "teen-idle.mp4"
-    tap_path = output_dir / "teen-tap.png"
-    tap_path.write_bytes(b"tap")
-    image_set = PetAssetImageSet(
-        asset_set_id=asset_id,
-        generated_paths={("teen", "idle"): (idle_path, "scene")},
-        scene_path=idle_path,
-        character_bible={},
-        version=7,
-        generated_at=datetime.now(UTC),
-    )
-    monkeypatch.setattr(
-        "app.services.image_service.generated_dir_for",
-        lambda _asset_id: output_dir,
-    )
-
-    response = build_pet_asset_set_response(image_set, idle_video_path)
-
-    assert response["tapReactionImageUrl"].endswith("teen-tap.png?v=7")
-
-
 def test_state_strip_prompt_omits_lore_only_do_not_change() -> None:
     prompt = build_pet_state_strip_prompt(
         "электрический дракон",
@@ -1738,11 +1643,6 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
         "app.services.image_service.generate_pet_scene_video_bytes",
         lambda _source_path: b"video-bytes",
     )
-    monkeypatch.setattr(
-        "app.services.image_service.generate_pet_tap_reaction_scene_path",
-        lambda *_args, **_kwargs: tmp_path / "teen-tap.png",
-    )
-
     result, video_path = generate_individual_sprite_paths(
         uuid.uuid4(),
         "электрический дракон",
@@ -1779,11 +1679,6 @@ def test_generate_individual_sprite_paths_requires_video(monkeypatch, tmp_path) 
             Image.new("RGBA", (100, 100), (40, 90, 190, 255))
         ),
     )
-    monkeypatch.setattr(
-        "app.services.image_service.generate_pet_tap_reaction_scene_path",
-        lambda *_args, **_kwargs: tmp_path / "teen-tap.png",
-    )
-
     def fail_video(_source_path):
         raise RuntimeError("provider unavailable")
 

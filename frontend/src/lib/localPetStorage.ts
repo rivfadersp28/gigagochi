@@ -145,8 +145,6 @@ function normalizeAssetSet(value: unknown): LocalPetAssetSet | undefined {
     videoUrl: typeof value.videoUrl === "string" ? value.videoUrl : undefined,
     sadVideoUrl: typeof value.sadVideoUrl === "string" ? value.sadVideoUrl : undefined,
     happyVideoUrl: typeof value.happyVideoUrl === "string" ? value.happyVideoUrl : undefined,
-    tapReactionImageUrl:
-      typeof value.tapReactionImageUrl === "string" ? value.tapReactionImageUrl : undefined,
     generationJobId:
       typeof value.generationJobId === "string" ? value.generationJobId : undefined,
     backgroundGenerationStatus:
