@@ -52,6 +52,20 @@ export function shouldPollBackgroundAssets(assetSet?: LocalPetAssetSet): boolean
   return assetSet.backgroundGenerationStatus === "running" || !assetSet.kandinskyAssets;
 }
 
+export function backgroundAssetsAfterJobNotFound(
+  assetSet: LocalPetAssetSet,
+  message: string,
+): LocalPetAssetSet {
+  return {
+    ...assetSet,
+    generationJobId: undefined,
+    backgroundGenerationStatus: "failed",
+    backgroundGenerationPhase: "completed",
+    backgroundGenerationError: message,
+    backgroundGenerationUpdatedAt: new Date().toISOString(),
+  };
+}
+
 export function usePetBackgroundAssets({
   assetSet,
   applyGeneratedAssets,
@@ -88,13 +102,7 @@ export function usePetBackgroundAssets({
           return;
         }
         if (error instanceof ApiError && error.code === "GENERATION_JOB_NOT_FOUND") {
-          applyGeneratedAssets({
-            ...assetSet,
-            backgroundGenerationStatus: "failed",
-            backgroundGenerationPhase: "completed",
-            backgroundGenerationError: error.message,
-            backgroundGenerationUpdatedAt: new Date().toISOString(),
-          });
+          applyGeneratedAssets(backgroundAssetsAfterJobNotFound(assetSet, error.message));
           return;
         }
       }

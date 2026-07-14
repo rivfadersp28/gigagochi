@@ -439,9 +439,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       ? [speechBubbleSrc]
       : dashboardStaticImageSources;
     const imageReady = [sceneBackgroundSrc, ...staticImageSources].map(preloadImage);
-    const videoReady = sceneVideoSrc ? [preloadVideo(sceneVideoSrc)] : [];
 
-    void Promise.all([fontReady, ...imageReady, ...videoReady])
+    void Promise.all([fontReady, ...imageReady])
       .then(() => {
         if (!cancelled) {
           setAssetsReadyForPetId(petId);
@@ -463,7 +462,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     pet,
     petId,
     sceneBackgroundSrc,
-    sceneVideoSrc,
   ]);
 
   useEffect(() => {
