@@ -6,10 +6,10 @@ export function AppGlimmProvider({ children }: Readonly<{ children: React.ReactN
   return (
     <GlimmProvider
       palette={{
-        a: [0.43, 0.69, 0.47],
-        b: [0.61, 0.34, 0.48],
+        a: [0, 0.95, 0.75],
+        b: [0, 0.04, 0.08],
         c: [0.5, 0.5, 0.5],
-        d: [0.93, 0.67, 0.42],
+        d: [0.24, 0.98, 0.55],
       }}
       direction="ttb"
       brightness={1.2}
