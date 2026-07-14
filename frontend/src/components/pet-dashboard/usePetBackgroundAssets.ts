@@ -45,6 +45,13 @@ type UsePetBackgroundAssetsOptions = {
   derivedAssetsEnabled: boolean;
 };
 
+export function shouldPollBackgroundAssets(assetSet?: LocalPetAssetSet): boolean {
+  if (!assetSet?.generationJobId || assetSet.comparisonGenerationError) {
+    return false;
+  }
+  return assetSet.backgroundGenerationStatus === "running" || !assetSet.kandinskyAssets;
+}
+
 export function usePetBackgroundAssets({
   assetSet,
   applyGeneratedAssets,
@@ -55,7 +62,7 @@ export function usePetBackgroundAssets({
   const updatedAt = assetSet?.backgroundGenerationUpdatedAt;
 
   useEffect(() => {
-    if (!derivedAssetsEnabled || !assetSet || !jobId || status !== "running") {
+    if (!derivedAssetsEnabled || !assetSet || !shouldPollBackgroundAssets(assetSet)) {
       return;
     }
 
@@ -71,6 +78,7 @@ export function usePetBackgroundAssets({
         if (
           refreshed.backgroundGenerationUpdatedAt !== updatedAt
           || refreshed.backgroundGenerationStatus !== status
+          || refreshed.kandinskyAssets?.assetSetId !== assetSet.kandinskyAssets?.assetSetId
         ) {
           applyGeneratedAssets(refreshed);
           return;

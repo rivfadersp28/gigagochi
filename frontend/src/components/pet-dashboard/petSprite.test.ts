@@ -12,7 +12,11 @@ import {
   isPetInRedZone,
   resolvedPetVisualMode,
 } from "./petSprite";
-import { legacyHappyAssetUrls, legacySadAssetUrls } from "./usePetBackgroundAssets";
+import {
+  legacyHappyAssetUrls,
+  legacySadAssetUrls,
+  shouldPollBackgroundAssets,
+} from "./usePetBackgroundAssets";
 
 function pet(): LocalPetState {
   const tick = "2026-07-10T10:00:00.000Z";
@@ -44,6 +48,21 @@ function pet(): LocalPetState {
 }
 
 describe("sad pet assets", () => {
+  it("refreshes a completed local asset set when Kandinsky assets are still missing", () => {
+    const assetSet = pet().assetSet!;
+    assetSet.generationJobId = "job-1";
+    assetSet.backgroundGenerationStatus = "succeeded";
+
+    expect(shouldPollBackgroundAssets(assetSet)).toBe(true);
+
+    assetSet.kandinskyAssets = {
+      assetSetId: "kandinsky-1",
+      generatedAt: assetSet.generatedAt,
+      images: assetSet.images,
+    };
+    expect(shouldPollBackgroundAssets(assetSet)).toBe(false);
+  });
+
   it.each(["hunger", "happiness", "energy"] as const)(
     "treats %s below 30 as a red zone",
     (stat) => {

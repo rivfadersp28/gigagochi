@@ -160,6 +160,7 @@ function normalizeAssetSet(value: unknown): LocalPetAssetSet | undefined {
       || value.backgroundGenerationPhase === "generating_sad_video"
       || value.backgroundGenerationPhase === "generating_happy_image"
       || value.backgroundGenerationPhase === "generating_happy_video"
+      || value.backgroundGenerationPhase === "generating_kandinsky"
       || value.backgroundGenerationPhase === "completed"
         ? value.backgroundGenerationPhase
         : undefined,
