@@ -1147,6 +1147,15 @@ body {
   transition: none;
 }
 
+button.feed-food-token--dragging:enabled:active {
+  transform: translate3d(
+      var(--feed-food-translate-x, 0),
+      var(--feed-food-translate-y, 0),
+      0
+    )
+    rotate(var(--feed-food-rotation)) scale(1);
+}
+
 .feed-food-token--dragging img {
   transform: scale(1.18);
 }
