@@ -3,7 +3,6 @@
 /* eslint-disable @next/next/no-img-element */
 /* eslint-disable react-hooks/set-state-in-effect -- effects drive the persisted travel state machine */
 import { ArrowLeft, RotateCcw } from "lucide-react";
-import { useGlimm } from "glimm/react";
 import { useRouter } from "next/navigation";
 import {
   type FormEvent,
@@ -12,7 +11,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { flushSync } from "react-dom";
+
+import { SmoothBackgroundVideo } from "@/components/SmoothBackgroundVideo";
 
 import {
   animateInteractiveTravelPart,
@@ -62,7 +62,6 @@ const ADVICE_MAX_LENGTH = 1000;
 const INTRO_PORTION_DURATION_MS = 3_200;
 const CHARACTER_TRANSITION_DURATION_MS = 500;
 const MINIMUM_WAIT_DURATION_MS = 1_600;
-const FALLBACK_BACKGROUND = "/figma/travel-entry-bg.png";
 const ENTRY_BACKGROUND_VIDEO = "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-2";
 const SPEECH_BUBBLE_SHAPE = "/figma/speech-bubble-new.svg";
 const VIDEO_FILTER = "/figma/video-filter-normal.webp?v=20260713-video-filter-lossless-webp-1";
@@ -124,7 +123,6 @@ function restoredBackgroundVideo(session: LocalInteractiveTravel | null) {
 
 export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps) {
   const router = useRouter();
-  const { sweep } = useGlimm();
   const localPet = useLocalPetState();
   const [session, setSession] = useState<LocalInteractiveTravel | null>(null);
   const capturedFinaleTravelIdRef = useRef<string | null>(null);
@@ -573,15 +571,11 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         });
         return;
       }
-      sweep(() => {
-        flushSync(() => {
-          setVisibleBackgroundVideoUrl(backgroundVideoUrl);
-          updatePresentation({
-            phase: "story",
-            partNumber: activePart.partNumber,
-            portionIndex: 0,
-          });
-        });
+      setVisibleBackgroundVideoUrl(backgroundVideoUrl);
+      updatePresentation({
+        phase: "story",
+        partNumber: activePart.partNumber,
+        portionIndex: 0,
       });
       return;
     }
@@ -601,7 +595,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     loadedVideos,
     phase,
     session,
-    sweep,
     updatePresentation,
     visibleBackgroundVideoUrl,
     waitElapsedKey,
@@ -874,6 +867,11 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     !brokenVideos.includes(activePart.backgroundVideoUrl)
       ? activePart.backgroundVideoUrl
       : null;
+  const backgroundVideoSrc =
+    preloadBackgroundVideoUrl ?? visibleBackgroundVideoUrl ?? ENTRY_BACKGROUND_VIDEO;
+  const shouldRevealBackgroundVideo =
+    backgroundVideoSrc === ENTRY_BACKGROUND_VIDEO
+    || backgroundVideoSrc === visibleBackgroundVideoUrl;
   const isChoices = phase === "choice" && !showCustomAction;
   const isNarrative = phase === "story" || phase === "result";
   return (
@@ -882,63 +880,23 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       aria-busy={isTravelLoading}
     >
       <section className={styles.scene} aria-label="Интерактивное путешествие">
-        <video
-          src={ENTRY_BACKGROUND_VIDEO}
-          poster={FALLBACK_BACKGROUND}
-          className={`${styles.background} ${styles.entryBackgroundVideo}`}
-          autoPlay
-          loop
-          muted
-          playsInline
-          preload="auto"
-          aria-hidden="true"
-        />
-        {visibleBackgroundVideoUrl ? (
-          <video
-            src={visibleBackgroundVideoUrl}
-            className={`${styles.background} ${styles.generatedBackground} ${styles.generatedBackgroundReady}`}
-            autoPlay
-            loop
-            muted
-            playsInline
-            preload="auto"
-            aria-hidden="true"
-            onCanPlay={() =>
-              setLoadedVideos((current) => [
-                ...new Set([...current, visibleBackgroundVideoUrl]),
-              ])
+        <SmoothBackgroundVideo
+          src={backgroundVideoSrc}
+          className={`${styles.background} ${styles.backgroundVideo}`}
+          revealWhenReady={shouldRevealBackgroundVideo}
+          onReady={(readySrc) => {
+            if (readySrc === ENTRY_BACKGROUND_VIDEO) {
+              return;
             }
-            onError={() => {
-              setBrokenVideos((current) => [
-                ...new Set([...current, visibleBackgroundVideoUrl]),
-              ]);
+            setLoadedVideos((current) => [...new Set([...current, readySrc])]);
+          }}
+          onError={(brokenSrc) => {
+            setBrokenVideos((current) => [...new Set([...current, brokenSrc])]);
+            if (visibleBackgroundVideoUrl === brokenSrc) {
               setVisibleBackgroundVideoUrl(null);
-            }}
-          />
-        ) : null}
-        {preloadBackgroundVideoUrl ? (
-          <video
-            key={preloadBackgroundVideoUrl}
-            src={preloadBackgroundVideoUrl}
-            className={`${styles.background} ${styles.backgroundPreloader}`}
-            autoPlay
-            loop
-            muted
-            playsInline
-            preload="auto"
-            aria-hidden="true"
-            onCanPlay={() =>
-              setLoadedVideos((current) => [
-                ...new Set([...current, preloadBackgroundVideoUrl]),
-              ])
             }
-            onError={() =>
-              setBrokenVideos((current) => [
-                ...new Set([...current, preloadBackgroundVideoUrl]),
-              ])
-            }
-          />
-        ) : null}
+          }}
+        />
         <img src={VIDEO_FILTER} alt="" className={styles.grain} aria-hidden="true" />
 
         {SHOW_LOCAL_CONTROLS && !isTravelLoading ? (

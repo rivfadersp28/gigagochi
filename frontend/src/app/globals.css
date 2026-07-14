@@ -360,6 +360,10 @@ body {
   user-select: none;
 }
 
+.main-scene-video {
+  z-index: 0;
+}
+
 .main-scene-filter-image {
   position: absolute;
   inset: 0;
