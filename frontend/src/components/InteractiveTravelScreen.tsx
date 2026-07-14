@@ -846,7 +846,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           />
         ) : null}
         <img src={VIDEO_FILTER} alt="" className={styles.grain} aria-hidden="true" />
-        <div className={styles.scrim} />
 
         {SHOW_LOCAL_CONTROLS ? (
           <>

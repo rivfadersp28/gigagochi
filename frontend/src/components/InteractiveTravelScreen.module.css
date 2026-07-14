@@ -79,16 +79,6 @@
   filter: none;
 }
 
-.scrim {
-  position: absolute;
-  z-index: -2;
-  inset: 0;
-  background:
-    linear-gradient(180deg, rgb(0 0 0 / 20%) 0%, transparent 34%),
-    linear-gradient(0deg, rgb(0 0 0 / 28%) 0%, transparent 42%);
-  pointer-events: none;
-}
-
 .backButton,
 .newStoryButton {
   position: absolute;
