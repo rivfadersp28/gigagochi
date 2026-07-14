@@ -63,7 +63,7 @@ const INTRO_PORTION_DURATION_MS = 3_200;
 const CHARACTER_TRANSITION_DURATION_MS = 500;
 const MINIMUM_WAIT_DURATION_MS = 1_600;
 const FALLBACK_BACKGROUND = "/figma/travel-entry-bg.png";
-const ENTRY_BACKGROUND_VIDEO = "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-1";
+const ENTRY_BACKGROUND_VIDEO = "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-2";
 const SPEECH_BUBBLE_SHAPE = "/figma/speech-bubble-new.svg";
 const VIDEO_FILTER = "/figma/video-filter-normal.webp?v=20260713-video-filter-lossless-webp-1";
 const SHOW_LOCAL_CONTROLS = process.env.NODE_ENV !== "production";

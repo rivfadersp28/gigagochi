@@ -173,7 +173,7 @@ const ACTION_ICON_CACHE_VERSION = "20260710-figma-142-1509-1";
 const VIDEO_FILTER_CACHE_VERSION = "20260713-video-filter-lossless-webp-1";
 const MAIN_SCENE_BACKGROUND_CACHE_VERSION = "20260709-main-screen-bg-2";
 const TRAVEL_ENTRY_BACKGROUND_VIDEO =
-  "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-1";
+  "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-2";
 const PET_SCENE_ASPECT_RATIO = 720 / 1280;
 const PET_TAP_REGION = {
   left: 120 / 720,
