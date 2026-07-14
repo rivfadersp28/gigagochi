@@ -36,5 +36,9 @@ class InMemoryRateLimiter:
                 )
             events.append(now)
 
+    def clear(self, bucket: str, user_id: int) -> None:
+        with self._lock:
+            self._events.pop((bucket, user_id), None)
+
 
 rate_limiter = InMemoryRateLimiter()

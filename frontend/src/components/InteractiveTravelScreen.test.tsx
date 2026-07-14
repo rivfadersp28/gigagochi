@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   readLocalInteractiveTravel: vi.fn(),
   replace: vi.fn(),
   startInteractiveTravel: vi.fn(),
+  resetInteractiveTravelGeneration: vi.fn(),
+  canUseDebugMenu: false,
   writeLocalInteractiveTravel: vi.fn(),
 }));
 
@@ -54,8 +56,13 @@ vi.mock("@/lib/localInteractiveTravel", () => ({
     mocks.writeLocalInteractiveTravel(...args),
 }));
 
+vi.mock("@/lib/interactiveTravelDebugApi", () => ({
+  resetInteractiveTravelGeneration: (...args: unknown[]) =>
+    mocks.resetInteractiveTravelGeneration(...args),
+}));
+
 vi.mock("@/lib/telegram", () => ({
-  canUseDebugMenu: () => false,
+  canUseDebugMenu: () => mocks.canUseDebugMenu,
   hapticNotification: vi.fn(),
   setTelegramBackgroundColor: vi.fn(),
   useTelegramBackButton: vi.fn(),
@@ -187,6 +194,8 @@ function deferred<T>() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.canUseDebugMenu = false;
+  mocks.resetInteractiveTravelGeneration.mockResolvedValue(undefined);
   mocks.getInteractiveTravelSuggestions.mockResolvedValue({
     destinations: ["В горы", "В океан", "На Луну"],
   });
@@ -205,7 +214,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("InteractiveTravelScreen", () => {
-  it("renders a generated vertical video over its poster", async () => {
+  it("renders a generated vertical video without exposing its still poster", async () => {
     const animatedPart = {
       ...pendingPart(1),
       backgroundVideoUrl: "/story-1.mp4",
@@ -221,9 +230,43 @@ describe("InteractiveTravelScreen", () => {
     );
     const video = document.querySelector<HTMLVideoElement>('video[src="/story-1.mp4"]');
     expect(video).not.toBeNull();
-    expect(video).toHaveAttribute("poster", "/story-1.png");
+    expect(video).not.toHaveAttribute("poster");
     expect(video).toHaveAttribute("autoplay");
     expect(video).toHaveAttribute("loop");
+  });
+
+  it("keeps the entry video visible instead of rendering a generated still", async () => {
+    mocks.animateInteractiveTravelPart.mockReturnValue(new Promise(() => undefined));
+    mocks.readLocalInteractiveTravel.mockReturnValue(
+      restoredSession(travel([pendingPart(1)]), "story"),
+    );
+
+    render(<InteractiveTravelScreen petId="pet-1" />);
+
+    await waitFor(() =>
+      expect(document.querySelector('video[src^="/figma/travel-entry-bg.mp4"]')).not.toBeNull(),
+    );
+    expect(document.querySelector('img[src="/story-1.png"]')).toBeNull();
+    expect(cssRule("viewport")).toContain("position: fixed");
+    expect(cssRule("viewport")).toContain("inset: 0");
+    expect(cssRule("scene")).toContain("width: 100%");
+    expect(cssRule("background")).toContain("object-fit: cover");
+  });
+
+  it("resets server generations and local travel from the debug menu", async () => {
+    mocks.canUseDebugMenu = true;
+    mocks.readLocalInteractiveTravel.mockReturnValue(
+      restoredSession(travel([pendingPart(1)]), "story"),
+    );
+
+    render(<InteractiveTravelScreen petId="pet-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Перезапустить путешествие" }));
+
+    await waitFor(() =>
+      expect(mocks.resetInteractiveTravelGeneration).toHaveBeenCalledWith("travel-1"),
+    );
+    expect(mocks.clearLocalInteractiveTravel).toHaveBeenCalledWith("pet-1");
   });
 
   it("returns from a custom destination to the generated options and restores focus", async () => {

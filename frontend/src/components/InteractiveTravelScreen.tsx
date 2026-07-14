@@ -37,6 +37,7 @@ import {
   type InteractiveTravelPresentation,
   type LocalInteractiveTravel,
 } from "@/lib/localInteractiveTravel";
+import { resetInteractiveTravelGeneration } from "@/lib/interactiveTravelDebugApi";
 import { buildMemorySnapshotContext } from "@/lib/localPetMemoryRecall";
 import { readLocalPetMemory } from "@/lib/localPetMemoryStorage";
 import { readLocalChatHistory } from "@/lib/localPetStorage";
@@ -109,12 +110,14 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<PresentedError | null>(null);
   const [failedIllustrations, setFailedIllustrations] = useState<string[]>([]);
+  const [failedAnimations, setFailedAnimations] = useState<string[]>([]);
   const [illustratingKeys, setIllustratingKeys] = useState<string[]>([]);
-  const [loadedBackgrounds, setLoadedBackgrounds] = useState<string[]>([]);
+  const [animatingKeys, setAnimatingKeys] = useState<string[]>([]);
+  const [loadedVideos, setLoadedVideos] = useState<string[]>([]);
   const [waitElapsedKey, setWaitElapsedKey] = useState<string | null>(null);
-  const [brokenBackgrounds, setBrokenBackgrounds] = useState<string[]>([]);
   const [brokenVideos, setBrokenVideos] = useState<string[]>([]);
   const [characterImageSrc, setCharacterImageSrc] = useState<string | null>(null);
+  const [isResettingTravel, setIsResettingTravel] = useState(false);
   const submittingRef = useRef(false);
   const requestEpochRef = useRef(0);
   const illustrationRequestsRef = useRef(new Set<string>());
@@ -279,6 +282,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         return;
       }
       animationRequestsRef.current.add(key);
+      setAnimatingKeys((current) => [...new Set([...current, key])]);
       const requestEpoch = requestEpochRef.current;
       try {
         const response = await animateInteractiveTravelPart(travelSession.travel, part);
@@ -306,9 +310,11 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       } catch {
         if (requestEpoch === requestEpochRef.current) {
           failedAnimationsRef.current.add(key);
+          setFailedAnimations((current) => [...new Set([...current, key])]);
         }
       } finally {
         animationRequestsRef.current.delete(key);
+        setAnimatingKeys((current) => current.filter((candidate) => candidate !== key));
       }
     },
     [petId],
@@ -451,13 +457,16 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     ) {
       return;
     }
-    const illustrationReady =
-      Boolean(
-        activePart.backgroundImageUrl &&
-          loadedBackgrounds.includes(activePart.backgroundImageUrl),
-      ) ||
-      (activeIllustrationKey ? failedIllustrations.includes(activeIllustrationKey) : false);
-    if (illustrationReady) {
+    const videoReady = Boolean(
+      activePart.backgroundVideoUrl &&
+        (loadedVideos.includes(activePart.backgroundVideoUrl) ||
+          brokenVideos.includes(activePart.backgroundVideoUrl)),
+    );
+    const mediaFailed = activeIllustrationKey
+      ? failedIllustrations.includes(activeIllustrationKey) ||
+        failedAnimations.includes(activeIllustrationKey)
+      : false;
+    if (videoReady || mediaFailed) {
       updatePresentation({
         phase: "story",
         partNumber: activePart.partNumber,
@@ -467,8 +476,10 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   }, [
     activeIllustrationKey,
     activePart,
+    brokenVideos,
+    failedAnimations,
     failedIllustrations,
-    loadedBackgrounds,
+    loadedVideos,
     phase,
     session,
     updatePresentation,
@@ -584,11 +595,13 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     }
   }
 
-  function handleNewTravel() {
+  function resetLocalTravel() {
     requestEpochRef.current += 1;
     submittingRef.current = false;
     illustrationRequestsRef.current.clear();
     failedIllustrationsRef.current.clear();
+    animationRequestsRef.current.clear();
+    failedAnimationsRef.current.clear();
     clearLocalInteractiveTravel(petId);
     setSession(null);
     setSuggestions([]);
@@ -601,10 +614,38 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     setIsSubmitting(false);
     setError(null);
     setFailedIllustrations([]);
+    setFailedAnimations([]);
     setIllustratingKeys([]);
-    setLoadedBackgrounds([]);
+    setAnimatingKeys([]);
+    setLoadedVideos([]);
     setWaitElapsedKey(null);
-    setBrokenBackgrounds([]);
+    setBrokenVideos([]);
+  }
+
+  function handleNewTravel() {
+    resetLocalTravel();
+  }
+
+  async function handleDebugRestart() {
+    if (isResettingTravel) {
+      return;
+    }
+    const travelId = session?.travel.travelId;
+    requestEpochRef.current += 1;
+    setIsResettingTravel(true);
+    setError(null);
+    try {
+      if (travelId) {
+        await resetInteractiveTravelGeneration(travelId);
+      }
+      resetLocalTravel();
+      hapticNotification("success");
+    } catch (caught) {
+      setError(presentError(caught, "Не получилось перезапустить путешествие."));
+      hapticNotification("error");
+    } finally {
+      setIsResettingTravel(false);
+    }
   }
 
   function handleNext() {
@@ -709,90 +750,56 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     activePart?.backgroundVideoUrl &&
       !brokenVideos.includes(activePart.backgroundVideoUrl),
   );
-  const showGeneratedScene =
-    (showGeneratedVideo ||
-      (Boolean(activePart?.backgroundImageUrl) &&
-        !brokenBackgrounds.includes(activePart?.backgroundImageUrl ?? ""))) &&
-    phase !== "introReaction" &&
-    phase !== "departureWait";
+  const generatedVideoLoaded = Boolean(
+    activePart?.backgroundVideoUrl && loadedVideos.includes(activePart.backgroundVideoUrl),
+  );
+  const showGeneratedScene = showGeneratedVideo && phase !== "introReaction";
   const isChoices = phase === "choice" && !showCustomAction;
   const isNarrative = phase === "story" || phase === "result";
-  const isWaitingForIllustration =
-    Boolean(activeIllustrationKey) && illustratingKeys.includes(activeIllustrationKey ?? "");
+  const isWaitingForMedia =
+    Boolean(activeIllustrationKey) &&
+    (illustratingKeys.includes(activeIllustrationKey ?? "") ||
+      animatingKeys.includes(activeIllustrationKey ?? ""));
 
   return (
-    <main className={styles.viewport} aria-busy={isLoading || isSubmitting}>
+    <main
+      className={styles.viewport}
+      aria-busy={isLoading || isSubmitting || isResettingTravel}
+    >
       <section className={styles.scene} aria-label="Интерактивное путешествие">
-        {!session ? (
-          <video
-            src={ENTRY_BACKGROUND_VIDEO}
-            poster={FALLBACK_BACKGROUND}
-            className={`${styles.background} ${styles.entryBackgroundVideo}`}
-            autoPlay
-            loop
-            muted
-            playsInline
-            preload="auto"
-            aria-hidden="true"
-          />
-        ) : (
-          <img src={FALLBACK_BACKGROUND} alt="" className={styles.background} />
-        )}
+        <video
+          src={ENTRY_BACKGROUND_VIDEO}
+          poster={FALLBACK_BACKGROUND}
+          className={`${styles.background} ${styles.entryBackgroundVideo}`}
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="auto"
+          aria-hidden="true"
+        />
         {showGeneratedScene && showGeneratedVideo && activePart?.backgroundVideoUrl ? (
           <video
             src={activePart.backgroundVideoUrl}
-            poster={activePart.backgroundImageUrl}
             className={`${styles.background} ${styles.generatedBackground} ${
               isChoices ? styles.sharpBackground : ""
-            }`}
+            } ${generatedVideoLoaded ? styles.generatedBackgroundReady : ""}`}
             autoPlay
             loop
             muted
             playsInline
             preload="auto"
             aria-hidden="true"
+            onCanPlay={() =>
+              setLoadedVideos((current) => [
+                ...new Set([...current, activePart.backgroundVideoUrl ?? ""]),
+              ])
+            }
             onError={() =>
               setBrokenVideos((current) => [
                 ...new Set([...current, activePart.backgroundVideoUrl ?? ""]),
               ])
             }
-          />
-        ) : showGeneratedScene && activePart?.backgroundImageUrl ? (
-          <img
-            src={activePart.backgroundImageUrl}
-            alt=""
-            className={`${styles.background} ${styles.generatedBackground} ${
-              isChoices ? styles.sharpBackground : ""
-            }`}
-            onError={() =>
-              setBrokenBackgrounds((current) => [
-                ...new Set([...current, activePart.backgroundImageUrl ?? ""]),
-              ])
-            }
-          />
-        ) : null}
-        {(phase === "introReaction" || phase === "departureWait") &&
-        activePart?.backgroundImageUrl ? (
-          <img
-            src={activePart.backgroundImageUrl}
-            alt=""
-            aria-hidden="true"
-            className={styles.backgroundPreloader}
-            onLoad={() =>
-              setLoadedBackgrounds((current) => [
-                ...new Set([...current, activePart.backgroundImageUrl ?? ""]),
-              ])
-            }
-            onError={() => {
-              const imageUrl = activePart.backgroundImageUrl ?? "";
-              setBrokenBackgrounds((current) => [...new Set([...current, imageUrl])]);
-              if (activeIllustrationKey) {
-                failedIllustrationsRef.current.add(activeIllustrationKey);
-                setFailedIllustrations((current) => [
-                  ...new Set([...current, activeIllustrationKey]),
-                ]);
-              }
-            }}
           />
         ) : null}
         <img src={VIDEO_FILTER} alt="" className={styles.grain} aria-hidden="true" />
@@ -816,6 +823,24 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
               </button>
             ) : null}
           </>
+        ) : null}
+
+        {canUseDebugMenu() ? (
+          <div className={styles.debugMenu} aria-label="Debug путешествия">
+            <span>Debug</span>
+            <button
+              type="button"
+              onClick={() => void handleDebugRestart()}
+              disabled={isResettingTravel}
+            >
+              {isResettingTravel ? (
+                <Loader2 className={styles.debugSpinner} aria-hidden="true" />
+              ) : (
+                <RotateCcw aria-hidden="true" />
+              )}
+              <span>Перезапустить путешествие</span>
+            </button>
+          </div>
         ) : null}
 
         {error ? (
@@ -1039,7 +1064,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
               </button>
             ) : null}
 
-            {phase === "departureWait" && isWaitingForIllustration ? (
+            {phase === "departureWait" && isWaitingForMedia ? (
               <Loader2 className={styles.waitSpinner} aria-hidden="true" />
             ) : null}
 

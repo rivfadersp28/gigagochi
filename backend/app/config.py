@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     allow_dev_tma_auth: bool = False
     enable_in_memory_rate_limit: bool = True
     generation_rate_limit_per_day: int = 3
+    interactive_travel_rate_limit_per_day: int = 30
     chat_rate_limit_per_hour: int = 120
     lite_facts_rate_limit_per_hour: int = 120
     memory_rate_limit_per_hour: int = 120

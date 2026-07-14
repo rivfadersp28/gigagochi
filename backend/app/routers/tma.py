@@ -91,7 +91,7 @@ from app.services.prompt_debug import (
 from app.services.rate_limit_service import rate_limiter
 from app.services.telegram_auth_service import TelegramUserContext
 from app.services.telegram_push_service import register_push_snapshot
-from app.services.travel_service import generate_travel
+from app.services.travel_service import generate_travel, reset_interactive_travel_generation
 
 router = APIRouter(prefix="/api", tags=["telegram-mini-app"])
 TelegramUser = Annotated[TelegramUserContext, Depends(get_telegram_user)]
@@ -100,6 +100,7 @@ DEFAULT_GENERATION_RATE_LIMIT_PER_DAY = 0
 DEFAULT_CHAT_RATE_LIMIT_PER_HOUR = 0
 DEFAULT_LITE_FACTS_RATE_LIMIT_PER_HOUR = 0
 DEFAULT_MEMORY_RATE_LIMIT_PER_HOUR = 0
+DEFAULT_INTERACTIVE_TRAVEL_RATE_LIMIT_PER_DAY = 30
 
 
 def check_rate_limit(bucket: str, user: TelegramUserContext) -> None:
@@ -114,6 +115,17 @@ def check_rate_limit(bucket: str, user: TelegramUserContext) -> None:
                 settings,
                 "generation_rate_limit_per_day",
                 DEFAULT_GENERATION_RATE_LIMIT_PER_DAY,
+            ),
+            window=timedelta(days=1),
+        )
+    elif bucket == "interactive_travel":
+        rate_limiter.check(
+            bucket,
+            user.telegram_id,
+            limit=getattr(
+                settings,
+                "interactive_travel_rate_limit_per_day",
+                DEFAULT_INTERACTIVE_TRAVEL_RATE_LIMIT_PER_DAY,
             ),
             window=timedelta(days=1),
         )
@@ -168,6 +180,18 @@ def _require_interactive_travel_pilot(user: TelegramUser) -> None:
             "code": "INTERACTIVE_TRAVEL_NOT_AVAILABLE",
             "message": "Путешествия пока недоступны для этого пользователя.",
         },
+    )
+
+
+def _require_diagnostic_user(user: TelegramUser) -> None:
+    settings = get_settings()
+    if _is_diagnostic_user(user.telegram_id) or (
+        getattr(settings, "allow_dev_tma_auth", False) and user.telegram_id == 0
+    ):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"code": "DEBUG_FORBIDDEN", "message": "Недостаточно прав."},
     )
 
 
@@ -566,7 +590,7 @@ def interactive_travel_start(
     user: TelegramUser,
 ) -> InteractiveTravelResponse:
     _require_interactive_travel_pilot(user)
-    check_rate_limit("generation", user)
+    check_rate_limit("interactive_travel", user)
     payload = _without_untrusted_debug(payload)
     prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel/interactive/start"})
     try:
@@ -602,7 +626,7 @@ def interactive_travel_illustrate(
     user: TelegramUser,
 ) -> InteractiveTravelIllustrationResponse:
     _require_interactive_travel_pilot(user)
-    check_rate_limit("generation", user)
+    check_rate_limit("interactive_travel", user)
     prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel/interactive/illustrate"})
     try:
         return illustrate_interactive_travel_part(
@@ -638,7 +662,7 @@ def interactive_travel_animate(
     user: TelegramUser,
 ) -> InteractiveTravelAnimationResponse:
     _require_interactive_travel_pilot(user)
-    check_rate_limit("generation", user)
+    check_rate_limit("interactive_travel", user)
     prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel/interactive/animate"})
     try:
         return animate_interactive_travel_part(
@@ -671,7 +695,7 @@ def interactive_travel_continue(
     user: TelegramUser,
 ) -> InteractiveTravelResponse:
     _require_interactive_travel_pilot(user)
-    check_rate_limit("generation", user)
+    check_rate_limit("interactive_travel", user)
     payload = _without_untrusted_debug(payload)
     prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel/interactive/continue"})
     try:
@@ -697,3 +721,15 @@ def interactive_travel_continue(
         ) from exc
     finally:
         reset_prompt_log_context(prompt_log_token)
+
+
+@router.post("/travel/interactive/{travel_id}/debug/reset")
+def interactive_travel_debug_reset(
+    travel_id: str,
+    user: TelegramUser,
+) -> dict[str, bool]:
+    _require_interactive_travel_pilot(user)
+    _require_diagnostic_user(user)
+    reset_interactive_travel_generation(travel_id)
+    rate_limiter.clear("interactive_travel", user.telegram_id)
+    return {"reset": True}

@@ -5,6 +5,7 @@ from io import BytesIO
 from types import SimpleNamespace
 
 import httpx
+import pytest
 from PIL import Image
 
 from app.schemas import GenerateTravelRequest, TravelStory
@@ -80,6 +81,49 @@ def sample_png_bytes() -> bytes:
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def test_interactive_travel_video_returns_url_and_writes_mp4(monkeypatch, tmp_path) -> None:
+    travel_id = "interactive-travel-video-test"
+    output_dir = tmp_path / travel_id
+    output_dir.mkdir(parents=True)
+    (output_dir / "interactive-travel-part-01-video-source.png").write_bytes(sample_png_bytes())
+    monkeypatch.setattr(travel_service, "generated_dir_for", lambda _travel_id: output_dir)
+    monkeypatch.setattr(
+        travel_service,
+        "generate_background_story_video_bytes",
+        lambda _source, **_kwargs: b"video-bytes",
+    )
+
+    video_url = travel_service.generate_interactive_travel_part_video(
+        travel_id=travel_id,
+        part_number=1,
+    )
+
+    assert video_url.startswith(
+        f"/static/generated/{travel_id}/interactive-travel-part-01.mp4?v="
+    )
+    assert (output_dir / "interactive-travel-part-01.mp4").read_bytes() == b"video-bytes"
+
+
+def test_interactive_travel_reset_deletes_assets_and_tombstones_id(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    travel_id = "interactive-travel-reset-test"
+    output_dir = tmp_path / travel_id
+    output_dir.mkdir(parents=True)
+    (output_dir / "interactive-travel-part-01.png").write_bytes(sample_png_bytes())
+    monkeypatch.setattr(travel_service, "generated_dir_for", lambda _travel_id: output_dir)
+
+    travel_service.reset_interactive_travel_generation(travel_id)
+
+    assert not output_dir.exists()
+    with pytest.raises(RuntimeError, match="INTERACTIVE_TRAVEL_GENERATION_CANCELLED"):
+        travel_service.generate_interactive_travel_part_video(
+            travel_id=travel_id,
+            part_number=1,
+        )
 
 
 def adventure_template(template_id: str) -> dict[str, object]:

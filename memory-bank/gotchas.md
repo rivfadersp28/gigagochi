@@ -450,3 +450,6 @@
   cacheable. `preload="auto"` on the travel screen starts too late, while the generic `/figma/*`
   `no-store` header otherwise discards the warm download. Keep the scene at full viewport size;
   a fixed `402px` cap leaves side gutters in wider Telegram WebViews.
+- Interactive travel needs 9–18 text/image/video calls for a complete 3–6-part route. Never charge
+  them to the pet-generation `3/day` bucket. The debug reset must invalidate the travel ID before
+  deleting its directory; deleting files alone lets an already-running provider call write them back.

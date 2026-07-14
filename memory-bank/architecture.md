@@ -489,7 +489,12 @@
 ## Interactive Travel Pilot
 
 - `/pet/[id]/travel` is the production travel flow: simple curated destination choices, character reaction, compact one-sentence portions, user action, generated result, and a later substory after a visible 2–8 hour story-time gap.
-- The backend owns story validation plus illustration/video generation; the frontend persists presentation progress locally and renders generated vertical media inside a 402px-wide mobile viewport.
+- The backend owns story validation plus illustration/video generation; the frontend persists
+  presentation progress locally and renders video-only backgrounds across the full Telegram
+  viewport. Generated PNGs are intermediate video sources, not visible background fallbacks.
+- Interactive travel uses its own daily rate-limit bucket. A diagnostic reset tombstones the
+  current travel ID, deletes its generated directory and clears that diagnostic user's travel
+  bucket so late image/video completions cannot restore stale assets.
 - Access is canaried on both UI and API through `INTERACTIVE_TRAVEL_PILOT_TELEGRAM_IDS`; the initial production allowlist contains only Telegram ID `62943754`.
 - Destination suggestions are sampled from a small server-side vocabulary without an LLM call.
 

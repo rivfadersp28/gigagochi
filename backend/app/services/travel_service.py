@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 import re
+import shutil
 import time
 import uuid
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from urllib.parse import urlparse
 
@@ -57,6 +59,8 @@ INTERACTIVE_TRAVEL_BACKGROUND_SIZE = (402, 874)
 INTERACTIVE_TRAVEL_VIDEO_SOURCE_SIZE = (720, 1280)
 INTERACTIVE_TRAVEL_VIDEO_ASPECT_RATIO = "9:16"
 INTERACTIVE_TRAVEL_PROVIDER_SIZE = "1024x1536"
+_INTERACTIVE_TRAVEL_GENERATION_LOCK = Lock()
+_CANCELLED_INTERACTIVE_TRAVEL_IDS: set[str] = set()
 INTERACTIVE_TRAVEL_VERTICAL_COMPOSITION = """
 VERTICAL FORMAT — COMPOSITION ONLY:
 - Compose for a tall 2:3 provider canvas that will be center-cropped to 201:437.
@@ -73,6 +77,25 @@ TRAVEL_CHAT_MAX_ATTEMPTS = 3
 TRAVEL_CHAT_RETRY_SECONDS = (3.0, 8.0)
 TRAVEL_IMAGE_MAX_ATTEMPTS = 3
 TRAVEL_IMAGE_RETRY_SECONDS = (60.0, 90.0)
+
+
+def _validate_interactive_travel_id(travel_id: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", travel_id):
+        raise ValueError("Invalid interactive travel id")
+
+
+def _assert_interactive_travel_generation_active(travel_id: str) -> None:
+    if travel_id in _CANCELLED_INTERACTIVE_TRAVEL_IDS:
+        raise RuntimeError("INTERACTIVE_TRAVEL_GENERATION_CANCELLED")
+
+
+def reset_interactive_travel_generation(travel_id: str) -> None:
+    _validate_interactive_travel_id(travel_id)
+    with _INTERACTIVE_TRAVEL_GENERATION_LOCK:
+        _CANCELLED_INTERACTIVE_TRAVEL_IDS.add(travel_id)
+        shutil.rmtree(generated_dir_for(travel_id), ignore_errors=True)
+
+
 TRAVEL_STORY_TEMPLATE_PATH = (
     Path(__file__).resolve().parents[2] / "data" / "travel_story_templates.json"
 )
@@ -1205,8 +1228,9 @@ def generate_interactive_travel_part_image(
     title: str,
     story_text: str,
 ) -> str:
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", travel_id):
-        raise ValueError("Invalid interactive travel id")
+    _validate_interactive_travel_id(travel_id)
+    with _INTERACTIVE_TRAVEL_GENERATION_LOCK:
+        _assert_interactive_travel_generation_active(travel_id)
     if not 1 <= part_number <= 6:
         raise ValueError("Invalid interactive travel part number")
     image_story = BackgroundStoryResult(
@@ -1230,12 +1254,16 @@ def generate_interactive_travel_part_image(
     )
     image_bytes = _normalize_interactive_travel_background_image(raw_image_bytes)
     video_source_bytes = _normalize_interactive_travel_video_source(raw_image_bytes)
-    output_dir = generated_dir_for(travel_id)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / f"interactive-travel-part-{part_number:02d}.png"
-    video_source_path = output_dir / f"interactive-travel-part-{part_number:02d}-video-source.png"
-    path.write_bytes(image_bytes)
-    video_source_path.write_bytes(video_source_bytes)
+    with _INTERACTIVE_TRAVEL_GENERATION_LOCK:
+        _assert_interactive_travel_generation_active(travel_id)
+        output_dir = generated_dir_for(travel_id)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / f"interactive-travel-part-{part_number:02d}.png"
+        video_source_path = (
+            output_dir / f"interactive-travel-part-{part_number:02d}-video-source.png"
+        )
+        path.write_bytes(image_bytes)
+        video_source_path.write_bytes(video_source_bytes)
     version = int(datetime.now(UTC).timestamp())
     return f"/static/generated/{travel_id}/{path.name}?v={version}"
 
@@ -1245,8 +1273,9 @@ def generate_interactive_travel_part_video(
     travel_id: str,
     part_number: int,
 ) -> str:
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", travel_id):
-        raise ValueError("Invalid interactive travel id")
+    _validate_interactive_travel_id(travel_id)
+    with _INTERACTIVE_TRAVEL_GENERATION_LOCK:
+        _assert_interactive_travel_generation_active(travel_id)
     if not 1 <= part_number <= 6:
         raise ValueError("Invalid interactive travel part number")
     output_dir = generated_dir_for(travel_id)
@@ -1262,9 +1291,13 @@ def generate_interactive_travel_part_video(
         source_bytes,
         aspect_ratio=INTERACTIVE_TRAVEL_VIDEO_ASPECT_RATIO,
     )
-    path = output_dir / f"interactive-travel-part-{part_number:02d}.mp4"
-    path.write_bytes(video_bytes)
+    with _INTERACTIVE_TRAVEL_GENERATION_LOCK:
+        _assert_interactive_travel_generation_active(travel_id)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / f"interactive-travel-part-{part_number:02d}.mp4"
+        path.write_bytes(video_bytes)
     version = int(datetime.now(UTC).timestamp())
+    return f"/static/generated/{travel_id}/{path.name}?v={version}"
 
 
 def _normalize_travel_card_image(image_bytes: bytes) -> bytes:
