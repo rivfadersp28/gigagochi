@@ -66,7 +66,7 @@ def _start_payload() -> dict:
     return {
         "overallTitle": "Часы облачного города",
         "introReaction": {
-            "text": "Облачный город — вот это высота!",
+            "text": "Сейчас подготовлюсь и отправлюсь в облачный город!",
             "tone": "enthusiastic",
         },
         "arcPlan": {
@@ -245,6 +245,9 @@ def test_start_creates_one_pending_story_block(monkeypatch) -> None:
     assert len(completions.calls) == 1
     call = completions.calls[0]
     assert '"в облачный город с часовыми башнями"' in call["messages"][1]["content"]
+    assert "сейчас подготовится и отправится именно в выбранное DESTINATION" in call[
+        "messages"
+    ][1]["content"]
     part_properties = call["response_format"]["json_schema"]["schema"]["properties"]["part"][
         "properties"
     ]

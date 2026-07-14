@@ -94,6 +94,14 @@ function illustrationKey(travelId: string, partNumber: number) {
   return `${travelId}:${partNumber}`;
 }
 
+function fallbackIntroReaction(destination: string | undefined) {
+  const place = destination?.trim() || "в путешествие";
+  const hasDirectionPreposition = /^(?:в|во|на|к|ко|за|под)\s/iu.test(place);
+  return hasDirectionPreposition
+    ? `Сейчас подготовлюсь и отправлюсь ${place}!`
+    : `Сейчас подготовлюсь и отправлюсь в путь — ${place}!`;
+}
+
 function partByNumber(parts: InteractiveTravelPart[], partNumber: number) {
   return parts.find((part) => part.partNumber === partNumber) ?? null;
 }
@@ -441,7 +449,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
 
   const introText =
     session?.travel.introReaction?.text ??
-    `Вот это маршрут! Отправляюсь в ${session?.travel.destination ?? "путешествие"}.`;
+    fallbackIntroReaction(session?.travel.destination);
   const introPortions = splitInteractiveTravelText(introText);
   const presentationPortionIndex = session?.presentation.portionIndex ?? 0;
   const introCharacterTravelId =
@@ -995,7 +1003,11 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           />
         ) : null}
 
-        {isStartingTravel ? <PetThinkingIndicator /> : null}
+        {isStartingTravel ? (
+          <div className={styles.travelThinkingIndicator}>
+            <PetThinkingIndicator />
+          </div>
+        ) : null}
 
         {isLoading ? (
           <div className={styles.centerLoader}>
