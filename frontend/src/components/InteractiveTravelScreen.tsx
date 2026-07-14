@@ -99,16 +99,12 @@ function partByNumber(parts: InteractiveTravelPart[], partNumber: number) {
 }
 
 function restoredBackgroundVideo(session: LocalInteractiveTravel | null) {
-  if (!session || session.presentation.phase === "introReaction") {
+  if (
+    !session ||
+    session.presentation.phase === "introReaction" ||
+    session.presentation.phase === "departureWait"
+  ) {
     return null;
-  }
-  if (session.presentation.phase === "departureWait") {
-    return (
-      [...session.travel.parts]
-        .filter((part) => part.partNumber < session.presentation.partNumber)
-        .sort((left, right) => right.partNumber - left.partNumber)[0]
-        ?.backgroundVideoUrl ?? null
-    );
   }
   return (
     partByNumber(session.travel.parts, session.presentation.partNumber)?.backgroundVideoUrl ??
@@ -799,6 +795,9 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       return;
     }
     const nextPart = currentPendingPart(session.travel);
+    if (nextPart) {
+      setVisibleBackgroundVideoUrl(null);
+    }
     updatePresentation({
       phase: nextPart ? "departureWait" : "completed",
       partNumber: nextPart?.partNumber ?? activePart.partNumber,

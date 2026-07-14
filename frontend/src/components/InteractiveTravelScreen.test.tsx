@@ -258,6 +258,25 @@ describe("InteractiveTravelScreen", () => {
     expect(cssRule("background")).toContain("object-fit: cover");
   });
 
+  it("shows the entry placeholder instead of the previous scene while continuing", async () => {
+    const firstPart = {
+      ...pendingPart(1),
+      backgroundVideoUrl: "/story-1.mp4",
+    };
+    const secondPart = pendingPart(2);
+    mocks.readLocalInteractiveTravel.mockReturnValue(
+      restoredSession(travel([firstPart, secondPart]), "departureWait", 2),
+    );
+
+    render(<InteractiveTravelScreen petId="pet-1" />);
+
+    await waitFor(() =>
+      expect(document.querySelector('video[src^="/figma/travel-entry-bg.mp4"]')).not.toBeNull(),
+    );
+    expect(document.querySelector('video[src="/story-1.mp4"]')).toBeNull();
+    expect(await screen.findByText(/Листик продолжает путешествие/u)).toBeInTheDocument();
+  });
+
   it("resets server generations and local travel from the debug menu", async () => {
     mocks.canUseDebugMenu = true;
     mocks.readLocalInteractiveTravel.mockReturnValue(
