@@ -10,13 +10,13 @@ const petTapParticleConfig = {
   particleCount: 16,
   spread: 92,
   startVelocity: 16,
-  elementSize: 42,
+  elementSize: 28,
   lifetime: 170,
   colors: [
-    "#ff8a94",
-    "#ff5a68",
-    "#e5394f",
-    "#b71c35",
+    "rgba(255, 255, 255, 0.78)",
+    "rgba(129, 212, 250, 0.58)",
+    "rgba(41, 182, 246, 0.48)",
+    "rgba(255, 241, 118, 0.5)",
   ],
   physics: {
     gravity: -0.04,
@@ -39,7 +39,7 @@ type PetTapParticleBurstProps = {
 export function PetTapParticleBurst({ id, x, y, isExiting, onComplete }: PetTapParticleBurstProps) {
   const targetRef = useRef<HTMLSpanElement>(null);
   const particleContainerRef = useRef<HTMLElement | null>(null);
-  const { reward } = useReward(targetRef as RefObject<HTMLElement>, "hearts", petTapParticleConfig);
+  const { reward } = useReward(targetRef as RefObject<HTMLElement>, "bubbles", petTapParticleConfig);
   const rewardRef = useRef(reward);
 
   useEffect(() => {
