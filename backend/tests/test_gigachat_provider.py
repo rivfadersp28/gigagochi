@@ -18,6 +18,7 @@ from app.llm import (
 from app.llm.providers.gigachat import (
     GigaChatProvider,
     GigaChatProviderError,
+    GigaChatResponseError,
     GigaChatUnsupportedFeatureError,
 )
 
@@ -531,6 +532,83 @@ def test_structured_output_reply_schema_wraps_plain_text_fallback() -> None:
         "faceHint": None,
         "moodHint": None,
     }
+
+
+def test_structured_output_repairs_missing_object_closer() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/token":
+            return httpx.Response(200, json={"tok": "token"})
+        return httpx.Response(200, json=_completion('{"value":"готово"'))
+
+    response = _provider(handler).complete(
+        LLMRequest(
+            messages=[{"role": "user", "content": "Ответь JSON"}],
+            structured_output=StructuredOutputSchema(
+                name="structured_value",
+                schema={
+                    "type": "object",
+                    "properties": {"value": {"type": "string"}},
+                    "required": ["value"],
+                },
+            ),
+        )
+    )
+
+    assert json.loads(response.content or "") == {"value": "готово"}
+
+
+def test_structured_output_repairs_nested_array_and_object_closers() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/token":
+            return httpx.Response(200, json={"tok": "token"})
+        return httpx.Response(200, json=_completion('{"items":[{"value":"готово"}'))
+
+    response = _provider(handler).complete(
+        LLMRequest(
+            messages=[{"role": "user", "content": "Ответь JSON"}],
+            structured_output=StructuredOutputSchema(
+                name="structured_items",
+                schema={
+                    "type": "object",
+                    "properties": {"items": {"type": "array"}},
+                    "required": ["items"],
+                },
+            ),
+        )
+    )
+
+    assert json.loads(response.content or "") == {"items": [{"value": "готово"}]}
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"value":"незакрытая строка}',
+        '{"items":[1}',
+        '{"first":1 "second":2',
+    ],
+    ids=["unterminated-string", "mismatched-closer", "missing-comma"],
+)
+def test_structured_output_does_not_repair_other_invalid_json(content: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/token":
+            return httpx.Response(200, json={"tok": "token"})
+        return httpx.Response(200, json=_completion(content))
+
+    with pytest.raises(GigaChatResponseError, match="non-JSON content"):
+        _provider(handler).complete(
+            LLMRequest(
+                messages=[{"role": "user", "content": "Ответь JSON"}],
+                structured_output=StructuredOutputSchema(
+                    name="structured_value",
+                    schema={
+                        "type": "object",
+                        "properties": {"value": {"type": "string"}},
+                        "required": ["value"],
+                    },
+                ),
+            )
+        )
 
 
 def test_translates_tool_history_to_legacy_messages() -> None:

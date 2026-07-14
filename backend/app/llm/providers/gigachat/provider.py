@@ -313,6 +313,45 @@ def _structured_output_fallback_content(
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
+def _repair_truncated_json_closers(content: str) -> str | None:
+    normalized = content.strip()
+    if not normalized:
+        return None
+
+    expected_closers: list[str] = []
+    in_string = False
+    escaped = False
+    for character in normalized:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+
+        if character == '"':
+            in_string = True
+        elif character == "{":
+            expected_closers.append("}")
+        elif character == "[":
+            expected_closers.append("]")
+        elif character in "}]":
+            if not expected_closers or expected_closers.pop() != character:
+                return None
+
+    if in_string or not expected_closers:
+        return None
+
+    repaired = normalized + "".join(reversed(expected_closers))
+    try:
+        json.loads(repaired)
+    except json.JSONDecodeError:
+        return None
+    return repaired
+
+
 def _api_urls(base_url: str) -> tuple[tuple[str, str], str]:
     normalized = _required_text(base_url, field_name="base_url").rstrip("/")
     parsed = urlsplit(normalized)
@@ -956,15 +995,19 @@ class GigaChatProvider:
             try:
                 json.loads(content)
             except json.JSONDecodeError as exc:
-                fallback_content = _structured_output_fallback_content(
-                    request.structured_output.schema,
-                    content,
-                )
-                if fallback_content is None:
-                    raise GigaChatResponseError(
-                        "GigaChat returned non-JSON content for a structured-output request"
-                    ) from exc
-                content = fallback_content
+                repaired_content = _repair_truncated_json_closers(content)
+                if repaired_content is not None:
+                    content = repaired_content
+                else:
+                    fallback_content = _structured_output_fallback_content(
+                        request.structured_output.schema,
+                        content,
+                    )
+                    if fallback_content is None:
+                        raise GigaChatResponseError(
+                            "GigaChat returned non-JSON content for a structured-output request"
+                        ) from exc
+                    content = fallback_content
 
         usage_value = body.get("usage")
         usage = None

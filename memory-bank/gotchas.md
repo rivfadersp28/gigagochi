@@ -467,12 +467,17 @@
 - Interactive travel needs 9–21 text/image/video calls for a complete 3–7-part route. Never charge
   them to the pet-generation `3/day` bucket. The debug reset must invalidate the travel ID before
   deleting its directory; deleting files alone lets an already-running provider call write them back.
-- GigaChat structured output is prompt-only and may emit `completed` or omit `storyStatus` before
-  the planned travel finale even when the intermediate schema permits only `continue`. Do not let
-  that flag shorten the arc: before `arcPlan.targetPartCount`, backend state plus a validated
-  `nextPart` is authoritative.
-- Do not require a GigaChat continuity anchor to match both visible fields literally: valid Russian
-  synonyms and inflections can exhaust both repair attempts. Keep the prompt strict, but merge the
-  departure route with the first next-part event when no meaningful shared stem is found.
-- Named-term validation must treat every sentence boundary as a possible capitalized common word,
-  not only the start of the whole string; otherwise ordinary pronouns such as `Она` are rejected.
+- Do not restore interactive-travel root matching, named-term checks, event counters, continuity
+  anchors or validator-specific retries. They made semantic heuristics drive generation and caused
+  valid Russian output to fail. Do not restore a parallel `step1...stepN` plot either: the model can
+  make it disagree with the scene produced after a user's choice. New travels also have no fixed
+  `partCount`: a preselected length made the model add an epilogue after an already completed goal.
+  Let the selected action end the story on parts 3–5 and force closure only on part 6. If quality
+  regresses, first adjust the short goal or immediate context, then verify with complete synthetic stories.
+- GigaChat 3.5 may return arrays as nested objects/strings and may omit final JSON closers. Travel
+  choices therefore use three scalar schema fields. The provider repairs only missing trailing
+  brackets when a strict stack scan plus `json.loads` proves that no other syntax is damaged.
+- Keep the exact opening goal in `arcPlan` and build the visible final achieved/failed sentence from
+  it. In a final response, `outcome=positive` means the goal was achieved and `negative` means it
+  definitively failed; the model's concrete result must say the same thing. Semantic validation is
+  intentionally not used to reject or regenerate it.

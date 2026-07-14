@@ -91,6 +91,9 @@
   while leaving the profile default on `$GIGACHAT_MODEL`, so chat-facing and
   post-reply lightweight tasks can use a fast model without moving longer text
   tasks off the default.
+- GigaChat 3.5 structured output uses a prompt JSON contract. The adapter may append only missing
+  trailing `}`/`]` when the rest of the response is valid JSON; it does not repair strings, commas
+  or mismatched brackets.
 - Production mounts the same `llm_runtime.json` and optional custom-CA directory
   into backend and bot. `/health` validates the active profile, configured
   providers, local dependencies, credentials presence and CA-file presence;
@@ -503,19 +506,19 @@
 ## Interactive Travel Pilot
 
 - `/pet/[id]/travel` is the production travel flow: simple curated destination choices, character reaction, compact one-sentence portions, user action, generated result, and a causally linked next part. Immediate continuation uses a zero-hour gap; real longer travel may use 1–8 hours.
-- The backend owns story validation plus illustration/video generation; the frontend persists
+- The backend owns compact response mapping plus illustration/video generation; the frontend persists
   presentation progress locally and renders video-only backgrounds across the full Telegram
   viewport. Generated PNGs are intermediate video sources, not visible background fallbacks.
-- Interactive travel chooses a `targetPartCount` from 3–7 at start and stores exactly that many
-  causal `partBeats` plus goal keywords in `arcPlan`. Before the target part the backend owns the
-  continuation decision and ignores premature or malformed model completion flags as long as a
-  valid next part exists. A final result must expose achieved/failed goal status and an exact
-  visible evidence sentence tied to the opening goal; defeating the last obstacle alone is not a
-  valid ending.
-- Every continued part carries a `continuityAnchor`. The model is asked to repeat a concrete place
-  or participant across the departure hook and the next opening. If lexical validation cannot see
-  that link, the backend merges the route and first event into one visible hook instead of failing
-  the entire generation. Known opaque words are normalized to plain Russian at the output boundary.
+- A new interactive travel stores only one short goal in `arcPlan`; there is no fixed `partCount`
+  or parallel `step1...stepN` plot. Parts 1–2 continue, parts 3–5 may finish when the selected action
+  itself completes the goal, and part 6 must finish. Legacy active states still honor saved
+  `partCount`/`targetPartCount` values through 7. Each continuation sees the goal, current situation
+  and immediately previous consequence. The backend appends a deterministic achieved/failed
+  sentence from the exact opening goal to the model's visible final action.
+- The active story contract intentionally has no lexical, named-term, event-count, goal-evidence or
+  continuity validators and no semantic repair prompts. The model returns a result, one bridge and
+  the next unresolved situation; three choices are separate scalar fields. Backend normalization is
+  limited to API bounds, at most two visible sentences, choice-shape cleanup and one technical JSON retry.
 - Interactive travel uses its own daily rate-limit bucket. A diagnostic reset tombstones the
   current travel ID, deletes its generated directory and clears that diagnostic user's travel
   bucket so late image/video completions cannot restore stale assets.
