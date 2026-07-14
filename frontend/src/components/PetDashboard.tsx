@@ -521,7 +521,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
       sweep(() => {
         if (!cancelled) {
-          setLoadedSceneMedia(nextSceneMedia);
+          flushSync(() => {
+            setLoadedSceneMedia(nextSceneMedia);
+          });
         }
       });
     }).catch(() => {
