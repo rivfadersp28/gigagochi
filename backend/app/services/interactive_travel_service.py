@@ -27,6 +27,7 @@ from app.services.interactive_travel_media_service import (
 )
 
 STORY_PART_COUNT = 4
+INTERACTIVE_TRAVEL_CHOICE_LIMIT = 2  # Temporary paid-media test mode; restore to 4 later.
 GENERATOR_VERSION = "task-bank-location-v4"
 TASK_BANK_PATH = (
     Path(__file__).resolve().parents[2] / "data" / "задачи_путешественника_без_расчётов.md"
@@ -49,6 +50,36 @@ DESTINATION_FALLBACKS = (
     "на кладбище",
     "в башню",
 )
+
+SUCCESS_REACTIONS = (
+    "Я кое-чему научился... Кажется, я стал немного умнее.",
+    "Вот это сработало! Запомню этот приём.",
+    "Ура, мы справились! Я многому научился.",
+    "Хороший выбор. Теперь я знаю чуть больше.",
+)
+FAILURE_REACTIONS = (
+    "Ой... В следующий раз буду осторожнее.",
+    "Кажется, это была не лучшая идея.",
+    "Не получилось... Но теперь я знаю, как не надо.",
+    "Вот же незадача. Попробуем иначе в следующий раз.",
+)
+MOOD_CONTEXT_WORDS = (
+    "друг", "довер", "обид", "груст", "страш", "стыд", "спор", "ссор",
+    "одинок", "настроен", "чувств", "разочар", "вежлив", "поддерж",
+)
+
+
+def _negative_travel_stat(task: InteractiveTravelTaskPlan) -> str:
+    context = " ".join(
+        (
+            task.situation,
+            task.question,
+            task.explanation or "",
+            *task.choiceOutcomes,
+        )
+    ).casefold()
+    return "happiness" if any(word in context for word in MOOD_CONTEXT_WORDS) else "energy"
+
 
 class InteractiveTravelGenerationError(RuntimeError):
     pass
@@ -165,6 +196,41 @@ def _select_story_tasks() -> list[dict[str, Any]]:
     return list(random.sample(list(_task_bank()), STORY_PART_COUNT))
 
 
+def _test_mode_choices(task: dict[str, Any]) -> tuple[list[str], list[str]]:
+    correct_index = task["choices"].index(task["answer"])
+    wrong_indices = [index for index in range(4) if index != correct_index]
+    selected_indices = [correct_index, random.choice(wrong_indices)]
+    random.shuffle(selected_indices)
+    return (
+        [task["choices"][index] for index in selected_indices],
+        [task["outcomes"][index] for index in selected_indices],
+    )
+
+
+def _task_plan(task: dict[str, Any], lead_in: str) -> InteractiveTravelTaskPlan:
+    return InteractiveTravelTaskPlan(
+        taskId=task["id"], leadIn=lead_in, situation=task["situation"],
+        question=task["question"], choices=list(task["choices"]),
+        correctChoice=task["answer"], explanation=task["explanation"],
+        choiceOutcomes=list(task["outcomes"]),
+    )
+
+
+def generate_scheduled_interactive_episode_plan() -> dict[str, Any]:
+    destination = random.choice(DESTINATION_FALLBACKS)
+    task = random.choice(_task_bank())
+    choices, outcomes = _test_mode_choices(task)
+    return {
+        "destination": destination,
+        "title": task["title"],
+        "storyText": f"{_location_lead_ins(destination)[0]} {task['situation']}",
+        "question": task["question"],
+        "choices": choices,
+        "outcomes": outcomes,
+        "correctChoice": task["answer"],
+    }
+
+
 def _location_lead_ins(destination: str) -> list[str]:
     location = _compact_text(destination, 140, "выбранное место")
     ordinals = ("первая", "вторая", "третья", "четвёртая")
@@ -278,14 +344,23 @@ def _deterministic_result(
         if is_correct
         else f"Этот вариант не подходит; правильный ответ — {task.correctChoice}."
     )
+    affected_stat = _negative_travel_stat(task)
+    stat_label = "настроение" if affected_stat == "happiness" else "здоровье"
     return InteractiveTravelResult(
         text=result_text,
         adviceAssessment="helpful" if is_correct else "harmful",
-        reaction=f"Я выбираю: {selected_choice}.",
+        reaction=random.choice(SUCCESS_REACTIONS if is_correct else FAILURE_REACTIONS),
         reactionTone="determined" if is_correct else "worried",
         consequence=consequence,
         outcomeValence="positive" if is_correct else "negative",
-        statImpacts=[],
+        experienceGained=random.randint(18, 30) if is_correct else 0,
+        statImpacts=[] if is_correct else [
+            {
+                "stat": affected_stat,
+                "amount": -random.randint(8, 15),
+                "reason": f"Неудачный выбор уменьшил {stat_label}.",
+            }
+        ],
     )
 
 
@@ -352,16 +427,7 @@ def start_interactive_travel(
     plan = InteractiveTravelPlan(
         version=GENERATOR_VERSION,
         tasks=[
-            InteractiveTravelTaskPlan(
-                taskId=task["id"],
-                leadIn=lead_in,
-                situation=task["situation"],
-                question=task["question"],
-                choices=list(task["choices"]),
-                correctChoice=task["answer"],
-                explanation=task["explanation"],
-                choiceOutcomes=list(task["outcomes"]),
-            )
+            _task_plan(task, lead_in)
             for task, lead_in in zip(story_tasks, lead_ins, strict=True)
         ],
     )

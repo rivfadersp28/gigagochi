@@ -17,7 +17,7 @@ from threading import BoundedSemaphore, Event, Lock, Thread
 from typing import Any
 
 BotCommandWorker = Callable[[int, dict[str, Any]], None]
-SUPPORTED_BOT_COMMANDS = frozenset({"/app", "/full_story", "/help", "/push", "/start", "/story"})
+SUPPORTED_BOT_COMMANDS = frozenset({"/app", "/full_story", "/help", "/push", "/start"})
 SQLITE_BUSY_TIMEOUT_MS = 5_000
 MAX_PREPARED_RESULT_BYTES = 512 * 1024
 BOT_COMMAND_LOCK_BUCKETS = 256
@@ -91,8 +91,28 @@ def normalize_bot_command_update(update: object) -> DurableBotCommand | None:
     if not isinstance(update, dict):
         return None
     update_id = update.get("update_id")
+    if type(update_id) is not int or update_id < 0:
+        return None
+    callback = update.get("callback_query")
+    if isinstance(callback, dict):
+        message = callback.get("message")
+        chat = message.get("chat") if isinstance(message, dict) else None
+        data = callback.get("data")
+        callback_id = callback.get("id")
+        if (
+            isinstance(chat, dict) and type(chat.get("id")) is int
+            and isinstance(data, str) and data.startswith("it:")
+            and isinstance(callback_id, str)
+        ):
+            chat_id = chat["id"]
+            normalized = {"update_id": update_id, "callback_query": {
+                "id": callback_id[:256], "data": data[:64],
+                "message": {"chat": {"id": chat_id}},
+            }}
+            return DurableBotCommand(update_id, chat_id, "/interactive_story_callback", normalized)
+        return None
     message = update.get("message")
-    if type(update_id) is not int or update_id < 0 or not isinstance(message, dict):
+    if not isinstance(message, dict):
         return None
     chat = message.get("chat")
     text = message.get("text")

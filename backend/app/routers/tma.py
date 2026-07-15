@@ -148,7 +148,12 @@ from app.services.request_admission_service import (
     public_request_admission,
 )
 from app.services.telegram_auth_service import TelegramUserContext
-from app.services.telegram_push_service import register_push_snapshot, unregister_push_snapshot
+from app.services.telegram_push_service import (
+    TelegramPushError,
+    automatic_interactive_story,
+    register_push_snapshot,
+    unregister_push_snapshot,
+)
 from app.services.telegram_push_store import (
     TelegramPushRecordTooLargeError,
     TelegramPushStoreCapacityError,
@@ -1302,6 +1307,23 @@ def interactive_travel_suggestions(
 def interactive_travel_demo(user: TelegramUser) -> InteractiveTravelDemoResponse:
     _require_diagnostic_user(user)
     return read_interactive_travel_demo()
+
+
+@router.get("/travel/automatic/{token}")
+def automatic_travel_story(
+    token: Annotated[
+        str,
+        PathParameter(min_length=16, max_length=16, pattern=r"^[a-f0-9]{16}$"),
+    ],
+    user: TelegramUser,
+) -> dict[str, Any]:
+    try:
+        return automatic_interactive_story(telegram_id=user.telegram_id, token=token)
+    except TelegramPushError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": exc.code, "message": exc.message},
+        ) from None
 
 
 @router.post(

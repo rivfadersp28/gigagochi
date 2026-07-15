@@ -322,6 +322,7 @@ class InteractiveTravelResult(BaseModel):
     ]
     consequence: str = Field(min_length=1, max_length=280)
     outcomeValence: Literal["positive", "negative"]
+    experienceGained: int = Field(default=0, ge=0, le=50)
     statImpacts: list[InteractiveTravelStatImpact] = Field(default_factory=list, max_length=2)
 
 

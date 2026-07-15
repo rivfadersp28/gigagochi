@@ -190,6 +190,7 @@ export type InteractiveTravelResult = {
   reactionTone: InteractiveTravelReactionTone;
   consequence: string;
   outcomeValence: "positive" | "negative";
+  experienceGained?: number;
   statImpacts: InteractiveTravelStatImpact[];
 };
 

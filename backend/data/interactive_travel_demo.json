@@ -95,6 +95,7 @@
           "reactionTone": "determined",
           "consequence": "Выбран правильный ответ.",
           "outcomeValence": "positive",
+          "experienceGained": 23,
           "statImpacts": []
         }
       },
@@ -125,6 +126,7 @@
           "reactionTone": "determined",
           "consequence": "Выбран правильный ответ.",
           "outcomeValence": "positive",
+          "experienceGained": 19,
           "statImpacts": []
         }
       },
@@ -155,6 +157,7 @@
           "reactionTone": "determined",
           "consequence": "Выбран правильный ответ.",
           "outcomeValence": "positive",
+          "experienceGained": 27,
           "statImpacts": []
         }
       },
@@ -185,6 +188,7 @@
           "reactionTone": "determined",
           "consequence": "Выбран правильный ответ.",
           "outcomeValence": "positive",
+          "experienceGained": 21,
           "statImpacts": []
         }
       }

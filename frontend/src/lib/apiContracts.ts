@@ -583,6 +583,12 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
               INTERACTIVE_TRAVEL_VALENCES,
               `${resultPath}.outcomeValence`,
             ),
+            experienceGained: integerInRange(
+              resultValue.experienceGained ?? 0,
+              `${resultPath}.experienceGained`,
+              0,
+              50,
+            ),
             statImpacts,
           };
         })()

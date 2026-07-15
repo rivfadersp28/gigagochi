@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import signal
 import uuid
 from collections.abc import Callable
@@ -36,6 +37,7 @@ from app.services.story_delivery_format import (
 )
 from app.services.telegram_client import (
     TelegramAPIError,
+    answer_callback_query,
     mini_app_keyboard,
     redact_telegram_token,
     send_message,
@@ -720,6 +722,23 @@ def handle_update(
     submit_full_story: Callable[[int, dict[str, Any]], bool | None] | None = None,
     submit_push: Callable[[int, dict[str, Any]], bool | None] | None = None,
 ) -> None:
+    callback = update.get("callback_query")
+    if isinstance(callback, dict):
+        data = str(callback.get("data") or "")
+        match = re.fullmatch(r"it:([a-f0-9]{16}):([01])", data)
+        message = callback.get("message") or {}
+        chat_id = (message.get("chat") or {}).get("id")
+        if match and isinstance(chat_id, int):
+            from app.services.telegram_push_service import interactive_story_outcome_for_callback
+            video, caption = interactive_story_outcome_for_callback(
+                telegram_id=chat_id, token=match.group(1), choice_index=int(match.group(2))
+            )
+            answer_callback_query(client, str(callback.get("id") or ""))
+            webapp_url = get_settings().webapp_url
+            if not webapp_url:
+                return
+            send_video(client, chat_id, video, caption, mini_app_keyboard(webapp_url))
+        return
     message = update.get("message") or {}
     chat = message.get("chat") or {}
     sender = message.get("from") or {}
@@ -744,19 +763,6 @@ def handle_update(
             chat_id,
             "Открой Mini App, создай AI-питомца и общайся с ним внутри Telegram.",
             keyboard,
-        )
-        return
-
-    if command == "/story":
-        _handle_generation_command(
-            client,
-            chat_id,
-            keyboard,
-            settings,
-            quota_user_id=quota_user_id,
-            quota_request_key=quota_request_key,
-            submit=submit_story,
-            send_response=_send_story_response,
         )
         return
 
@@ -947,7 +953,7 @@ def _dispatch_pending_commands(
     should_stop: Callable[[], bool] | None = None,
 ) -> int:
     submitted_count = 0
-    async_commands = {"/full_story", "/push", "/story"}
+    async_commands = {"/full_story", "/push"}
     for command in inbox.list_ready(limit=ready_limit):
         if should_stop is not None and should_stop():
             break
@@ -1110,7 +1116,11 @@ def run_bot() -> None:
                     )
                     response = client.get(
                         telegram_api_url("getUpdates", settings.bot_token),
-                        params={"timeout": 30, "offset": offset, "allowed_updates": ["message"]},
+                        params={
+                            "timeout": 30,
+                            "offset": offset,
+                            "allowed_updates": ["message", "callback_query"],
+                        },
                         timeout=40,
                     )
                     response.raise_for_status()

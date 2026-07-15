@@ -66,6 +66,10 @@ import {
 import type { InteractiveTravelPart, InteractiveTravelState } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 import { APP_BACKGROUND_COLOR } from "@/lib/theme";
+import {
+  playInteractiveTravelSuccessSound,
+  primeInteractiveTravelSuccessSound,
+} from "@/lib/travelSuccessAudio";
 import { useTelegramCapabilities } from "@/lib/useTelegramCapabilities";
 
 import { ErrorNotice } from "./ErrorNotice";
@@ -132,13 +136,14 @@ function AnimatedTravelParagraph({
   startIndex: number;
   text: string;
 }) {
-  let characterIndex = startIndex;
+  const tokens = text.split(/(\s+)/u).filter(Boolean);
+  const tokenOffsets = tokens.map((_, index) =>
+    tokens.slice(0, index).reduce((total, token) => total + Array.from(token).length, 0));
   return (
     <p aria-label={text}>
-      {text.split(/(\s+)/u).filter(Boolean).map((token, tokenIndex) => {
+      {tokens.map((token, tokenIndex) => {
         const isWhitespace = /^\s+$/u.test(token);
         if (isWhitespace) {
-          characterIndex += Array.from(token).length;
           return (
             <span
               key={`${animationKey}:token:${tokenIndex}`}
@@ -155,10 +160,10 @@ function AnimatedTravelParagraph({
             aria-hidden="true"
             className={styles.storyAnimatedWord}
           >
-            {Array.from(token).map((character) => {
+            {Array.from(token).map((character, characterOffset) => {
+              const characterIndex = startIndex + tokenOffsets[tokenIndex] + characterOffset;
               const delay = characterIndex * STORY_CHARACTER_RISE_STAGGER_MS;
               const key = `${animationKey}:character:${characterIndex}`;
-              characterIndex += 1;
               return (
                 <span
                   key={key}
@@ -1347,12 +1352,20 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     if (!pendingPart) {
       return;
     }
+    primeInteractiveTravelSuccessSound();
     if (demoTravel) {
       submittingRef.current = true;
       setIsSubmitting(true);
       setError(null);
       try {
-        setSession(continueDemoSession(session, demoTravel));
+        const next = continueDemoSession(session, demoTravel);
+        setSession(next);
+        const resolvedPart = next.travel.parts.find(
+          (part) => part.partNumber === pendingPart.partNumber,
+        );
+        if (resolvedPart?.result?.outcomeValence === "positive") {
+          void playInteractiveTravelSuccessSound();
+        }
         hapticNotification("success");
       } catch (caught) {
         setError(presentError(caught, "Не получилось продолжить демо-историю."));
@@ -1412,6 +1425,12 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         if (!persistSession(next)) {
           hapticNotification("error");
           return;
+        }
+        const resolvedPart = next.travel.parts.find(
+          (part) => part.partNumber === latestPendingPart.partNumber,
+        );
+        if (resolvedPart?.result?.outcomeValence === "positive") {
+          void playInteractiveTravelSuccessSound();
         }
         const nextPendingPart = currentPendingPart(next.travel);
         if (nextPendingPart) {
@@ -1663,6 +1682,12 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const storyParagraphs = activePart ? storyAndChallengeParagraphs(activePart) : [];
   const resultParagraphs = activePart ? resolvedResultParagraphs(activePart) : [];
   const visibleStoryParagraphs = phase === "result" ? resultParagraphs : storyParagraphs;
+  const resultImpact = phase === "result" ? activePart?.result?.statImpacts[0] : undefined;
+  const resultImpactLabel = resultImpact?.stat === "happiness"
+    ? "Настроение"
+    : resultImpact?.stat === "energy"
+      ? "Здоровье"
+      : "Голод";
   const storyRevealKey = isStoryLayout && activePart
     ? `${session?.travel.travelId ?? "travel"}:${activePart.partNumber}:${
         phase === "result" ? "result" : "question"
@@ -1690,10 +1715,10 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     }, revealDuration);
     return () => window.clearTimeout(timeoutId);
   }, [storyRevealCharacterCount, storyRevealKey]);
-  let storyCharacterOffset = 0;
   const animatedStoryParagraphs = visibleStoryParagraphs.map((paragraph, index) => {
-    const startIndex = storyCharacterOffset;
-    storyCharacterOffset += Array.from(paragraph).length;
+    const startIndex = visibleStoryParagraphs
+      .slice(0, index)
+      .reduce((total, item) => total + Array.from(item).length, 0);
     return (
       <AnimatedTravelParagraph
         key={`${storyRevealKey ?? "story"}:${index}`}
@@ -1960,6 +1985,22 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
               aria-label={phase === "result" ? "Результат выбора" : "История и вопрос"}
             >
               {animatedStoryParagraphs}
+              {phase === "result" && activePart.result ? (
+                <div className={styles.storyResultMeta}>
+                  <p className={styles.storyCharacterReaction}>
+                    {activePart.result.reaction}
+                  </p>
+                  {activePart.result.outcomeValence === "positive" ? (
+                    <p className={`${styles.storyOutcomeDelta} ${styles.storyOutcomePositive}`}>
+                      +{activePart.result.experienceGained ?? 0} Exp
+                    </p>
+                  ) : resultImpact ? (
+                    <p className={`${styles.storyOutcomeDelta} ${styles.storyOutcomeNegative}`}>
+                      −{Math.abs(resultImpact.amount)} {resultImpactLabel}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
 
             {isStoryQuestionPhase && isStoryTextRevealComplete ? (

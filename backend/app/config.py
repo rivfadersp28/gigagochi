@@ -128,6 +128,9 @@ class Settings(BaseSettings):
         max_length=4,
     )
     background_story_window_minutes: int = Field(default=120, ge=5, le=180)
+    scheduled_short_story_enabled: bool = False
+    scheduled_short_story_interval_seconds: int = Field(default=600, ge=60, le=86_400)
+    scheduled_short_story_telegram_ids: set[int] = Field(default_factory=set)
     scheduled_background_story_paid_media_daily_cap: int = Field(
         default=0,
         ge=0,

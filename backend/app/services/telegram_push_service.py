@@ -49,6 +49,11 @@ from app.services.generated_media_cleanup import (
     generated_media_cleanup_is_enabled,
 )
 from app.services.image_service import generated_dir_for
+from app.services.interactive_travel_media_service import (
+    generate_interactive_travel_part_image,
+    generate_interactive_travel_part_video,
+)
+from app.services.interactive_travel_service import generate_scheduled_interactive_episode_plan
 from app.services.lite_overlay import merge_lite_overlay_patch, normalize_lite_overlay_patch
 from app.services.pet_reply_engine.lite_generator import generate_push_pet_message
 from app.services.rate_limit_service import (
@@ -89,6 +94,7 @@ PUSH_STORY_MAX_AGE = timedelta(hours=12)
 MAX_STORY_NOVELTY_HISTORY = 400
 MAX_FULL_STORY_HISTORY = 8
 MAX_BOT_GENERATION_RECEIPTS = 16
+MAX_AUTOMATIC_INTERACTIVE_STORIES = 12
 MAX_PERSISTED_ERROR_CHARS = 2_000
 SNAPSHOT_EPOCH_REVISION_FLOOR = 1_000_000_000_000
 STORY_STAT_MAX_ITEMS = 2
@@ -115,6 +121,7 @@ SCHEDULER_LEADERSHIP_RETRY_SECONDS = 5.0
 SCHEDULER_LOCK_NAMES = {
     "dailyPush": "daily-push",
     "backgroundStory": "background-story",
+    "scheduledShortStory": "scheduled-short-story",
     "generatedMediaCleanup": "generated-media-cleanup",
 }
 _background_story_media_gc_lock = Lock()
@@ -2175,6 +2182,7 @@ def _background_story_result_from_payload(payload: Any) -> BackgroundStoryResult
         causal_origin=str(payload.get("causalOrigin") or ""),
         event_scale=str(payload.get("eventScale") or ""),
         setting_class=str(payload.get("settingClass") or ""),
+        location=str(payload.get("location") or ""),
         opposition_class=str(payload.get("oppositionClass") or ""),
         resolution_mode=str(payload.get("resolutionMode") or ""),
         resolution_family=str(payload.get("resolutionFamily") or ""),
@@ -2208,6 +2216,7 @@ def _background_story_result_payload(result: Any) -> dict[str, Any]:
         "causalOrigin": getattr(result, "causal_origin", ""),
         "eventScale": getattr(result, "event_scale", ""),
         "settingClass": getattr(result, "setting_class", ""),
+        "location": getattr(result, "location", ""),
         "oppositionClass": getattr(result, "opposition_class", ""),
         "resolutionMode": getattr(result, "resolution_mode", ""),
         "resolutionFamily": getattr(result, "resolution_family", ""),
@@ -2267,6 +2276,7 @@ def generate_story_for_telegram_user(
                 "causalOrigin": getattr(result, "causal_origin", ""),
                 "eventScale": getattr(result, "event_scale", ""),
                 "settingClass": getattr(result, "setting_class", ""),
+                "location": getattr(result, "location", ""),
                 "oppositionClass": getattr(result, "opposition_class", ""),
                 "resolutionMode": getattr(result, "resolution_mode", ""),
                 "resolutionFamily": getattr(result, "resolution_family", ""),
@@ -2311,6 +2321,7 @@ def generate_story_for_telegram_user(
         "causalOrigin": getattr(result, "causal_origin", ""),
         "eventScale": getattr(result, "event_scale", ""),
         "settingClass": getattr(result, "setting_class", ""),
+        "location": getattr(result, "location", ""),
         "oppositionClass": getattr(result, "opposition_class", ""),
         "resolutionMode": getattr(result, "resolution_mode", ""),
         "resolutionFamily": getattr(result, "resolution_family", ""),
@@ -3881,6 +3892,262 @@ def send_due_pushes() -> list[dict[str, Any]]:
     return _run_due_pushes().results
 
 
+def _scheduled_short_story_interval(settings: Any) -> timedelta:
+    seconds = max(60, int(getattr(settings, "scheduled_short_story_interval_seconds", 600)))
+    return timedelta(seconds=seconds)
+
+
+def _due_scheduled_short_story_records(now: datetime) -> list[dict[str, Any]]:
+    settings = get_settings()
+    target_ids = set(getattr(settings, "scheduled_short_story_telegram_ids", set()) or set())
+    if not target_ids:
+        return []
+    interval = _scheduled_short_story_interval(settings)
+    records = _read_store().get("records", {})
+    due: list[dict[str, Any]] = []
+    for telegram_id in sorted(target_ids):
+        record = records.get(str(telegram_id))
+        if not isinstance(record, dict):
+            continue
+        if not _has_snapshot(record) or record.get("chatReachable") is not True:
+            continue
+        if _record_is_dead(record, now):
+            continue
+        latest = _latest_time(
+            record.get("lastScheduledShortStoryAt"),
+            record.get("lastScheduledShortStoryAttemptAt"),
+        )
+        if latest is None or now - latest >= interval:
+            due.append(record)
+    return due
+
+
+def _mark_scheduled_short_story_attempt(record: dict[str, Any], *, now: datetime) -> dict[str, Any]:
+    telegram_id = _telegram_id_from_record(record)
+    attempt_at = _iso(now)
+
+    def update(current: dict[str, Any] | None) -> dict[str, Any]:
+        source = current.copy() if isinstance(current, dict) else record.copy()
+        return {
+            **source,
+            "lastScheduledShortStoryAttemptAt": attempt_at,
+            "lastScheduledShortStoryError": None,
+        }
+
+    return _update_record(telegram_id, update)
+
+
+def _send_scheduled_short_story(record: dict[str, Any], *, now: datetime) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.bot_token:
+        raise TelegramPushError("BOT_TOKEN_MISSING", "BOT_TOKEN не настроен.")
+    if not settings.webapp_url:
+        raise TelegramPushError("WEBAPP_URL_MISSING", "WEBAPP_URL не настроен.")
+    record = _mark_scheduled_short_story_attempt(record, now=now)
+    telegram_id = _telegram_id_from_record(record)
+    payload = _build_push_payload(record, reason="Интерактивная история.", include_debug=False)
+    plan = generate_scheduled_interactive_episode_plan()
+    travel_id = f"interactive-travel-auto-{uuid.uuid4().hex}"
+    generate_interactive_travel_part_image(
+        pet=payload.pet, travel_id=travel_id, destination=plan["destination"],
+        part_number=1, title=plan["title"], story_text=plan["storyText"],
+    )
+    generate_interactive_travel_part_video(travel_id=travel_id, part_number=1)
+    outcome_files: list[str] = []
+    for index, outcome in enumerate(plan["outcomes"]):
+        variant = f"outcome-{index}"
+        generate_interactive_travel_part_image(
+            pet=payload.pet, travel_id=travel_id, destination=plan["destination"],
+            part_number=1, title=f"{plan['title']}: исход", story_text=outcome,
+            variant=variant,
+        )
+        generate_interactive_travel_part_video(
+            travel_id=travel_id, part_number=1, variant=variant
+        )
+        outcome_files.append(f"interactive-travel-part-01-{variant}.mp4")
+    video_bytes = (generated_dir_for(travel_id) / "interactive-travel-part-01.mp4").read_bytes()
+    chat_id = record.get("chatId")
+    if not isinstance(chat_id, int):
+        raise TelegramPushError(
+            "STORY_CHAT_ID_MISSING",
+            "chat_id для короткой истории не найден.",
+        )
+    callback_token = uuid.uuid4().hex[:16]
+    story_url = f"{settings.webapp_url.rstrip('/')}/auto-story/{callback_token}"
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "Открыть приложение",
+                    "web_app": {"url": story_url},
+                }
+            ]
+        ]
+    }
+    caption = f"{plan['title']}\n\n{plan['storyText']}\n\n{plan['question']}"
+    try:
+        with httpx.Client() as client:
+            send_video(client, chat_id, video_bytes, caption, keyboard)
+    except TelegramAPIError as exc:
+        raise _telegram_push_error(exc) from exc
+    except httpx.HTTPError as exc:
+        raise TelegramPushError(
+            "TELEGRAM_SEND_FAILED",
+            f"Telegram scheduled story send failed: {exc.__class__.__name__}",
+        ) from exc
+
+    delivered_at = _iso()
+
+    def save_delivery(current: dict[str, Any] | None) -> dict[str, Any]:
+        source = current.copy() if isinstance(current, dict) else record.copy()
+        episode = {
+            "token": callback_token, "travelId": travel_id,
+            "title": plan["title"], "storyText": plan["storyText"],
+            "question": plan["question"], "destination": plan["destination"],
+            "choices": plan["choices"], "outcomes": plan["outcomes"],
+            "situationVideoUrl": (
+                f"/static/generated/{travel_id}/interactive-travel-part-01.mp4"
+            ),
+            "outcomeVideoUrls": [
+                f"/static/generated/{travel_id}/{name}" for name in outcome_files
+            ],
+            "outcomeFiles": outcome_files, "createdAt": delivered_at,
+        }
+        history = source.get("automaticInteractiveStories")
+        stories = (
+            [item for item in history if isinstance(item, dict)]
+            if isinstance(history, list)
+            else []
+        )
+        stories = [item for item in stories if item.get("token") != callback_token]
+        stories.append(episode)
+        return {
+            **source,
+            "lastScheduledShortStoryAt": delivered_at,
+            "lastScheduledShortStoryError": None,
+            "pendingInteractiveStory": episode,
+            "automaticInteractiveStories": stories[-MAX_AUTOMATIC_INTERACTIVE_STORIES:],
+        }
+
+    _update_record(telegram_id, save_delivery)
+    return {
+        "sent": True,
+        "telegramId": telegram_id,
+        "generatedAt": delivered_at,
+        "deliveredAt": delivered_at,
+        "story": plan,
+    }
+
+
+def _run_due_scheduled_short_stories() -> _SchedulerBatchResult:
+    settings = get_settings()
+    if not getattr(settings, "scheduled_short_story_enabled", False):
+        return _SchedulerBatchResult(
+            results=[], attempted=0, failed=0, health_failed=0, last_error=None
+        )
+    now = _now()
+    records = _due_scheduled_short_story_records(now)
+    results: list[dict[str, Any]] = []
+    errors: list[str] = []
+    health_failures = 0
+    for record in records:
+        try:
+            results.append(_send_scheduled_short_story(record, now=now))
+        except Exception as exc:
+            errors.append(_scheduler_delivery_error(exc))
+            health_failures += int(_scheduler_delivery_affects_health(exc))
+            telegram_id = _telegram_id_from_record(record)
+            fallback_record = record.copy()
+            error_message = _safe_error_message(exc)
+
+            def save_error(
+                current: dict[str, Any] | None,
+                fallback: dict[str, Any] = fallback_record,
+                message: str = error_message,
+            ) -> dict[str, Any]:
+                source = current.copy() if isinstance(current, dict) else fallback.copy()
+                return {
+                    **source,
+                    "lastScheduledShortStoryError": message,
+                }
+
+            _update_record(telegram_id, save_error)
+    return _SchedulerBatchResult(
+        results=results,
+        attempted=len(records),
+        failed=len(errors),
+        health_failed=health_failures,
+        last_error=errors[-1] if errors else None,
+    )
+
+
+def send_due_scheduled_short_stories() -> list[dict[str, Any]]:
+    return _run_due_scheduled_short_stories().results
+
+
+def _automatic_interactive_episode(record: dict[str, Any], token: str) -> dict[str, Any] | None:
+    history = record.get("automaticInteractiveStories")
+    if isinstance(history, list):
+        for episode in reversed(history):
+            if isinstance(episode, dict) and episode.get("token") == token:
+                return episode
+    episode = record.get("pendingInteractiveStory")
+    if isinstance(episode, dict) and episode.get("token") == token:
+        return episode
+    return None
+
+
+def interactive_story_outcome_for_callback(
+    *, telegram_id: int, token: str, choice_index: int
+) -> tuple[bytes, str]:
+    record = _record_by_telegram_id(telegram_id)
+    episode = _automatic_interactive_episode(record, token)
+    if episode is None:
+        raise TelegramPushError("INTERACTIVE_STORY_EXPIRED", "Эта история уже недоступна.")
+    outcomes = episode.get("outcomes")
+    files = episode.get("outcomeFiles")
+    if (
+        not isinstance(outcomes, list) or not isinstance(files, list)
+        or choice_index not in range(len(outcomes)) or choice_index not in range(len(files))
+    ):
+        raise TelegramPushError("INTERACTIVE_STORY_CHOICE_INVALID", "Неизвестный вариант.")
+    travel_id = str(episode.get("travelId") or "")
+    video_path = generated_dir_for(travel_id) / str(files[choice_index])
+    video_bytes = video_path.read_bytes()
+    return video_bytes, str(outcomes[choice_index])
+
+
+def automatic_interactive_story(*, telegram_id: int, token: str) -> dict[str, Any]:
+    record = _record_by_telegram_id(telegram_id)
+    episode = _automatic_interactive_episode(record, token)
+    if episode is None:
+        raise TelegramPushError("INTERACTIVE_STORY_EXPIRED", "История не найдена.")
+    travel_id = str(episode.get("travelId") or "")
+    choices = episode.get("choices")
+    outcomes = episode.get("outcomes")
+    if not isinstance(choices, list) or len(choices) != 2:
+        raise TelegramPushError("INTERACTIVE_STORY_INVALID", "История повреждена.")
+    if not isinstance(outcomes, list) or len(outcomes) != 2:
+        raise TelegramPushError("INTERACTIVE_STORY_INVALID", "Исходы истории повреждены.")
+    situation_url = episode.get("situationVideoUrl") or (
+        f"/static/generated/{travel_id}/interactive-travel-part-01.mp4"
+    )
+    outcome_urls = episode.get("outcomeVideoUrls")
+    if not isinstance(outcome_urls, list) or len(outcome_urls) != 2:
+        files = episode.get("outcomeFiles") or []
+        outcome_urls = [f"/static/generated/{travel_id}/{name}" for name in files]
+    return {
+        "token": token,
+        "title": str(episode.get("title") or "История путешествия"),
+        "storyText": str(episode.get("storyText") or "Выбери, как поступить питомцу."),
+        "question": str(episode.get("question") or "Как поступить?"),
+        "choices": [str(value) for value in choices],
+        "outcomes": [str(value) for value in outcomes],
+        "situationVideoUrl": str(situation_url),
+        "outcomeVideoUrls": [str(value) for value in outcome_urls],
+    }
+
+
 def _scheduled_background_story_order_key(
     record: dict[str, Any],
     *,
@@ -4005,6 +4272,16 @@ async def _background_story_loop() -> None:
     )
 
 
+async def _scheduled_short_story_loop() -> None:
+    settings = get_settings()
+    cadence = int(_scheduled_short_story_interval(settings).total_seconds())
+    await _scheduler_leadership_loop(
+        "scheduledShortStory",
+        _run_due_scheduled_short_stories,
+        min(60, cadence),
+    )
+
+
 async def _generated_media_cleanup_loop() -> None:
     await _scheduler_leadership_loop(
         "generatedMediaCleanup",
@@ -4028,6 +4305,19 @@ _scheduler_runtime: dict[str, dict[str, Any]] = {
         "degradedUntil": None,
     },
     "backgroundStory": {
+        "running": False,
+        "role": "stopped",
+        "leaderSince": None,
+        "lastLeadershipAttemptAt": None,
+        "consecutiveFailures": 0,
+        "lastRunAt": None,
+        "lastAttempted": 0,
+        "lastSucceeded": 0,
+        "lastFailed": 0,
+        "lastError": None,
+        "degradedUntil": None,
+    },
+    "scheduledShortStory": {
         "running": False,
         "role": "stopped",
         "leaderSince": None,
@@ -4255,6 +4545,18 @@ def start_background_story_scheduler() -> asyncio.Task[None] | None:
     if not settings.background_story_enabled or not settings.bot_token or not settings.webapp_url:
         return None
     return _start_scheduler_task("backgroundStory", _background_story_loop)
+
+
+def start_scheduled_short_story_scheduler() -> asyncio.Task[None] | None:
+    settings = get_settings()
+    if (
+        not getattr(settings, "scheduled_short_story_enabled", False)
+        or not getattr(settings, "scheduled_short_story_telegram_ids", set())
+        or not settings.bot_token
+        or not settings.webapp_url
+    ):
+        return None
+    return _start_scheduler_task("scheduledShortStory", _scheduled_short_story_loop)
 
 
 def start_generated_media_cleanup_scheduler() -> asyncio.Task[None] | None:

@@ -1564,6 +1564,138 @@ def test_background_story_paid_media_budget_config_is_fail_closed() -> None:
         Settings(_env_file=None, scheduled_background_story_paid_media_daily_cap=-1)
 
 
+def test_scheduled_short_story_config_defaults_fail_closed() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.scheduled_short_story_enabled is False
+    assert settings.scheduled_short_story_interval_seconds == 600
+    assert settings.scheduled_short_story_telegram_ids == set()
+
+
+def test_due_scheduled_short_stories_only_selects_allowlisted_reachable_user(
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
+    records = {
+        str(TEST_TELEGRAM_ID): {
+            "telegramId": TEST_TELEGRAM_ID,
+            "petId": "pet-sergey",
+            "pet": {},
+            "chatReachable": True,
+        },
+        "42": {
+            "telegramId": 42,
+            "petId": "pet-other",
+            "pet": {},
+            "chatReachable": True,
+        },
+    }
+    settings = SimpleNamespace(
+        scheduled_short_story_telegram_ids={TEST_TELEGRAM_ID},
+        scheduled_short_story_interval_seconds=600,
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_read_store",
+        lambda: {"version": 1, "records": records},
+    )
+    monkeypatch.setattr(telegram_push_service, "_record_is_dead", lambda *_args: False)
+
+    assert [
+        record["telegramId"]
+        for record in telegram_push_service._due_scheduled_short_story_records(now)
+    ] == [TEST_TELEGRAM_ID]
+
+    records[str(TEST_TELEGRAM_ID)]["lastScheduledShortStoryAt"] = (
+        now - timedelta(minutes=9, seconds=59)
+    ).isoformat()
+    assert telegram_push_service._due_scheduled_short_story_records(now) == []
+
+
+def test_scheduled_interactive_story_generates_three_videos(monkeypatch, tmp_path) -> None:
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
+    record = {
+        "telegramId": TEST_TELEGRAM_ID,
+        "chatId": TEST_TELEGRAM_ID,
+        "petId": "pet-sergey",
+        "pet": {"description": "Лис", "stage": "teen", "mood": "idle",
+                "stats": {"hunger": 80, "happiness": 80, "energy": 80}},
+        "chatReachable": True,
+    }
+    settings = SimpleNamespace(
+        bot_token="token",
+        webapp_url="https://example.com/app",
+        scheduled_short_story_interval_seconds=600,
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+
+    def update(_telegram_id, callback):
+        next_record = callback(record)
+        record.clear()
+        record.update(next_record)
+        return deepcopy(record)
+
+    monkeypatch.setattr(telegram_push_service, "_update_record", update)
+    plan = {"destination": "в лес", "title": "Путь", "storyText": "Ситуация.",
+            "question": "Что делать?", "choices": ["А", "Б"],
+            "outcomes": ["Исход А", "Исход Б"], "correctChoice": "А"}
+    monkeypatch.setattr(telegram_push_service, "generate_scheduled_interactive_episode_plan",
+                        lambda: plan)
+    monkeypatch.setattr(telegram_push_service, "generated_dir_for", lambda _travel_id: tmp_path)
+    monkeypatch.setattr(telegram_push_service, "generate_interactive_travel_part_image",
+                        lambda **_kwargs: "/image.png")
+    def video(**kwargs):
+        variant = kwargs.get("variant", "situation")
+        suffix = "" if variant == "situation" else f"-{variant}"
+        path = tmp_path / f"interactive-travel-part-01{suffix}.mp4"
+        path.write_bytes(variant.encode())
+        return f"/{path.name}"
+    monkeypatch.setattr(telegram_push_service, "generate_interactive_travel_part_video", video)
+    sent: list[tuple[int, bytes, str, dict]] = []
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_video",
+        lambda _client, chat_id, video, caption, keyboard: sent.append(
+            (chat_id, video, caption, keyboard)
+        ),
+    )
+
+    result = telegram_push_service._send_scheduled_short_story(record, now=now)
+
+    assert result["sent"] is True
+    assert sent[0][:2] == (TEST_TELEGRAM_ID, b"situation")
+    button = sent[0][3]["inline_keyboard"][0][0]
+    assert button["text"] == "Открыть приложение"
+    assert button["web_app"]["url"].startswith("https://example.com/app/auto-story/")
+    assert record["pendingInteractiveStory"]["outcomeFiles"] == [
+        "interactive-travel-part-01-outcome-0.mp4",
+        "interactive-travel-part-01-outcome-1.mp4",
+    ]
+    assert record["automaticInteractiveStories"] == [record["pendingInteractiveStory"]]
+    assert record["lastScheduledShortStoryAttemptAt"]
+    assert record["lastScheduledShortStoryAt"]
+
+
+def test_interactive_story_callback_returns_selected_video(monkeypatch, tmp_path) -> None:
+    record = {
+        "telegramId": TEST_TELEGRAM_ID,
+        "chatId": TEST_TELEGRAM_ID,
+        "petId": "pet-sergey",
+        "pet": {},
+        "chatReachable": True,
+        "pendingInteractiveStory": {"token": "abc", "travelId": "interactive-travel-auto-x",
+            "outcomes": ["Исход А", "Исход Б"], "outcomeFiles": ["a.mp4", "b.mp4"]},
+    }
+    (tmp_path / "b.mp4").write_bytes(b"outcome-b")
+    monkeypatch.setattr(telegram_push_service, "_record_by_telegram_id", lambda _id: record)
+    monkeypatch.setattr(telegram_push_service, "generated_dir_for", lambda _id: tmp_path)
+    video, caption = telegram_push_service.interactive_story_outcome_for_callback(
+        telegram_id=TEST_TELEGRAM_ID, token="abc", choice_index=1)
+    assert video == b"outcome-b"
+    assert caption == "Исход Б"
+
+
 def test_background_story_paid_media_budget_uses_durable_global_counter(
     monkeypatch,
     tmp_path,

@@ -52,6 +52,19 @@ def mini_app_keyboard(webapp_url: str) -> dict[str, Any]:
     }
 
 
+def answer_callback_query(client: httpx.Client, callback_query_id: str) -> None:
+    settings = get_settings()
+    if not settings.bot_token:
+        raise RuntimeError("BOT_TOKEN is not configured")
+    response = client.post(
+        telegram_api_url("answerCallbackQuery", settings.bot_token),
+        json={"callback_query_id": callback_query_id},
+        timeout=30,
+    )
+    if not response.is_success:
+        raise TelegramAPIError("answerCallbackQuery", response)
+
+
 def send_message(
     client: httpx.Client,
     chat_id: int,

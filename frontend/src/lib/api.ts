@@ -83,6 +83,45 @@ export type TelegramCapabilities = {
   interactiveTravel: boolean;
 };
 
+export type AutomaticInteractiveStory = {
+  token: string;
+  title: string;
+  storyText: string;
+  question: string;
+  choices: [string, string];
+  outcomes: [string, string];
+  situationVideoUrl: string;
+  outcomeVideoUrls: [string, string];
+};
+
+function parseAutomaticInteractiveStory(payload: unknown): AutomaticInteractiveStory {
+  if (!isRecord(payload)) {
+    throw new ApiContractError("automatic story: expected an object");
+  }
+  const text = (value: unknown, field: string) => {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new ApiContractError(`automatic story: invalid ${field}`);
+    }
+    return value.trim();
+  };
+  const pair = (value: unknown, field: string): [string, string] => {
+    if (!Array.isArray(value) || value.length !== 2) {
+      throw new ApiContractError(`automatic story: invalid ${field}`);
+    }
+    return [text(value[0], `${field}[0]`), text(value[1], `${field}[1]`)];
+  };
+  return {
+    token: text(payload.token, "token"),
+    title: text(payload.title, "title"),
+    storyText: text(payload.storyText, "storyText"),
+    question: text(payload.question, "question"),
+    choices: pair(payload.choices, "choices"),
+    outcomes: pair(payload.outcomes, "outcomes"),
+    situationVideoUrl: publicImageUrl(text(payload.situationVideoUrl, "situationVideoUrl")),
+    outcomeVideoUrls: pair(payload.outcomeVideoUrls, "outcomeVideoUrls").map(publicImageUrl) as [string, string],
+  };
+}
+
 function parseTelegramCapabilities(payload: unknown): TelegramCapabilities {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new ApiContractError("capabilities: expected an object");
@@ -387,6 +426,14 @@ export async function fetchTelegramCapabilities(): Promise<TelegramCapabilities>
       timeoutMs: 15_000,
     },
     parseTelegramCapabilities,
+  );
+}
+
+export function getAutomaticInteractiveStory(token: string): Promise<AutomaticInteractiveStory> {
+  return request(
+    `/api/travel/automatic/${encodeURIComponent(token)}`,
+    { method: "GET", headers: tmaAuthHeaders(), timeoutMs: 15_000 },
+    parseAutomaticInteractiveStory,
   );
 }
 

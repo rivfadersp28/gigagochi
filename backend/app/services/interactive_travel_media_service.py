@@ -246,14 +246,20 @@ def generate_interactive_travel_part_image(
     part_number: int,
     title: str,
     story_text: str,
+    variant: str = "situation",
 ) -> str:
     _validate_interactive_travel_id(travel_id)
     if not 1 <= part_number <= 7:
         raise ValueError("Invalid interactive travel part number")
     output_dir = generated_dir_for(travel_id)
-    path = output_dir / f"interactive-travel-part-{part_number:02d}.png"
-    video_source_path = output_dir / f"interactive-travel-part-{part_number:02d}-video-source.png"
-    media_lock_key = f"image:{travel_id}:{part_number}"
+    if not re.fullmatch(r"situation|outcome-[01]", variant):
+        raise ValueError("Invalid interactive travel media variant")
+    suffix = "" if variant == "situation" else f"-{variant}"
+    path = output_dir / f"interactive-travel-part-{part_number:02d}{suffix}.png"
+    video_source_path = output_dir / (
+        f"interactive-travel-part-{part_number:02d}{suffix}-video-source.png"
+    )
+    media_lock_key = f"image:{travel_id}:{part_number}:{variant}"
     lifecycle_lock_key = travel_id
     with _interactive_travel_file_lock(output_dir, "media", media_lock_key):
         with _interactive_travel_file_lock(output_dir, "lifecycle", lifecycle_lock_key):
@@ -295,15 +301,19 @@ def generate_interactive_travel_part_video(
     *,
     travel_id: str,
     part_number: int,
+    variant: str = "situation",
 ) -> str:
     _validate_interactive_travel_id(travel_id)
     if not 1 <= part_number <= 7:
         raise ValueError("Invalid interactive travel part number")
     output_dir = generated_dir_for(travel_id)
-    path = output_dir / f"interactive-travel-part-{part_number:02d}.mp4"
-    source_path = output_dir / f"interactive-travel-part-{part_number:02d}-video-source.png"
-    poster_path = output_dir / f"interactive-travel-part-{part_number:02d}.png"
-    media_lock_key = f"video:{travel_id}:{part_number}"
+    if not re.fullmatch(r"situation|outcome-[01]", variant):
+        raise ValueError("Invalid interactive travel media variant")
+    suffix = "" if variant == "situation" else f"-{variant}"
+    path = output_dir / f"interactive-travel-part-{part_number:02d}{suffix}.mp4"
+    source_path = output_dir / f"interactive-travel-part-{part_number:02d}{suffix}-video-source.png"
+    poster_path = output_dir / f"interactive-travel-part-{part_number:02d}{suffix}.png"
+    media_lock_key = f"video:{travel_id}:{part_number}:{variant}"
     lifecycle_lock_key = travel_id
     with _interactive_travel_file_lock(output_dir, "media", media_lock_key):
         with _interactive_travel_file_lock(output_dir, "lifecycle", lifecycle_lock_key):

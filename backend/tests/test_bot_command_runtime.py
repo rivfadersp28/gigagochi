@@ -30,7 +30,7 @@ def _durable_command(update_id: int, *, chat_id: int = 1001) -> DurableBotComman
             "message": {
                 "chat": {"id": chat_id},
                 "from": {"id": chat_id, "first_name": "Test"},
-                "text": "/story",
+                "text": "/push",
             },
         }
     )
@@ -125,7 +125,7 @@ def test_pending_command_survives_offset_advance_and_process_restart(tmp_path: P
         "message": {
             "chat": {"id": 1001},
             "from": {"id": 1001, "first_name": "Test"},
-            "text": "/story",
+            "text": "/push",
         },
     }
     command = normalize_bot_command_update(update)
@@ -260,20 +260,20 @@ def test_normalizer_keeps_only_bounded_supported_command_fields() -> None:
                     "first_name": "x" * 1_000,
                     "ignored": "secret",
                 },
-                "text": "/story@GigagochiBot ignored arguments",
+                    "text": "/push@GigagochiBot ignored arguments",
                 "photo": ["large-payload"],
             },
         }
     )
 
     assert command is not None
-    assert command.command == "/story"
+    assert command.command == "/push"
     assert command.update == {
         "update_id": 7,
         "message": {
             "chat": {"id": 9},
             "from": {"id": 8, "first_name": "x" * 256},
-            "text": "/story",
+            "text": "/push",
         },
     }
     assert (
@@ -289,7 +289,7 @@ def test_normalizer_keeps_only_bounded_supported_command_fields() -> None:
         is None
     )
     assert (
-        normalize_bot_command_update({"update_id": 10, "message": {"chat": {}, "text": "/story"}})
+        normalize_bot_command_update({"update_id": 10, "message": {"chat": {}, "text": "/push"}})
         is None
     )
 

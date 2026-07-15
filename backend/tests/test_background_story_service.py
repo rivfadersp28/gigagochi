@@ -38,6 +38,18 @@ def test_story_direction_uses_all_modes_before_repeating() -> None:
     )
 
 
+def test_story_direction_selects_concrete_location_for_setting() -> None:
+    direction = background_story_service.select_background_story_direction(
+        [],
+        rng=random.Random(17),
+    )
+
+    assert direction["location"] in background_story_service.STORY_LOCATIONS_BY_SETTING[
+        direction["settingClass"]
+    ]
+    assert direction["location"] in background_story_service._story_direction_block(direction)
+
+
 def test_story_direction_block_forbids_fallback_to_trap_pattern() -> None:
     direction = {
         "plotMode": "mystery",

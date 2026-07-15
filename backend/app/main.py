@@ -24,6 +24,7 @@ from app.services.telegram_push_service import (
     start_background_story_scheduler,
     start_daily_push_scheduler,
     start_generated_media_cleanup_scheduler,
+    start_scheduled_short_story_scheduler,
 )
 
 settings = get_settings()
@@ -35,17 +36,21 @@ async def lifespan(app: FastAPI):
     tma.start_generation_jobs()
     push_task = start_daily_push_scheduler()
     story_task = start_background_story_scheduler()
+    short_story_task = start_scheduled_short_story_scheduler()
     cleanup_task = start_generated_media_cleanup_scheduler()
     app.state.scheduler_tasks = {
         "dailyPush": push_task,
         "backgroundStory": story_task,
+        "scheduledShortStory": short_story_task,
         "generatedMediaCleanup": cleanup_task,
     }
     try:
         yield
     finally:
         scheduler_tasks = [
-            task for task in (push_task, story_task, cleanup_task) if task is not None
+            task
+            for task in (push_task, story_task, short_story_task, cleanup_task)
+            if task is not None
         ]
         for task in scheduler_tasks:
             task.cancel()

@@ -238,6 +238,7 @@ STORY_DIRECTION_FIELDS = (
     "causalOrigin",
     "eventScale",
     "settingClass",
+    "location",
     "oppositionClass",
     "resolutionMode",
     "resolutionFamily",
@@ -497,6 +498,53 @@ STORY_SETTING_INSTRUCTIONS = {
     "remote_landscape": "горы, пустошь, ущелье или иная дальняя местность",
     "road_or_crossing": "дорога, переправа или место встречи путников",
     "water_or_shore": "река, озеро, болото, побережье или остров",
+}
+STORY_LOCATIONS_BY_SETTING = {
+    "wild_frontier": (
+        "ветреное плато над хвойной долиной",
+        "заросший папоротниками лесной овраг",
+        "степь с одинокими каменными столбами",
+    ),
+    "inhabited_place": (
+        "ночной рынок под бумажными фонарями",
+        "горная деревня с канатными мостами",
+        "мастерская часовщика у городской стены",
+    ),
+    "ancient_site": (
+        "затопленный двор древнего храма",
+        "руины обсерватории в красной пустыне",
+        "каменный амфитеатр, заросший мхом",
+    ),
+    "liminal_place": (
+        "станция, где поезда появляются только в тумане",
+        "сад на границе вечного заката",
+        "зеркальная поляна между двумя лесами",
+    ),
+    "castle_or_tower": (
+        "маяк-крепость на чёрных скалах",
+        "заброшенная башня над облаками",
+        "ледяной замок с тёплой оранжереей",
+    ),
+    "underground": (
+        "пещера с подземной рекой и светящимися грибами",
+        "заброшенное метро под старым городом",
+        "соляные катакомбы с гулкими залами",
+    ),
+    "remote_landscape": (
+        "ущелье среди розовых гор",
+        "вулканическая пустошь под зелёным небом",
+        "снежный перевал с замёрзшими водопадами",
+    ),
+    "road_or_crossing": (
+        "подвесная переправа над бурной рекой",
+        "караванная дорога через поющие дюны",
+        "перекрёсток у старого придорожного постоялого двора",
+    ),
+    "water_or_shore": (
+        "остров внутри туманного озера",
+        "каменистый берег во время отлива",
+        "плавучая деревня среди тростников",
+    ),
 }
 STORY_OPPOSITION_INSTRUCTIONS = {
     "creature": "самостоятельное живое существо или монстр",
@@ -807,6 +855,7 @@ class BackgroundStoryResult:
     causal_origin: str = ""
     event_scale: str = ""
     setting_class: str = ""
+    location: str = ""
     opposition_class: str = ""
     resolution_mode: str = ""
     resolution_family: str = ""
@@ -843,6 +892,7 @@ class BackgroundStoryResult:
             "causalOrigin": self.causal_origin,
             "eventScale": self.event_scale,
             "settingClass": self.setting_class,
+            "location": self.location,
             "oppositionClass": self.opposition_class,
             "resolutionMode": self.resolution_mode,
             "resolutionFamily": self.resolution_family,
@@ -1613,14 +1663,16 @@ def select_background_story_direction(
             available_valences = tuple(value for value in available_valences if value != "positive")
         if all(value <= 0 for value in current_stats.values()):
             available_valences = tuple(value for value in available_valences if value != "negative")
+    setting_class = _least_used_choice(
+        spec["settings"], history=history, field="settingClass", rng=rng
+    )
     return {
         "plotMode": plot_mode,
         "incidentClass": incident_class,
         "causalOrigin": causal_origin,
         "eventScale": event_scale,
-        "settingClass": _least_used_choice(
-            spec["settings"], history=history, field="settingClass", rng=rng
-        ),
+        "settingClass": setting_class,
+        "location": rng.choice(STORY_LOCATIONS_BY_SETTING[setting_class]),
         "oppositionClass": _least_used_choice(
             spec["oppositions"], history=history, field="oppositionClass", rng=rng
         ),
@@ -1646,6 +1698,7 @@ def story_direction_block(
     causal_origin = direction["causalOrigin"]
     event_scale = direction["eventScale"]
     setting_class = direction["settingClass"]
+    location = direction.get("location") or STORY_SETTING_INSTRUCTIONS[setting_class]
     opposition_class = direction["oppositionClass"]
     resolution_mode = direction["resolutionMode"]
     valence_target = direction["valenceTarget"]
@@ -1676,6 +1729,7 @@ def story_direction_block(
         f"{STORY_CAUSAL_ORIGIN_INSTRUCTIONS[causal_origin]}.\n"
         f"- eventScale={event_scale}: {STORY_EVENT_SCALE_INSTRUCTIONS[event_scale]}.\n"
         f"- settingClass={setting_class}: {STORY_SETTING_INSTRUCTIONS[setting_class]}.\n"
+        f"- location={location}: вся история происходит именно в этой конкретной локации.\n"
         f"- oppositionClass={opposition_class}: "
         f"{STORY_OPPOSITION_INSTRUCTIONS[opposition_class]}.\n"
         f"- resolutionMode={resolution_mode}: "
@@ -2758,6 +2812,7 @@ def generate_background_story(
         causal_origin=story_direction["causalOrigin"],
         event_scale=story_direction["eventScale"],
         setting_class=story_direction["settingClass"],
+        location=story_direction["location"],
         opposition_class=story_direction["oppositionClass"],
         resolution_mode=story_direction["resolutionMode"],
         resolution_family=story_direction["resolutionFamily"],
