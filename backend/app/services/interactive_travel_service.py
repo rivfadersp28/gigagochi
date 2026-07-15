@@ -104,8 +104,9 @@ START_SYSTEM_PROMPT = "\n".join(
 )
 
 RESULT_SYSTEM_PROMPT = (
-    "Покажи простой результат выбранного ответа в текущем фэнтезийном эпизоде. "
-    "Не добавляй новую задачу, локацию или сюжетную линию. Верни только JSON по схеме."
+    "Покажи простой результат выбранного ответа в текущем фэнтезийном эпизоде и объясни "
+    "правило обычными фразами без заголовков и шаблонов. Не добавляй новую задачу, "
+    "локацию или сюжетную линию. Верни только JSON по схеме."
 )
 
 CHOICE_SCHEMA: dict[str, Any] = {
@@ -129,8 +130,17 @@ PLAN_PART_SCHEMA: dict[str, Any] = {
                 "встречает эту задачу. Не повторяй условие и вопрос."
             ),
         },
+        "directQuestion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 180,
+            "description": (
+                "Самостоятельный прямой вопрос: ребёнок должен понять его без предыдущих "
+                "реплик. Сохрани смысл задачи и явно назови сравниваемые предметы или действия."
+            ),
+        },
     },
-    "required": ["fantasySetup"],
+    "required": ["fantasySetup", "directQuestion"],
 }
 
 
@@ -140,7 +150,7 @@ START_SCHEMA: dict[str, Any] = {
     "properties": {
         **PLAN_PART_SCHEMA["properties"],
     },
-    "required": ["fantasySetup"],
+    "required": ["fantasySetup", "directQuestion"],
 }
 
 RESULT_PROPERTIES: dict[str, Any] = {
@@ -195,8 +205,17 @@ FIXED_RESULT_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "properties": {
         "result": {"type": "string", "minLength": 1, "maxLength": 240},
+        "explanation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "description": (
+                "Одно-два простых предложения: естественно назови верное действие и объясни "
+                "его ребёнку. Без 'Правильный ответ:', 'Почему:' и других заголовков."
+            ),
+        },
     },
-    "required": ["result"],
+    "required": ["result", "explanation"],
 }
 
 NEXT_FIXED_RESULT_SCHEMA: dict[str, Any] = {
@@ -206,7 +225,7 @@ NEXT_FIXED_RESULT_SCHEMA: dict[str, Any] = {
         **FIXED_RESULT_SCHEMA["properties"],
         **PLAN_PART_SCHEMA["properties"],
     },
-    "required": ["result", "fantasySetup"],
+    "required": ["result", "explanation", "fantasySetup", "directQuestion"],
 }
 
 
@@ -568,6 +587,7 @@ def _part_from_task(
     *,
     task: dict[str, Any],
     fantasy_setup: Any,
+    direct_question: Any,
     part_number: int,
     previous_result: InteractiveTravelResult | None = None,
 ) -> InteractiveTravelPart:
@@ -593,7 +613,7 @@ def _part_from_task(
         ),
         transition=transition,
         challenge=_sentence(
-            task["question"],
+            direct_question,
             fallback="Что нужно сделать",
             limit=280,
             question=True,
@@ -844,17 +864,20 @@ def start_interactive_travel(
             f"Локация: {clean_destination}.\n"
             "Придумай одну простую фэнтезийную подводку к задаче. Подводка — одно короткое "
             "предложение от первого лица о встрече в этой локации. Не пересказывай условие, "
-            "не меняй вопрос и не объясняй ответ.\n\n"
+            "не объясняй ответ. Отдельно сформулируй прямой самостоятельный вопрос: он должен "
+            "содержать весь нужный контекст и быть понятен школьнику без предыдущих реплик. "
+            "Не меняй смысл задачи и вариантов.\n\n"
             f"{_task_prompt(story_task)}"
         ),
         client=client,
         model=model,
         timeout=timeout,
-        required_text_fields=("fantasySetup",),
+        required_text_fields=("fantasySetup", "directQuestion"),
     )
     first_part = _part_from_task(
         task=story_task,
         fantasy_setup=payload["fantasySetup"],
+        direct_question=payload["directQuestion"],
         part_number=1,
     )
     travel = InteractiveTravelState(
@@ -941,23 +964,27 @@ def continue_interactive_travel(
                 next_task = _select_story_task(used_task_ids)
                 instruction += (
                     " Затем напиши одну короткую фэнтезийную подводку к следующей задаче "
-                    "в той же локации. Не связывай её сюжетом с текущим эпизодом.\n"
+                    "в той же локации. Не связывай её сюжетом с текущим эпизодом. Отдельно "
+                    "сформулируй прямой самостоятельный вопрос, понятный школьнику без "
+                    "предыдущих реплик. Сохрани смысл задачи и вариантов.\n"
                     f"Следующая задача:\n{_task_prompt(next_task)}"
                 )
         schema = NEXT_FIXED_RESULT_SCHEMA if next_task is not None else FIXED_RESULT_SCHEMA
         label = f"interactive_travel/part_{current_part.partNumber}_result_fixed"
         schema_name = (
-            "interactive_travel_part_result_and_next_episode_v3"
+            "interactive_travel_part_result_and_next_episode_v4"
             if next_task is not None
-            else "interactive_travel_part_result_fixed_v3"
+            else "interactive_travel_part_result_fixed_v4"
         )
         result_user_content = (
             f"Локация: {travel.destination}.\n"
             f"Текущий эпизод: {current_part.storyText}\n"
             f"Выбранный ответ: {clean_advice}.\n"
             f"{answer_rule}\n{instruction}\n"
-            "Напиши максимум два коротких предложения с прямым результатом выбора. "
-            "Не придумывай новую задачу, правило, предмет или место."
+            "В result напиши максимум два коротких предложения: что произошло из-за выбора. "
+            "В explanation обычным текстом назови верное действие и просто объясни правило. "
+            "Не используй подписи 'Правильный ответ:' и 'Почему:'. Не повторяй result и не "
+            "придумывай новую задачу, правило, предмет или место."
         )
     else:
         instruction = (
@@ -1011,9 +1038,10 @@ def continue_interactive_travel(
         result.outcomeValence = "positive" if answer_is_correct else "negative"
         result.adviceAssessment = "helpful" if answer_is_correct else "harmful"
     if uses_fixed_plan:
-        explanation_text = _compact_text(
-            f"Правильный ответ: {correct_choice}. Почему: {correct_explanation}",
-            420,
+        explanation_text = _sentence(
+            payload.get("explanation"),
+            fallback=(f"Лучше выбрать {correct_choice}, потому что {correct_explanation}"),
+            limit=300,
         )
         result = result.model_copy(
             update={"text": _compact_text(f"{result.text} {explanation_text}", 700)}
@@ -1035,6 +1063,7 @@ def continue_interactive_travel(
                 _part_from_task(
                     task=next_task,
                     fantasy_setup=payload.get("fantasySetup"),
+                    direct_question=payload.get("directQuestion"),
                     part_number=next_number,
                     previous_result=result,
                 )

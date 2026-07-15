@@ -82,7 +82,10 @@ def _client(
 
 
 def _start_payload() -> dict[str, Any]:
-    return {"fantasySetup": "У старого дуба меня встречает хранитель тропы"}
+    return {
+        "fantasySetup": "У старого дуба меня встречает хранитель тропы",
+        "directQuestion": "Что из вариантов поможет определить север ночью?",
+    }
 
 
 def _test_story_tasks() -> list[dict[str, Any]]:
@@ -140,6 +143,7 @@ def _result_payload(
 ) -> dict[str, Any]:
     payload = {
         "result": f"Я выполняю выбранное действие и прохожу испытание {number}.",
+        "explanation": "Верный выбор помогает, потому что правило из задачи работает именно так.",
         "outcome": outcome,
         "stat": stat,
         "amount": amount,
@@ -152,6 +156,13 @@ def _result_payload(
             else "На поляне я встречаю каменного великана"
             if number == 2
             else "У выхода из леса меня ждёт огненная птица"
+        )
+        payload["directQuestion"] = (
+            "Что поможет поднять груз?"
+            if number == 1
+            else "Какую дверь нужно проверить?"
+            if number == 2
+            else "Что нужно открыть, чтобы к огню поступал воздух?"
         )
     return payload
 
@@ -170,6 +181,7 @@ def _legacy_continue_payload(number: int) -> dict[str, Any]:
 def _final_payload() -> dict[str, Any]:
     return {
         "result": "Я поднимаю заслонку, и огонь вспыхивает над куполом.",
+        "explanation": "Заслонку стоит открыть: через неё к огню поступает воздух.",
         "outcome": "positive",
         "stat": "happiness",
         "amount": 5,
@@ -239,7 +251,7 @@ def test_start_builds_only_first_erudition_episode(
         "У старого дуба меня встречает хранитель тропы. "
         "Ночью нужно определить направление на север по звёздам."
     )
-    assert part.challenge == "Что укажет север?"
+    assert part.challenge == "Что из вариантов поможет определить север ночью?"
     assert part.actionSuggestions == [
         "Полярная звезда",
         "Полная луна",
@@ -263,7 +275,7 @@ def test_start_builds_only_first_erudition_episode(
     schema = call["response_format"]["json_schema"]
     assert schema["name"] == "interactive_travel_task_bank_location_sequential_v3"
     assert schema["schema"] == interactive_travel_service.START_SCHEMA
-    assert list(schema["schema"]["properties"]) == ["fantasySetup"]
+    assert list(schema["schema"]["properties"]) == ["fantasySetup", "directQuestion"]
 
 
 def test_task_bank_condition_is_not_repeated_inside_direct_question() -> None:
@@ -275,10 +287,11 @@ def test_task_bank_condition_is_not_repeated_inside_direct_question() -> None:
     part = interactive_travel_service._part_from_task(
         task=task,
         fantasy_setup="У ворот меня встречает страж",
+        direct_question="Кто вместе образует лишайник?",
         part_number=1,
     )
 
-    assert part.challenge == "Кто образует лишайник?"
+    assert part.challenge == "Кто вместе образует лишайник?"
 
 
 def test_task_bank_is_deduplicated_and_has_enough_tasks() -> None:
@@ -312,7 +325,7 @@ def test_start_retries_invalid_json_once(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_start_retries_missing_setup_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    incomplete = {"fantasySetup": ""}
+    incomplete = {"fantasySetup": "", "directQuestion": "Что выбрать?"}
     client, completions = _client(monkeypatch, [incomplete, _start_payload()])
 
     travel = interactive_travel_service.start_interactive_travel(
@@ -348,7 +361,10 @@ def test_long_destination_keeps_intro_inside_api_limit(
 def test_start_preserves_task_bank_content_without_model_rewriting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    payload = {"fantasySetup": "Короткая встреча в выбранной локации"}
+    payload = {
+        "fantasySetup": "Короткая встреча в выбранной локации",
+        "directQuestion": "Что из вариантов поможет определить север ночью?",
+    }
     client, _ = _client(monkeypatch, [payload])
 
     travel = interactive_travel_service.start_interactive_travel(
@@ -373,7 +389,9 @@ def test_continue_resolves_choice_and_adds_next_part(
             _start_payload(),
             {
                 "result": "Я выбираю неверный ответ и задерживаюсь у дуба.",
+                "explanation": "Север ночью показывает Полярная звезда.",
                 "fantasySetup": "У лесного ручья меня останавливает речной дух",
+                "directQuestion": "Что поможет поднять груз?",
             },
         ],
     )
@@ -416,12 +434,18 @@ def test_continue_resolves_choice_and_adds_next_part(
     assert all(len(choice.split()) <= 3 for choice in pending.actionSuggestions)
     assert next_travel.arcPlan["taskBankIds"] == "test-1,test-2"
     assert next_travel.arcPlan["part2CorrectChoice"] == "Рычаг"
-    assert "Правильный ответ: Полярная звезда" in resolved.result.text
-    assert "Почему:" in resolved.result.text
+    assert "Север ночью показывает Полярная звезда" in resolved.result.text
+    assert "Правильный ответ:" not in resolved.result.text
+    assert "Почему:" not in resolved.result.text
     result_call = client.chat.completions.calls[1]
     result_schema = result_call["response_format"]["json_schema"]
-    assert result_schema["name"] == "interactive_travel_part_result_and_next_episode_v3"
-    assert list(result_schema["schema"]["properties"]) == ["result", "fantasySetup"]
+    assert result_schema["name"] == "interactive_travel_part_result_and_next_episode_v4"
+    assert list(result_schema["schema"]["properties"]) == [
+        "result",
+        "explanation",
+        "fantasySetup",
+        "directQuestion",
+    ]
     assert "Следующая задача:" in result_call["messages"][1]["content"]
     assert "Не связывай её сюжетом" in result_call["messages"][1]["content"]
     assert "Локация: в ночной лес" in result_call["messages"][1]["content"]
@@ -508,13 +532,14 @@ def test_story_generates_four_independent_episodes_and_goes_home(
     assert len(completions.calls) == 5
     final_result = travel.parts[-1].result
     assert final_result is not None
-    assert "Правильный ответ: Заслонку" in final_result.text
-    assert "Почему:" in final_result.text
+    assert "Заслонку стоит открыть" in final_result.text
+    assert "Правильный ответ:" not in final_result.text
+    assert "Почему:" not in final_result.text
     assert "домой" not in final_result.consequence.casefold()
     assert "домой" not in final_result.text.casefold()
     final_call = completions.calls[-1]
     assert final_call["response_format"]["json_schema"]["name"] == (
-        "interactive_travel_part_result_fixed_v3"
+        "interactive_travel_part_result_fixed_v4"
     )
     assert (
         "реплику о возвращении домой интерфейс добавит"

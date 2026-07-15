@@ -6,6 +6,7 @@ import { ArrowLeft, Play, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   type FormEvent,
+  type MouseEvent,
   useCallback,
   useEffect,
   useRef,
@@ -1346,6 +1347,29 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     }
   }
 
+  function handleSceneClick(event: MouseEvent<HTMLElement>) {
+    if (
+      phase !== "choice"
+      || !activePart
+      || isSubmitting
+      || showCustomAction
+    ) {
+      return;
+    }
+    const target = event.target;
+    if (
+      target instanceof Element
+      && target.closest("button, a, input, textarea, select, [role='button'], [role='dialog']")
+    ) {
+      return;
+    }
+    updatePresentation({
+      phase: "story",
+      partNumber: activePart.partNumber,
+      portionIndex: 0,
+    });
+  }
+
   function handleNext() {
     if (!session || !activePart) {
       return;
@@ -1492,7 +1516,11 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       className={styles.viewport}
       aria-busy={isTravelLoading}
     >
-      <section className={styles.scene} aria-label="Интерактивное путешествие">
+      <section
+        className={styles.scene}
+        aria-label="Интерактивное путешествие"
+        onClick={handleSceneClick}
+      >
         <SmoothBackgroundVideo
           src={backgroundVideoSrc}
           className={`${styles.background} ${styles.backgroundVideo}`}

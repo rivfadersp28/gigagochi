@@ -669,6 +669,13 @@
   episode four, the client adds one short line that the character is tired and
   goes home. Unfinished `task-bank-location-v2` sessions retain their prepared
   episodes for backward compatibility.
+- Each generated episode includes a standalone, child-readable question that
+  preserves the bank task's meaning but names the compared objects/actions, so
+  it remains understandable without earlier bubbles. After a choice, the model
+  returns consequence and explanation as separate natural phrases; the server
+  joins them without `Правильный ответ:`/`Почему:` labels. While choices are
+  visible, a non-control tap on the scene replays the current episode from its
+  first story bubble.
 - Interactive travel uses its own daily rate-limit bucket. A diagnostic reset tombstones the
   current travel ID, deletes its generated directory and clears that diagnostic user's travel
   bucket so late image/video completions cannot restore stale assets.
