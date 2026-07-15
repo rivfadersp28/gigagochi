@@ -261,6 +261,56 @@ describe("API response contracts", () => {
     expect(parsed.travel.parts[1].transition?.departureHook).toBe(departureHook);
   });
 
+  it("accepts the 31-entry erudition arc plan produced by the backend", () => {
+    const arcPlan = Object.fromEntries(
+      Array.from({ length: 31 }, (_, index) => [`field${index + 1}`, `value${index + 1}`]),
+    );
+
+    const parsed = parseInteractiveTravelResponse({
+      travel: {
+        travelId: "interactive-travel-erudition-1",
+        generatedAt: "2026-07-15T12:00:00Z",
+        destination: "в пещеру",
+        overallTitle: "Путь знаний",
+        arcPlan,
+        parts: [{
+          partNumber: 1,
+          title: "Часть 1",
+          storyText: "Я встречаю первое препятствие.",
+          challenge: "Что выбрать?",
+          actionSuggestions: ["Первое", "Второе", "Третье"],
+        }],
+        completed: false,
+      },
+    });
+
+    expect(Object.keys(parsed.travel.arcPlan)).toHaveLength(31);
+  });
+
+  it("rejects an arc plan above the backend limit", () => {
+    const arcPlan = Object.fromEntries(
+      Array.from({ length: 33 }, (_, index) => [`field${index + 1}`, `value${index + 1}`]),
+    );
+
+    expect(() => parseInteractiveTravelResponse({
+      travel: {
+        travelId: "interactive-travel-erudition-1",
+        generatedAt: "2026-07-15T12:00:00Z",
+        destination: "в пещеру",
+        overallTitle: "Путь знаний",
+        arcPlan,
+        parts: [{
+          partNumber: 1,
+          title: "Часть 1",
+          storyText: "Я встречаю первое препятствие.",
+          challenge: "Что выбрать?",
+          actionSuggestions: ["Первое", "Второе", "Третье"],
+        }],
+        completed: false,
+      },
+    })).toThrow(ApiContractError);
+  });
+
   it("rejects a departure hook above the shared persistence boundary", () => {
     expect(() =>
       parseInteractiveTravelResponse({

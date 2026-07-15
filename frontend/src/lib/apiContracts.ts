@@ -111,6 +111,7 @@ const MAX_MEMORY_EXTRACTION_OPERATIONS = 12;
 const MAX_MEMORY_CONSOLIDATION_OPERATIONS = 120;
 const MAX_CHARACTER_BIBLE_BYTES = 512_000;
 const MAX_GENERATION_ERROR_BYTES = 64_000;
+const MAX_INTERACTIVE_TRAVEL_ARC_PLAN_ENTRIES = 32;
 
 function fail(path: string, expectation: string): never {
   throw new ApiContractError(`${path}: ожидалось ${expectation}`);
@@ -612,8 +613,11 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
   }
   const arcPlanValue = record(travel.arcPlan, "interactiveTravelResponse.travel.arcPlan");
   const arcPlanEntries = Object.entries(arcPlanValue);
-  if (arcPlanEntries.length > 20) {
-    return fail("interactiveTravelResponse.travel.arcPlan", "at most 20 entries");
+  if (arcPlanEntries.length > MAX_INTERACTIVE_TRAVEL_ARC_PLAN_ENTRIES) {
+    return fail(
+      "interactiveTravelResponse.travel.arcPlan",
+      `at most ${MAX_INTERACTIVE_TRAVEL_ARC_PLAN_ENTRIES} entries`,
+    );
   }
   const arcPlan: Record<string, string> = Object.create(null) as Record<string, string>;
   for (const [key, item] of arcPlanEntries) {

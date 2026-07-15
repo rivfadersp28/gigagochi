@@ -37,6 +37,9 @@ from app.services.prompt_debug import log_chat_completion_prompt, log_chat_compl
 
 STORY_PART_COUNT = 4
 GENERATOR_VERSION = "erudition-4-v1"
+STORY_APPLICATION_RULE = (
+    "Верный ответ нужно применить, чтобы преодолеть препятствие и пройти дальше."
+)
 MIN_TIMEOUT_SECONDS = 120.0
 CHOICE_MAX_WORDS = 3
 CHOICE_MAX_LENGTH = 40
@@ -122,10 +125,10 @@ PLAN_PART_SCHEMA: dict[str, Any] = {
         "obstacle": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 180,
+            "maxLength": 240,
             "description": (
-                "Конкретное препятствие или враг и прямое объяснение, почему без правильного "
-                "ответа герой не может продолжить путь."
+                "Одно короткое законченное предложение: конкретное препятствие или враг и "
+                "почему без правильного ответа герой не может продолжить путь."
             ),
         },
         "question": {
@@ -172,7 +175,7 @@ START_SCHEMA: dict[str, Any] = {
         "ending": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 180,
+            "maxLength": 260,
             "description": (
                 "Готовая развязка с конкретным предметом или результатом: что именно я получил, "
                 "как достиг цели и что могу вернуться домой."
@@ -462,11 +465,20 @@ def _parts_from_plan_payload(payload: dict[str, Any]) -> list[InteractiveTravelP
         InteractiveTravelPart(
             partNumber=part_number,
             title=f"Часть {part_number}",
-            storyText=_sentence(
-                f"{raw_part['situation']} {raw_part['obstacle']} "
-                "Верный ответ нужно применить, чтобы преодолеть препятствие и пройти дальше.",
-                fallback="На пути происходит что-то неожиданное",
-                limit=500,
+            storyText=" ".join(
+                (
+                    _sentence(
+                        raw_part["situation"],
+                        fallback="На пути происходит что-то неожиданное",
+                        limit=200,
+                    ),
+                    _sentence(
+                        raw_part["obstacle"],
+                        fallback="Без правильного ответа путь дальше закрыт",
+                        limit=220,
+                    ),
+                    STORY_APPLICATION_RULE,
+                )
             ),
             challenge=_sentence(
                 raw_part["question"],
@@ -495,7 +507,7 @@ def _arc_plan_from_payload(
         "storyEnding": _sentence(
             payload.get("ending"),
             fallback="Я достигаю цели и могу вернуться домой",
-            limit=180,
+            limit=260,
         ),
     }
     for part, raw_part in zip(parts, raw_parts, strict=True):

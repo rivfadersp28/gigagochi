@@ -293,6 +293,11 @@ def test_start_builds_four_erudition_challenges(
     assert schema["schema"] == interactive_travel_service.START_SCHEMA
     assert schema["schema"]["properties"]["parts"]["minItems"] == 4
     assert schema["schema"]["properties"]["parts"]["maxItems"] == 4
+    assert (
+        schema["schema"]["properties"]["parts"]["items"]["properties"]["obstacle"]["maxLength"]
+        == 240
+    )
+    assert schema["schema"]["properties"]["ending"]["maxLength"] == 260
 
 
 def test_task_bank_is_deduplicated_and_has_enough_tasks() -> None:
@@ -358,6 +363,55 @@ def test_long_destination_keeps_intro_inside_api_limit(
 
     assert travel.introReaction is not None
     assert len(travel.introReaction.text) <= 220
+
+
+def test_start_preserves_an_ending_longer_than_the_old_provider_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _start_payload()
+    payload["ending"] = (
+        "Я возвращаю тепло в деревню, получаю серебряный ключ от хранителя святилища "
+        "и открываю безопасную дорогу домой для всех жителей, которые ждали меня у ворот, "
+        "а хранитель обещает защищать перевал от новых снежных бурь"
+    )
+    client, _ = _client(monkeypatch, [payload])
+
+    travel = interactive_travel_service.start_interactive_travel(
+        pet=_pet(),
+        destination="в лес",
+        client=client,
+        model="test-model",
+    ).travel
+
+    assert len(payload["ending"]) > 180
+    assert travel.arcPlan["storyEnding"] == f"{payload['ending']}."
+
+
+def test_start_keeps_long_plan_fields_separate_from_application_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _start_payload()
+    for part in payload["parts"]:
+        part["situation"] = "Длинное описание места и события " * 20
+        part["obstacle"] = "Препятствие полностью перекрывает путь " * 20
+    client, _ = _client(monkeypatch, [payload])
+
+    travel = interactive_travel_service.start_interactive_travel(
+        pet=_pet(),
+        destination="в лес",
+        client=client,
+        model="test-model",
+    ).travel
+
+    planned_texts = [
+        travel.parts[0].storyText,
+        *(travel.arcPlan[f"part{part_number}Situation"] for part_number in range(2, 5)),
+    ]
+    for story_text in planned_texts:
+        assert len(story_text) <= 500
+        assert story_text.endswith(interactive_travel_service.STORY_APPLICATION_RULE)
+        assert f". {interactive_travel_service.STORY_APPLICATION_RULE}" in story_text
+        assert story_text.count(interactive_travel_service.STORY_APPLICATION_RULE) == 1
 
 
 def test_continue_resolves_choice_and_adds_next_part(
