@@ -1050,18 +1050,25 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     ] ?? 0) +
     portionIndex;
   const preloadBackgroundVideoUrl =
+    phase !== "introReaction" &&
     activePart?.backgroundVideoUrl &&
     activePart.backgroundVideoUrl !== visibleBackgroundVideoUrl &&
     !brokenVideos.includes(activePart.backgroundVideoUrl)
       ? activePart.backgroundVideoUrl
       : null;
   const backgroundVideoSrc =
-    preloadBackgroundVideoUrl ?? visibleBackgroundVideoUrl ?? ENTRY_BACKGROUND_VIDEO;
+    phase === "introReaction"
+      ? ENTRY_BACKGROUND_VIDEO
+      : preloadBackgroundVideoUrl ?? visibleBackgroundVideoUrl ?? ENTRY_BACKGROUND_VIDEO;
   const shouldRevealBackgroundVideo =
     backgroundVideoSrc === ENTRY_BACKGROUND_VIDEO
     || backgroundVideoSrc === visibleBackgroundVideoUrl;
   const isChoices = phase === "choice" && !showCustomAction;
   const isNarrative = phase === "story" || phase === "result";
+  const demoSelectedAnswer =
+    demoTravel && activePart
+      ? partByNumber(demoTravel.parts, activePart.partNumber)?.answer
+      : undefined;
   return (
     <main
       className={styles.viewport}
@@ -1239,7 +1246,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           <>
             <div
               className={`${styles.bubbleAnchor} ${
-                phase === "introReaction" || phase === "departureWait"
+                phase === "introReaction"
                   ? styles.bubbleAnchorCenter
                   : styles.bubbleAnchorBottom
               } ${phase === "departureWait" ? styles.mutedBubble : ""}`}
@@ -1279,7 +1286,10 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
                       key={suggestion}
                       type="button"
                       className={`${styles.actionButton} ${styles.storyGlassButton}`}
-                      disabled={isSubmitting}
+                      disabled={
+                        isSubmitting ||
+                        Boolean(demoTravel && suggestion !== demoSelectedAnswer)
+                      }
                       onClick={() => void submitAdvice(suggestion)}
                     >
                       {suggestion}
@@ -1289,7 +1299,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
                     ref={customActionTriggerRef}
                     type="button"
                     className={`${styles.actionButton} ${styles.storyGlassButton}`}
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || Boolean(demoTravel)}
                     onClick={() => {
                       setShowCustomAction(true);
                       setError(null);
