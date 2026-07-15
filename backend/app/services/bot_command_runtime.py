@@ -17,7 +17,9 @@ from threading import BoundedSemaphore, Event, Lock, Thread
 from typing import Any
 
 BotCommandWorker = Callable[[int, dict[str, Any]], None]
-SUPPORTED_BOT_COMMANDS = frozenset({"/app", "/full_story", "/help", "/push", "/start"})
+SUPPORTED_BOT_COMMANDS = frozenset(
+    {"/app", "/easy", "/full_story", "/hard", "/help", "/push", "/start"}
+)
 SQLITE_BUSY_TIMEOUT_MS = 5_000
 MAX_PREPARED_RESULT_BYTES = 512 * 1024
 BOT_COMMAND_LOCK_BUCKETS = 256

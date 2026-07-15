@@ -1582,6 +1582,17 @@ def test_task_bank_commands_are_available_to_any_user(
     ]
 
 
+@pytest.mark.parametrize("command", ("/easy", "/hard"))
+def test_task_bank_commands_survive_durable_normalization(command) -> None:
+    normalized = normalize_bot_command_update(
+        _durable_command_update(77, command, chat_id=123456)
+    )
+
+    assert normalized is not None
+    assert normalized.command == command
+    assert normalized.update["message"]["text"] == command
+
+
 def test_push_command_can_be_submitted_without_blocking_polling(monkeypatch) -> None:
     submitted: list[tuple[int, dict]] = []
     monkeypatch.setattr(
