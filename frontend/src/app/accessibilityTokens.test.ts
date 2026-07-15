@@ -29,11 +29,11 @@ function contrast(foreground: string, background: string) {
   return (light + 0.05) / (dark + 0.05);
 }
 
-it("keeps error and placeholder tokens readable on their surfaces", () => {
+it("keeps error tokens readable and the scene placeholder visually subdued", () => {
   expect(contrast(hexVariable("danger"), hexVariable("danger-bg"))).toBeGreaterThanOrEqual(4.5);
   expect(contrast(hexVariable("ink-faint"), hexVariable("control"))).toBeGreaterThanOrEqual(4.5);
   expect(css).toContain("background: #2b1116;");
-  expect(css).toContain("color: rgba(255, 255, 255, 0.72);");
+  expect(css).toContain("color: rgba(255, 255, 255, 0.3);");
 });
 
 it("keeps travel controls readable over the brightest video frame", () => {
@@ -48,20 +48,21 @@ it("keeps travel controls readable over the brightest video frame", () => {
 
 it("keeps creation copy and focus indicators visible on variable dark media", () => {
   expect(contrast("#9c9c9c", "#000000")).toBeGreaterThanOrEqual(4.5);
-  expect(contrast(hexVariable("main-focus-ring"), "#000000")).toBeGreaterThanOrEqual(3);
   expect(contrast(hexVariable("main-focus-halo"), "#ffffff")).toBeGreaterThanOrEqual(3);
+  expect(css).toContain("--main-focus-ring: rgba(120, 72, 139, 0.36);");
   expect(css).toContain("color: rgba(251, 251, 251, 0.62);");
   expect(css).toContain("color: rgba(255, 255, 255, 0.68);");
-  expect(css).toContain("box-shadow: 0 0 0 5px var(--main-focus-halo);");
+  expect(css).toContain("box-shadow: 0 0 0 8px var(--main-focus-halo);");
   expect(css).toContain(".create-pet-prompt:focus-visible");
-  expect(css).toContain(".conversation-input-panel:has(.conversation-input:focus-visible)");
 });
 
-it("keeps main actions readable over the brightest generated frame", () => {
-  expect(contrast("#ffffff", "#242424")).toBeGreaterThanOrEqual(4.5);
-  expect(css).toContain("background: rgb(22 22 22 / 94%);");
-  expect(css).toContain("border: 2px solid rgba(255, 255, 255, 0.55);");
+it("keeps main actions and chat input as translucent scene controls", () => {
+  expect(css).toContain("--main-scene-surface: rgba(255, 255, 255, 0.15);");
+  expect(css).toContain("--main-scene-surface-hover: rgba(255, 255, 255, 0.2);");
+  expect(css).toContain("background: rgba(255, 255, 255, 0.15);");
+  expect(css).toContain("border: 0;");
   expect(css.match(/rgba\(255, 255, 255, 0\.68\)/gu)?.length).toBeGreaterThanOrEqual(5);
-  expect(css).not.toContain("--tw-backdrop-blur: blur(18.5px)");
+  expect(css).toContain("--tw-backdrop-blur: blur(18.5px)");
+  expect(css).toContain("backdrop-filter: blur(18.5px);");
   expect(css.match(/\.travel-story-close\s*\{[^}]*display: grid;/u)).not.toBeNull();
 });

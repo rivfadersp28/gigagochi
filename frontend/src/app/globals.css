@@ -25,15 +25,15 @@
   --main-scene-ink: #ffffff;
   --main-scene-ink-soft: rgba(52, 37, 61, 0.72);
   --main-scene-ink-muted: rgba(255, 255, 255, 0.62);
-  --main-scene-surface: rgb(22 22 22 / 94%);
-  --main-scene-surface-strong: rgb(22 22 22 / 96%);
-  --main-scene-surface-hover: rgb(32 32 32 / 96%);
-  --main-scene-line: rgba(255, 255, 255, 0.55);
+  --main-scene-surface: rgba(255, 255, 255, 0.15);
+  --main-scene-surface-strong: rgba(255, 255, 255, 0.15);
+  --main-scene-surface-hover: rgba(255, 255, 255, 0.2);
+  --main-scene-line: rgba(41, 41, 41, 0.04);
   --main-scene-shadow: rgba(62, 35, 64, 0.08);
   --main-scene-shadow-soft: rgba(62, 35, 64, 0.06);
-  --main-focus-ring: #ffffff;
+  --main-focus-ring: rgba(120, 72, 139, 0.36);
   --main-focus-halo: #000000;
-  --main-danger: #ff9aaa;
+  --main-danger: #b94456;
   --tg-safe-area-inset-top: 0px;
   --tg-safe-area-inset-right: 0px;
   --tg-safe-area-inset-bottom: 0px;
@@ -525,9 +525,11 @@ body {
   justify-content: center;
   gap: 8px;
   padding: 14px 17px 16px 13px;
-  border: 2px solid rgba(255, 255, 255, 0.55);
+  border: 0;
   border-radius: 24px;
-  background: rgb(22 22 22 / 94%);
+  background: var(--main-scene-surface-strong);
+  backdrop-filter: blur(18.5px);
+  -webkit-backdrop-filter: blur(18.5px);
   font-family: "SF Pro Rounded", "SF Pro Display", var(--font-open-runde), ui-rounded,
     system-ui, sans-serif;
   font-size: 23.445px;
@@ -562,7 +564,7 @@ body {
 }
 
 .main-action-button:enabled:hover {
-  background: rgb(32 32 32 / 96%);
+  background: var(--main-scene-surface-hover);
 }
 
 .main-action-button--chat {
@@ -689,10 +691,10 @@ body {
   height: 50px;
   place-items: center;
   overflow: hidden;
-  border: 2px solid var(--main-scene-line);
+  border: 0;
   border-radius: 24px;
-  background: var(--main-scene-surface);
-  color: var(--main-scene-ink);
+  background: rgba(51, 51, 51, 0.09);
+  color: #333333;
   box-shadow:
     inset 0 2px 4px rgba(255, 255, 255, 0.09),
     inset 0 -3.768px 8px rgba(1, 1, 1, 0);
@@ -704,7 +706,7 @@ body {
 }
 
 .main-debug-button:enabled:hover {
-  background: var(--main-scene-surface-hover);
+  background: rgba(51, 51, 51, 0.13);
 }
 
 .main-debug-button:focus-visible {
@@ -1207,18 +1209,6 @@ button.feed-food-token--dragging:enabled:active {
   outline-offset: 3px;
 }
 
-.pet-reaction-button:focus-visible,
-.main-action-button:focus-visible,
-.main-debug-button:focus-visible,
-.travel-story-phone:focus-visible,
-.travel-story-close:focus-visible,
-.travel-story-empty__action:focus-visible,
-.conversation-send-button:focus-visible,
-.feed-mode-close:focus-visible,
-.feed-food-token:focus-visible {
-  box-shadow: 0 0 0 5px var(--main-focus-halo);
-}
-
 .feed-drop-pulse {
   position: absolute;
   top: 404px;
@@ -1246,7 +1236,7 @@ button.feed-food-token--dragging:enabled:active {
   overflow: hidden;
   border: 0;
   border-radius: 56px;
-  background: rgba(20, 20, 20, 0.94);
+  background: rgba(255, 255, 255, 0.15);
   box-shadow:
     inset 0 3px 12px rgba(255, 255, 255, 0.3),
     inset 0 2px 4px rgba(255, 255, 255, 0.09);
@@ -1273,8 +1263,16 @@ button.feed-food-token--dragging:enabled:active {
 .feed-food-token,
 .feed-food-token--dragging,
 .conversation-input-panel {
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
+  --tw-backdrop-blur: blur(18.5px);
+
+  -webkit-backdrop-filter: var(--tw-backdrop-blur, ) var(--tw-backdrop-brightness, )
+    var(--tw-backdrop-contrast, ) var(--tw-backdrop-grayscale, ) var(--tw-backdrop-hue-rotate, )
+    var(--tw-backdrop-invert, ) var(--tw-backdrop-opacity, ) var(--tw-backdrop-saturate, )
+    var(--tw-backdrop-sepia, );
+  backdrop-filter: var(--tw-backdrop-blur, ) var(--tw-backdrop-brightness, )
+    var(--tw-backdrop-contrast, ) var(--tw-backdrop-grayscale, ) var(--tw-backdrop-hue-rotate, )
+    var(--tw-backdrop-invert, ) var(--tw-backdrop-opacity, ) var(--tw-backdrop-saturate, )
+    var(--tw-backdrop-sepia, );
 }
 
 .main-mobile-scene--chat .conversation-input-panel {
@@ -1304,14 +1302,8 @@ button.feed-food-token--dragging:enabled:active {
   outline: none;
 }
 
-.conversation-input-panel:has(.conversation-input:focus-visible) {
-  outline: 3px solid var(--main-focus-ring);
-  outline-offset: 3px;
-  box-shadow: 0 0 0 6px var(--main-focus-halo);
-}
-
 .conversation-input::placeholder {
-  color: rgba(255, 255, 255, 0.72);
+  color: rgba(255, 255, 255, 0.3);
   font-size: 20px;
   font-weight: 700;
   line-height: 46px;
