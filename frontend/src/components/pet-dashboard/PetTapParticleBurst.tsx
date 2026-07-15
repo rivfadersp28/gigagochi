@@ -13,10 +13,10 @@ const petTapParticleConfig = {
   elementSize: 28,
   lifetime: 170,
   colors: [
-    "rgba(255, 255, 255, 0.78)",
-    "rgba(129, 212, 250, 0.58)",
-    "rgba(41, 182, 246, 0.48)",
-    "rgba(255, 241, 118, 0.5)",
+    "rgba(255, 23, 68, 0.88)",
+    "rgba(233, 30, 99, 0.82)",
+    "rgba(255, 69, 105, 0.78)",
+    "rgba(255, 128, 171, 0.74)",
   ],
   physics: {
     gravity: -0.04,
@@ -24,7 +24,7 @@ const petTapParticleConfig = {
     friction: 0.985,
   },
   effects: {
-    wobble: true,
+    pulse: true,
   },
 } satisfies AnimationConfig;
 
@@ -39,7 +39,7 @@ type PetTapParticleBurstProps = {
 export function PetTapParticleBurst({ id, x, y, isExiting, onComplete }: PetTapParticleBurstProps) {
   const targetRef = useRef<HTMLSpanElement>(null);
   const particleContainerRef = useRef<HTMLElement | null>(null);
-  const { reward } = useReward(targetRef as RefObject<HTMLElement>, "bubbles", petTapParticleConfig);
+  const { reward } = useReward(targetRef as RefObject<HTMLElement>, "hearts", petTapParticleConfig);
   const rewardRef = useRef(reward);
 
   useEffect(() => {
