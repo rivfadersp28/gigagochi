@@ -33,6 +33,10 @@ from app.services.travel_service import (
 
 STORY_PART_COUNT = 3
 MIN_TIMEOUT_SECONDS = 120.0
+CHOICE_MAX_WORDS = 3
+CHOICE_MAX_LENGTH = 40
+TIME_SKIP_MIN_HOURS = 2
+TIME_SKIP_MAX_HOURS = 5
 
 DESTINATION_FALLBACKS = (
     "в подземелье",
@@ -73,6 +77,11 @@ SYSTEM_PROMPT = "\n".join(
         "Создай короткое интерактивное приключение для ребёнка 9–14 лет.",
         "Пиши просто, от первого лица и в настоящем времени.",
         "Одна ситуация — одно интересное событие, максимум два коротких предложения.",
+        "Каждая ситуация мешает идти дальше и требует выбора: препятствие, конфликт, "
+        "встреча с требованием или головоломка.",
+        "Пассивное наблюдение без проблемы и решения не считается ситуацией.",
+        "Между соседними ситуациями проходит несколько часов пути.",
+        "Каждый вариант действия — максимум три слова.",
         "Лёгкое фэнтези допустимо.",
         "Выполняй выбранное пользователем действие буквально.",
         "Если дан правдивый факт, естественно вплети его смысл в первую ситуацию.",
@@ -84,7 +93,8 @@ SYSTEM_PROMPT = "\n".join(
 CHOICE_SCHEMA: dict[str, Any] = {
     "type": "string",
     "minLength": 1,
-    "maxLength": 72,
+    "maxLength": CHOICE_MAX_LENGTH,
+    "description": "Короткое действие: от одного до трёх слов.",
 }
 
 START_SCHEMA: dict[str, Any] = {
@@ -92,8 +102,18 @@ START_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "properties": {
         "title": {"type": "string", "minLength": 1, "maxLength": 80},
-        "situation": {"type": "string", "minLength": 1, "maxLength": 300},
-        "question": {"type": "string", "minLength": 1, "maxLength": 120},
+        "situation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "description": "Проблема, без решения которой герой не может продолжить путь.",
+        },
+        "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "Конкретный выбор для решения текущей проблемы.",
+        },
         "choice1": CHOICE_SCHEMA,
         "choice2": CHOICE_SCHEMA,
         "choice3": CHOICE_SCHEMA,
@@ -111,7 +131,15 @@ CONTINUE_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "properties": {
         **RESULT_PROPERTIES,
-        "nextSituation": {"type": "string", "minLength": 1, "maxLength": 300},
+        "nextSituation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "description": (
+                "Новое препятствие после нескольких часов пути. Без решения герой не может "
+                "продолжить путешествие."
+            ),
+        },
         "nextQuestion": {"type": "string", "minLength": 1, "maxLength": 120},
         "nextChoice1": CHOICE_SCHEMA,
         "nextChoice2": CHOICE_SCHEMA,
@@ -157,7 +185,8 @@ def _choices(values: list[Any]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
     for value in [*values, *CHOICE_FALLBACKS]:
-        choice = _compact_text(value, 72).rstrip(" .!?…")
+        compact = _compact_text(value, CHOICE_MAX_LENGTH).rstrip(" .!?…")
+        choice = " ".join(compact.split()[:CHOICE_MAX_WORDS])
         key = choice.casefold()
         if not choice or key in seen:
             continue
@@ -166,6 +195,10 @@ def _choices(values: list[Any]) -> list[str]:
         if len(result) == 3:
             break
     return result
+
+
+def _hours_phrase(hours: int) -> str:
+    return f"{hours} {'часа' if hours in {2, 3, 4} else 'часов'}"
 
 
 def _intro_text(destination: str) -> str:
@@ -359,8 +392,9 @@ def start_interactive_travel(
             f"Я — {_character_summary(pet)}.\n"
             f"Я отправляюсь {clean_destination}.\n"
             f"Правдивый факт для первой ситуации: {fun_fact}.\n\n"
-            "Придумай первое интересное событие, вопрос и три действия. Естественно вплети "
-            "смысл факта в событие. Не пиши слова «фанфакт» и не выноси факт отдельно."
+            "Придумай препятствие, конфликт, встречу с требованием или головоломку. Без решения "
+            "нельзя идти дальше. Добавь вопрос и три действия. Естественно вплети смысл факта "
+            "в событие. Не пиши слова «фанфакт» и не выноси факт отдельно."
         ),
         client=client,
         model=model,
@@ -430,12 +464,16 @@ def continue_interactive_travel(
     model, timeout = _model_and_timeout(client=client, model=model, timeout=timeout)
     clean_advice = _compact_text(advice, 1000, "идти дальше")
     is_final = current_part.partNumber >= STORY_PART_COUNT
+    elapsed_hours = (
+        0 if is_final else random.randint(TIME_SKIP_MIN_HOURS, TIME_SKIP_MAX_HOURS)
+    )
     instruction = (
         "Покажи результат действия и закончи приключение. Не придумывай новую ситуацию."
         if is_final
         else (
-            "Покажи результат действия и придумай следующую интересную ситуацию "
-            "с тремя действиями."
+            f"Покажи результат действия. Затем проходит {_hours_phrase(elapsed_hours)} пути. "
+            "В новом месте придумай отдельное препятствие, конфликт, встречу с требованием или "
+            "головоломку. Без решения нельзя идти дальше. Добавь три действия."
         )
     )
     schema = FINAL_SCHEMA if is_final else CONTINUE_SCHEMA
@@ -484,9 +522,11 @@ def continue_interactive_travel(
                     limit=300,
                 ),
                 transition={
-                    "elapsedHours": 0,
+                    "elapsedHours": elapsed_hours,
                     "summary": result.consequence,
-                    "departureHook": "Я иду дальше.",
+                    "departureHook": (
+                        f"Я продолжаю путь. Проходит {_hours_phrase(elapsed_hours)}."
+                    ),
                 },
                 challenge=_sentence(
                     payload.get("nextQuestion"),

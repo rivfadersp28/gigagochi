@@ -73,6 +73,7 @@ def _client(
         ),
     )
     monkeypatch.setattr(interactive_travel_service.random, "choice", lambda values: values[0])
+    monkeypatch.setattr(interactive_travel_service.random, "randint", lambda start, end: 3)
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     return client, completions
 
@@ -181,6 +182,7 @@ def test_start_uses_minimal_state_and_keeps_naturally_embedded_fact(
     assert "goal" not in call["messages"][1]["content"]
     assert TEST_FACT in call["messages"][1]["content"]
     assert "не выноси факт отдельно" in call["messages"][1]["content"]
+    assert "Без решения нельзя идти дальше" in call["messages"][1]["content"]
     schema = call["response_format"]["json_schema"]
     assert schema["name"] == "interactive_travel_start_simple_v1"
     assert schema["schema"] == interactive_travel_service.START_SCHEMA
@@ -240,9 +242,33 @@ def test_continue_resolves_choice_and_adds_next_part(
     assert pending.result is None
     assert pending.partNumber == 2
     assert pending.transition is not None
+    assert pending.transition.elapsedHours == 3
     assert pending.transition.summary == resolved.result.consequence
-    assert pending.transition.departureHook == "Я иду дальше."
+    assert pending.transition.departureHook == "Я продолжаю путь. Проходит 3 часа."
+    assert pending.actionSuggestions == [
+        "Попросить мост пропустить",
+        "Перепрыгнуть ручей",
+        "Найти другую тропу",
+    ]
+    assert all(len(choice.split()) <= 3 for choice in pending.actionSuggestions)
     assert next_travel.arcPlan == travel.arcPlan
+
+
+def test_choices_are_limited_to_three_words() -> None:
+    choices = interactive_travel_service._choices(
+        [
+            "Осторожно подойти к старому мосту",
+            "Очень громко позвать лесного сторожа",
+            "Быстро убежать по дальней тропе",
+        ]
+    )
+
+    assert choices == [
+        "Осторожно подойти к",
+        "Очень громко позвать",
+        "Быстро убежать по",
+    ]
+    assert interactive_travel_service.CHOICE_SCHEMA["maxLength"] == 40
 
 
 def test_long_result_fits_transition_summary(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -288,6 +314,7 @@ def test_story_always_finishes_after_three_parts(monkeypatch: pytest.MonkeyPatch
     assert travel.outcomeValence == "positive"
     assert len(travel.parts) == 3
     assert all(part.result is not None for part in travel.parts)
+    assert [part.transition.elapsedHours for part in travel.parts[1:]] == [3, 3]
     visible_story = " ".join(part.storyText for part in travel.parts)
     assert visible_story.count(TEST_FACT) == 1
     assert len(completions.calls) == 4
