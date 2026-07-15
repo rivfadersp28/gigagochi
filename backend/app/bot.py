@@ -753,6 +753,10 @@ def _interactive_story_worker(chat_id: int, keyboard: dict[str, Any]) -> None:
 
 
 _DEFAULT_INTERACTIVE_STORY_WORKER = _interactive_story_worker
+INTERACTIVE_STORY_STARTED_MESSAGE = "Начали сочинять историю"
+INTERACTIVE_STORY_START_FAILED_MESSAGE = (
+    "Не получилось начать сочинять историю. Попробуй позже."
+)
 
 
 def handle_update(
@@ -849,9 +853,15 @@ def handle_update(
         return
 
     if command == "/story":
+        send_message(client, chat_id, INTERACTIVE_STORY_STARTED_MESSAGE, keyboard)
         if submit_interactive_story is not None:
             if submit_interactive_story(chat_id, keyboard) is False:
-                send_message(client, chat_id, BOT_COMMAND_BUSY_MESSAGE, keyboard)
+                send_message(
+                    client,
+                    chat_id,
+                    INTERACTIVE_STORY_START_FAILED_MESSAGE,
+                    keyboard,
+                )
         else:
             _send_interactive_story_response(client, chat_id, keyboard)
         return

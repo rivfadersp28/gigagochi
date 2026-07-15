@@ -2041,10 +2041,16 @@ def test_full_story_command_can_be_submitted_without_blocking_polling(monkeypatc
 
 def test_interactive_story_command_can_be_submitted_without_blocking_polling(monkeypatch) -> None:
     submitted: list[tuple[int, dict]] = []
+    sent_messages: list[str] = []
     monkeypatch.setattr(
         bot,
         "get_settings",
         lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
+    )
+    monkeypatch.setattr(
+        bot,
+        "send_message",
+        lambda _client, _chat_id, text, _keyboard: sent_messages.append(text),
     )
 
     bot.handle_update(
@@ -2054,6 +2060,32 @@ def test_interactive_story_command_can_be_submitted_without_blocking_polling(mon
     )
 
     assert submitted[0][0] == TEST_TELEGRAM_ID
+    assert sent_messages == [bot.INTERACTIVE_STORY_STARTED_MESSAGE]
+
+
+def test_interactive_story_command_reports_queue_rejection(monkeypatch) -> None:
+    sent_messages: list[str] = []
+    monkeypatch.setattr(
+        bot,
+        "get_settings",
+        lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
+    )
+    monkeypatch.setattr(
+        bot,
+        "send_message",
+        lambda _client, _chat_id, text, _keyboard: sent_messages.append(text),
+    )
+
+    bot.handle_update(
+        httpx.Client(),
+        _interactive_story_update(),
+        submit_interactive_story=lambda _chat_id, _keyboard: False,
+    )
+
+    assert sent_messages == [
+        bot.INTERACTIVE_STORY_STARTED_MESSAGE,
+        bot.INTERACTIVE_STORY_START_FAILED_MESSAGE,
+    ]
 
 
 def test_interactive_story_command_generates_for_requesting_user(monkeypatch) -> None:
@@ -2068,10 +2100,45 @@ def test_interactive_story_command_generates_for_requesting_user(monkeypatch) ->
         "send_scheduled_short_story_for_telegram_user",
         lambda *, telegram_id: calls.append(telegram_id) or {"sent": True},
     )
+    monkeypatch.setattr(bot, "send_message", lambda *_args, **_kwargs: None)
 
     bot.handle_update(httpx.Client(), _interactive_story_update())
 
     assert calls == [TEST_TELEGRAM_ID]
+
+
+def test_interactive_story_command_reports_generation_error(monkeypatch) -> None:
+    sent_messages: list[str] = []
+    monkeypatch.setattr(
+        bot,
+        "get_settings",
+        lambda: SimpleNamespace(
+            bot_token="bot-token",
+            webapp_url="https://example.com/app",
+            diagnostic_telegram_ids=set(),
+        ),
+    )
+
+    def fail_generation(*, telegram_id: int) -> None:
+        raise RuntimeError(f"generation failed for {telegram_id}")
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_scheduled_short_story_for_telegram_user",
+        fail_generation,
+    )
+    monkeypatch.setattr(
+        bot,
+        "send_message",
+        lambda _client, _chat_id, text, _keyboard: sent_messages.append(text),
+    )
+
+    bot.handle_update(httpx.Client(), _interactive_story_update())
+
+    assert sent_messages == [
+        bot.INTERACTIVE_STORY_STARTED_MESSAGE,
+        "Не получилось создать интерактивную историю. Попробуй позже.",
+    ]
 
 
 def test_full_story_command_generates_for_requesting_user(monkeypatch) -> None:
