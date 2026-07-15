@@ -87,27 +87,27 @@ function pet(assetSetId: string, idleUrl: string): LocalPetState {
 }
 
 describe("interactive travel text portions", () => {
-  it("splits an oversized sentence at word boundaries", () => {
+  it("keeps a long sentence in one portion for font fitting", () => {
     const text =
       "Персонаж долго пробирался через заросший лес, внимательно прислушиваясь к каждому шороху, чтобы вовремя заметить спрятанную среди деревьев старую каменную башню.";
 
     const portions = splitInteractiveTravelText(text);
 
-    expect(portions.length).toBeGreaterThan(1);
-    expect(portions.every((portion) => Array.from(portion).length <= 80)).toBe(true);
-    expect(portions.join(" ")).toBe(text.replace(/\.$/u, ""));
+    expect(portions).toEqual([text.replace(/\.$/u, "")]);
   });
 
-  it("hard-wraps a single oversized token without losing characters", () => {
-    const text = "я".repeat(201);
+  it("splits only at sentence boundaries without a one-word tail", () => {
+    const text = "Сначала герой долго идёт через лес. Затем замечает башню у реки.";
 
     const portions = splitInteractiveTravelText(text);
 
-    expect(portions.map((portion) => Array.from(portion).length)).toEqual([80, 80, 41]);
-    expect(portions.join("")).toBe(text);
+    expect(portions).toEqual([
+      "Сначала герой долго идёт через лес",
+      "Затем замечает башню у реки",
+    ]);
   });
 
-  it("builds story portions and puts the character reaction before the result", () => {
+  it("builds story portions and shows only the direct result after a choice", () => {
     const resolved = part(1, true);
 
     expect(storyPortions(resolved)).toEqual([
@@ -115,7 +115,6 @@ describe("interactive travel text portions", () => {
       "Потом заметил свет на другом берегу",
     ]);
     expect(resultPortions(resolved)).toEqual([
-      "Вот это отличный план!",
       "Плот выдержал течение",
       "Герой благополучно добрался до берега",
     ]);

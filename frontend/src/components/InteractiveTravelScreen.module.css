@@ -339,6 +339,8 @@
   position: absolute;
   z-index: 8;
   left: 50%;
+  display: flex;
+  justify-content: center;
   width: 360px;
   max-width: calc(100% - 42px);
   transform: translateX(-50%);

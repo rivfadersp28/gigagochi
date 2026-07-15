@@ -424,6 +424,8 @@ describe("InteractiveTravelScreen", () => {
     expect(cssRule("viewport")).toContain("inset: 0");
     expect(cssRule("scene")).toContain("width: 100%");
     expect(cssRule("background")).toContain("object-fit: cover");
+    expect(cssRule("bubbleAnchor")).toContain("display: flex");
+    expect(cssRule("bubbleAnchor")).toContain("justify-content: center");
   });
 
   it("keeps the previous scene while preparing the next part", async () => {
@@ -709,7 +711,7 @@ describe("InteractiveTravelScreen", () => {
     const nextButton = screen.getByRole("button", { name: "Далее" });
     expect(nextButton.className).toMatch(/storyGlassButton/u);
     expect(screen.getByTestId("travel-speech").parentElement).not.toHaveAttribute("aria-live");
-    expect(screen.getByTestId("travel-speech")).toHaveAttribute("data-min-font-size", "20");
+    expect(screen.getByTestId("travel-speech")).toHaveAttribute("data-min-font-size", "14");
     expect(screen.getByTestId("travel-speech")).toHaveAttribute("data-fixed-size", "false");
     fireEvent.click(nextButton);
     expect(await screen.findByText("Потом виден мост")).toBeInTheDocument();
@@ -858,7 +860,9 @@ describe("InteractiveTravelScreen", () => {
     render(<InteractiveTravelScreen petId="pet-1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Идти вперёд" }));
 
-    expect(await screen.findByText("Хорошая мысль!")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Листик перешёл мост и добрался до башни"),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Твой ответ")).not.toBeInTheDocument();
     expect(mocks.applyInteractiveTravelImpacts).toHaveBeenCalledTimes(1);
     expect(mocks.applyInteractiveTravelImpacts).toHaveBeenCalledWith(
@@ -894,7 +898,9 @@ describe("InteractiveTravelScreen", () => {
     stored = restoredSession(resolvedFirstWithPendingSecond(), "result");
     fireEvent.click(choice);
 
-    expect(await screen.findByText("Хорошая мысль!")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Листик перешёл мост и добрался до башни"),
+    ).toBeInTheDocument();
     expect(mocks.continueInteractiveTravel).not.toHaveBeenCalled();
   });
 
@@ -1107,7 +1113,9 @@ describe("InteractiveTravelScreen", () => {
       }));
     });
 
-    expect(await screen.findByText("Хорошая мысль!")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Листик перешёл мост и добрался до башни"),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(mocks.writeLocalInteractiveTravelDurably).toHaveBeenCalled(),
     );
@@ -1199,6 +1207,9 @@ describe("InteractiveTravelScreen", () => {
     );
 
     render(<InteractiveTravelScreen petId="pet-1" />);
+    expect(
+      await screen.findByText("Я устал — на сегодня хватит. Отправляюсь домой."),
+    ).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Новое путешествие" }));
 
     await waitFor(() =>

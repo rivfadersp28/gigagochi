@@ -651,23 +651,24 @@
 
 ## Interactive Travel Pilot
 
-- `/pet/[id]/travel` is the production travel flow: simple curated destination choices, character reaction, compact one-sentence portions, user action, generated result, and a causally linked next part. Immediate continuation uses a zero-hour gap; real longer travel may use 1–8 hours.
+- `/pet/[id]/travel` is the production travel flow: simple curated destination choices, character reaction, compact one-sentence portions, a direct task-bank question, user choice, generated consequence and a separate next episode in the same location theme.
 - The backend owns compact response mapping plus illustration/video generation; the frontend persists
   presentation progress locally and renders video-only backgrounds across the full Telegram
   viewport. Generated PNGs are intermediate video sources, not visible background fallbacks.
 - Interactive-travel stat effects commit with bounded local-only receipts inside the same
   `LocalPetState` write. `appliedResultParts` in the separate travel session is only a presentation
   projection and a legacy-migration hint; push snapshots intentionally exclude the receipts.
-- New interactive travels always have three parts. They have no goal contract,
-  target-state ledger, continuity validator or semantic repair. `arcPlan` stores
-  only `generatorVersion` and one reviewed `funFact`; old arc-plan fields are
-  ignored when an unfinished legacy story continues.
-- The model freely generates the opening, selected-action result and next
-  situation from a short prompt. Three choices remain separate scalar JSON
-  fields for provider compatibility. The model receives one reviewed fact and
-  naturally incorporates it into part 1. The backend uses a fixed zero-hour
-  transition and always finishes after part 3. Normalization is limited to API bounds, punctuation, choice
-  cleanup and one technical JSON retry.
+- New interactive travels contain four independent episodes joined only by the
+  destination theme. The backend selects one unused task from the reviewed
+  task bank at a time; the model generates only that task's short fantasy
+  setup. The direct question, four choices, correct answer and child-readable
+  explanation stay server-authoritative and are never rewritten by the model.
+- The next episode is selected and generated only after the current answer.
+  `arcPlan` stores the generator version, used task IDs and answer metadata for
+  generated episodes; it does not pre-generate a shared plot or ending. After
+  episode four, the client adds one short line that the character is tired and
+  goes home. Unfinished `task-bank-location-v2` sessions retain their prepared
+  episodes for backward compatibility.
 - Interactive travel uses its own daily rate-limit bucket. A diagnostic reset tombstones the
   current travel ID, deletes its generated directory and clears that diagnostic user's travel
   bucket so late image/video completions cannot restore stale assets.

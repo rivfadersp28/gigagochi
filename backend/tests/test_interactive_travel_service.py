@@ -74,24 +74,15 @@ def _client(
     monkeypatch.setattr(interactive_travel_service.random, "randint", lambda start, end: 3)
     monkeypatch.setattr(
         interactive_travel_service,
-        "_select_story_tasks",
-        lambda: _test_story_tasks(),
+        "_task_bank",
+        lambda: tuple(_test_story_tasks()),
     )
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     return client, completions
 
 
 def _start_payload() -> dict[str, Any]:
-    return {
-        "title": "Ночная тропа",
-        "ending": "После четвёртой встречи я покидаю ночной лес и возвращаюсь домой",
-        "parts": [
-            {"fantasySetup": "У старого дуба меня встречает хранитель тропы"},
-            {"fantasySetup": "У лесного ручья меня останавливает речной дух"},
-            {"fantasySetup": "На поляне я встречаю каменного великана"},
-            {"fantasySetup": "У выхода из леса меня ждёт огненная птица"},
-        ],
-    }
+    return {"fantasySetup": "У старого дуба меня встречает хранитель тропы"}
 
 
 def _test_story_tasks() -> list[dict[str, Any]]:
@@ -147,13 +138,22 @@ def _result_payload(
     stat: str = "none",
     amount: int = 0,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "result": f"Я выполняю выбранное действие и прохожу испытание {number}.",
         "outcome": outcome,
         "stat": stat,
         "amount": amount,
         "reason": "Выбор повлиял на моё состояние",
     }
+    if number < 4:
+        payload["fantasySetup"] = (
+            "У лесного ручья меня останавливает речной дух"
+            if number == 1
+            else "На поляне я встречаю каменного великана"
+            if number == 2
+            else "У выхода из леса меня ждёт огненная птица"
+        )
+    return payload
 
 
 def _legacy_continue_payload(number: int) -> dict[str, Any]:
@@ -209,7 +209,7 @@ def test_suggestions_do_not_call_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     assert completions.calls == []
 
 
-def test_start_builds_four_erudition_challenges(
+def test_start_builds_only_first_erudition_episode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client, completions = _client(monkeypatch, [_start_payload()])
@@ -224,26 +224,13 @@ def test_start_builds_four_erudition_challenges(
 
     travel = response.travel
     assert travel.destination == "в ночной лес"
-    assert travel.overallTitle == "Ночная тропа"
+    assert travel.overallTitle == "Путешествие в ночной лес"
     assert travel.arcPlan["generatorVersion"] == interactive_travel_service.GENERATOR_VERSION
-    assert travel.arcPlan["storyGoal"] == "Пройти четыре встречи и вернуться домой."
-    assert travel.arcPlan["storyEnding"] == (
-        "После четвёртой встречи я покидаю ночной лес и возвращаюсь домой."
-    )
-    assert travel.arcPlan["part2Situation"] == (
-        "У лесного ручья меня останавливает речной дух. "
-        "Для подъёма груза нужно выбрать подходящий простой механизм."
-    )
-    assert travel.arcPlan["part3Situation"].startswith("На поляне")
-    assert travel.arcPlan["part4Situation"].startswith("У выхода из леса")
     assert travel.arcPlan["part1CorrectChoice"] == "Полярная звезда"
-    assert travel.arcPlan["part2CorrectChoice"] == "Рычаг"
-    assert travel.arcPlan["part3CorrectChoice"] == "Третью"
-    assert travel.arcPlan["part4CorrectChoice"] == "Заслонку"
     assert travel.arcPlan["part1Subject"] == "nature"
     assert travel.arcPlan["part1Explanation"].startswith("Полярная звезда")
-    assert travel.arcPlan["taskBankIds"] == "test-1,test-2,test-3,test-4"
-    assert len(travel.arcPlan) == 34
+    assert travel.arcPlan["taskBankIds"] == "test-1"
+    assert len(travel.arcPlan) == 5
     assert travel.completed is False
     assert travel.outcomeValence is None
     assert len(travel.parts) == 1
@@ -266,7 +253,6 @@ def test_start_builds_four_erudition_challenges(
     call = completions.calls[0]
     assert len(call["messages"]) == 2
     assert "Локация: в ночной лес" in call["messages"][1]["content"]
-    assert "ЗАДАЧА 1" in call["messages"][1]["content"]
     assert "Условие: Ночью нужно определить направление" in call["messages"][1]["content"]
     assert "Правильный ответ" not in call["messages"][1]["content"]
     assert "Объяснение" not in call["messages"][1]["content"]
@@ -275,29 +261,24 @@ def test_start_builds_four_erudition_challenges(
     assert "кошка" not in call["messages"][1]["content"]
     assert "ночной лес" in call["messages"][1]["content"]
     schema = call["response_format"]["json_schema"]
-    assert schema["name"] == "interactive_travel_task_bank_location_v2"
+    assert schema["name"] == "interactive_travel_task_bank_location_sequential_v3"
     assert schema["schema"] == interactive_travel_service.START_SCHEMA
-    assert schema["schema"]["properties"]["parts"]["minItems"] == 4
-    assert schema["schema"]["properties"]["parts"]["maxItems"] == 4
-    assert list(
-        schema["schema"]["properties"]["parts"]["items"]["properties"]
-    ) == ["fantasySetup"]
-    assert schema["schema"]["properties"]["ending"]["maxLength"] == 180
+    assert list(schema["schema"]["properties"]) == ["fantasySetup"]
 
 
 def test_task_bank_condition_is_not_repeated_inside_direct_question() -> None:
-    payload = _start_payload()
     task = _test_story_tasks()[0] | {
         "situation": "На воротах появилась цветная корочка.",
         "question": "Кто образует лишайник?",
     }
 
-    applied = interactive_travel_service._apply_story_tasks(
-        payload,
-        [task, *_test_story_tasks()[1:]],
+    part = interactive_travel_service._part_from_task(
+        task=task,
+        fantasy_setup="У ворот меня встречает страж",
+        part_number=1,
     )
 
-    assert applied["parts"][0]["question"] == "Кто образует лишайник?"
+    assert part.challenge == "Кто образует лишайник?"
 
 
 def test_task_bank_is_deduplicated_and_has_enough_tasks() -> None:
@@ -328,11 +309,10 @@ def test_start_retries_invalid_json_once(monkeypatch: pytest.MonkeyPatch) -> Non
     assert completions.calls[0]["response_format"] == completions.calls[1]["response_format"]
 
 
-def test_start_retries_incomplete_four_part_plan_once(
+def test_start_retries_missing_setup_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    incomplete = _start_payload()
-    incomplete["parts"][3]["fantasySetup"] = ""
+    incomplete = {"fantasySetup": ""}
     client, completions = _client(monkeypatch, [incomplete, _start_payload()])
 
     travel = interactive_travel_service.start_interactive_travel(
@@ -342,7 +322,7 @@ def test_start_retries_incomplete_four_part_plan_once(
         model="test-model",
     ).travel
 
-    assert travel.arcPlan["part4Situation"].startswith("У выхода из леса")
+    assert travel.parts[0].storyText.startswith("У старого дуба")
     assert len(completions.calls) == 2
     assert completions.calls[1]["messages"][-1]["content"] == (
         "Верни только корректный JSON по исходной схеме."
@@ -365,29 +345,10 @@ def test_long_destination_keeps_intro_inside_api_limit(
     assert len(travel.introReaction.text) <= 220
 
 
-def test_start_keeps_ending_inside_simple_schema_limit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    payload = _start_payload()
-    client, _ = _client(monkeypatch, [payload])
-
-    travel = interactive_travel_service.start_interactive_travel(
-        pet=_pet(),
-        destination="в лес",
-        client=client,
-        model="test-model",
-    ).travel
-
-    assert travel.arcPlan["storyEnding"] == f"{payload['ending']}."
-    assert interactive_travel_service.START_SCHEMA["properties"]["ending"]["maxLength"] == 180
-
-
 def test_start_preserves_task_bank_content_without_model_rewriting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    payload = _start_payload()
-    for part in payload["parts"]:
-        part["fantasySetup"] = "Короткая встреча в выбранной локации"
+    payload = {"fantasySetup": "Короткая встреча в выбранной локации"}
     client, _ = _client(monkeypatch, [payload])
 
     travel = interactive_travel_service.start_interactive_travel(
@@ -397,34 +358,10 @@ def test_start_preserves_task_bank_content_without_model_rewriting(
         model="test-model",
     ).travel
 
-    planned_texts = [
-        travel.parts[0].storyText,
-        *(travel.arcPlan[f"part{part_number}Situation"] for part_number in range(2, 5)),
-    ]
-    questions = [
-        travel.parts[0].challenge,
-        *(travel.arcPlan[f"part{part_number}Question"] for part_number in range(2, 5)),
-    ]
-    choices = [
-        travel.parts[0].actionSuggestions,
-        *(
-            [
-                travel.arcPlan[f"part{part_number}Choice{choice_number}"]
-                for choice_number in range(1, 5)
-            ]
-            for part_number in range(2, 5)
-        ),
-    ]
-    for story_text, question, actual_choices, task in zip(
-        planned_texts,
-        questions,
-        choices,
-        _test_story_tasks(),
-        strict=True,
-    ):
-        assert story_text.endswith(task["situation"])
-        assert question == task["question"]
-        assert actual_choices == task["choices"]
+    task = _test_story_tasks()[0]
+    assert travel.parts[0].storyText.endswith(task["situation"])
+    assert travel.parts[0].challenge == task["question"]
+    assert travel.parts[0].actionSuggestions == task["choices"]
 
 
 def test_continue_resolves_choice_and_adds_next_part(
@@ -432,7 +369,13 @@ def test_continue_resolves_choice_and_adds_next_part(
 ) -> None:
     travel, client = _start(
         monkeypatch,
-        [_start_payload(), {"result": "Я выбираю неверный ответ и задерживаюсь у дуба."}],
+        [
+            _start_payload(),
+            {
+                "result": "Я выбираю неверный ответ и задерживаюсь у дуба.",
+                "fantasySetup": "У лесного ручья меня останавливает речной дух",
+            },
+        ],
     )
 
     response = interactive_travel_service.continue_interactive_travel(
@@ -454,9 +397,11 @@ def test_continue_resolves_choice_and_adds_next_part(
     assert pending.result is None
     assert pending.partNumber == 2
     assert pending.transition is not None
-    assert pending.transition.elapsedHours == 3
+    assert pending.transition.elapsedHours == 1
     assert pending.transition.summary == resolved.result.consequence
-    assert pending.transition.departureHook == "Я продолжаю путь. Проходит 3 часа."
+    assert pending.transition.departureHook == (
+        "Чуть позже в этой же локации происходит новая встреча."
+    )
     assert pending.storyText == (
         "У лесного ручья меня останавливает речной дух. "
         "Для подъёма груза нужно выбрать подходящий простой механизм."
@@ -469,12 +414,16 @@ def test_continue_resolves_choice_and_adds_next_part(
         "Факел",
     ]
     assert all(len(choice.split()) <= 3 for choice in pending.actionSuggestions)
-    assert next_travel.arcPlan == travel.arcPlan
+    assert next_travel.arcPlan["taskBankIds"] == "test-1,test-2"
+    assert next_travel.arcPlan["part2CorrectChoice"] == "Рычаг"
+    assert "Правильный ответ: Полярная звезда" in resolved.result.text
+    assert "Почему:" in resolved.result.text
     result_call = client.chat.completions.calls[1]
     result_schema = result_call["response_format"]["json_schema"]
-    assert result_schema["name"] == "interactive_travel_part_result_fixed_v2"
-    assert list(result_schema["schema"]["properties"]) == ["result"]
-    assert travel.arcPlan["part2Situation"] not in result_call["messages"][1]["content"]
+    assert result_schema["name"] == "interactive_travel_part_result_and_next_episode_v3"
+    assert list(result_schema["schema"]["properties"]) == ["result", "fantasySetup"]
+    assert "Следующая задача:" in result_call["messages"][1]["content"]
+    assert "Не связывай её сюжетом" in result_call["messages"][1]["content"]
     assert "Локация: в ночной лес" in result_call["messages"][1]["content"]
 
 
@@ -514,7 +463,7 @@ def test_long_result_fits_transition_summary(monkeypatch: pytest.MonkeyPatch) ->
     assert interactive_travel_service.RESULT_PROPERTIES["result"]["maxLength"] == 240
 
 
-def test_story_always_finishes_after_four_parts_with_saved_ending(
+def test_story_generates_four_independent_episodes_and_goes_home(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client, completions = _client(
@@ -552,26 +501,25 @@ def test_story_always_finishes_after_four_parts_with_saved_ending(
     assert travel.outcomeValence == "positive"
     assert len(travel.parts) == 4
     assert all(part.result is not None for part in travel.parts)
-    assert [part.transition.elapsedHours for part in travel.parts[1:]] == [3, 3, 3]
+    assert [part.transition.elapsedHours for part in travel.parts[1:]] == [1, 1, 1]
     assert travel.parts[1].storyText.startswith("У лесного ручья")
     assert travel.parts[2].storyText.startswith("На поляне")
     assert travel.parts[3].storyText.startswith("У выхода из леса")
     assert len(completions.calls) == 5
     final_result = travel.parts[-1].result
     assert final_result is not None
-    ending = travel.arcPlan["storyEnding"]
-    assert final_result.text.endswith(ending)
-    assert final_result.text.count(ending) == 1
-    assert ending not in final_result.consequence
+    assert "Правильный ответ: Заслонку" in final_result.text
+    assert "Почему:" in final_result.text
+    assert "домой" not in final_result.consequence.casefold()
+    assert "домой" not in final_result.text.casefold()
     final_call = completions.calls[-1]
     assert final_call["response_format"]["json_schema"]["name"] == (
-        "interactive_travel_part_result_fixed_v2"
+        "interactive_travel_part_result_fixed_v3"
     )
-    assert travel.arcPlan["storyGoal"] not in final_call["messages"][1]["content"]
-    assert travel.arcPlan["storyEnding"] not in final_call["messages"][1]["content"]
-    assert "развязку путешествия сервер добавит отдельно" in final_call["messages"][1][
-        "content"
-    ].casefold()
+    assert (
+        "реплику о возвращении домой интерфейс добавит"
+        in final_call["messages"][1]["content"].casefold()
+    )
 
 
 @pytest.mark.parametrize(

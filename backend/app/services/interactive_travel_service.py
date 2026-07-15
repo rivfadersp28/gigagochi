@@ -36,8 +36,13 @@ from app.services.pet_reply_engine.speech_runtime import background_story_reason
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
 
 STORY_PART_COUNT = 4
-GENERATOR_VERSION = "task-bank-location-v2"
-FIXED_PLAN_GENERATOR_VERSIONS = {"erudition-4-v1", GENERATOR_VERSION}
+PREGENERATED_GENERATOR_VERSION = "task-bank-location-v2"
+GENERATOR_VERSION = "task-bank-location-sequential-v3"
+FIXED_PLAN_GENERATOR_VERSIONS = {
+    "erudition-4-v1",
+    PREGENERATED_GENERATOR_VERSION,
+    GENERATOR_VERSION,
+}
 MIN_TIMEOUT_SECONDS = 120.0
 CHOICE_MAX_WORDS = 3
 CHOICE_MAX_LENGTH = 40
@@ -91,8 +96,8 @@ CHOICE_FALLBACKS = (
 
 START_SYSTEM_PROMPT = "\n".join(
     (
-        "Создай простую фэнтези-историю из четырёх коротких эпизодов в заданной локации.",
-        "Для каждого эпизода напиши только короткую подводку к переданной задаче.",
+        "Создай один короткий фэнтезийный эпизод в заданной локации.",
+        "Напиши только короткую подводку к переданной задаче.",
         "Не переписывай, не усложняй и не решай задачи: сервер добавит их дословно.",
         "Верни только JSON по схеме.",
     )
@@ -133,21 +138,9 @@ START_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "title": {"type": "string", "minLength": 1, "maxLength": 80},
-        "ending": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 180,
-            "description": "Одно короткое предложение: герой завершает путь в этой локации.",
-        },
-        "parts": {
-            "type": "array",
-            "minItems": STORY_PART_COUNT,
-            "maxItems": STORY_PART_COUNT,
-            "items": PLAN_PART_SCHEMA,
-        },
+        **PLAN_PART_SCHEMA["properties"],
     },
-    "required": ["title", "ending", "parts"],
+    "required": ["fantasySetup"],
 }
 
 RESULT_PROPERTIES: dict[str, Any] = {
@@ -204,6 +197,16 @@ FIXED_RESULT_SCHEMA: dict[str, Any] = {
         "result": {"type": "string", "minLength": 1, "maxLength": 240},
     },
     "required": ["result"],
+}
+
+NEXT_FIXED_RESULT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        **FIXED_RESULT_SCHEMA["properties"],
+        **PLAN_PART_SCHEMA["properties"],
+    },
+    "required": ["result", "fantasySetup"],
 }
 
 
@@ -354,6 +357,14 @@ def _select_story_tasks() -> list[dict[str, Any]]:
     return list(random.sample(list(_task_bank()), STORY_PART_COUNT))
 
 
+def _select_story_task(excluded_ids: set[str] | None = None) -> dict[str, Any]:
+    excluded = excluded_ids or set()
+    candidates = [task for task in _task_bank() if task["id"] not in excluded]
+    if not candidates:
+        raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_TASK_BANK_EXHAUSTED")
+    return random.choice(candidates)
+
+
 def _task_bank_prompt(tasks: list[dict[str, Any]]) -> str:
     blocks = []
     for index, task in enumerate(tasks, start=1):
@@ -368,6 +379,16 @@ def _task_bank_prompt(tasks: list[dict[str, Any]]) -> str:
             )
         )
     return "\n\n".join(blocks)
+
+
+def _task_prompt(task: dict[str, Any]) -> str:
+    return "\n".join(
+        (
+            f"Условие: {task['situation']}",
+            f"Вопрос: {task['question']}",
+            f"Варианты: {' | '.join(task['choices'])}",
+        )
+    )
 
 
 def _apply_story_tasks(payload: dict[str, Any], tasks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -521,7 +542,11 @@ def _planned_part_from_arc(
     elapsed_hours: int,
 ) -> InteractiveTravelPart:
     prefix = f"part{part_number}"
-    choice_count = 4 if arc_plan.get("generatorVersion") == GENERATOR_VERSION else 3
+    choice_count = (
+        4
+        if arc_plan.get("generatorVersion") in {PREGENERATED_GENERATOR_VERSION, GENERATOR_VERSION}
+        else 3
+    )
     return InteractiveTravelPart(
         partNumber=part_number,
         title=f"Часть {part_number}",
@@ -537,6 +562,71 @@ def _planned_part_from_arc(
             for choice_number in range(1, choice_count + 1)
         ],
     )
+
+
+def _part_from_task(
+    *,
+    task: dict[str, Any],
+    fantasy_setup: Any,
+    part_number: int,
+    previous_result: InteractiveTravelResult | None = None,
+) -> InteractiveTravelPart:
+    transition = None
+    if previous_result is not None:
+        transition = {
+            "elapsedHours": 1,
+            "summary": previous_result.consequence,
+            "departureHook": "Чуть позже в этой же локации происходит новая встреча.",
+        }
+    return InteractiveTravelPart(
+        partNumber=part_number,
+        title=f"Эпизод {part_number}",
+        storyText=" ".join(
+            (
+                _sentence(
+                    fantasy_setup,
+                    fallback="В этой локации происходит новая встреча",
+                    limit=180,
+                ),
+                task["situation"],
+            )
+        ),
+        transition=transition,
+        challenge=_sentence(
+            task["question"],
+            fallback="Что нужно сделать",
+            limit=280,
+            question=True,
+        ),
+        actionSuggestions=list(task["choices"]),
+    )
+
+
+def _append_task_to_arc_plan(
+    arc_plan: dict[str, str],
+    *,
+    task: dict[str, Any],
+    part_number: int,
+) -> dict[str, str]:
+    next_arc = dict(arc_plan)
+    task_ids = [value for value in next_arc.get("taskBankIds", "").split(",") if value]
+    if task["id"] not in task_ids:
+        task_ids.append(task["id"])
+    prefix = f"part{part_number}"
+    next_arc.update(
+        {
+            "generatorVersion": GENERATOR_VERSION,
+            "taskBankIds": ",".join(task_ids),
+            f"{prefix}CorrectChoice": task["answer"],
+            f"{prefix}Subject": task["subject"],
+            f"{prefix}Explanation": _sentence(
+                task["explanation"],
+                fallback="Это правильный ответ",
+                limit=180,
+            ),
+        }
+    )
+    return next_arc
 
 
 def _intro_text(destination: str) -> str:
@@ -744,44 +834,44 @@ def start_interactive_travel(
     del history, memory_context
     model, timeout = _model_and_timeout(client=client, model=model, timeout=timeout)
     clean_destination = _compact_text(destination, 500, "в путешествие")
-    story_tasks = _select_story_tasks()
+    story_task = _select_story_task()
     payload, debug = _request(
-        label="interactive_travel/start_task_bank_location_v2",
-        schema_name="interactive_travel_task_bank_location_v2",
+        label="interactive_travel/start_task_bank_location_sequential_v3",
+        schema_name="interactive_travel_task_bank_location_sequential_v3",
         schema=START_SCHEMA,
         system_content=START_SYSTEM_PROMPT,
         user_content=(
             f"Локация: {clean_destination}.\n"
-            "Придумай название и четыре простые фэнтезийные подводки — по одной к каждой "
-            "задаче. Все встречи происходят в этой локации. Подводка — одно короткое "
-            "предложение от первого лица о месте встречи. Не пересказывай условие, не меняй "
-            "вопрос и не объясняй ответ. Эпизодам не нужна сложная причинная связь. В ending "
-            "одним предложением закончи путешествие в этой же локации.\n\n"
-            f"{_task_bank_prompt(story_tasks)}"
+            "Придумай одну простую фэнтезийную подводку к задаче. Подводка — одно короткое "
+            "предложение от первого лица о встрече в этой локации. Не пересказывай условие, "
+            "не меняй вопрос и не объясняй ответ.\n\n"
+            f"{_task_prompt(story_task)}"
         ),
         client=client,
         model=model,
         timeout=timeout,
-        required_text_fields=("title", "ending"),
-        require_story_plan=True,
+        required_text_fields=("fantasySetup",),
     )
-    payload = _apply_story_tasks(payload, story_tasks)
-    planned_parts = _parts_from_plan_payload(payload)
+    first_part = _part_from_task(
+        task=story_task,
+        fantasy_setup=payload["fantasySetup"],
+        part_number=1,
+    )
     travel = InteractiveTravelState(
         travelId=travel_id or f"interactive-travel-{uuid4().hex}",
         generatedAt=datetime.now(UTC),
         destination=clean_destination,
-        overallTitle=_compact_text(payload.get("title"), 120, "Приключение"),
-        arcPlan=_arc_plan_from_payload(
-            payload,
-            parts=planned_parts,
-            task_ids=[task["id"] for task in story_tasks],
+        overallTitle=_compact_text(
+            f"Путешествие {clean_destination}",
+            120,
+            "Путешествие",
         ),
+        arcPlan=_append_task_to_arc_plan({}, task=story_task, part_number=1),
         introReaction=InteractiveTravelIntroReaction(
             text=_intro_text(clean_destination),
             tone="determined",
         ),
-        parts=[planned_parts[0]],
+        parts=[first_part],
         completed=False,
     )
     return InteractiveTravelResponse(
@@ -818,7 +908,8 @@ def continue_interactive_travel(
     is_final = current_part.partNumber >= STORY_PART_COUNT
     elapsed_hours = 0 if is_final else random.randint(TIME_SKIP_MIN_HOURS, TIME_SKIP_MAX_HOURS)
     uses_fixed_plan = travel.arcPlan.get("generatorVersion") in FIXED_PLAN_GENERATOR_VERSIONS
-    story_ending: str | None = None
+    uses_sequential_plan = travel.arcPlan.get("generatorVersion") == GENERATOR_VERSION
+    next_task: dict[str, Any] | None = None
     answer_rule = ""
     answer_is_correct = False
     if uses_fixed_plan:
@@ -840,13 +931,26 @@ def continue_interactive_travel(
             )
         )
         if is_final:
-            story_ending = _required_arc_value(travel.arcPlan, "storyEnding")
-            instruction = "Это последний эпизод. Развязку путешествия сервер добавит отдельно."
+            instruction = "Это последний эпизод. Реплику о возвращении домой интерфейс добавит."
         else:
-            instruction = "Заверши только этот эпизод. Следующую встречу сервер покажет отдельно."
-        schema = FIXED_RESULT_SCHEMA
+            instruction = "Заверши только этот эпизод."
+            if uses_sequential_plan:
+                used_task_ids = {
+                    value for value in travel.arcPlan.get("taskBankIds", "").split(",") if value
+                }
+                next_task = _select_story_task(used_task_ids)
+                instruction += (
+                    " Затем напиши одну короткую фэнтезийную подводку к следующей задаче "
+                    "в той же локации. Не связывай её сюжетом с текущим эпизодом.\n"
+                    f"Следующая задача:\n{_task_prompt(next_task)}"
+                )
+        schema = NEXT_FIXED_RESULT_SCHEMA if next_task is not None else FIXED_RESULT_SCHEMA
         label = f"interactive_travel/part_{current_part.partNumber}_result_fixed"
-        schema_name = "interactive_travel_part_result_fixed_v2"
+        schema_name = (
+            "interactive_travel_part_result_and_next_episode_v3"
+            if next_task is not None
+            else "interactive_travel_part_result_fixed_v3"
+        )
         result_user_content = (
             f"Локация: {travel.destination}.\n"
             f"Текущий эпизод: {current_part.storyText}\n"
@@ -906,9 +1010,13 @@ def continue_interactive_travel(
     if uses_fixed_plan:
         result.outcomeValence = "positive" if answer_is_correct else "negative"
         result.adviceAssessment = "helpful" if answer_is_correct else "harmful"
-    if story_ending is not None:
+    if uses_fixed_plan:
+        explanation_text = _compact_text(
+            f"Правильный ответ: {correct_choice}. Почему: {correct_explanation}",
+            420,
+        )
         result = result.model_copy(
-            update={"text": _compact_text(f"{result.text} {story_ending}", 700)}
+            update={"text": _compact_text(f"{result.text} {explanation_text}", 700)}
         )
     resolved_part = InteractiveTravelPart.model_validate(
         current_part.model_dump(mode="json")
@@ -920,7 +1028,18 @@ def continue_interactive_travel(
     parts = [*travel.parts[:-1], resolved_part]
     if not is_final:
         next_number = current_part.partNumber + 1
-        if uses_fixed_plan:
+        if uses_sequential_plan:
+            if next_task is None:
+                raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_PLAN_MISSING")
+            parts.append(
+                _part_from_task(
+                    task=next_task,
+                    fantasy_setup=payload.get("fantasySetup"),
+                    part_number=next_number,
+                    previous_result=result,
+                )
+            )
+        elif uses_fixed_plan:
             parts.append(
                 _planned_part_from_arc(
                     arc_plan=travel.arcPlan,
@@ -962,9 +1081,17 @@ def continue_interactive_travel(
                 )
             )
 
+    next_arc_plan = travel.arcPlan
+    if next_task is not None:
+        next_arc_plan = _append_task_to_arc_plan(
+            travel.arcPlan,
+            task=next_task,
+            part_number=current_part.partNumber + 1,
+        )
     next_travel = InteractiveTravelState.model_validate(
         travel.model_dump(mode="json")
         | {
+            "arcPlan": next_arc_plan,
             "parts": [part.model_dump(mode="json") for part in parts],
             "completed": is_final,
             "outcomeValence": result.outcomeValence if is_final else None,

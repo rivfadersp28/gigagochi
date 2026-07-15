@@ -1455,7 +1455,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       return challengeTextPortions[Math.min(portionIndex, challengeTextPortions.length - 1)]
         ?? challenge;
     }
-    return `${petName} вернулся домой. Путешествие завершено!`;
+    return "Я устал — на сегодня хватит. Отправляюсь домой.";
   })();
 
   const messageId =
@@ -1700,7 +1700,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
                 scaleOrigin="bottom"
                 shapeSrc={SPEECH_BUBBLE_SHAPE}
                 maxLines={3}
-                minFontSize={20}
+                minFontSize={14}
               />
             </div>
 
