@@ -594,7 +594,7 @@ body {
 
 .pet-status-level {
   position: absolute;
-  top: 66px;
+  top: 86px;
   left: 50%;
   z-index: 40;
   max-width: 260px;
@@ -612,7 +612,7 @@ body {
 
 .pet-experience-track {
   position: absolute;
-  top: 95px;
+  top: 115px;
   left: 50%;
   z-index: 40;
   width: 174px;
@@ -636,7 +636,7 @@ body {
 
 .top-status-strip {
   position: absolute;
-  top: 66px;
+  top: 86px;
   right: 12px;
   z-index: 40;
   display: flex;
