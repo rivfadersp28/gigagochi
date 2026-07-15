@@ -624,6 +624,9 @@
   (image + video per part). Never charge them to the pet-generation `3/day` bucket. The debug reset
   must invalidate the travel ID before deleting its directory; deleting files alone lets an
   already-running provider call write them back.
+- The active `x-ai/grok-imagine-video` OpenRouter endpoint rejects `4:5` with HTTP 400 even though
+  the image provider supports it. Interactive-travel poster and video generation use `3:4`, the
+  nearest accepted portrait ratio; do not infer the video allowlist from the image allowlist.
 - Do not restore interactive-travel goals, target states, root matching, named-term checks, event
   counters, continuity anchors or validator-specific retries. The current product decision accepts
   independent episodes in exchange for a fixed four-task generator that is easy to control.

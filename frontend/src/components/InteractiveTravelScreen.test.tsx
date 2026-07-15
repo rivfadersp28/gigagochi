@@ -662,14 +662,21 @@ describe("InteractiveTravelScreen", () => {
   });
 
   it("queues a durable cancellation before clearing the local session", async () => {
+    mocks.canUseDebugMenu = true;
     mocks.readLocalInteractiveTravel.mockReturnValue(
       restoredSession(travel([pendingPart(1)]), "story"),
     );
 
     render(<InteractiveTravelScreen petId="pet-1" />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Создать новую историю" }),
-    );
+    expect(await screen.findByLabelText("История и вопрос")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Создать новую историю" }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Debug путешествия")).not.toBeInTheDocument();
+    const backHandler = mocks.useTelegramBackButton.mock.calls.at(-1)?.[0] as
+      | (() => void)
+      | undefined;
+    expect(backHandler).toBeTypeOf("function");
+    act(() => backHandler?.());
 
     await waitFor(() =>
       expect(mocks.enqueueInteractiveTravelCancel).toHaveBeenCalledWith(
@@ -680,6 +687,23 @@ describe("InteractiveTravelScreen", () => {
     expect(mocks.enqueueInteractiveTravelCancel.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.clearLocalInteractiveTravel.mock.invocationCallOrder[0],
     );
+    expect(mocks.flushPendingInteractiveTravelOperations).toHaveBeenCalledOnce();
+    expect(mocks.push).toHaveBeenCalledWith("/pet/pet-1");
+  });
+
+  it("clears the current story when the travel page is closed", async () => {
+    mocks.readLocalInteractiveTravel.mockReturnValue(
+      restoredSession(travel([pendingPart(1)]), "story"),
+    );
+
+    render(<InteractiveTravelScreen petId="pet-1" />);
+    expect(await screen.findByLabelText("История и вопрос")).toBeInTheDocument();
+    act(() => window.dispatchEvent(new Event("pagehide")));
+
+    expect(mocks.enqueueInteractiveTravelCancel).toHaveBeenCalledWith(
+      "interactive-travel-1",
+    );
+    expect(mocks.clearLocalInteractiveTravel).toHaveBeenCalledWith("pet-1");
   });
 
   it("returns from a custom destination to the generated options and restores focus", async () => {
@@ -690,7 +714,11 @@ describe("InteractiveTravelScreen", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Свой вариант" }));
     expect(await screen.findByLabelText("Свой вариант путешествия")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Вернуться к вариантам" }));
+    const backHandler = mocks.useTelegramBackButton.mock.calls.at(-1)?.[0] as
+      | (() => void)
+      | undefined;
+    expect(backHandler).toBeTypeOf("function");
+    act(() => backHandler?.());
 
     const customTrigger = await screen.findByRole("button", { name: "Свой вариант" });
     expect(screen.queryByLabelText("Свой вариант путешествия")).not.toBeInTheDocument();
@@ -757,7 +785,8 @@ describe("InteractiveTravelScreen", () => {
       "src",
       "/teen-idle-foreground.png?travel_foreground_v=20260714-1",
     );
-    expect(screen.getByRole("button", { name: "Создать новую историю" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Создать новую историю" }))
+      .not.toBeInTheDocument();
   });
 
   it("shows the intro shell while the story plan is still generated in background", async () => {
@@ -1286,7 +1315,10 @@ describe("InteractiveTravelScreen", () => {
     render(<InteractiveTravelScreen petId="pet-1" />);
 
     await waitFor(() => expect(mocks.animateInteractiveTravelPart).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole("button", { name: "Создать новую историю" }));
+    const backHandler = mocks.useTelegramBackButton.mock.calls.at(-1)?.[0] as
+      | (() => void)
+      | undefined;
+    act(() => backHandler?.());
     mocks.writeLocalInteractiveTravelDurably.mockClear();
     await act(async () => {
       animation.resolve({ partNumber: 1, videoUrl: "/stale-story-1.mp4" });

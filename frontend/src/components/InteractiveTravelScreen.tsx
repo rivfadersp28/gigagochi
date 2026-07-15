@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 /* eslint-disable react-hooks/set-state-in-effect -- effects drive the persisted travel state machine */
-import { ArrowLeft, Play, RotateCcw } from "lucide-react";
+import { Play, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   type FormEvent,
@@ -44,6 +44,7 @@ import {
 import {
   enqueueInteractiveTravelCancel,
   enqueueInteractiveTravelCapture,
+  flushPendingInteractiveTravelOperations,
 } from "@/lib/pendingInteractiveTravelOperations";
 import {
   getInteractiveTravelDemo,
@@ -92,7 +93,6 @@ const STORAGE_ERROR: PresentedError = {
 const MUTATION_ERROR: PresentedError = {
   message: "Путешествие обновляется в другой вкладке. Подожди немного и попробуй снова.",
 };
-const SHOW_LOCAL_CONTROLS = process.env.NODE_ENV !== "production";
 const FALLBACK_DESTINATIONS = [
   "в подземелье",
   "на болото",
@@ -350,16 +350,43 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     };
   }, [currentPetId, currentPetIntroductionPending, petId]);
 
+  const clearTravelHistory = useCallback(() => {
+    const latest = readLocalInteractiveTravel(petId);
+    if (!demoTravel) {
+      const travelId = latest?.travel.travelId ?? activeTravelIdRef.current;
+      const queued = latest?.travel.completed
+        ? enqueueInteractiveTravelCapture(latest.travel)
+        : travelId
+          ? enqueueInteractiveTravelCancel(travelId)
+          : false;
+      if (queued) {
+        void flushPendingInteractiveTravelOperations().catch(() => undefined);
+      }
+    }
+    requestEpochRef.current += 1;
+    activeTravelIdRef.current = null;
+    clearLocalInteractiveTravel(petId);
+    setSession(null);
+    setDemoTravel(null);
+  }, [demoTravel, petId]);
+
   const goBack = useCallback(() => {
     if (showCustomDestination) {
       setShowCustomDestination(false);
       setError(null);
       return;
     }
+    clearTravelHistory();
     router.push(`/pet/${petId}`);
-  }, [petId, router, showCustomDestination]);
+  }, [clearTravelHistory, petId, router, showCustomDestination]);
 
   useTelegramBackButton(goBack);
+
+  useEffect(() => {
+    const handlePageHide = () => clearTravelHistory();
+    window.addEventListener("pagehide", handlePageHide);
+    return () => window.removeEventListener("pagehide", handlePageHide);
+  }, [clearTravelHistory]);
 
   useEffect(() => {
     setTelegramBackgroundColor("#000000");
@@ -1726,32 +1753,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           </>
         )}
 
-        {SHOW_LOCAL_CONTROLS && !isTravelLoading ? (
-          <>
-            <button type="button" onClick={goBack} className={styles.backButton}>
-              <ArrowLeft aria-hidden="true" />
-              <span className="sr-only">
-                {showCustomDestination
-                  ? "Вернуться к вариантам"
-                  : "Вернуться к персонажу"}
-              </span>
-            </button>
-
-            {(session && !session.travel.completed) || isSubmitting ? (
-              <button
-                type="button"
-                onClick={() => void handleNewTravel()}
-                className={styles.newStoryButton}
-                disabled={isResettingTravel}
-              >
-                <RotateCcw aria-hidden="true" />
-                <span>Создать новую историю</span>
-              </button>
-            ) : null}
-          </>
-        ) : null}
-
-        {canShowDebugMenu && !isTravelLoading ? (
+        {canShowDebugMenu && !isTravelLoading && !isStoryLayout ? (
           <div className={styles.debugMenu} aria-label="Debug путешествия">
             <span>Debug</span>
             {!demoTravel ? (

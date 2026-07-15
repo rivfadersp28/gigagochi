@@ -659,8 +659,9 @@
 - The backend owns response mapping plus illustration/video generation; the frontend persists
   presentation progress locally. The generated PNG is the poster/fallback inside the fixed media
   frame and the MP4 replaces it when ready; a blurred crop of that same first frame fills the
-  backdrop. New travel posters and video sources use 4:5, the closest provider-supported ratio to
-  the 382×456 UI container, and the video request explicitly asks the provider for 4:5.
+  backdrop. New travel posters and video sources use 3:4, the closest ratio to the 382×456 UI
+  container accepted by the active OpenRouter video model, and the video request explicitly asks
+  the provider for 3:4.
 - Interactive-travel stat effects commit with bounded local-only receipts inside the same
   `LocalPetState` write. `appliedResultParts` in the separate travel session is only a presentation
   projection and a legacy-migration hint; push snapshots intentionally exclude the receipts.

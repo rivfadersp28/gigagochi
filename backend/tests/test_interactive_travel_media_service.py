@@ -97,7 +97,7 @@ def test_interactive_travel_video_returns_url_and_writes_mp4(monkeypatch, tmp_pa
     assert video_url.startswith(f"/static/generated/{travel_id}/interactive-travel-part-01.mp4?v=")
     assert (output_dir / "interactive-travel-part-01.mp4").read_bytes() == b"video-bytes"
     assert reservation_events == ["enter", "exit-after-commit"]
-    assert captured_options["aspect_ratio"] == "4:5"
+    assert captured_options["aspect_ratio"] == "3:4"
 
 
 def test_interactive_travel_image_replay_reuses_persisted_media(
@@ -137,12 +137,12 @@ def test_interactive_travel_image_replay_reuses_persisted_media(
     assert provider_calls == 1
     assert first_url == second_url
     assert first_url.endswith(f"?v={persisted_mtime}")
-    assert captured_options["image_size"] == "1024x1280"
-    assert "4:5 portrait canvas" in captured_options["composition_direction"]
+    assert captured_options["image_size"] == "768x1024"
+    assert "3:4 portrait canvas" in captured_options["composition_direction"]
     with Image.open(output_dir / "interactive-travel-part-01.png") as poster:
-        assert poster.size == (400, 500)
+        assert poster.size == (450, 600)
     with Image.open(output_dir / "interactive-travel-part-01-video-source.png") as video_source:
-        assert video_source.size == (720, 900)
+        assert video_source.size == (720, 960)
     assert not list(output_dir.glob(".*.tmp"))
 
 

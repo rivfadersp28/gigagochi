@@ -25,10 +25,10 @@ from app.services.background_story_service import (
 )
 from app.services.image_service import generated_dir_for
 
-INTERACTIVE_TRAVEL_BACKGROUND_SIZE = (400, 500)
-INTERACTIVE_TRAVEL_VIDEO_SOURCE_SIZE = (720, 900)
-INTERACTIVE_TRAVEL_VIDEO_ASPECT_RATIO = "4:5"
-INTERACTIVE_TRAVEL_PROVIDER_SIZE = "1024x1280"
+INTERACTIVE_TRAVEL_BACKGROUND_SIZE = (450, 600)
+INTERACTIVE_TRAVEL_VIDEO_SOURCE_SIZE = (720, 960)
+INTERACTIVE_TRAVEL_VIDEO_ASPECT_RATIO = "3:4"
+INTERACTIVE_TRAVEL_PROVIDER_SIZE = "768x1024"
 _INTERACTIVE_TRAVEL_LOCK_BUCKET_COUNT = 256
 _INTERACTIVE_TRAVEL_CANCEL_RETENTION_SECONDS = 180 * 24 * 60 * 60
 _INTERACTIVE_TRAVEL_FILE_LOCKS = {
@@ -37,8 +37,9 @@ _INTERACTIVE_TRAVEL_FILE_LOCKS = {
 }
 
 INTERACTIVE_TRAVEL_VERTICAL_COMPOSITION = """
-PORTRAIT 4:5 FORMAT — COMPOSITION ONLY:
-- Compose directly for a 4:5 portrait canvas matching the travel media container.
+PORTRAIT 3:4 FORMAT — COMPOSITION ONLY:
+- Compose directly for a 3:4 portrait canvas, the closest video-provider format to the travel
+  media container.
 - Keep the complete main character, the decisive action and every required story object inside
   the central 80% of the canvas width and height.
 - Use the outer edges only for expendable atmosphere and scenery; do not put required objects
