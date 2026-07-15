@@ -20,6 +20,7 @@ from app.dependencies import get_telegram_user
 from app.errors import public_error
 from app.schemas import (
     AnimateInteractiveTravelPartRequest,
+    AutomaticInteractiveStoryChoiceRequest,
     ContinueInteractiveTravelRequest,
     GeneratePetJobResponse,
     GeneratePetRequest,
@@ -151,6 +152,7 @@ from app.services.telegram_auth_service import TelegramUserContext
 from app.services.telegram_push_service import (
     TelegramPushError,
     automatic_interactive_story,
+    select_automatic_interactive_story,
     register_push_snapshot,
     unregister_push_snapshot,
 )
@@ -1319,6 +1321,28 @@ def automatic_travel_story(
 ) -> dict[str, Any]:
     try:
         return automatic_interactive_story(telegram_id=user.telegram_id, token=token)
+    except TelegramPushError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": exc.code, "message": exc.message},
+        ) from None
+
+
+@router.post("/travel/automatic/{token}/choice")
+def choose_automatic_travel_story(
+    token: Annotated[
+        str,
+        PathParameter(min_length=16, max_length=16, pattern=r"^[a-f0-9]{16}$"),
+    ],
+    request: AutomaticInteractiveStoryChoiceRequest,
+    user: TelegramUser,
+) -> dict[str, Any]:
+    try:
+        return select_automatic_interactive_story(
+            telegram_id=user.telegram_id,
+            token=token,
+            selected_choice=request.choice,
+        )
     except TelegramPushError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

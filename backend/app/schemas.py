@@ -502,6 +502,10 @@ class ContinueInteractiveTravelRequest(BaseModel):
     includeDebug: bool = False
 
 
+class AutomaticInteractiveStoryChoiceRequest(BaseModel):
+    choice: str = Field(min_length=1, max_length=1000)
+
+
 class InteractiveTravelResponse(BaseModel):
     travel: InteractiveTravelState
     debug: LocalChatDebug | None = None

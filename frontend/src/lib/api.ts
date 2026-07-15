@@ -3,6 +3,7 @@ import type {
   InteractiveTravelAnimationResponse,
   InteractiveTravelIllustrationResponse,
   InteractiveTravelPart,
+  InteractiveTravelResult,
   InteractiveTravelResponse,
   InteractiveTravelState,
   InteractiveTravelSuggestionsResponse,
@@ -85,12 +86,19 @@ export type TelegramCapabilities = {
 
 export type AutomaticInteractiveStory = {
   token: string;
+  travelId: string;
+  destination: string;
+  createdAt: string;
   title: string;
   storyText: string;
   question: string;
   choices: [string, string];
   outcomes: [string, string];
+  selectedChoice?: string;
+  result?: InteractiveTravelResult;
+  situationImageUrl: string;
   situationVideoUrl: string;
+  outcomeImageUrls: [string, string];
   outcomeVideoUrls: [string, string];
 };
 
@@ -110,14 +118,50 @@ function parseAutomaticInteractiveStory(payload: unknown): AutomaticInteractiveS
     }
     return [text(value[0], `${field}[0]`), text(value[1], `${field}[1]`)];
   };
+  const resultPayload = isRecord(payload.result) ? payload.result : undefined;
+  const result: InteractiveTravelResult | undefined = resultPayload ? {
+    text: text(resultPayload.text, "result.text"),
+    adviceAssessment: resultPayload.adviceAssessment === "helpful" ? "helpful" as const : "harmful" as const,
+    reaction: text(resultPayload.reaction, "result.reaction"),
+    reactionTone: resultPayload.reactionTone === "determined" ? "determined" as const : "worried" as const,
+    consequence: text(resultPayload.consequence, "result.consequence"),
+    outcomeValence: resultPayload.outcomeValence === "positive" ? "positive" as const : "negative" as const,
+    experienceGained: typeof resultPayload.experienceGained === "number"
+      ? resultPayload.experienceGained
+      : 0,
+    statImpacts: Array.isArray(resultPayload.statImpacts)
+      ? resultPayload.statImpacts.flatMap((item) => {
+          if (!isRecord(item) || typeof item.amount !== "number") {
+            return [];
+          }
+          const stat = item.stat === "happiness" || item.stat === "energy" || item.stat === "hunger"
+            ? item.stat as InteractiveTravelResult["statImpacts"][number]["stat"]
+            : null;
+          return stat ? [{
+            stat,
+            amount: item.amount,
+            reason: text(item.reason, "result.statImpacts.reason"),
+          }] : [];
+        })
+      : [],
+  } : undefined;
   return {
     token: text(payload.token, "token"),
+    travelId: text(payload.travelId, "travelId"),
+    destination: text(payload.destination, "destination"),
+    createdAt: text(payload.createdAt, "createdAt"),
     title: text(payload.title, "title"),
     storyText: text(payload.storyText, "storyText"),
     question: text(payload.question, "question"),
     choices: pair(payload.choices, "choices"),
     outcomes: pair(payload.outcomes, "outcomes"),
+    selectedChoice: typeof payload.selectedChoice === "string"
+      ? payload.selectedChoice.trim() || undefined
+      : undefined,
+    result,
+    situationImageUrl: publicImageUrl(text(payload.situationImageUrl, "situationImageUrl")),
     situationVideoUrl: publicImageUrl(text(payload.situationVideoUrl, "situationVideoUrl")),
+    outcomeImageUrls: pair(payload.outcomeImageUrls, "outcomeImageUrls").map(publicImageUrl) as [string, string],
     outcomeVideoUrls: pair(payload.outcomeVideoUrls, "outcomeVideoUrls").map(publicImageUrl) as [string, string],
   };
 }
@@ -433,6 +477,22 @@ export function getAutomaticInteractiveStory(token: string): Promise<AutomaticIn
   return request(
     `/api/travel/automatic/${encodeURIComponent(token)}`,
     { method: "GET", headers: tmaAuthHeaders(), timeoutMs: 15_000 },
+    parseAutomaticInteractiveStory,
+  );
+}
+
+export function chooseAutomaticInteractiveStory(
+  token: string,
+  choice: string,
+): Promise<AutomaticInteractiveStory> {
+  return request(
+    `/api/travel/automatic/${encodeURIComponent(token)}/choice`,
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      body: { choice: choice.trim().slice(0, 1000) },
+      timeoutMs: 15_000,
+    },
     parseAutomaticInteractiveStory,
   );
 }

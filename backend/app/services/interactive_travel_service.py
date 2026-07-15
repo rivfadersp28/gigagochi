@@ -81,6 +81,44 @@ def _negative_travel_stat(task: InteractiveTravelTaskPlan) -> str:
     return "happiness" if any(word in context for word in MOOD_CONTEXT_WORDS) else "energy"
 
 
+def scheduled_interactive_episode_result(
+    *,
+    situation: str,
+    question: str,
+    outcomes: list[str],
+    correct_choice: str,
+    selected_choice: str,
+) -> InteractiveTravelResult:
+    if not selected_choice:
+        raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_ANSWER_INVALID")
+    is_correct = selected_choice == correct_choice
+    context = " ".join((situation, question, *outcomes)).casefold()
+    affected_stat = (
+        "happiness" if any(word in context for word in MOOD_CONTEXT_WORDS) else "energy"
+    )
+    stat_label = "настроение" if affected_stat == "happiness" else "здоровье"
+    return InteractiveTravelResult(
+        text=outcomes[0] if outcomes else "История завершилась.",
+        adviceAssessment="helpful" if is_correct else "harmful",
+        reaction=random.choice(SUCCESS_REACTIONS if is_correct else FAILURE_REACTIONS),
+        reactionTone="determined" if is_correct else "worried",
+        consequence=(
+            "Выбран правильный ответ."
+            if is_correct
+            else f"Этот вариант не подходит; правильный ответ — {correct_choice}."
+        ),
+        outcomeValence="positive" if is_correct else "negative",
+        experienceGained=random.randint(100, 150) if is_correct else 0,
+        statImpacts=[] if is_correct else [
+            {
+                "stat": affected_stat,
+                "amount": -random.randint(8, 15),
+                "reason": f"Неудачный выбор уменьшил {stat_label}.",
+            }
+        ],
+    )
+
+
 class InteractiveTravelGenerationError(RuntimeError):
     pass
 
@@ -229,6 +267,19 @@ def generate_scheduled_interactive_episode_plan() -> dict[str, Any]:
         "outcomes": outcomes,
         "correctChoice": task["answer"],
     }
+
+
+def scheduled_interactive_episode_correct_choice(
+    *, question: str, choices: list[str]
+) -> str:
+    normalized_question = _answer_key(question)
+    for task in _task_bank():
+        if _answer_key(task["question"]) != normalized_question:
+            continue
+        answer = str(task["answer"])
+        if answer in choices:
+            return answer
+    raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_TASK_NOT_FOUND")
 
 
 def _location_lead_ins(destination: str) -> list[str]:

@@ -403,8 +403,12 @@
   hardcoded answer slots, and pre-generates three videos: the situation and one outcome per answer.
   Telegram sends the situation video with one owner-bound `Открыть приложение` web-app button to
   `/auto-story/{token}`. The backend keeps the newest 12 episode records so earlier buttons remain
-  addressable; the dedicated screen fetches the token-authenticated episode and swaps to the chosen
-  outcome video. Durable aftermath from ordinary background stories goes to
+  addressable. The token route mounts the shared `InteractiveTravelScreen`; an automatic-story
+  adapter turns the episode into a one-part travel session, so question/result layout, text and
+  button animations, success sound, EXP, and stat impacts use the ordinary travel path. Choice is
+  resolved and persisted once by `/api/travel/automatic/{token}/choice`; reopening cannot grant the
+  reward again because local impact receipts are keyed by the automatic travel ID. Durable
+  aftermath from ordinary background stories goes to
   `characterBible.extensions.lite_overlay`. The episode itself is stored in the
   backend push registry as `recentStoryEvents`, returned by `/api/push/snapshot`
   as `recentStoryEventsPatch`, and applied locally to

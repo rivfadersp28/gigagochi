@@ -53,7 +53,11 @@ from app.services.interactive_travel_media_service import (
     generate_interactive_travel_part_image,
     generate_interactive_travel_part_video,
 )
-from app.services.interactive_travel_service import generate_scheduled_interactive_episode_plan
+from app.services.interactive_travel_service import (
+    generate_scheduled_interactive_episode_plan,
+    scheduled_interactive_episode_correct_choice,
+    scheduled_interactive_episode_result,
+)
 from app.services.lite_overlay import merge_lite_overlay_patch, normalize_lite_overlay_patch
 from app.services.pet_reply_engine.lite_generator import generate_push_pet_message
 from app.services.rate_limit_service import (
@@ -4005,9 +4009,17 @@ def _send_scheduled_short_story(record: dict[str, Any], *, now: datetime) -> dic
             "title": plan["title"], "storyText": plan["storyText"],
             "question": plan["question"], "destination": plan["destination"],
             "choices": plan["choices"], "outcomes": plan["outcomes"],
+            "correctChoice": plan["correctChoice"],
+            "situationImageUrl": (
+                f"/static/generated/{travel_id}/interactive-travel-part-01.png"
+            ),
             "situationVideoUrl": (
                 f"/static/generated/{travel_id}/interactive-travel-part-01.mp4"
             ),
+            "outcomeImageUrls": [
+                f"/static/generated/{travel_id}/interactive-travel-part-01-outcome-{index}.png"
+                for index in range(2)
+            ],
             "outcomeVideoUrls": [
                 f"/static/generated/{travel_id}/{name}" for name in outcome_files
             ],
@@ -4143,9 +4155,85 @@ def automatic_interactive_story(*, telegram_id: int, token: str) -> dict[str, An
         "question": str(episode.get("question") or "Как поступить?"),
         "choices": [str(value) for value in choices],
         "outcomes": [str(value) for value in outcomes],
+        "selectedChoice": episode.get("selectedChoice"),
+        "result": episode.get("result"),
+        "travelId": travel_id,
+        "destination": str(episode.get("destination") or "в путешествие"),
+        "createdAt": str(episode.get("createdAt") or _iso()),
+        "situationImageUrl": str(
+            episode.get("situationImageUrl")
+            or f"/static/generated/{travel_id}/interactive-travel-part-01.png"
+        ),
         "situationVideoUrl": str(situation_url),
+        "outcomeImageUrls": [
+            str(value) for value in (
+                episode.get("outcomeImageUrls")
+                or [
+                    f"/static/generated/{travel_id}/interactive-travel-part-01-outcome-{index}.png"
+                    for index in range(2)
+                ]
+            )
+        ],
         "outcomeVideoUrls": [str(value) for value in outcome_urls],
     }
+
+
+def select_automatic_interactive_story(
+    *, telegram_id: int, token: str, selected_choice: str
+) -> dict[str, Any]:
+    def select(current: dict[str, Any] | None) -> dict[str, Any]:
+        if not isinstance(current, dict):
+            raise TelegramPushError("INTERACTIVE_STORY_EXPIRED", "История не найдена.")
+        episode = _automatic_interactive_episode(current, token)
+        if episode is None:
+            raise TelegramPushError("INTERACTIVE_STORY_EXPIRED", "История не найдена.")
+        choices = episode.get("choices")
+        outcomes = episode.get("outcomes")
+        if not isinstance(choices, list) or selected_choice not in choices:
+            raise TelegramPushError("INTERACTIVE_STORY_CHOICE_INVALID", "Неизвестный вариант.")
+        if not isinstance(outcomes, list) or len(outcomes) != len(choices):
+            raise TelegramPushError("INTERACTIVE_STORY_INVALID", "История повреждена.")
+        if isinstance(episode.get("result"), dict):
+            return current
+        selected_index = choices.index(selected_choice)
+        correct_choice = str(episode.get("correctChoice") or "") or (
+            scheduled_interactive_episode_correct_choice(
+                question=str(episode.get("question") or ""),
+                choices=[str(value) for value in choices],
+            )
+        )
+        result = scheduled_interactive_episode_result(
+            situation=str(episode.get("storyText") or ""),
+            question=str(episode.get("question") or ""),
+            outcomes=[str(value) for value in outcomes],
+            correct_choice=correct_choice,
+            selected_choice=selected_choice,
+        ).model_dump()
+        result["text"] = str(outcomes[selected_index])
+        updated_episode = {
+            **episode,
+            "correctChoice": correct_choice,
+            "selectedChoice": selected_choice,
+            "result": result,
+        }
+        history = current.get("automaticInteractiveStories")
+        updated_history = [
+            updated_episode if isinstance(item, dict) and item.get("token") == token else item
+            for item in history
+        ] if isinstance(history, list) else [updated_episode]
+        pending = current.get("pendingInteractiveStory")
+        return {
+            **current,
+            "automaticInteractiveStories": updated_history,
+            "pendingInteractiveStory": (
+                updated_episode
+                if isinstance(pending, dict) and pending.get("token") == token
+                else pending
+            ),
+        }
+
+    _update_record(telegram_id, select)
+    return automatic_interactive_story(telegram_id=telegram_id, token=token)
 
 
 def _scheduled_background_story_order_key(

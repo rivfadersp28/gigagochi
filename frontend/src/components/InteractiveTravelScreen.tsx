@@ -16,10 +16,13 @@ import { SmoothBackgroundVideo } from "@/components/SmoothBackgroundVideo";
 
 import {
   animateInteractiveTravelPart,
+  chooseAutomaticInteractiveStory,
   continueInteractiveTravel,
+  getAutomaticInteractiveStory,
   getInteractiveTravelSuggestions,
   getInteractiveTravelStatus,
   illustrateInteractiveTravelPart,
+  type AutomaticInteractiveStory,
 } from "@/lib/api";
 import { presentError, type PresentedError } from "@/lib/errorPresentation";
 import {
@@ -107,7 +110,51 @@ const FALLBACK_DESTINATIONS = [
 ];
 type InteractiveTravelScreenProps = {
   petId: string;
+  automaticStoryToken?: string;
 };
+
+function automaticStorySession(story: AutomaticInteractiveStory): LocalInteractiveTravel {
+  const selectedIndex = story.selectedChoice
+    ? story.choices.indexOf(story.selectedChoice)
+    : -1;
+  const hasResult = selectedIndex >= 0 && Boolean(story.result);
+  const part: InteractiveTravelPart = {
+    partNumber: 1,
+    title: story.title,
+    storyText: story.storyText,
+    challenge: story.question,
+    actionSuggestions: [...story.choices],
+    backgroundImageUrl: hasResult
+      ? story.outcomeImageUrls[selectedIndex]
+      : story.situationImageUrl,
+    backgroundVideoUrl: hasResult
+      ? story.outcomeVideoUrls[selectedIndex]
+      : story.situationVideoUrl,
+    ...(hasResult && story.result
+      ? { answer: story.selectedChoice, result: story.result }
+      : {}),
+  };
+  return {
+    travel: {
+      travelId: story.travelId,
+      generatedAt: story.createdAt,
+      destination: story.destination,
+      overallTitle: story.title,
+      generationStatus: "ready",
+      plan: null,
+      parts: [part],
+      completed: hasResult,
+      outcomeValence: story.result?.outcomeValence,
+      statImpact: story.result?.statImpacts[0],
+    },
+    appliedResultParts: [],
+    presentation: {
+      phase: hasResult ? "result" : "story",
+      partNumber: 1,
+      portionIndex: 0,
+    },
+  };
+}
 
 function shuffledFallbackDestinations() {
   return [...FALLBACK_DESTINATIONS]
@@ -295,7 +342,10 @@ function continueDemoSession(
   };
 }
 
-export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps) {
+export function InteractiveTravelScreen({
+  petId,
+  automaticStoryToken,
+}: InteractiveTravelScreenProps) {
   const router = useRouter();
   const localPet = useLocalPetState();
   const canShowDebugMenu = useTelegramCapabilities().debugMenu;
@@ -368,6 +418,10 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   }, [currentPetId, currentPetIntroductionPending, petId]);
 
   const clearTravelHistory = useCallback(() => {
+    if (automaticStoryToken) {
+      setSession(null);
+      return;
+    }
     const latest = readLocalInteractiveTravel(petId);
     if (!demoTravel) {
       const travelId = latest?.travel.travelId ?? activeTravelIdRef.current;
@@ -385,7 +439,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     clearLocalInteractiveTravel(petId);
     setSession(null);
     setDemoTravel(null);
-  }, [demoTravel, petId]);
+  }, [automaticStoryToken, demoTravel, petId]);
 
   const goBack = useCallback(() => {
     if (showCustomDestination) {
@@ -393,17 +447,22 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       setError(null);
       return;
     }
-    clearTravelHistory();
+    if (!automaticStoryToken) {
+      clearTravelHistory();
+    }
     router.push(`/pet/${petId}`);
-  }, [clearTravelHistory, petId, router, showCustomDestination]);
+  }, [automaticStoryToken, clearTravelHistory, petId, router, showCustomDestination]);
 
   useTelegramBackButton(goBack);
 
   useEffect(() => {
+    if (automaticStoryToken) {
+      return;
+    }
     const handlePageHide = () => clearTravelHistory();
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
-  }, [clearTravelHistory]);
+  }, [automaticStoryToken, clearTravelHistory]);
 
   useEffect(() => {
     setTelegramBackgroundColor("#000000");
@@ -451,10 +510,53 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       submittingRef.current = false;
       generationStatusRequestRef.current = null;
     };
-  }, [petId]);
+  }, [automaticStoryToken, petId]);
+
+  useEffect(() => {
+    if (
+      !automaticStoryToken
+      || isRestored
+      || localPet.status !== "ready"
+      || !pet
+    ) {
+      return;
+    }
+    const requestEpoch = ++requestEpochRef.current;
+    setIsLoadingSuggestions(false);
+    setError(null);
+    void getAutomaticInteractiveStory(automaticStoryToken)
+      .then((story) => {
+        if (requestEpoch !== requestEpochRef.current) {
+          return;
+        }
+        const next = automaticStorySession(story);
+        if (next.travel.parts.some((part) => part.result)) {
+          const applied = localPet.applyInteractiveTravelImpacts(
+            { travelId: next.travel.travelId, parts: next.travel.parts },
+            pet.petId,
+          );
+          if (!applied) {
+            setError(STORAGE_ERROR);
+          }
+        }
+        activeTravelIdRef.current = next.travel.travelId;
+        setSession(next);
+        setVisibleBackgroundVideoUrl(next.travel.parts[0]?.backgroundVideoUrl ?? null);
+        setIsRestored(true);
+      })
+      .catch((caught) => {
+        if (requestEpoch === requestEpochRef.current) {
+          setError(presentError(caught, "Не удалось открыть эту историю."));
+          setIsRestored(true);
+        }
+      });
+  }, [automaticStoryToken, isRestored, localPet, pet]);
 
   useEffect(() => {
     if (isRestored || localPet.status !== "ready") {
+      return;
+    }
+    if (automaticStoryToken) {
       return;
     }
     let cancelled = false;
@@ -521,10 +623,13 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [isRestored, localPet, petId]);
+  }, [automaticStoryToken, isRestored, localPet, petId]);
 
   useEffect(() => {
     const travel = session?.travel;
+    if (automaticStoryToken) {
+      return;
+    }
     if (
       !demoTravel
       && travel?.completed
@@ -533,7 +638,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     ) {
       queuedFinaleTravelIdRef.current = travel.travelId;
     }
-  }, [demoTravel, session]);
+  }, [automaticStoryToken, demoTravel, session]);
 
   useEffect(() => {
     if (localPet.status === "empty") {
@@ -638,7 +743,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
 
   const updatePresentation = useCallback(
     (presentation: InteractiveTravelPresentation) => {
-      if (demoTravel) {
+      if (demoTravel || automaticStoryToken) {
         setSession((current) => current ? { ...current, presentation } : current);
         return;
       }
@@ -671,7 +776,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         }
       });
     },
-    [demoTravel, petId],
+    [automaticStoryToken, demoTravel, petId],
   );
 
   const patchLatestMedia = useCallback(
@@ -729,7 +834,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
 
   useEffect(() => {
     const reconcileFromStorage = (event: StorageEvent) => {
-      if (demoTravel) {
+      if (demoTravel || automaticStoryToken) {
         return;
       }
       if (!isLocalInteractiveTravelStorageKey(event.key, petId)) {
@@ -753,10 +858,16 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     };
     window.addEventListener("storage", reconcileFromStorage);
     return () => window.removeEventListener("storage", reconcileFromStorage);
-  }, [adoptStoredSession, demoTravel, petId]);
+  }, [adoptStoredSession, automaticStoryToken, demoTravel, petId]);
 
   useEffect(() => {
-    if (!isRestored || session || !pet || localPet.status !== "ready") {
+    if (
+      automaticStoryToken
+      || !isRestored
+      || session
+      || !pet
+      || localPet.status !== "ready"
+    ) {
       return;
     }
     const requestEpoch = ++requestEpochRef.current;
@@ -780,7 +891,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           setIsLoadingSuggestions(false);
         }
       });
-  }, [canShowDebugMenu, isRestored, localPet.status, pet, session, suggestionsNonce]);
+  }, [automaticStoryToken, canShowDebugMenu, isRestored, localPet.status, pet, session, suggestionsNonce]);
 
   const sessionTravelId = session?.travel.travelId;
   const sessionGenerationStatus = session?.travel.generationStatus;
@@ -1353,6 +1464,46 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       return;
     }
     primeInteractiveTravelSuccessSound();
+    if (automaticStoryToken) {
+      submittingRef.current = true;
+      const requestEpoch = ++requestEpochRef.current;
+      setIsSubmitting(true);
+      setError(null);
+      try {
+        const story = await chooseAutomaticInteractiveStory(automaticStoryToken, value);
+        if (requestEpoch !== requestEpochRef.current) {
+          return;
+        }
+        const next = automaticStorySession(story);
+        const applied = localPet.applyInteractiveTravelImpacts(
+          { travelId: next.travel.travelId, parts: next.travel.parts },
+          pet.petId,
+        );
+        if (!applied) {
+          setError(STORAGE_ERROR);
+          hapticNotification("error");
+          return;
+        }
+        activeTravelIdRef.current = next.travel.travelId;
+        setSession(next);
+        setVisibleBackgroundVideoUrl(next.travel.parts[0]?.backgroundVideoUrl ?? null);
+        if (story.result?.outcomeValence === "positive") {
+          void playInteractiveTravelSuccessSound();
+        }
+        hapticNotification("success");
+      } catch (caught) {
+        if (requestEpoch === requestEpochRef.current) {
+          setError(presentError(caught, "Не получилось продолжить историю. Попробуй ещё раз."));
+          hapticNotification("error");
+        }
+      } finally {
+        if (requestEpoch === requestEpochRef.current) {
+          submittingRef.current = false;
+          setIsSubmitting(false);
+        }
+      }
+      return;
+    }
     if (demoTravel) {
       submittingRef.current = true;
       setIsSubmitting(true);
