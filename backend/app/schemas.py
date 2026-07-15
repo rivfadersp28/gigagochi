@@ -77,6 +77,23 @@ class GeneratePetRequest(BaseModel):
     description: str = Field(min_length=1, max_length=300)
 
 
+class OutfitSimplificationRequest(BaseModel):
+    request: str = Field(min_length=1, max_length=1000)
+    petDescription: str = Field(min_length=1, max_length=300)
+
+
+class OutfitSimplificationResponse(BaseModel):
+    item: str = Field(min_length=1, max_length=80)
+    generationDescription: str = Field(min_length=1, max_length=300)
+
+
+class GenerateOutfitRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=300)
+    idleImageUrl: AssetImageUrl
+    sadImageUrl: AssetImageUrl
+    happyImageUrl: AssetImageUrl
+
+
 class GeneratedPetImages(BaseModel):
     baby: dict[PetStateValue, str]
     teen: dict[PetStateValue, str]

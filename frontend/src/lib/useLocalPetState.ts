@@ -48,6 +48,7 @@ type UseLocalPetStateResult = {
   feed: (foodId: FoodId) => LocalPetState | null;
   play: () => LocalPetState | null;
   registerPetTap: () => { pet: LocalPetState; rewarded: boolean } | null;
+  spendExperience: (amount: number, expectedPetId?: string) => LocalPetState | null;
   reset: (expectedPetId?: string) => boolean;
   resetStats: () => LocalPetState | null;
   kill: () => LocalPetState | null;
@@ -300,6 +301,13 @@ export function useLocalPetState(): UseLocalPetStateResult {
       : null;
   }, [commitPetMutation, pet]);
 
+  const spendExperience = useCallback((amount: number, expectedPetId?: string) => {
+    return commitPetMutation(
+      { kind: "spend-experience", amount },
+      expectedPetId ?? currentPetRef.current?.petId,
+    )?.pet ?? null;
+  }, [commitPetMutation]);
+
   const reset = useCallback((expectedPetId?: string) => {
     const targetPetId = expectedPetId ?? currentPetRef.current?.petId;
     const currentPet = readPetForMutation(targetPetId);
@@ -481,6 +489,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
     feed,
     play,
     registerPetTap,
+    spendExperience,
     reset,
     resetStats,
     kill,

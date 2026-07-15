@@ -7,6 +7,7 @@ import {
   applyStoryLibraryPatch,
   CHAT_HISTORY_STORAGE_KEY,
   clearLocalChatHistory,
+  commitLocalPetStateMutation,
   createLocalPetState,
   PET_STATE_STORAGE_KEY,
   readLocalChatHistory,
@@ -147,6 +148,23 @@ describe("localPetStats", () => {
 
     const nearMaximum = { ...state, petTapProgress: 4, stats: { ...state.stats, happiness: 95 } };
     expect(applyPetTap(nearMaximum).state.stats.happiness).toBe(100);
+  });
+
+  it("spends outfit experience atomically and rejects an insufficient balance", () => {
+    writeLocalPetState({ ...petState(), experience: 2 });
+
+    const spent = commitLocalPetStateMutation(
+      { kind: "spend-experience", amount: 2 },
+      "pet-1",
+    );
+    const rejected = commitLocalPetStateMutation(
+      { kind: "spend-experience", amount: 2 },
+      "pet-1",
+    );
+
+    expect(spent?.pet.experience).toBe(0);
+    expect(rejected?.rejected).toBe(true);
+    expect(readLocalPetState()?.experience).toBe(0);
   });
 
   it("decays each stat from its own tick and advances the life stage", () => {

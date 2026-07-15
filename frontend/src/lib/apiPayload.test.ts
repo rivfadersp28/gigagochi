@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cancelInteractiveTravel,
   continueInteractiveTravel,
+  generateOutfitAssets,
   generatePetAssets,
   refreshPetBackgroundAssets,
   registerPetPushSnapshot,
@@ -237,6 +238,51 @@ describe("API request payloads", () => {
     expect(headers.get("Idempotency-Key")).toBe("pet-request-api-0001");
     expect(headers.get("Content-Type")).toBe("application/json");
     expect(JSON.parse(String(requestInit.body))).toEqual({ description: "мышонок" });
+  });
+
+  it("sends three mood references for outfit generation", async () => {
+    const onJobQueued = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        jobId: "outfit-job-1",
+        status: "succeeded",
+        phase: "completed",
+        createdAt: "2026-07-10T12:00:00Z",
+        updatedAt: "2026-07-10T12:01:00Z",
+        result: {
+          assetSetId: "outfit-assets-1",
+          generatedAt: "2026-07-10T12:01:00Z",
+          images: assetImages("/outfit"),
+        },
+      }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateOutfitAssets(
+      "Одень персонажа в футболку Аргентины.",
+      {
+        idleImageUrl: "/generated/idle.png",
+        sadImageUrl: "/generated/sad.png",
+        happyImageUrl: "/generated/happy.png",
+      },
+      { requestKey: "outfit-request-api-0001", onJobQueued },
+    );
+
+    expect(onJobQueued).toHaveBeenCalledWith("outfit-job-1");
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("/api/outfit/generate");
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(requestInit.headers).get("Idempotency-Key")).toBe(
+      "outfit-request-api-0001",
+    );
+    expect(JSON.parse(String(requestInit.body))).toEqual({
+      prompt: "Одень персонажа в футболку Аргентины.",
+      idleImageUrl: "/generated/idle.png",
+      sadImageUrl: "/generated/sad.png",
+      happyImageUrl: "/generated/happy.png",
+    });
   });
 
   it("marks a server-confirmed failed generation as terminal", async () => {

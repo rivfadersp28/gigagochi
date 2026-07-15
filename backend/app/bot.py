@@ -754,9 +754,7 @@ def _interactive_story_worker(chat_id: int, keyboard: dict[str, Any]) -> None:
 
 _DEFAULT_INTERACTIVE_STORY_WORKER = _interactive_story_worker
 INTERACTIVE_STORY_STARTED_MESSAGE = "Начали сочинять историю"
-INTERACTIVE_STORY_START_FAILED_MESSAGE = (
-    "Не получилось начать сочинять историю. Попробуй позже."
-)
+INTERACTIVE_STORY_START_FAILED_MESSAGE = "Не получилось начать сочинять историю. Попробуй позже."
 
 
 def handle_update(
@@ -776,6 +774,7 @@ def handle_update(
         chat_id = (message.get("chat") or {}).get("id")
         if match and isinstance(chat_id, int):
             from app.services.telegram_push_service import interactive_story_outcome_for_callback
+
             video, caption = interactive_story_outcome_for_callback(
                 telegram_id=chat_id, token=match.group(1), choice_index=int(match.group(2))
             )

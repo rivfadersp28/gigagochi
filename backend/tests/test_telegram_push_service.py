@@ -1657,9 +1657,12 @@ def test_due_scheduled_short_stories_only_selects_allowlisted_reachable_user(
     assert telegram_push_service._due_scheduled_short_story_records(now) == []
 
     records[str(TEST_TELEGRAM_ID)].pop("lastScheduledShortStoryAt")
-    assert telegram_push_service._due_scheduled_short_story_records(
-        datetime(2026, 7, 15, 19, 0, tzinfo=UTC)
-    ) == []
+    assert (
+        telegram_push_service._due_scheduled_short_story_records(
+            datetime(2026, 7, 15, 19, 0, tzinfo=UTC)
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize(
@@ -1698,8 +1701,12 @@ def test_scheduled_interactive_story_generates_five_videos(monkeypatch, tmp_path
         "telegramId": TEST_TELEGRAM_ID,
         "chatId": TEST_TELEGRAM_ID,
         "petId": "pet-sergey",
-        "pet": {"description": "Лис", "stage": "teen", "mood": "idle",
-                "stats": {"hunger": 80, "happiness": 80, "energy": 80}},
+        "pet": {
+            "description": "Лис",
+            "stage": "teen",
+            "mood": "idle",
+            "stats": {"hunger": 80, "happiness": 80, "energy": 80},
+        },
         "chatReachable": True,
     }
     settings = SimpleNamespace(
@@ -1716,21 +1723,32 @@ def test_scheduled_interactive_story_generates_five_videos(monkeypatch, tmp_path
         return deepcopy(record)
 
     monkeypatch.setattr(telegram_push_service, "_update_record", update)
-    plan = {"destination": "в лес", "title": "Путь", "storyText": "Ситуация.",
-            "question": "Что делать?", "choices": ["А", "Б", "В", "Г"],
-            "outcomes": ["Исход А", "Исход Б", "Исход В", "Исход Г"],
-            "correctChoice": "А"}
-    monkeypatch.setattr(telegram_push_service, "generate_scheduled_interactive_episode_plan",
-                        lambda: plan)
+    plan = {
+        "destination": "в лес",
+        "title": "Путь",
+        "storyText": "Ситуация.",
+        "question": "Что делать?",
+        "choices": ["А", "Б", "В", "Г"],
+        "outcomes": ["Исход А", "Исход Б", "Исход В", "Исход Г"],
+        "correctChoice": "А",
+    }
+    monkeypatch.setattr(
+        telegram_push_service, "generate_scheduled_interactive_episode_plan", lambda: plan
+    )
     monkeypatch.setattr(telegram_push_service, "generated_dir_for", lambda _travel_id: tmp_path)
-    monkeypatch.setattr(telegram_push_service, "generate_interactive_travel_part_image",
-                        lambda **_kwargs: "/image.png")
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_interactive_travel_part_image",
+        lambda **_kwargs: "/image.png",
+    )
+
     def video(**kwargs):
         variant = kwargs.get("variant", "situation")
         suffix = "" if variant == "situation" else f"-{variant}"
         path = tmp_path / f"interactive-travel-part-01{suffix}.mp4"
         path.write_bytes(variant.encode())
         return f"/{path.name}"
+
     monkeypatch.setattr(telegram_push_service, "generate_interactive_travel_part_video", video)
     sent: list[tuple[int, bytes, str, dict]] = []
     monkeypatch.setattr(
@@ -1766,15 +1784,19 @@ def test_interactive_story_callback_returns_selected_video(monkeypatch, tmp_path
         "petId": "pet-sergey",
         "pet": {},
         "chatReachable": True,
-        "pendingInteractiveStory": {"token": "abc", "travelId": "interactive-travel-auto-x",
+        "pendingInteractiveStory": {
+            "token": "abc",
+            "travelId": "interactive-travel-auto-x",
             "outcomes": ["Исход А", "Исход Б", "Исход В", "Исход Г"],
-            "outcomeFiles": ["a.mp4", "b.mp4", "c.mp4", "d.mp4"]},
+            "outcomeFiles": ["a.mp4", "b.mp4", "c.mp4", "d.mp4"],
+        },
     }
     (tmp_path / "d.mp4").write_bytes(b"outcome-d")
     monkeypatch.setattr(telegram_push_service, "_record_by_telegram_id", lambda _id: record)
     monkeypatch.setattr(telegram_push_service, "generated_dir_for", lambda _id: tmp_path)
     video, caption = telegram_push_service.interactive_story_outcome_for_callback(
-        telegram_id=TEST_TELEGRAM_ID, token="abc", choice_index=3)
+        telegram_id=TEST_TELEGRAM_ID, token="abc", choice_index=3
+    )
     assert video == b"outcome-d"
     assert caption == "Исход Г"
 

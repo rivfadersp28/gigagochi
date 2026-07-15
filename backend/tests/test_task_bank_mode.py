@@ -17,9 +17,7 @@ def test_task_bank_mode_defaults_to_hard_and_persists_switch(monkeypatch, tmp_pa
     assert mode_path.read_text(encoding="utf-8") == "easy\n"
 
 
-def test_invalid_persisted_task_bank_mode_falls_back_to_hard(
-    monkeypatch, tmp_path
-) -> None:
+def test_invalid_persisted_task_bank_mode_falls_back_to_hard(monkeypatch, tmp_path) -> None:
     mode_path = tmp_path / "task-bank-mode.txt"
     mode_path.write_text("unknown\n", encoding="utf-8")
     monkeypatch.setattr(

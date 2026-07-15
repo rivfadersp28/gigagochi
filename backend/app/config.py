@@ -137,9 +137,7 @@ class Settings(BaseSettings):
     )
     scheduled_short_story_timezone: str = "Europe/Moscow"
     scheduled_short_story_telegram_ids: set[int] = Field(default_factory=set)
-    interactive_travel_task_bank_mode_path: str = (
-        "data/push/interactive_travel_task_bank_mode.txt"
-    )
+    interactive_travel_task_bank_mode_path: str = "data/push/interactive_travel_task_bank_mode.txt"
     scheduled_background_story_paid_media_daily_cap: int = Field(
         default=0,
         ge=0,

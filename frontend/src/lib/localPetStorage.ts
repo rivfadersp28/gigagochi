@@ -825,6 +825,7 @@ export type LocalPetStateMutationOperation =
   | { kind: "feed"; foodId: FoodId }
   | { kind: "play" }
   | { kind: "tap" }
+  | { kind: "spend-experience"; amount: number }
   | { kind: "reset-stats" }
   | { kind: "kill" }
   | { kind: "revive" }
@@ -1066,6 +1067,24 @@ function applyMutationOperation(
         }
         const result = applyPetTap(currentPet, now);
         return { pet: result.state, tapRewarded: result.rewarded };
+      }
+      case "spend-experience": {
+        const currentPet = progressed();
+        const amount = Math.floor(operation.amount);
+        if (!Number.isFinite(amount) || amount <= 0) {
+          return { pet: currentPet, rejected: true };
+        }
+        const experience = clampPetExperience(currentPet.experience);
+        if (experience < amount) {
+          return { pet: currentPet, rejected: true };
+        }
+        return {
+          pet: {
+            ...currentPet,
+            experience: experience - amount,
+            updatedAt: nowIso,
+          },
+        };
       }
       case "reset-stats": {
         const currentPet = progressed();

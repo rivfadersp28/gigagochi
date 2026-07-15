@@ -1,6 +1,7 @@
 export const PET_EXPERIENCE_MAX = 3_000;
 export const PET_INITIAL_EXPERIENCE = 450;
 export const PET_STORY_EXPERIENCE_MAX = 150;
+export const PET_OUTFIT_EXPERIENCE_COST = 2;
 
 export function clampPetExperience(value: unknown) {
   if (typeof value !== "number" || !Number.isFinite(value)) {

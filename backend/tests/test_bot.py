@@ -1587,16 +1587,13 @@ def test_task_bank_commands_are_available_to_any_user(
 
     assert task_bank_mode.read_task_bank_mode() == expected_mode
     assert sent == [
-        f"Включён {expected_label} банк задач для всех. "
-        "Он применится к следующей истории."
+        f"Включён {expected_label} банк задач для всех. Он применится к следующей истории."
     ]
 
 
 @pytest.mark.parametrize("command", ("/easy", "/hard", "/story"))
 def test_task_bank_commands_survive_durable_normalization(command) -> None:
-    normalized = normalize_bot_command_update(
-        _durable_command_update(77, command, chat_id=123456)
-    )
+    normalized = normalize_bot_command_update(_durable_command_update(77, command, chat_id=123456))
 
     assert normalized is not None
     assert normalized.command == command

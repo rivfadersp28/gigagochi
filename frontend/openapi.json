@@ -443,6 +443,21 @@
         "title": "AnimateInteractiveTravelPartRequest",
         "type": "object"
       },
+      "AutomaticInteractiveStoryChoiceRequest": {
+        "properties": {
+          "choice": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Choice",
+            "type": "string"
+          }
+        },
+        "required": [
+          "choice"
+        ],
+        "title": "AutomaticInteractiveStoryChoiceRequest",
+        "type": "object"
+      },
       "CaptureInteractiveTravelFinaleRequest": {
         "properties": {
           "travel": {
@@ -481,6 +496,39 @@
           "advice"
         ],
         "title": "ContinueInteractiveTravelRequest",
+        "type": "object"
+      },
+      "GenerateOutfitRequest": {
+        "properties": {
+          "happyImageUrl": {
+            "maxLength": 1000,
+            "title": "Happyimageurl",
+            "type": "string"
+          },
+          "idleImageUrl": {
+            "maxLength": 1000,
+            "title": "Idleimageurl",
+            "type": "string"
+          },
+          "prompt": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "sadImageUrl": {
+            "maxLength": 1000,
+            "title": "Sadimageurl",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt",
+          "idleImageUrl",
+          "sadImageUrl",
+          "happyImageUrl"
+        ],
+        "title": "GenerateOutfitRequest",
         "type": "object"
       },
       "GeneratePetAssetResponse": {
@@ -1275,6 +1323,13 @@
             "minLength": 1,
             "title": "Consequence",
             "type": "string"
+          },
+          "experienceGained": {
+            "default": 0,
+            "maximum": 150.0,
+            "minimum": 0.0,
+            "title": "Experiencegained",
+            "type": "integer"
           },
           "outcomeValence": {
             "enum": [
@@ -3233,6 +3288,50 @@
         "title": "MemoryExtractionResponse",
         "type": "object"
       },
+      "OutfitSimplificationRequest": {
+        "properties": {
+          "petDescription": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Petdescription",
+            "type": "string"
+          },
+          "request": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Request",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request",
+          "petDescription"
+        ],
+        "title": "OutfitSimplificationRequest",
+        "type": "object"
+      },
+      "OutfitSimplificationResponse": {
+        "properties": {
+          "generationDescription": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Generationdescription",
+            "type": "string"
+          },
+          "item": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Item",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "generationDescription"
+        ],
+        "title": "OutfitSimplificationResponse",
+        "type": "object"
+      },
       "StartInteractiveTravelRequest": {
         "properties": {
           "destination": {
@@ -4232,6 +4331,104 @@
         ]
       }
     },
+    "/api/outfit/generate": {
+      "post": {
+        "operationId": "generate_outfit_api_outfit_generate_post",
+        "parameters": [
+          {
+            "description": "Required for paid generation. Reusing the same key for this Telegram user replays or resumes the original operation without restarting completed media.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Required for paid generation. Reusing the same key for this Telegram user replays or resumes the original operation without restarting completed media.",
+              "maxLength": 96,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateOutfitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratePetJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Outfit",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/outfit/simplify": {
+      "post": {
+        "operationId": "simplify_outfit_api_outfit_simplify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutfitSimplificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutfitSimplificationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Simplify Outfit",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
     "/api/push/snapshot": {
       "post": {
         "operationId": "push_snapshot_api_push_snapshot_post",
@@ -4312,6 +4509,110 @@
           }
         },
         "summary": "Delete Push Snapshot",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/automatic/{token}": {
+      "get": {
+        "operationId": "automatic_travel_story_api_travel_automatic__token__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "maxLength": 16,
+              "minLength": 16,
+              "pattern": "^[a-f0-9]{16}$",
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Automatic Travel Story Api Travel Automatic  Token  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Automatic Travel Story",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/automatic/{token}/choice": {
+      "post": {
+        "operationId": "choose_automatic_travel_story_api_travel_automatic__token__choice_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "maxLength": 16,
+              "minLength": 16,
+              "pattern": "^[a-f0-9]{16}$",
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutomaticInteractiveStoryChoiceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Choose Automatic Travel Story Api Travel Automatic  Token  Choice Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Choose Automatic Travel Story",
         "tags": [
           "telegram-mini-app"
         ]

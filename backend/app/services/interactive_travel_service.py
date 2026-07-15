@@ -67,8 +67,20 @@ FAILURE_REACTIONS = (
     "Вот же незадача. Попробуем иначе в следующий раз.",
 )
 MOOD_CONTEXT_WORDS = (
-    "друг", "довер", "обид", "груст", "страш", "стыд", "спор", "ссор",
-    "одинок", "настроен", "чувств", "разочар", "вежлив", "поддерж",
+    "друг",
+    "довер",
+    "обид",
+    "груст",
+    "страш",
+    "стыд",
+    "спор",
+    "ссор",
+    "одинок",
+    "настроен",
+    "чувств",
+    "разочар",
+    "вежлив",
+    "поддерж",
 )
 
 
@@ -96,9 +108,7 @@ def scheduled_interactive_episode_result(
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_ANSWER_INVALID")
     is_correct = selected_choice == correct_choice
     context = " ".join((situation, question, *outcomes)).casefold()
-    affected_stat = (
-        "happiness" if any(word in context for word in MOOD_CONTEXT_WORDS) else "energy"
-    )
+    affected_stat = "happiness" if any(word in context for word in MOOD_CONTEXT_WORDS) else "energy"
     stat_label = "настроение" if affected_stat == "happiness" else "здоровье"
     return InteractiveTravelResult(
         text=outcomes[0] if outcomes else "История завершилась.",
@@ -112,7 +122,9 @@ def scheduled_interactive_episode_result(
         ),
         outcomeValence="positive" if is_correct else "negative",
         experienceGained=random.randint(100, 150) if is_correct else 0,
-        statImpacts=[] if is_correct else [
+        statImpacts=[]
+        if is_correct
+        else [
             {
                 "stat": affected_stat,
                 "amount": -random.randint(8, 15),
@@ -197,9 +209,7 @@ def _task_bank_from_path(path_value: str) -> tuple[dict[str, Any], ...]:
         stated_answer = " ".join(answer_match.group(2).split())
         choices = list(choices_by_letter.values())
         choice_outcomes = list(outcomes_by_letter.values())
-        explanation = (
-            " ".join(explanation_match.group(1).split()) if explanation_match else None
-        )
+        explanation = " ".join(explanation_match.group(1).split()) if explanation_match else None
         source = " ".join(source_match.group(1).split())
         if (
             task_number != len(tasks) + 1
@@ -251,9 +261,13 @@ def _select_story_tasks() -> list[dict[str, Any]]:
 
 def _task_plan(task: dict[str, Any], lead_in: str) -> InteractiveTravelTaskPlan:
     return InteractiveTravelTaskPlan(
-        taskId=task["id"], leadIn=lead_in, situation=task["situation"],
-        question=task["question"], choices=list(task["choices"]),
-        correctChoice=task["answer"], explanation=task["explanation"],
+        taskId=task["id"],
+        leadIn=lead_in,
+        situation=task["situation"],
+        question=task["question"],
+        choices=list(task["choices"]),
+        correctChoice=task["answer"],
+        explanation=task["explanation"],
         choiceOutcomes=list(task["outcomes"]),
     )
 
@@ -272,9 +286,7 @@ def generate_scheduled_interactive_episode_plan() -> dict[str, Any]:
     }
 
 
-def scheduled_interactive_episode_correct_choice(
-    *, question: str, choices: list[str]
-) -> str:
+def scheduled_interactive_episode_correct_choice(*, question: str, choices: list[str]) -> str:
     normalized_question = _answer_key(question)
     active_mode = read_task_bank_mode()
     fallback_mode: TaskBankMode = "hard" if active_mode == "easy" else "easy"
@@ -392,8 +404,7 @@ def _deterministic_result(
             f"Верно. Правильный ответ: {task.correctChoice}. {explanation}"
             if is_correct
             else (
-                f"Выбрано: {selected_choice}. Правильный ответ: {task.correctChoice}. "
-                f"{explanation}"
+                f"Выбрано: {selected_choice}. Правильный ответ: {task.correctChoice}. {explanation}"
             )
         )
     consequence = (
@@ -411,7 +422,9 @@ def _deterministic_result(
         consequence=consequence,
         outcomeValence="positive" if is_correct else "negative",
         experienceGained=random.randint(100, 150) if is_correct else 0,
-        statImpacts=[] if is_correct else [
+        statImpacts=[]
+        if is_correct
+        else [
             {
                 "stat": affected_stat,
                 "amount": -random.randint(8, 15),
@@ -484,8 +497,7 @@ def start_interactive_travel(
     plan = InteractiveTravelPlan(
         version=GENERATOR_VERSION,
         tasks=[
-            _task_plan(task, lead_in)
-            for task, lead_in in zip(story_tasks, lead_ins, strict=True)
+            _task_plan(task, lead_in) for task, lead_in in zip(story_tasks, lead_ins, strict=True)
         ],
     )
     travel = InteractiveTravelState(

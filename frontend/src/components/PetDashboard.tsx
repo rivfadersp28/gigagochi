@@ -15,7 +15,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   generateLocalAmbientMessage,
   generateLocalProactiveMessage,
+  generateOutfitAssets,
   sendLocalChatMessage,
+  simplifyOutfitRequest,
 } from "@/lib/api";
 import { presentError, type PresentedError } from "@/lib/errorPresentation";
 import {
@@ -45,7 +47,10 @@ import {
   runLocalPetChatTurn,
 } from "@/lib/localPetChatTurn";
 import { foodReactionPrompt, type FoodId } from "@/lib/localPetFood";
-import { playPetFeedSound, primePetFeedSound } from "@/lib/petFeedAudio";
+import {
+  playPetFeedSound,
+  primePetFeedSound,
+} from "@/lib/petFeedAudio";
 import { SmoothBackgroundVideo } from "@/components/SmoothBackgroundVideo";
 import { applyPetVoice, type PetVoiceMode } from "@/lib/petVoice";
 import {
@@ -86,6 +91,7 @@ import {
 import {
   clampPetExperience,
   PET_EXPERIENCE_MAX,
+  PET_OUTFIT_EXPERIENCE_COST,
   petExperiencePercent,
 } from "@/lib/localPetExperience";
 import {
@@ -311,6 +317,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [confirmationAction, setConfirmationAction] = useState<ConfirmationAction | null>(null);
   const [isChatMode, setIsChatMode] = useState(false);
   const [isFeedMode, setIsFeedMode] = useState(false);
+  const [isOutfitMode, setIsOutfitMode] = useState(false);
+  const [outfitInput, setOutfitInput] = useState("");
+  const [outfitError, setOutfitError] = useState<PresentedError | null>(null);
+  const [isGeneratingOutfit, setIsGeneratingOutfit] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatError, setChatError] = useState<PresentedError | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
@@ -328,6 +338,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [assetsReadyForPetId, setAssetsReadyForPetId] = useState<string | null>(null);
   const [assetLoadErrorForPetId, setAssetLoadErrorForPetId] = useState<string | null>(null);
   const proactiveAttemptedRef = useRef(false);
+  const outfitAbortRef = useRef<AbortController | null>(null);
   const ambientRequestIdRef = useRef(0);
   const ambientSessionPetIdRef = useRef<string | null>(null);
   const ambientSessionPendingRef = useRef(false);
@@ -365,6 +376,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      outfitAbortRef.current?.abort();
     };
   }, []);
   const cancelPetTapThanksProtection = useCallback(() => {
@@ -1263,6 +1275,91 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     router.push(`/pet/${petId}/travel`);
   }
 
+  function handleOpenOutfitMode() {
+    cancelReplyAutoAdvance();
+    cancelIdleReplyGeneration();
+    setIsDebugPanelOpen(false);
+    setOutfitError(null);
+    setIsOutfitMode(true);
+  }
+
+  async function handleOutfitSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const request = outfitInput.trim();
+    if (!request || !pet || isGeneratingOutfit) {
+      return;
+    }
+    if (clampPetExperience(pet.experience) < PET_OUTFIT_EXPERIENCE_COST) {
+      setOutfitError({ message: "Не хватает XP, чтобы переодеть персонажа." });
+      hapticNotification("error");
+      return;
+    }
+
+    const requestedPetId = pet.petId;
+    const currentAssetSet = pet.assetSet;
+    const controller = new AbortController();
+    outfitAbortRef.current?.abort();
+    outfitAbortRef.current = controller;
+    setOutfitError(null);
+    setIsGeneratingOutfit(true);
+
+    try {
+      const simplified = await simplifyOutfitRequest(request, pet.description, {
+        signal: controller.signal,
+      });
+      if (!currentAssetSet) {
+        throw new Error("OUTFIT_REFERENCE_ASSETS_MISSING");
+      }
+      const currentImages = currentAssetSet.images[pet.stage];
+      const generated = await generateOutfitAssets(
+        simplified.generationDescription,
+        {
+          idleImageUrl: currentImages.idle,
+          sadImageUrl: currentImages.sad,
+          happyImageUrl: currentImages.happy,
+        },
+        {
+          requestKey: createLocalId("outfit"),
+          onJobQueued: () => {
+            if (!localPet.spendExperience(PET_OUTFIT_EXPERIENCE_COST, requestedPetId)) {
+              throw new Error("OUTFIT_EXPERIENCE_SPEND_FAILED");
+            }
+          },
+          signal: controller.signal,
+        },
+      );
+      if (readLocalPetState()?.petId !== requestedPetId) {
+        return;
+      }
+      const nextAssetSet = {
+        ...generated,
+        characterTemplate: currentAssetSet?.characterTemplate,
+        characterBible: currentAssetSet?.characterBible ?? generated.characterBible,
+      };
+      if (!localPet.applyGeneratedAssets(nextAssetSet, requestedPetId)) {
+        throw new Error("OUTFIT_STORAGE_FAILED");
+      }
+      setOutfitInput("");
+      setIsOutfitMode(false);
+      hapticNotification("success");
+    } catch (caught) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setOutfitError(
+        presentError(caught, "Не получилось нарядить персонажа. Попробуйте ещё раз."),
+      );
+      hapticNotification("error");
+    } finally {
+      if (outfitAbortRef.current === controller) {
+        outfitAbortRef.current = null;
+      }
+      if (mountedRef.current) {
+        setIsGeneratingOutfit(false);
+      }
+    }
+  }
+
   function focusChatInput() {
     chatInputRef.current?.focus({ preventScroll: true });
   }
@@ -2110,6 +2207,18 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               <span>В путешествие</span>
             </button>
           ) : null}
+          <button
+            type="button"
+            onClick={handleOpenOutfitMode}
+            disabled={
+              isGeneratingOutfit
+              || firstSessionActive
+              || pet?.assetSet?.backgroundGenerationStatus === "running"
+            }
+            className="main-action-button main-action-button--outfit"
+          >
+            <span>Нарядить</span>
+          </button>
           {storyHistory.length ? (
             <button
               type="button"
@@ -2123,6 +2232,63 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           ) : null}
         </div>
       </div>
+      {isOutfitMode ? (
+        <div className="outfit-panel-backdrop" role="presentation">
+          <form
+            className="outfit-panel"
+            onSubmit={handleOutfitSubmit}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="outfit-panel-title"
+          >
+            <div className="outfit-panel__header">
+              <div>
+                <p className="outfit-panel__eyebrow">Гардероб</p>
+                <h2 id="outfit-panel-title">Нарядить персонажа</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsOutfitMode(false)}
+                disabled={isGeneratingOutfit}
+                aria-label="Закрыть"
+              >
+                ×
+              </button>
+            </div>
+            <div className="outfit-panel__xp" id="outfit-xp-description">
+              <span>Чтобы переодеть персонажа, нужно {PET_OUTFIT_EXPERIENCE_COST} XP</span>
+              <strong>Сейчас у вас: {experience} XP</strong>
+            </div>
+            <textarea
+              value={outfitInput}
+              onChange={(event) => setOutfitInput(event.target.value)}
+              maxLength={1000}
+              disabled={isGeneratingOutfit}
+              placeholder="Например: красная вязаная шапка"
+              aria-label="Описание наряда"
+              aria-describedby="outfit-xp-description"
+              autoFocus
+            />
+            {experience < PET_OUTFIT_EXPERIENCE_COST ? (
+              <p className="outfit-panel__hint">Заработайте XP за правильные ответы в историях.</p>
+            ) : null}
+            {outfitError ? <ErrorNotice error={outfitError} /> : null}
+            <button
+              type="submit"
+              className="main-action-button outfit-panel__submit"
+              disabled={
+                !outfitInput.trim()
+                || isGeneratingOutfit
+                || experience < PET_OUTFIT_EXPERIENCE_COST
+              }
+            >
+              {isGeneratingOutfit ? (
+                <><Loader2 className="size-[20px] animate-spin" aria-hidden="true" /> Наряжаем…</>
+              ) : "Нарядить"}
+            </button>
+          </form>
+        </div>
+      ) : null}
       {isStoryHistoryOpen ? (
         <TravelStoryOverlay
           stories={storyHistory}

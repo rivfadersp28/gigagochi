@@ -163,6 +163,16 @@
 
 ## Production Routing
 
+- Solo release workflow uses `scripts/publish.sh`: it runs the fast static/contract checks by
+  default, commits all current changes, pushes `main` with ordinary `git`, deploys the same branch
+  to Hetzner and checks production health. It does not require `gh` or a pull request. Passing
+  `full` runs all backend and frontend tests before publication. GitHub Actions keeps the full
+  post-push suite; the default fast path intentionally does not wait for it before deploy.
+- Local checks have two tiers. `make check-fast` covers dependency locks, Ruff lint/format,
+  OpenAPI drift, frontend contracts, ESLint and TypeScript. `make check` adds backend pytest and
+  frontend Vitest. Use the full tier for risky/final changes instead of ritual use after every
+  small feature iteration.
+
 - Production containers join the shared `public_proxy` Docker network. The live
   `gigagochi.serega.works` virtual host is served by the shared
   `bizzy-radio-caddy-1` container using `/opt/bizzy-radio/Caddyfile`; the

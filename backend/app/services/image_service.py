@@ -2363,6 +2363,7 @@ def generate_image_edit_bytes(
     source_path: Path,
     *,
     label: str,
+    size: str | None = None,
     provider: str | None = None,
 ) -> bytes:
     input_references = [
@@ -2374,6 +2375,7 @@ def generate_image_edit_bytes(
     return generate_image_bytes(
         prompt,
         label=label,
+        size=size,
         input_references=input_references,
         provider=provider,
     )
@@ -2385,6 +2387,7 @@ def reserve_image_edit_bytes(
     source_path: Path,
     *,
     label: str,
+    size: str | None = None,
     provider: str | None = None,
 ) -> Iterator[bytes]:
     input_references = [
@@ -2396,6 +2399,7 @@ def reserve_image_edit_bytes(
     with reserve_image_bytes(
         prompt,
         label=label,
+        size=size,
         input_references=input_references,
         provider=provider,
     ) as payload:

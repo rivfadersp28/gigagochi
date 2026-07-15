@@ -44,9 +44,10 @@ def test_story_direction_selects_concrete_location_for_setting() -> None:
         rng=random.Random(17),
     )
 
-    assert direction["location"] in background_story_service.STORY_LOCATIONS_BY_SETTING[
-        direction["settingClass"]
-    ]
+    assert (
+        direction["location"]
+        in background_story_service.STORY_LOCATIONS_BY_SETTING[direction["settingClass"]]
+    )
     assert direction["location"] in background_story_service._story_direction_block(direction)
 
 

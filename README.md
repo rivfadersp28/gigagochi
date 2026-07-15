@@ -240,9 +240,30 @@ Production-конфигурация: `docker-compose.prod.yml`, `deploy/Caddyfil
 ## Проверки
 
 ```bash
+make check-fast
 make check
 cd frontend && npm run build
 ```
 
-`make check` запускает Ruff, backend tests, OpenAPI drift check, ESLint,
-TypeScript и Vitest.
+`make check-fast` запускает dependency/OpenAPI drift checks, Ruff, ESLint и TypeScript без
+unit-тестов. Это обычная проверка во время разработки. `make check` дополнительно запускает все
+backend tests и Vitest; используйте её перед рискованными изменениями и при подготовке финальной
+версии. GitHub Actions по-прежнему запускает полный набор после каждого push в `main`.
+
+## Push и deploy одним shortcut
+
+После локальной проверки фичи:
+
+```bash
+./scripts/publish.sh "Короткое описание изменения"
+```
+
+Скрипт выполняет быстрые проверки, создаёт commit из текущих изменений, отправляет `main`,
+обновляет Hetzner через `git pull --ff-only`, пересобирает контейнеры и проверяет production
+health. Pull request и `gh` для этого не нужны.
+
+Для рискованного изменения запустите полный набор тестов перед публикацией:
+
+```bash
+./scripts/publish.sh "Короткое описание изменения" full
+```

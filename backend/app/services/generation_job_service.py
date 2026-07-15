@@ -43,6 +43,7 @@ _UNSET = object()
 _IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$")
 DEFAULT_IDEMPOTENCY_TTL = timedelta(days=2)
 DEFAULT_GENERATION_METRICS_TTL = timedelta(days=365)
+OUTFIT_GENERATION_PREFIX = "__OUTFIT_V1__"
 
 
 class GenerationJobNotFoundError(LookupError):
@@ -266,7 +267,10 @@ class GenerationJobService:
                     description=description,
                     image_provider=normalized_provider,
                     response=response,
-                    comparison_complete=self._generate_comparison_images is None,
+                    comparison_complete=(
+                        self._generate_comparison_images is None
+                        or description.startswith(OUTFIT_GENERATION_PREFIX)
+                    ),
                 )
         self._record_metric_queued(job_id)
         logger.info(
@@ -477,7 +481,11 @@ class GenerationJobService:
             image_provider=stored.image_provider,
             response=stored.response,
             primary_complete=stored.response.status == "succeeded",
-            comparison_complete=self._generate_comparison_images is None or has_comparison,
+            comparison_complete=(
+                self._generate_comparison_images is None
+                or has_comparison
+                or stored.description.startswith(OUTFIT_GENERATION_PREFIX)
+            ),
         )
 
     def _submit_image_job(

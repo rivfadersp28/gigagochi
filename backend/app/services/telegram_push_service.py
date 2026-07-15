@@ -3998,21 +3998,27 @@ def _send_scheduled_short_story(record: dict[str, Any], *, now: datetime) -> dic
     plan = generate_scheduled_interactive_episode_plan()
     travel_id = f"interactive-travel-auto-{uuid.uuid4().hex}"
     generate_interactive_travel_part_image(
-        pet=payload.pet, travel_id=travel_id, destination=plan["destination"],
-        part_number=1, title=plan["title"], story_text=plan["storyText"],
+        pet=payload.pet,
+        travel_id=travel_id,
+        destination=plan["destination"],
+        part_number=1,
+        title=plan["title"],
+        story_text=plan["storyText"],
     )
     generate_interactive_travel_part_video(travel_id=travel_id, part_number=1)
     outcome_files: list[str] = []
     for index, outcome in enumerate(plan["outcomes"]):
         variant = f"outcome-{index}"
         generate_interactive_travel_part_image(
-            pet=payload.pet, travel_id=travel_id, destination=plan["destination"],
-            part_number=1, title=f"{plan['title']}: исход", story_text=outcome,
+            pet=payload.pet,
+            travel_id=travel_id,
+            destination=plan["destination"],
+            part_number=1,
+            title=f"{plan['title']}: исход",
+            story_text=outcome,
             variant=variant,
         )
-        generate_interactive_travel_part_video(
-            travel_id=travel_id, part_number=1, variant=variant
-        )
+        generate_interactive_travel_part_video(travel_id=travel_id, part_number=1, variant=variant)
         outcome_files.append(f"interactive-travel-part-01-{variant}.mp4")
     video_bytes = (generated_dir_for(travel_id) / "interactive-travel-part-01.mp4").read_bytes()
     chat_id = record.get("chatId")
@@ -4050,25 +4056,24 @@ def _send_scheduled_short_story(record: dict[str, Any], *, now: datetime) -> dic
     def save_delivery(current: dict[str, Any] | None) -> dict[str, Any]:
         source = current.copy() if isinstance(current, dict) else record.copy()
         episode = {
-            "token": callback_token, "travelId": travel_id,
-            "title": plan["title"], "storyText": plan["storyText"],
-            "question": plan["question"], "destination": plan["destination"],
-            "choices": plan["choices"], "outcomes": plan["outcomes"],
+            "token": callback_token,
+            "travelId": travel_id,
+            "title": plan["title"],
+            "storyText": plan["storyText"],
+            "question": plan["question"],
+            "destination": plan["destination"],
+            "choices": plan["choices"],
+            "outcomes": plan["outcomes"],
             "correctChoice": plan["correctChoice"],
-            "situationImageUrl": (
-                f"/static/generated/{travel_id}/interactive-travel-part-01.png"
-            ),
-            "situationVideoUrl": (
-                f"/static/generated/{travel_id}/interactive-travel-part-01.mp4"
-            ),
+            "situationImageUrl": (f"/static/generated/{travel_id}/interactive-travel-part-01.png"),
+            "situationVideoUrl": (f"/static/generated/{travel_id}/interactive-travel-part-01.mp4"),
             "outcomeImageUrls": [
                 f"/static/generated/{travel_id}/interactive-travel-part-01-outcome-{index}.png"
                 for index in range(len(plan["outcomes"]))
             ],
-            "outcomeVideoUrls": [
-                f"/static/generated/{travel_id}/{name}" for name in outcome_files
-            ],
-            "outcomeFiles": outcome_files, "createdAt": delivered_at,
+            "outcomeVideoUrls": [f"/static/generated/{travel_id}/{name}" for name in outcome_files],
+            "outcomeFiles": outcome_files,
+            "createdAt": delivered_at,
         }
         history = source.get("automaticInteractiveStories")
         stories = (
@@ -4169,8 +4174,10 @@ def interactive_story_outcome_for_callback(
     outcomes = episode.get("outcomes")
     files = episode.get("outcomeFiles")
     if (
-        not isinstance(outcomes, list) or not isinstance(files, list)
-        or choice_index not in range(len(outcomes)) or choice_index not in range(len(files))
+        not isinstance(outcomes, list)
+        or not isinstance(files, list)
+        or choice_index not in range(len(outcomes))
+        or choice_index not in range(len(files))
     ):
         raise TelegramPushError("INTERACTIVE_STORY_CHOICE_INVALID", "Неизвестный вариант.")
     travel_id = str(episode.get("travelId") or "")
@@ -4216,7 +4223,8 @@ def automatic_interactive_story(*, telegram_id: int, token: str) -> dict[str, An
         ),
         "situationVideoUrl": str(situation_url),
         "outcomeImageUrls": [
-            str(value) for value in (
+            str(value)
+            for value in (
                 episode.get("outcomeImageUrls")
                 or [
                     f"/static/generated/{travel_id}/interactive-travel-part-01-outcome-{index}.png"
@@ -4267,10 +4275,14 @@ def select_automatic_interactive_story(
             "result": result,
         }
         history = current.get("automaticInteractiveStories")
-        updated_history = [
-            updated_episode if isinstance(item, dict) and item.get("token") == token else item
-            for item in history
-        ] if isinstance(history, list) else [updated_episode]
+        updated_history = (
+            [
+                updated_episode if isinstance(item, dict) and item.get("token") == token else item
+                for item in history
+            ]
+            if isinstance(history, list)
+            else [updated_episode]
+        )
         pending = current.get("pendingInteractiveStory")
         return {
             **current,

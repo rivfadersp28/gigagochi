@@ -102,15 +102,21 @@ def normalize_bot_command_update(update: object) -> DurableBotCommand | None:
         data = callback.get("data")
         callback_id = callback.get("id")
         if (
-            isinstance(chat, dict) and type(chat.get("id")) is int
-            and isinstance(data, str) and data.startswith("it:")
+            isinstance(chat, dict)
+            and type(chat.get("id")) is int
+            and isinstance(data, str)
+            and data.startswith("it:")
             and isinstance(callback_id, str)
         ):
             chat_id = chat["id"]
-            normalized = {"update_id": update_id, "callback_query": {
-                "id": callback_id[:256], "data": data[:64],
-                "message": {"chat": {"id": chat_id}},
-            }}
+            normalized = {
+                "update_id": update_id,
+                "callback_query": {
+                    "id": callback_id[:256],
+                    "data": data[:64],
+                    "message": {"chat": {"id": chat_id}},
+                },
+            }
             return DurableBotCommand(update_id, chat_id, "/interactive_story_callback", normalized)
         return None
     message = update.get("message")

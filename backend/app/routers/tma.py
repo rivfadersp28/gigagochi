@@ -22,6 +22,7 @@ from app.schemas import (
     AnimateInteractiveTravelPartRequest,
     AutomaticInteractiveStoryChoiceRequest,
     ContinueInteractiveTravelRequest,
+    GenerateOutfitRequest,
     GeneratePetJobResponse,
     GeneratePetRequest,
     GenerationStatsResponse,
@@ -47,6 +48,8 @@ from app.schemas import (
     MemoryConsolidationResponse,
     MemoryExtractionRequest,
     MemoryExtractionResponse,
+    OutfitSimplificationRequest,
+    OutfitSimplificationResponse,
     StartInteractiveTravelRequest,
     TmaCapabilitiesResponse,
 )
@@ -124,6 +127,14 @@ from app.services.interactive_travel_session_store import (
 )
 from app.services.openai_service import MissingOpenAIAPIKey
 from app.services.ops_alert_service import notify_ops
+from app.services.outfit_service import (
+    encode_outfit_generation_description,
+    generate_outfit_image_asset_set,
+    generated_outfit_mood_path,
+    is_outfit_generation_description,
+    is_outfit_image_set,
+    simplify_outfit_request,
+)
 from app.services.pet_reply_engine.lite_generator import (
     extract_lite_overlay_patch_from_reply,
     generate_ambient_pet_message,
@@ -152,8 +163,8 @@ from app.services.telegram_auth_service import TelegramUserContext
 from app.services.telegram_push_service import (
     TelegramPushError,
     automatic_interactive_story,
-    select_automatic_interactive_story,
     register_push_snapshot,
+    select_automatic_interactive_story,
     unregister_push_snapshot,
 )
 from app.services.telegram_push_store import (
@@ -807,7 +818,13 @@ def _generation_job_service() -> GenerationJobService:
             ),
             generate_images_for_job=(
                 lambda job_id, description, image_provider, existing_asset_set_id: (
-                    generate_pet_image_asset_set(
+                    generate_outfit_image_asset_set(
+                        description,
+                        image_provider=image_provider,
+                        asset_set_id=generation_job_asset_set_id(job_id),
+                    )
+                    if is_outfit_generation_description(description)
+                    else generate_pet_image_asset_set(
                         description,
                         image_provider=image_provider,
                         asset_set_id=(
@@ -819,16 +836,24 @@ def _generation_job_service() -> GenerationJobService:
                 )
             ),
             generate_video=lambda image_set: generate_pet_video_for_image_asset_set(image_set),
-            generate_background_image=lambda image_set, image_provider: generate_pet_sad_scene_path(
-                image_set,
-                image_provider=image_provider,
+            generate_background_image=lambda image_set, image_provider: (
+                generated_outfit_mood_path(image_set, "sad")
+                if is_outfit_image_set(image_set)
+                else generate_pet_sad_scene_path(
+                    image_set,
+                    image_provider=image_provider,
+                )
             ),
             generate_background_video=lambda image_set, sad_scene_path: (
                 generate_pet_sad_video_for_image_asset_set(image_set, sad_scene_path)
             ),
-            generate_happy_image=lambda image_set, image_provider: generate_pet_happy_scene_path(
-                image_set,
-                image_provider=image_provider,
+            generate_happy_image=lambda image_set, image_provider: (
+                generated_outfit_mood_path(image_set, "happy")
+                if is_outfit_image_set(image_set)
+                else generate_pet_happy_scene_path(
+                    image_set,
+                    image_provider=image_provider,
+                )
             ),
             generate_happy_video=lambda image_set, happy_scene_path: (
                 generate_pet_happy_video_for_image_asset_set(image_set, happy_scene_path)
@@ -954,17 +979,11 @@ def generation_job_runtime_status() -> dict[str, int]:
     return _generation_job_service().runtime_status()
 
 
-@router.post(
-    "/generate-pet",
-    response_model=GeneratePetJobResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-def generate_pet(
-    payload: GeneratePetRequest,
-    user: TelegramUser,
-    idempotency_key: GenerationIdempotencyKey,
+def _submit_paid_generation(
+    description: str,
+    user: TelegramUserContext,
+    idempotency_key: str,
 ) -> GeneratePetJobResponse:
-    description = payload.description.strip()
     settings = get_settings()
     admission_context = _generation_admission_lock(
         getattr(settings, "generation_job_store_path", "data/push/generation_jobs.sqlite3")
@@ -1016,6 +1035,39 @@ def generate_pet(
             raise
 
 
+@router.post(
+    "/generate-pet",
+    response_model=GeneratePetJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def generate_pet(
+    payload: GeneratePetRequest,
+    user: TelegramUser,
+    idempotency_key: GenerationIdempotencyKey,
+) -> GeneratePetJobResponse:
+    description = payload.description.strip()
+    return _submit_paid_generation(description, user, idempotency_key)
+
+
+@router.post(
+    "/outfit/generate",
+    response_model=GeneratePetJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def generate_outfit(
+    payload: GenerateOutfitRequest,
+    user: TelegramUser,
+    idempotency_key: GenerationIdempotencyKey,
+) -> GeneratePetJobResponse:
+    description = encode_outfit_generation_description(
+        payload.prompt,
+        idle_image_url=payload.idleImageUrl,
+        sad_image_url=payload.sadImageUrl,
+        happy_image_url=payload.happyImageUrl,
+    )
+    return _submit_paid_generation(description, user, idempotency_key)
+
+
 @router.get("/generate-pet/jobs/{job_id}", response_model=GeneratePetJobResponse)
 def generation_job(job_id: str, user: TelegramUser) -> GeneratePetJobResponse:
     return get_generation_job(job_id, user)
@@ -1037,6 +1089,40 @@ def generation_stats(
         owner_id=user.telegram_id if mine else None,
     )
     return GenerationStatsResponse.model_validate(payload)
+
+
+@router.post(
+    "/outfit/simplify",
+    response_model=OutfitSimplificationResponse,
+    dependencies=[Depends(_llm_request_admission)],
+)
+def simplify_outfit(
+    payload: OutfitSimplificationRequest,
+    user: TelegramUser,
+) -> OutfitSimplificationResponse:
+    check_rate_limit("chat", user)
+    try:
+        item, generation_description = simplify_outfit_request(
+            payload.request,
+            payload.petDescription,
+        )
+    except Exception as exc:
+        logger.exception(
+            "outfit_simplification_failed ownerId=%s errorType=%s",
+            user.telegram_id,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "OUTFIT_SIMPLIFICATION_FAILED",
+                "message": "Не удалось разобрать наряд. Попробуйте описать его проще.",
+            },
+        ) from exc
+    return OutfitSimplificationResponse(
+        item=item,
+        generationDescription=generation_description,
+    )
 
 
 @router.post(

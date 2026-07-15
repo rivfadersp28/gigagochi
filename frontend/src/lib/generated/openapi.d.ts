@@ -311,6 +311,40 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/outfit/generate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Generate Outfit */
+        readonly post: operations["generate_outfit_api_outfit_generate_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/outfit/simplify": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Simplify Outfit */
+        readonly post: operations["simplify_outfit_api_outfit_simplify_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/push/snapshot": {
         readonly parameters: {
             readonly query?: never;
@@ -340,6 +374,40 @@ export interface paths {
         readonly post?: never;
         /** Delete Push Snapshot */
         readonly delete: operations["delete_push_snapshot_api_push_snapshot__pet_id__delete"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/travel/automatic/{token}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Automatic Travel Story */
+        readonly get: operations["automatic_travel_story_api_travel_automatic__token__get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/travel/automatic/{token}/choice": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Choose Automatic Travel Story */
+        readonly post: operations["choose_automatic_travel_story_api_travel_automatic__token__choice_post"];
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -681,6 +749,11 @@ export interface components {
             /** Travelid */
             readonly travelId: string;
         };
+        /** AutomaticInteractiveStoryChoiceRequest */
+        readonly AutomaticInteractiveStoryChoiceRequest: {
+            /** Choice */
+            readonly choice: string;
+        };
         /** CaptureInteractiveTravelFinaleRequest */
         readonly CaptureInteractiveTravelFinaleRequest: {
             readonly travel: components["schemas"]["InteractiveTravelState"];
@@ -696,6 +769,17 @@ export interface components {
             readonly includeDebug: boolean;
             readonly pet: components["schemas"]["LocalPetChatContext"];
             readonly travel: components["schemas"]["InteractiveTravelState"];
+        };
+        /** GenerateOutfitRequest */
+        readonly GenerateOutfitRequest: {
+            /** Happyimageurl */
+            readonly happyImageUrl: string;
+            /** Idleimageurl */
+            readonly idleImageUrl: string;
+            /** Prompt */
+            readonly prompt: string;
+            /** Sadimageurl */
+            readonly sadImageUrl: string;
         };
         /** GeneratePetAssetResponse */
         readonly GeneratePetAssetResponse: {
@@ -938,6 +1022,11 @@ export interface components {
             readonly adviceAssessment: "helpful" | "harmful" | "ambiguous";
             /** Consequence */
             readonly consequence: string;
+            /**
+             * Experiencegained
+             * @default 0
+             */
+            readonly experienceGained: number;
             /**
              * Outcomevalence
              * @enum {string}
@@ -1473,6 +1562,20 @@ export interface components {
             readonly operations?: readonly {
                 readonly [key: string]: unknown;
             }[];
+        };
+        /** OutfitSimplificationRequest */
+        readonly OutfitSimplificationRequest: {
+            /** Petdescription */
+            readonly petDescription: string;
+            /** Request */
+            readonly request: string;
+        };
+        /** OutfitSimplificationResponse */
+        readonly OutfitSimplificationResponse: {
+            /** Generationdescription */
+            readonly generationDescription: string;
+            /** Item */
+            readonly item: string;
         };
         /** StartInteractiveTravelRequest */
         readonly StartInteractiveTravelRequest: {
@@ -2152,6 +2255,75 @@ export interface operations {
             };
         };
     };
+    readonly generate_outfit_api_outfit_generate_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header: {
+                /** @description Required for paid generation. Reusing the same key for this Telegram user replays or resumes the original operation without restarting completed media. */
+                readonly "Idempotency-Key": string;
+            };
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["GenerateOutfitRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GeneratePetJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly simplify_outfit_api_outfit_simplify_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["OutfitSimplificationRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OutfitSimplificationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     readonly push_snapshot_api_push_snapshot_post: {
         readonly parameters: {
             readonly query?: never;
@@ -2203,6 +2375,76 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["LocalPetPushSnapshotDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly automatic_travel_story_api_travel_automatic__token__get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly choose_automatic_travel_story_api_travel_automatic__token__choice_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AutomaticInteractiveStoryChoiceRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

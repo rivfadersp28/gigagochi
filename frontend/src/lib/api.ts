@@ -84,6 +84,11 @@ export type TelegramCapabilities = {
   interactiveTravel: boolean;
 };
 
+export type OutfitSimplification = {
+  item: string;
+  generationDescription: string;
+};
+
 export type AutomaticInteractiveStory = {
   token: string;
   travelId: string;
@@ -251,6 +256,22 @@ function petNameForApi(pet: LocalPetState): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseOutfitSimplification(value: unknown): OutfitSimplification {
+  if (
+    !isRecord(value)
+    || typeof value.item !== "string"
+    || !value.item.trim()
+    || typeof value.generationDescription !== "string"
+    || !value.generationDescription.trim()
+  ) {
+    throw new ApiContractError("Invalid outfit simplification response");
+  }
+  return {
+    item: value.item.trim(),
+    generationDescription: value.generationDescription.trim(),
+  };
 }
 
 function parseGenerationStats(value: unknown): GenerationStats {
@@ -680,6 +701,26 @@ function generatedPetResponseFromJob(job: GeneratePetJobResponse): GeneratePetRe
   };
 }
 
+export async function simplifyOutfitRequest(
+  outfitRequest: string,
+  petDescription: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<OutfitSimplification> {
+  return request(
+    "/api/outfit/simplify",
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      signal: options.signal,
+      body: {
+        request: outfitRequest,
+        petDescription,
+      },
+    },
+    parseOutfitSimplification,
+  );
+}
+
 export async function generatePetAssets(
   description: string,
   options: {
@@ -697,6 +738,37 @@ export async function generatePetAssets(
       signal: options.signal,
       body: {
         description,
+      },
+    },
+    parseGeneratePetJobResponse,
+  );
+  options.onJobQueued?.(job.jobId);
+  return generatedPetResponseFromJob(await waitForGeneratedPet(job, options.signal));
+}
+
+export async function generateOutfitAssets(
+  prompt: string,
+  references: {
+    idleImageUrl: string;
+    sadImageUrl: string;
+    happyImageUrl: string;
+  },
+  options: {
+    requestKey: string;
+    onJobQueued?: (jobId: string) => void;
+    signal?: AbortSignal;
+  },
+): Promise<GeneratePetResponse> {
+  const job = await request(
+    "/api/outfit/generate",
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      idempotencyKey: options.requestKey,
+      signal: options.signal,
+      body: {
+        prompt,
+        ...references,
       },
     },
     parseGeneratePetJobResponse,

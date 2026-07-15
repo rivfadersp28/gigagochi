@@ -260,7 +260,7 @@ def test_normalizer_keeps_only_bounded_supported_command_fields() -> None:
                     "first_name": "x" * 1_000,
                     "ignored": "secret",
                 },
-                    "text": "/push@GigagochiBot ignored arguments",
+                "text": "/push@GigagochiBot ignored arguments",
                 "photo": ["large-payload"],
             },
         }
