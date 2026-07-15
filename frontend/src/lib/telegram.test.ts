@@ -54,22 +54,10 @@ describe("Telegram background color", () => {
 });
 
 describe("debug menu access", () => {
-  it("enables the debug menu for Sergey", () => {
-    setTelegramUser(62943754);
-
-    expect(canUseDebugMenu()).toBe(true);
-  });
-
-  it("enables the debug menu for Sonia", () => {
-    setTelegramUser(625405535);
-
-    expect(canUseDebugMenu()).toBe(true);
-  });
-
-  it("hides the debug menu from other Telegram users", () => {
+  it("enables the debug menu for every Telegram user", () => {
     setTelegramUser(42);
 
-    expect(canUseDebugMenu()).toBe(false);
+    expect(canUseDebugMenu()).toBe(true);
   });
 
   it("enables the debug menu in a local dev browser", () => {
