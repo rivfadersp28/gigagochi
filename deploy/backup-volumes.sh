@@ -54,6 +54,7 @@ validate_compose_environment
 assert_existing_stack_for_backup
 capture_writer_state
 stop_writers
+repair_volume_permissions
 validate_volume_sqlite_databases
 
 backup_id="gigagochi-volumes-$(date -u '+%Y%m%dT%H%M%SZ')-$$"

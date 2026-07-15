@@ -356,6 +356,10 @@ def test_volume_backup_and_restore_scripts_have_safe_static_contract() -> None:
     assert "trap cleanup EXIT" in backup
     assert "capture_writer_state" in backup
     assert backup.index("stop_writers") < backup.index("create_volume_bundle")
+    assert backup.index("stop_writers") < backup.index("repair_volume_permissions")
+    assert backup.index("repair_volume_permissions") < backup.index(
+        "validate_volume_sqlite_databases"
+    )
     assert backup.index("stop_writers") < backup.index("validate_volume_sqlite_databases")
     assert backup.index("validate_volume_sqlite_databases") < backup.index("create_volume_bundle")
     assert "mktemp -d" in backup
