@@ -1660,6 +1660,11 @@ def register_push_snapshot(
                     "dailyFullStoryAttemptKey",
                     "dailyFullStoryAttemptCount",
                     "dailyFullStoryAttemptAt",
+                    "lastScheduledShortStoryAt",
+                    "lastScheduledShortStoryAttemptAt",
+                    "lastScheduledShortStoryError",
+                    "pendingInteractiveStory",
+                    "automaticInteractiveStories",
                 ):
                     record[key] = deepcopy(existing.get(key))
                 record["recentStoryEvents"] = _record_recent_story_events(existing)

@@ -1557,6 +1557,47 @@ def test_same_pet_snapshot_preserves_bot_generation_receipts(monkeypatch, tmp_pa
     assert saved["botGenerationReceipts"][0]["requestKey"] == "telegram-update:42"
 
 
+def test_same_pet_snapshot_preserves_scheduled_interactive_story(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        telegram_push_service,
+        "get_settings",
+        lambda: SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json")),
+    )
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    episode = {
+        "token": "story-token",
+        "travelId": "interactive-travel-auto-story",
+        "title": "Серверная история",
+        "choices": ["А", "Б"],
+        "outcomes": ["Исход А", "Исход Б"],
+    }
+
+    def add_story(current):
+        next_record = deepcopy(current)
+        next_record.update(
+            {
+                "lastScheduledShortStoryAt": "2026-07-15T18:22:03Z",
+                "lastScheduledShortStoryAttemptAt": "2026-07-15T18:15:00Z",
+                "lastScheduledShortStoryError": None,
+                "pendingInteractiveStory": deepcopy(episode),
+                "automaticInteractiveStories": [deepcopy(episode)],
+            }
+        )
+        return next_record
+
+    telegram_push_service._update_record(TEST_TELEGRAM_ID, add_story)
+    newer_snapshot = _snapshot_payload().model_copy(update={"updatedAt": "2026-07-07T12:01:00Z"})
+
+    telegram_push_service.register_push_snapshot(_user(), newer_snapshot)
+
+    saved = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert saved["lastScheduledShortStoryAt"] == "2026-07-15T18:22:03Z"
+    assert saved["lastScheduledShortStoryAttemptAt"] == "2026-07-15T18:15:00Z"
+    assert saved["lastScheduledShortStoryError"] is None
+    assert saved["pendingInteractiveStory"] == episode
+    assert saved["automaticInteractiveStories"] == [episode]
+
+
 def test_background_story_paid_media_budget_config_is_fail_closed() -> None:
     field = Settings.model_fields["scheduled_background_story_paid_media_daily_cap"]
     assert field.default == 0
