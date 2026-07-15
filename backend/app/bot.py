@@ -761,7 +761,25 @@ def handle_update(
         send_message(
             client,
             chat_id,
-            "Открой Mini App, создай AI-питомца и общайся с ним внутри Telegram.",
+            (
+                "Открой Mini App, создай AI-питомца и общайся с ним внутри Telegram.\n\n"
+                "/easy — включить простой банк задач для всех\n"
+                "/hard — включить сложный банк задач для всех"
+            ),
+            keyboard,
+        )
+        return
+
+    if command in {"/easy", "/hard"}:
+        from app.services.task_bank_mode import write_task_bank_mode
+
+        mode = "easy" if command == "/easy" else "hard"
+        write_task_bank_mode(mode)
+        label = "простой" if mode == "easy" else "сложный"
+        send_message(
+            client,
+            chat_id,
+            f"Включён {label} банк задач для всех. Он применится к следующей истории.",
             keyboard,
         )
         return

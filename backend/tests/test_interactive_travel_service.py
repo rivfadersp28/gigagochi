@@ -341,6 +341,15 @@ def test_task_bank_is_valid_and_has_one_hundred_unique_tasks() -> None:
             assert result.text == outcome
 
 
+def test_easy_task_bank_is_valid_and_keeps_explanations() -> None:
+    interactive_travel_service._task_bank.cache_clear()
+    tasks = interactive_travel_service._task_bank("easy")
+
+    assert len(tasks) == 100
+    assert len({task["question"] for task in tasks}) == 100
+    assert all(task["explanation"] for task in tasks)
+
+
 def test_task_bank_rejects_answer_text_that_disagrees_with_its_letter(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

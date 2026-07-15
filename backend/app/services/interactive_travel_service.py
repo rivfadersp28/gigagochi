@@ -25,12 +25,16 @@ from app.services.interactive_travel_media_service import (
     generate_interactive_travel_part_image,
     generate_interactive_travel_part_video,
 )
+from app.services.task_bank_mode import TaskBankMode, read_task_bank_mode
 
 STORY_PART_COUNT = 4
 INTERACTIVE_TRAVEL_CHOICE_LIMIT = 2  # Temporary paid-media test mode; restore to 4 later.
 GENERATOR_VERSION = "task-bank-location-v4"
 TASK_BANK_PATH = (
     Path(__file__).resolve().parents[2] / "data" / "задачи_путешественника_без_расчётов.md"
+)
+EASY_TASK_BANK_PATH = (
+    Path(__file__).resolve().parents[2] / "data" / "задачи_путешественника_до_6_класса.md"
 )
 
 DESTINATION_FALLBACKS = (
@@ -136,9 +140,13 @@ def _sentence(value: Any, *, fallback: str, limit: int, question: bool = False) 
     return f"{text}{'?' if question else '.'}"
 
 
-@lru_cache(maxsize=1)
-def _task_bank() -> tuple[dict[str, Any], ...]:
-    markdown = TASK_BANK_PATH.read_text(encoding="utf-8")
+def _task_bank_path(mode: TaskBankMode) -> Path:
+    return EASY_TASK_BANK_PATH if mode == "easy" else TASK_BANK_PATH
+
+
+@lru_cache(maxsize=2)
+def _task_bank_from_path(path_value: str) -> tuple[dict[str, Any], ...]:
+    markdown = Path(path_value).read_text(encoding="utf-8")
     sections = re.split(r"(?m)^###\s+(\d+)\.\s+(.+?)\s*$", markdown)
     if len(sections) != 1 + 100 * 3:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_TASK_BANK_INVALID")
@@ -150,12 +158,12 @@ def _task_bank() -> tuple[dict[str, Any], ...]:
         title = " ".join(sections[index + 1].split())
         body = sections[index + 2]
         situation_match = re.search(
-            r"\*\*Ситуация\.\*\*\s*(.+?)(?=\n\s*\n\*\*Вопрос)",
+            r"\*\*Ситуация\.\*\*\s*(.+?)(?=\n(?:\s*\n)?\*\*Вопрос)",
             body,
             re.DOTALL,
         )
         question_match = re.search(
-            r"\*\*Вопрос\.\*\*\s*(.+?)(?=\n\s*\n- )",
+            r"\*\*Вопрос\.\*\*\s*(.+?)(?=\n(?:\s*\n)?- )",
             body,
             re.DOTALL,
         )
@@ -166,7 +174,7 @@ def _task_bank() -> tuple[dict[str, Any], ...]:
         )
         outcomes = re.findall(r"(?m)^- \*\*([А-Г])\)\*\*\s*(.+?)\s*$", body)
         explanation_match = re.search(
-            r"\*\*Почему:\*\*\s*(.+?)(?=\n\s*\n\*\*Источник:)",
+            r"\*\*Почему[.:]\*\*\s*(.+?)(?=\n(?:\s*\n)?\*\*Источник:)",
             body,
             re.DOTALL,
         )
@@ -230,6 +238,14 @@ def _task_bank() -> tuple[dict[str, Any], ...]:
     return tuple(tasks)
 
 
+def _task_bank(mode: TaskBankMode | None = None) -> tuple[dict[str, Any], ...]:
+    selected_mode = mode or read_task_bank_mode()
+    return _task_bank_from_path(str(_task_bank_path(selected_mode)))
+
+
+_task_bank.cache_clear = _task_bank_from_path.cache_clear  # type: ignore[attr-defined]
+
+
 def _select_story_tasks() -> list[dict[str, Any]]:
     return list(random.sample(list(_task_bank()), STORY_PART_COUNT))
 
@@ -273,12 +289,15 @@ def scheduled_interactive_episode_correct_choice(
     *, question: str, choices: list[str]
 ) -> str:
     normalized_question = _answer_key(question)
-    for task in _task_bank():
-        if _answer_key(task["question"]) != normalized_question:
-            continue
-        answer = str(task["answer"])
-        if answer in choices:
-            return answer
+    active_mode = read_task_bank_mode()
+    fallback_mode: TaskBankMode = "hard" if active_mode == "easy" else "easy"
+    for mode in (active_mode, fallback_mode):
+        for task in _task_bank(mode):
+            if _answer_key(task["question"]) != normalized_question:
+                continue
+            answer = str(task["answer"])
+            if answer in choices:
+                return answer
     raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_TASK_NOT_FOUND")
 
 

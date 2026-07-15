@@ -15,7 +15,7 @@ import pytest
 from app import bot
 from app.routers import tma
 from app.schemas import LocalPetPushSnapshotRequest
-from app.services import telegram_client, telegram_push_service
+from app.services import task_bank_mode, telegram_client, telegram_push_service
 from app.services.bot_command_runtime import (
     BotCommandLeaseKeeper,
     BoundedBotCommandDispatcher,
@@ -1549,6 +1549,37 @@ def test_push_command_generates_for_requesting_user(monkeypatch) -> None:
     bot.handle_update(httpx.Client(), _push_update())
 
     assert calls == [{"telegram_id": TEST_TELEGRAM_ID, "include_debug": False}]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_mode", "expected_label"),
+    (("/easy", "easy", "простой"), ("/hard", "hard", "сложный")),
+)
+def test_task_bank_commands_are_available_to_any_user(
+    monkeypatch, tmp_path, command, expected_mode, expected_label
+) -> None:
+    mode_path = tmp_path / "task-bank-mode.txt"
+    sent: list[str] = []
+    monkeypatch.setattr(bot, "get_settings", lambda: _bot_settings())
+    monkeypatch.setattr(
+        task_bank_mode,
+        "get_settings",
+        lambda: SimpleNamespace(interactive_travel_task_bank_mode_path=str(mode_path)),
+    )
+    monkeypatch.setattr(
+        bot,
+        "send_message",
+        lambda _client, _chat_id, text, _keyboard: sent.append(text),
+    )
+    update = _durable_command_update(1, command, chat_id=123456)
+
+    bot.handle_update(httpx.Client(), update)
+
+    assert task_bank_mode.read_task_bank_mode() == expected_mode
+    assert sent == [
+        f"Включён {expected_label} банк задач для всех. "
+        "Он применится к следующей истории."
+    ]
 
 
 def test_push_command_can_be_submitted_without_blocking_polling(monkeypatch) -> None:
