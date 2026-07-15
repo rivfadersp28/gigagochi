@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import ast
 import json
 import random
-import re
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -33,9 +31,7 @@ from app.services.travel_service import (
     generate_interactive_travel_part_video,
 )
 
-MIN_PART_COUNT = 3
-NEW_STORY_MAX_PART_COUNT = 6
-STATE_MAX_PART_COUNT = 7
+STORY_PART_COUNT = 3
 MIN_TIMEOUT_SECONDS = 120.0
 
 DESTINATION_FALLBACKS = (
@@ -62,18 +58,25 @@ CHOICE_FALLBACKS = (
     "Идти дальше",
 )
 
-SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[А-ЯЁ])|(?<=[.!?][»”])\s+(?=[А-ЯЁ])")
+# Модель строит приключение вокруг одного готового факта. Она не отвечает за его истинность.
+FUN_FACTS = (
+    "В Северном полушарии Полярная звезда показывает направление на север",
+    "Многие летучие мыши находят путь с помощью эха собственных звуков",
+    "Лёд плавает, потому что он менее плотный, чем жидкая вода",
+    "На холодной поверхности водяной пар из воздуха превращается в жидкие капли",
+    "Белый свет разделяется на разные цвета, проходя через призму",
+    "Ржавчина появляется, когда железо долго соприкасается с водой и кислородом",
+)
 
 SYSTEM_PROMPT = "\n".join(
     (
-        "Ты ведёшь приключение для ребёнка 7–12 лет.",
-        "Пиши от первого лица в настоящем времени, без метафор и лишних описаний.",
-        "Одна ситуация — максимум два коротких предложения про одно событие.",
-        "Без атмосферы: только событие и выбор.",
-        "Каждая новая ситуация прямо вытекает из результата и приближает к цели.",
-        "Первые две ситуации только ведут к цели; цель решается в финале.",
-        "Не дублируй предметы: у каждого предмета одно место и один владелец.",
-        "Варианты короткие. Добавь лёгкое фэнтези.",
+        "Создай короткое интерактивное приключение для ребёнка 9–14 лет.",
+        "Пиши просто, от первого лица и в настоящем времени.",
+        "Одна ситуация — одно интересное событие, максимум два коротких предложения.",
+        "Лёгкое фэнтези допустимо.",
+        "Выполняй выбранное пользователем действие буквально.",
+        "Если дан правдивый факт, естественно вплети его смысл в первую ситуацию.",
+        "Не оформляй факт отдельной сноской и не придумывай другие научные факты.",
         "Верни только JSON по схеме.",
     )
 )
@@ -82,7 +85,6 @@ CHOICE_SCHEMA: dict[str, Any] = {
     "type": "string",
     "minLength": 1,
     "maxLength": 72,
-    "description": "Одно короткое действие без объяснений.",
 }
 
 START_SCHEMA: dict[str, Any] = {
@@ -90,82 +92,26 @@ START_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "properties": {
         "title": {"type": "string", "minLength": 1, "maxLength": 80},
-        "goal": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 100,
-            "description": (
-                "Одно финальное действие без союза «и» и слов «Я хочу»: получить, вернуть, "
-                "открыть или раскрыть; не используй «найти», если предмет можно увидеть раньше."
-            ),
-        },
-        "situation": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 220,
-            "description": "Первая преграда: цель ещё нельзя выполнить.",
-        },
-        "question": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 120,
-            "description": "Как пройти первую преграду, не выполняя цель.",
-        },
+        "situation": {"type": "string", "minLength": 1, "maxLength": 300},
+        "question": {"type": "string", "minLength": 1, "maxLength": 120},
         "choice1": CHOICE_SCHEMA,
         "choice2": CHOICE_SCHEMA,
         "choice3": CHOICE_SCHEMA,
     },
-    "required": [
-        "title",
-        "goal",
-        "situation",
-        "question",
-        "choice1",
-        "choice2",
-        "choice3",
-    ],
+    "required": ["title", "situation", "question", "choice1", "choice2", "choice3"],
 }
 
 RESULT_PROPERTIES: dict[str, Any] = {
-    "result": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 220,
-        "description": (
-            "Сначала буквальное выбранное действие, затем его прямой результат; "
-            "максимум два простых предложения."
-        ),
-    },
-    "outcome": {
-        "type": "string",
-        "enum": ["positive", "negative"],
-        "description": (
-            "Итог действия. В финале positive означает, что цель достигнута, negative — что "
-            "цель окончательно не достигнута; result обязан совпадать с outcome."
-        ),
-    },
+    "result": {"type": "string", "minLength": 1, "maxLength": 240},
+    "outcome": {"type": "string", "enum": ["positive", "negative"]},
 }
 
-INTERMEDIATE_SCHEMA: dict[str, Any] = {
+CONTINUE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
         **RESULT_PROPERTIES,
-        "bridge": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 180,
-            "description": (
-                "Одно предложение от точного результата к следующему месту. "
-                "Перемещается герой, а не важные предметы."
-            ),
-        },
-        "nextSituation": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 220,
-            "description": "Продолжает bridge с теми же важными предметами.",
-        },
+        "nextSituation": {"type": "string", "minLength": 1, "maxLength": 300},
         "nextQuestion": {"type": "string", "minLength": 1, "maxLength": 120},
         "nextChoice1": CHOICE_SCHEMA,
         "nextChoice2": CHOICE_SCHEMA,
@@ -174,36 +120,6 @@ INTERMEDIATE_SCHEMA: dict[str, Any] = {
     "required": [
         "result",
         "outcome",
-        "bridge",
-        "nextSituation",
-        "nextQuestion",
-        "nextChoice1",
-        "nextChoice2",
-        "nextChoice3",
-    ],
-}
-
-FLEXIBLE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        **RESULT_PROPERTIES,
-        "complete": {
-            "type": "boolean",
-            "description": "true, только если result сам полностью завершает исходную цель",
-        },
-        "bridge": {"type": "string", "maxLength": 180},
-        "nextSituation": {"type": "string", "maxLength": 220},
-        "nextQuestion": {"type": "string", "maxLength": 120},
-        "nextChoice1": {"type": "string", "maxLength": 72},
-        "nextChoice2": {"type": "string", "maxLength": 72},
-        "nextChoice3": {"type": "string", "maxLength": 72},
-    },
-    "required": [
-        "result",
-        "outcome",
-        "complete",
-        "bridge",
         "nextSituation",
         "nextQuestion",
         "nextChoice1",
@@ -225,107 +141,45 @@ class InteractiveTravelGenerationError(RuntimeError):
 
 
 def _compact_text(value: Any, limit: int, fallback: str = "") -> str:
-    text = " ".join(str(value or "").split()).strip()
-    if not text:
-        text = fallback
+    text = " ".join(str(value or "").split()).strip() or fallback
     if len(text) <= limit:
         return text
     shortened = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:—–-")
     return shortened or text[:limit]
 
 
-def _sentence(
-    value: Any,
-    *,
-    fallback: str,
-    limit: int,
-    question: bool = False,
-    max_sentences: int = 2,
-) -> str:
+def _sentence(value: Any, *, fallback: str, limit: int, question: bool = False) -> str:
     text = _compact_text(value, limit - 1, fallback).rstrip(" .!?…")
-    if not text:
-        text = fallback.rstrip(" .!?…")
-    pieces = SENTENCE_SPLIT_RE.split(text)
-    text = " ".join(pieces[:max_sentences]).rstrip(" .!?…")
     return f"{text}{'?' if question else '.'}"
 
 
-def _goal_phrase(value: Any) -> str:
-    goal = _compact_text(value, 100, "узнать секрет этого места").strip(" .!?…")
-    lower = goal.casefold()
-    for prefix in ("я хочу ", "хочу ", "моя цель — ", "моя цель - "):
-        if lower.startswith(prefix):
-            goal = goal[len(prefix) :].strip()
-            break
-    if not goal:
-        goal = "узнать секрет этого места"
-    return goal[0].lower() + goal[1:]
-
-
-def _intro_text(destination: str, goal: str) -> str:
-    return _sentence(
-        f"Я отправляюсь {destination}. Моя цель — {goal}",
-        fallback="Я отправляюсь в приключение",
-        limit=220,
-    )
-
-
-CHOICE_SPLIT_RE = re.compile(r"[;\n]+|(?<=[.!?])\s+(?=[А-ЯЁ])|(?<=[.!?][»”])\s+(?=[А-ЯЁ])")
-
-
-def _choice_chunks(value: Any) -> list[str]:
-    if isinstance(value, (list, tuple)):
-        return [chunk for item in value for chunk in _choice_chunks(item)]
-    if isinstance(value, dict):
-        for key in ("string", "text", "value", "label", "step"):
-            if value.get(key):
-                return _choice_chunks(value[key])
-        return []
-    raw_text = str(value or "").strip()
-    if not raw_text:
-        return []
-    if raw_text.startswith("[") and raw_text.endswith("]"):
-        try:
-            nested = ast.literal_eval(raw_text)
-        except (SyntaxError, ValueError):
-            nested = None
-        if isinstance(nested, (list, tuple)):
-            return _choice_chunks(nested)
-    return [
-        " ".join(chunk.split()).strip()
-        for chunk in CHOICE_SPLIT_RE.split(raw_text)
-        if chunk.strip()
-    ]
-
-
-def _choices(value: Any) -> list[str]:
-    source = value if isinstance(value, list) else [value]
-    candidates = [chunk for item in source for chunk in _choice_chunks(item)]
+def _choices(values: list[Any]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
-    for item in [*candidates, *CHOICE_FALLBACKS]:
-        choice = " ".join(str(item).split()).strip().rstrip(" .!?…")
-        if len(choice) > 72:
+    for value in [*values, *CHOICE_FALLBACKS]:
+        choice = _compact_text(value, 72).rstrip(" .!?…")
+        key = choice.casefold()
+        if not choice or key in seen:
             continue
-        normalized = choice.casefold()
-        if not choice or normalized in seen:
-            continue
-        seen.add(normalized)
+        seen.add(key)
         result.append(choice)
         if len(result) == 3:
-            return result
-    return list(CHOICE_FALLBACKS)
+            break
+    return result
 
 
-def _fixed_part_count(arc_plan: dict[str, str]) -> int | None:
-    raw = arc_plan.get("partCount") or arc_plan.get("targetPartCount")
-    if raw is None:
-        return None
-    try:
-        count = int(raw)
-    except (TypeError, ValueError):
-        count = 4
-    return max(MIN_PART_COUNT, min(STATE_MAX_PART_COUNT, count))
+def _intro_text(destination: str) -> str:
+    return _sentence(
+        random.choice(
+            (
+                f"Отправлюсь {destination}. Посмотрим, что меня там ждёт.",
+                f"Пора отправляться {destination}. Скоро узнаю, что там происходит.",
+                f"Я отправляюсь {destination}. Интересно, что встречу по пути.",
+            )
+        ),
+        fallback="Я отправляюсь в путешествие",
+        limit=220,
+    )
 
 
 def _character_summary(pet: LocalPetChatContext) -> str:
@@ -409,44 +263,26 @@ def _request(
 
 
 def _result_from_payload(
-    payload: dict[str, Any],
-    *,
-    advice: str,
-    tie_break: str,
-    final_goal: str | None = None,
+    payload: dict[str, Any], *, advice: str, fallback_outcome: str
 ) -> InteractiveTravelResult:
     outcome = payload.get("outcome")
     if outcome not in {"positive", "negative"}:
-        outcome = tie_break
-    result_text = _sentence(
+        outcome = fallback_outcome
+    consequence = _sentence(
         payload.get("result"),
-        fallback=f"Я делаю так: {_compact_text(advice, 100, 'пробую')}",
-        limit=220,
+        fallback=f"Я пробую: {_compact_text(advice, 100, 'идти дальше')}",
+        limit=240,
     )
-    reaction = _sentence(
-        f"Выбираю: {_compact_text(advice, 180, 'попробовать')}",
-        fallback="Пробую",
-        limit=220,
-    )
-    final_text = result_text
-    if final_goal:
-        closure = _sentence(
-            f"Мне {'удалось' if outcome == 'positive' else 'не удалось'} {final_goal}",
-            fallback="Приключение закончено",
-            limit=280,
-        )
-        final_text = _sentence(
-            f"{result_text} {closure}",
-            fallback=closure,
-            limit=500,
-            max_sentences=3,
-        )
     return InteractiveTravelResult(
-        text=final_text,
+        text=consequence,
         adviceAssessment="helpful" if outcome == "positive" else "harmful",
-        reaction=reaction,
+        reaction=_sentence(
+            f"Выбираю: {_compact_text(advice, 180, 'идти дальше')}",
+            fallback="Пробую",
+            limit=220,
+        ),
         reactionTone="determined" if outcome == "positive" else "worried",
-        consequence=result_text,
+        consequence=consequence,
         outcomeValence=outcome,
         statImpacts=[],
     )
@@ -513,54 +349,50 @@ def start_interactive_travel(
     del history, memory_context
     model, timeout = _model_and_timeout(client=client, model=model, timeout=timeout)
     clean_destination = _compact_text(destination, 500, "в путешествие")
-    user_content = (
-        "Давай сыграем. Сделай для меня короткое приключение.\n\n"
-        f"Я — {_character_summary(pet)}.\n"
-        f"Я отправляюсь {clean_destination}.\n\n"
-        "Придумай одну ясную цель с одним финальным действием, без слова «и». Для предмета "
-        "цель — получить или вернуть его, а не просто увидеть. История длится от 3 до 6 "
-        "ситуаций. Первая ситуация — только первая преграда: ни один её вариант не может "
-        "выполнить цель. Вопрос и три варианта решают одно событие."
-    )
+    fun_fact = random.choice(FUN_FACTS)
     payload, debug = _request(
-        label="interactive_travel/start",
-        schema_name="interactive_travel_start_simple",
+        label="interactive_travel/start_simple",
+        schema_name="interactive_travel_start_simple_v1",
         schema=START_SCHEMA,
-        user_content=user_content,
+        user_content=(
+            "Давай сыграем. Сделай для меня короткое приключение.\n"
+            f"Я — {_character_summary(pet)}.\n"
+            f"Я отправляюсь {clean_destination}.\n"
+            f"Правдивый факт для первой ситуации: {fun_fact}.\n\n"
+            "Придумай первое интересное событие, вопрос и три действия. Естественно вплети "
+            "смысл факта в событие. Не пиши слова «фанфакт» и не выноси факт отдельно."
+        ),
         client=client,
         model=model,
         timeout=timeout,
     )
-    goal = _goal_phrase(payload.get("goal"))
-    situation = _sentence(
+    scene = _sentence(
         payload.get("situation"),
-        fallback="Передо мной появляется первая преграда",
-        limit=220,
+        fallback="На пути происходит что-то неожиданное",
+        limit=300,
     )
     part = InteractiveTravelPart(
         partNumber=1,
         title="Часть 1",
-        storyText=situation,
+        storyText=scene,
         challenge=_sentence(
             payload.get("question"),
             fallback="Что мне сделать",
             limit=120,
             question=True,
-            max_sentences=1,
         ),
         actionSuggestions=_choices(
             [payload.get("choice1"), payload.get("choice2"), payload.get("choice3")]
         ),
     )
-    arc_plan = {"goal": goal}
     travel = InteractiveTravelState(
         travelId=f"interactive-travel-{uuid4().hex}",
         generatedAt=datetime.now(UTC),
         destination=clean_destination,
-        overallTitle=_compact_text(payload.get("title"), 120, "Путешествие"),
-        arcPlan=arc_plan,
+        overallTitle=_compact_text(payload.get("title"), 120, "Приключение"),
+        arcPlan={"generatorVersion": "simple-1", "funFact": fun_fact},
         introReaction=InteractiveTravelIntroReaction(
-            text=_intro_text(clean_destination, goal),
+            text=_intro_text(clean_destination),
             tone="determined",
         ),
         parts=[part],
@@ -592,86 +424,45 @@ def continue_interactive_travel(
     if current_part.result is not None:
         raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_PENDING_PART_MISSING")
 
-    fixed_part_count = _fixed_part_count(travel.arcPlan)
-    must_finish = current_part.partNumber >= (
-        fixed_part_count or NEW_STORY_MAX_PART_COUNT
-    )
-    may_finish = fixed_part_count is None and current_part.partNumber >= MIN_PART_COUNT
-    tie_break = tie_break_valence or random.choice(("positive", "negative"))
-    if tie_break not in {"positive", "negative"}:
+    fallback_outcome = tie_break_valence or random.choice(("positive", "negative"))
+    if fallback_outcome not in {"positive", "negative"}:
         raise ValueError("tie_break_valence must be positive or negative")
     model, timeout = _model_and_timeout(client=client, model=model, timeout=timeout)
-    clean_advice = _compact_text(advice, 1000, "осмотреться")
-    goal = _goal_phrase(travel.arcPlan.get("goal"))
-    previous_context = ""
-    if len(travel.parts) > 1:
-        previous_part = travel.parts[-2]
-        if previous_part.result is not None:
-            previous_context = f"До этого: {previous_part.result.consequence}\n"
-    if must_finish:
-        final_rule = (
-            f"Это финал. Разреши цель «{goal}» сейчас: при outcome=positive покажи её "
-            "достижение, при outcome=negative — окончательную неудачу. result должен совпадать "
-            "с outcome. Не показывай путь к финалу и не начинай новую проблему."
-        )
-    elif may_finish:
-        final_rule = (
-            f"Если это действие само решает цель «{goal}» успехом или окончательной неудачей, "
-            "верни complete=true. При positive цель достигнута, при negative — окончательно нет; "
-            "result должен совпадать с outcome. Иначе верни complete=false и дай одну прямо "
-            "связанную следующую ситуацию с одним выбором."
-        )
-    else:
-        final_rule = (
-            "Это ещё не финал: цель пока не выполнена. После результата дай одну следующую "
-            "ситуацию, которая прямо из него вытекает и приближает к цели. Оставь одно событие "
-            "для нового выбора. Важные предметы остаются на своих местах."
-        )
-    progress = (
-        f"Сейчас ситуация {current_part.partNumber} из {fixed_part_count}."
-        if fixed_part_count is not None
+    clean_advice = _compact_text(advice, 1000, "идти дальше")
+    is_final = current_part.partNumber >= STORY_PART_COUNT
+    instruction = (
+        "Покажи результат действия и закончи приключение. Не придумывай новую ситуацию."
+        if is_final
         else (
-            f"Сейчас ситуация {current_part.partNumber}. История заканчивается естественно "
-            f"между ситуациями {MIN_PART_COUNT} и {NEW_STORY_MAX_PART_COUNT}."
+            "Покажи результат действия и придумай следующую интересную ситуацию "
+            "с тремя действиями."
         )
     )
-    user_content = (
-        "Продолжи приключение.\n\n"
-        f"Я — {_character_summary(pet)}.\n"
-        f"Моя цель — {goal}.\n"
-        f"{progress}\n"
-        f"{previous_context}"
-        f"Сейчас: {current_part.storyText}\n"
-        f"Вопрос: {current_part.challenge}\n"
-        f"Я делаю: {clean_advice}.\n\n"
-        "Сначала буквально выполни это действие, не заменяй его другим. "
-        f"{final_rule} У предмета цели нет второй копии. Пиши в настоящем времени. "
-        f"Если исход спорный, выбери {tie_break}."
-    )
-    if must_finish:
-        schema = FINAL_SCHEMA
-        schema_name = "interactive_travel_final_simple"
-    elif may_finish:
-        schema = FLEXIBLE_SCHEMA
-        schema_name = "interactive_travel_flexible_simple"
-    else:
-        schema = INTERMEDIATE_SCHEMA
-        schema_name = "interactive_travel_continue_simple"
+    schema = FINAL_SCHEMA if is_final else CONTINUE_SCHEMA
     payload, debug = _request(
-        label=f"interactive_travel/part_{current_part.partNumber}_result_simple",
-        schema_name=schema_name,
+        label=f"interactive_travel/part_{current_part.partNumber}_simple",
+        schema_name=(
+            "interactive_travel_final_simple_v1"
+            if is_final
+            else "interactive_travel_continue_simple_v1"
+        ),
         schema=schema,
-        user_content=user_content,
+        user_content=(
+            "Продолжи приключение.\n"
+            f"Я — {_character_summary(pet)}.\n"
+            f"Место: {travel.destination}.\n"
+            f"Сейчас: {current_part.storyText}\n"
+            f"Я делаю: {clean_advice}.\n\n"
+            f"{instruction} Пиши просто. Не добавляй научные факты."
+        ),
         client=client,
         model=model,
         timeout=timeout,
     )
-    is_final = must_finish or (may_finish and payload.get("complete") is True)
     result = _result_from_payload(
         payload,
         advice=clean_advice,
-        tie_break=tie_break,
-        final_goal=goal if is_final else None,
+        fallback_outcome=fallback_outcome,
     )
     resolved_part = InteractiveTravelPart.model_validate(
         current_part.model_dump(mode="json")
@@ -683,49 +474,42 @@ def continue_interactive_travel(
     parts = [*travel.parts[:-1], resolved_part]
     if not is_final:
         next_number = current_part.partNumber + 1
-        bridge = _sentence(
-            payload.get("bridge"),
-            fallback="После этого я продолжаю путь",
-            limit=180,
-            max_sentences=1,
+        parts.append(
+            InteractiveTravelPart(
+                partNumber=next_number,
+                title=f"Часть {next_number}",
+                storyText=_sentence(
+                    payload.get("nextSituation"),
+                    fallback="Впереди происходит новое событие",
+                    limit=300,
+                ),
+                transition={
+                    "elapsedHours": 0,
+                    "summary": result.consequence,
+                    "departureHook": "Я иду дальше.",
+                },
+                challenge=_sentence(
+                    payload.get("nextQuestion"),
+                    fallback="Что мне сделать",
+                    limit=120,
+                    question=True,
+                ),
+                actionSuggestions=_choices(
+                    [
+                        payload.get("nextChoice1"),
+                        payload.get("nextChoice2"),
+                        payload.get("nextChoice3"),
+                    ]
+                ),
+            )
         )
-        next_part = InteractiveTravelPart(
-            partNumber=next_number,
-            title=f"Часть {next_number}",
-            storyText=_sentence(
-                payload.get("nextSituation"),
-                fallback="Впереди появляется новая преграда",
-                limit=220,
-            ),
-            transition={
-                "elapsedHours": 0,
-                "summary": result.consequence,
-                "departureHook": bridge,
-            },
-            challenge=_sentence(
-                payload.get("nextQuestion"),
-                fallback="Что мне сделать",
-                limit=120,
-                question=True,
-                max_sentences=1,
-            ),
-            actionSuggestions=_choices(
-                [
-                    payload.get("nextChoice1"),
-                    payload.get("nextChoice2"),
-                    payload.get("nextChoice3"),
-                ]
-            ),
-        )
-        parts.append(next_part)
 
-    outcome_valence = result.outcomeValence if is_final else None
     next_travel = InteractiveTravelState.model_validate(
         travel.model_dump(mode="json")
         | {
             "parts": [part.model_dump(mode="json") for part in parts],
             "completed": is_final,
-            "outcomeValence": outcome_valence,
+            "outcomeValence": result.outcomeValence if is_final else None,
             "statImpact": None,
         }
     )
