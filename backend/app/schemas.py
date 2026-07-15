@@ -497,7 +497,7 @@ class LocalPushRequest(BaseModel):
 class LocalAmbientRequest(BaseModel):
     pet: LocalPetChatContext
     history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
-    recentAmbientReplies: list[str] = Field(default_factory=list, max_length=10)
+    recentAmbientReplies: list[str] = Field(default_factory=list, max_length=30)
     memoryContext: LocalPetMemoryContext | None = None
     replyMaxChars: int | None = Field(default=None, ge=1, le=300)
     nowIso: str | None = Field(default=None, max_length=80)
@@ -517,7 +517,7 @@ class LocalPetPushSnapshotRequest(BaseModel):
     petId: str = Field(min_length=1, max_length=120)
     pet: LocalPetChatContext
     history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
-    recentAmbientReplies: list[str] = Field(default_factory=list, max_length=10)
+    recentAmbientReplies: list[str] = Field(default_factory=list, max_length=30)
     memoryContext: LocalPetMemoryContext | None = None
     createdAt: str | None = Field(default=None, max_length=80)
     updatedAt: str | None = Field(default=None, max_length=80)

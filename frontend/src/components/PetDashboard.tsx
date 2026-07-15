@@ -47,6 +47,8 @@ import { SmoothBackgroundVideo } from "@/components/SmoothBackgroundVideo";
 import { applyPetVoice, type PetVoiceMode } from "@/lib/petVoice";
 import {
   appendRecentAmbientReply,
+  hasShownAmbientReplyInSession,
+  markAmbientReplyShownInSession,
   readRecentAmbientReplies,
 } from "@/lib/localPetAmbientMemory";
 import { claimPetIntroduction } from "@/lib/localPetIntroduction";
@@ -284,6 +286,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [assetLoadErrorForPetId, setAssetLoadErrorForPetId] = useState<string | null>(null);
   const proactiveAttemptedRef = useRef(false);
   const ambientRequestIdRef = useRef(0);
+  const ambientSessionPetIdRef = useRef<string | null>(null);
+  const ambientSessionPendingRef = useRef(false);
   const idleThinkingRequestIdRef = useRef(0);
   const ambientReplyHistoryRef = useRef<string[]>([]);
   const petReplyMessageRef = useRef<PetReplyMessage | null>(null);
@@ -587,10 +591,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [advancePetReplySentence, petReplyMessage?.id]);
 
   const requestAmbientReply = useCallback(() => {
-    if (!pet || pet.diedAt) {
+    if (
+      !pet ||
+      pet.diedAt ||
+      ambientSessionPetIdRef.current === pet.petId ||
+      hasShownAmbientReplyInSession(pet.petId) ||
+      ambientSessionPendingRef.current
+    ) {
       return;
     }
 
+    ambientSessionPendingRef.current = true;
     const requestId = ambientRequestIdRef.current + 1;
     ambientRequestIdRef.current = requestId;
     const {
@@ -625,6 +636,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           maxPortions: IDLE_REPLY_MAX_PORTIONS,
           autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
         });
+        ambientSessionPetIdRef.current = pet.petId;
+        markAmbientReplyShownInSession(pet.petId);
         ambientReplyHistoryRef.current = appendRecentAmbientReply(pet.petId, response.reply);
         localPet.applyMoodHint(
           response.moodHint,
@@ -642,6 +655,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         showPetReplyMessage("…", false, { voiceMode: "system" });
       })
       .finally(() => {
+        ambientSessionPendingRef.current = false;
         if (
           ambientRequestIdRef.current === requestId &&
           idleThinkingRequestIdRef.current === idleThinkingRequestId

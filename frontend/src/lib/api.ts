@@ -898,7 +898,7 @@ export async function registerPetPushSnapshot(
         timezone: browserTimezone(),
         memoryContext: memoryContextForApi(memoryContext),
         history: chatHistoryForApi(options.history ?? []),
-        recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-10),
+        recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-30),
         pet: {
           ...petContextForApi(pet),
           assetImages: publicAssetImagesForApi(pet.assetSet?.images),
@@ -928,7 +928,7 @@ export async function generateLocalAmbientMessage(
       replyMaxChars: options.replyMaxChars,
       nowIso: new Date().toISOString(),
       timezone: browserTimezone(),
-      recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-10),
+      recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-30),
       pet: petContextForApi(pet),
       history: chatHistoryForApi(options.history ?? []),
     },

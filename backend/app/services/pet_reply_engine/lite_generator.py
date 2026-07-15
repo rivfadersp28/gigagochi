@@ -58,6 +58,7 @@ from app.services.pet_reply_engine.speech_runtime import (
     age_role_hint,
     ambient_dialogue_impulse,
     ambient_state_reactivity_rule,
+    ambient_state_requires_attention,
     character_fact_extraction_system_prompt,
     context_routing_sources,
     context_routing_system_prompt,
@@ -104,7 +105,7 @@ PUSH_SENTENCE_RE = re.compile(
     re.DOTALL,
 )
 MAX_MEMORY_CONTEXT_ITEMS = 5
-MAX_RECENT_AMBIENT_REPLIES = 10
+MAX_RECENT_AMBIENT_REPLIES = 30
 MAX_RECENT_HISTORY_MESSAGES = 8
 AMBIENT_MEMORY_KINDS = frozenset(
     {"user_fact", "preference", "relationship", "routine", "emotion", "boundary"}
@@ -851,8 +852,67 @@ def _anti_repeat_block(lines: list[str]) -> str | None:
         "Недавние реплики персонажа, уже показанные владельцу:\n"
         + "\n".join(f"- {line}" for line in lines)
         + "\nИзбегай не только дословного повтора, но и той же стартовой конструкции, "
-        "действия, предмета, метафоры и повода заговорить. Это не источник фактов." + marker_rule
+        "действия, предмета, метафоры и повода заговорить. Особенно не повторяй "
+        "уже заданный вопрос, даже другими словами. Это не источник фактов." + marker_rule
     )
+
+
+QUESTION_STOP_WORDS = frozenset(
+    {
+        "знал", "знаешь", "слышал", "слышишь", "хочешь", "можешь",
+        "почему", "какой", "какая", "какие", "когда", "куда", "откуда",
+        "тебе", "тебя", "правда", "что", "это",
+    }
+)
+
+
+def _question_segments(text: str) -> list[str]:
+    return [
+        _compact_spaces(match.group(0))
+        for match in re.finditer(r"[^.!?…]*\?", text or "")
+        if _compact_spaces(match.group(0))
+    ]
+
+
+def _question_tokens(question: str) -> set[str]:
+    tokens: set[str] = set()
+    for raw_token in re.findall(r"[А-Яа-яЁё-]{3,}", question.casefold()):
+        if raw_token in QUESTION_STOP_WORDS:
+            continue
+        token = next(
+            (
+                raw_token[: -len(suffix)]
+                for suffix in RUSSIAN_REPEAT_SUFFIXES
+                if raw_token.endswith(suffix) and len(raw_token) - len(suffix) >= 4
+            ),
+            raw_token,
+        )
+        tokens.add(token)
+    return tokens
+
+
+def _ambient_repeats_recent_question(reply: str, recent_replies: list[str]) -> bool:
+    candidate_questions = _question_segments(reply)
+    if not candidate_questions:
+        return False
+    recent_questions = [
+        question
+        for recent_reply in recent_replies[-MAX_RECENT_AMBIENT_REPLIES:]
+        for question in _question_segments(recent_reply)
+    ]
+    for candidate in candidate_questions:
+        candidate_tokens = _question_tokens(candidate)
+        if len(candidate_tokens) < 2:
+            continue
+        for previous in recent_questions:
+            previous_tokens = _question_tokens(previous)
+            if len(previous_tokens) < 2:
+                continue
+            overlap = len(candidate_tokens & previous_tokens)
+            smaller_question_size = min(len(candidate_tokens), len(previous_tokens))
+            if overlap >= 2 and overlap / smaller_question_size >= 0.6:
+                return True
+    return False
 
 
 def _recent_ambient_replies_block(replies: list[str]) -> str | None:
@@ -2783,6 +2843,11 @@ def build_ambient_messages(
         if context_plan.includes("chatHistory")
         else None
     )
+    priority_state = ambient_state_requires_attention(
+        hunger=payload.pet.stats.hunger,
+        happiness=payload.pet.stats.happiness,
+        energy=payload.pet.stats.energy,
+    )
     plan = PhrasePlan(
         surface="ambient",
         reply_limit=reply_limit,
@@ -2807,10 +2872,29 @@ def build_ambient_messages(
             ),
             transient_context_rule(),
             _structured_reply_contract_rule(),
-            f"Разговорный импульс этой реплики: {ambient_dialogue_impulse()}.",
+            (
+                None
+                if priority_state
+                else f"Разговорный импульс этой реплики: {ambient_dialogue_impulse()}."
+            ),
         ),
     )
-    return [{"role": "system", "content": plan.system_content()}]
+    if priority_state:
+        ambient_request = (
+            "Скажи владельцу одну короткую законченную реплику только о своём "
+            "текущем плохом состоянии. Не добавляй фанфакт."
+        )
+    else:
+        ambient_request = (
+            "Расскажи один объективный проверяемый образовательный фанфакт о реальной "
+            "природе или науке от лица этого персонажа. Начни вовлекающе и не так, "
+            "как в недавних репликах. Используй 1–3 законченных предложения до 40 "
+            "символов каждое, без многоточия."
+        )
+    return [
+        {"role": "system", "content": plan.system_content()},
+        {"role": "user", "content": ambient_request},
+    ]
 
 
 def generate_ambient_pet_message(
@@ -2867,6 +2951,54 @@ def generate_ambient_pet_message(
         surface="ambient",
         reply_limit=reply_limit,
     )
+    repeated_question = _ambient_repeats_recent_question(
+        structured_reply.reply,
+        payload.recentAmbientReplies,
+    )
+    truncated_reply = structured_reply.reply.endswith("…")
+    if repeated_question or truncated_reply:
+        retry_reasons = []
+        if repeated_question:
+            retry_reasons.append("повторила вопрос из недавних idle-реплик")
+        if truncated_reply:
+            retry_reasons.append("не уместилась в лимит и оборвалась многоточием")
+        retry_request_kwargs = {
+            **request_kwargs,
+            "messages": [
+                *request_kwargs["messages"],
+                {
+                    "role": "system",
+                    "content": (
+                        f"Первая версия {' и '.join(retry_reasons)}. "
+                        "Сгенерируй реплику заново. Она должна целиком уместиться в лимит, "
+                        "состоять из законченных предложений без многоточия. Если вопрос "
+                        "повторился, выбери другой факт, тему, вопрос и начало."
+                    ),
+                },
+            ],
+        }
+        prompt_debug.append(
+            log_chat_completion_prompt("pet_reply/ambient_question_retry", retry_request_kwargs)
+        )
+        retry_completion = complete_chat(
+            "visible_reply", retry_request_kwargs, client=llm_client
+        )
+        log_chat_completion_response(
+            "pet_reply/ambient_question_retry", response_log_value(retry_completion)
+        )
+        raw_reply = retry_completion.content or ""
+        structured_reply = _parse_visible_reply_response(
+            raw_reply, surface="ambient", reply_limit=reply_limit
+        )
+        structured_reply.validation_flags.append("ambient_reply_regenerated")
+        if structured_reply.reply.endswith("…"):
+            structured_reply.validation_flags.append("ambient_truncated_after_regeneration")
+        if _ambient_repeats_recent_question(
+            structured_reply.reply, payload.recentAmbientReplies
+        ):
+            structured_reply.validation_flags.append(
+                "ambient_question_repeat_after_regeneration"
+            )
     log_ambient_reply_diagnostic(
         "pet_reply/ambient",
         request_kwargs,

@@ -1848,7 +1848,7 @@
             "items": {
               "type": "string"
             },
-            "maxItems": 10,
+            "maxItems": 30,
             "title": "Recentambientreplies",
             "type": "array"
           },
@@ -2692,7 +2692,7 @@
             "items": {
               "type": "string"
             },
-            "maxItems": 10,
+            "maxItems": 30,
             "title": "Recentambientreplies",
             "type": "array"
           },

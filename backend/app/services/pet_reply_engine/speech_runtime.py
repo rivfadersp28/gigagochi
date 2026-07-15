@@ -532,6 +532,22 @@ def ambient_state_reactivity_rule(
     return "\n".join(("Текущее состояние для idle:", *active_states, active_rule))
 
 
+def ambient_state_requires_attention(
+    *,
+    hunger: int | None,
+    happiness: int | None,
+    energy: int | None,
+) -> bool:
+    mild_below = _required_int(
+        speech_runtime_config(),
+        ("stateLayer", "ambientStateReaction", "thresholds", "mildBelow"),
+    )
+    return any(
+        value is not None and value < mild_below
+        for value in (hunger, happiness, energy)
+    )
+
+
 def _state_param_band(value: int | None, *, low_max: int, high_min: int) -> str:
     if value is None:
         return "normal"

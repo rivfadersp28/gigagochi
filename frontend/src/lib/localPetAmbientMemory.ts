@@ -1,5 +1,28 @@
 const KEY_PREFIX = "tamagochi:v1:ambient-replies:";
-const MAX_ITEMS = 10;
+const SESSION_KEY_PREFIX = "tamagochi:v1:ambient-shown:";
+const MAX_ITEMS = 30;
+
+export function hasShownAmbientReplyInSession(petId: string): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    return window.sessionStorage.getItem(`${SESSION_KEY_PREFIX}${petId}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function markAmbientReplyShownInSession(petId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(`${SESSION_KEY_PREFIX}${petId}`, "1");
+  } catch {
+    // The in-memory dashboard guard still prevents duplicates until unmount.
+  }
+}
 
 function normalize(value: unknown): string {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ").slice(0, 260) : "";
