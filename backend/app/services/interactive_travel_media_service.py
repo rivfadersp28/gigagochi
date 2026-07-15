@@ -29,6 +29,7 @@ INTERACTIVE_TRAVEL_BACKGROUND_SIZE = (450, 600)
 INTERACTIVE_TRAVEL_VIDEO_SOURCE_SIZE = (720, 960)
 INTERACTIVE_TRAVEL_VIDEO_ASPECT_RATIO = "3:4"
 INTERACTIVE_TRAVEL_PROVIDER_SIZE = "768x1024"
+INTERACTIVE_TRAVEL_MEDIA_VARIANT_PATTERN = re.compile(r"situation|outcome-[0-3]")
 _INTERACTIVE_TRAVEL_LOCK_BUCKET_COUNT = 256
 _INTERACTIVE_TRAVEL_CANCEL_RETENTION_SECONDS = 180 * 24 * 60 * 60
 _INTERACTIVE_TRAVEL_FILE_LOCKS = {
@@ -52,6 +53,11 @@ PORTRAIT 3:4 FORMAT — COMPOSITION ONLY:
 def _validate_interactive_travel_id(travel_id: str) -> None:
     if not re.fullmatch(r"interactive-travel-[A-Za-z0-9_-]+", travel_id):
         raise ValueError("Invalid interactive travel id")
+
+
+def _validate_interactive_travel_media_variant(variant: str) -> None:
+    if not INTERACTIVE_TRAVEL_MEDIA_VARIANT_PATTERN.fullmatch(variant):
+        raise ValueError("Invalid interactive travel media variant")
 
 
 def _interactive_travel_lock_root(output_dir: Path) -> Path:
@@ -252,8 +258,7 @@ def generate_interactive_travel_part_image(
     if not 1 <= part_number <= 7:
         raise ValueError("Invalid interactive travel part number")
     output_dir = generated_dir_for(travel_id)
-    if not re.fullmatch(r"situation|outcome-[01]", variant):
-        raise ValueError("Invalid interactive travel media variant")
+    _validate_interactive_travel_media_variant(variant)
     suffix = "" if variant == "situation" else f"-{variant}"
     path = output_dir / f"interactive-travel-part-{part_number:02d}{suffix}.png"
     video_source_path = output_dir / (
@@ -307,8 +312,7 @@ def generate_interactive_travel_part_video(
     if not 1 <= part_number <= 7:
         raise ValueError("Invalid interactive travel part number")
     output_dir = generated_dir_for(travel_id)
-    if not re.fullmatch(r"situation|outcome-[01]", variant):
-        raise ValueError("Invalid interactive travel media variant")
+    _validate_interactive_travel_media_variant(variant)
     suffix = "" if variant == "situation" else f"-{variant}"
     path = output_dir / f"interactive-travel-part-{part_number:02d}{suffix}.mp4"
     source_path = output_dir / f"interactive-travel-part-{part_number:02d}{suffix}-video-source.png"

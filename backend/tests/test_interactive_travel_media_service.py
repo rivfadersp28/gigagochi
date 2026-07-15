@@ -64,6 +64,20 @@ def sample_png_bytes() -> bytes:
     return buffer.getvalue()
 
 
+@pytest.mark.parametrize(
+    "variant",
+    ["situation", "outcome-0", "outcome-1", "outcome-2", "outcome-3"],
+)
+def test_interactive_travel_media_variant_accepts_all_story_outcomes(variant: str) -> None:
+    media_service._validate_interactive_travel_media_variant(variant)
+
+
+@pytest.mark.parametrize("variant", ["outcome-4", "outcome-10", "other"])
+def test_interactive_travel_media_variant_rejects_unknown_outcomes(variant: str) -> None:
+    with pytest.raises(ValueError, match="Invalid interactive travel media variant"):
+        media_service._validate_interactive_travel_media_variant(variant)
+
+
 def test_interactive_travel_video_returns_url_and_writes_mp4(monkeypatch, tmp_path) -> None:
     travel_id = "interactive-travel-video-test"
     output_dir = tmp_path / travel_id
