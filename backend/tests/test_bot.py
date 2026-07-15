@@ -76,7 +76,7 @@ def _interactive_story_update() -> dict:
         "message": {
             "chat": {"id": TEST_TELEGRAM_ID},
             "from": {"id": TEST_TELEGRAM_ID, "first_name": "Serge"},
-            "text": "/история",
+            "text": "/story",
         }
     }
 
@@ -1592,7 +1592,7 @@ def test_task_bank_commands_are_available_to_any_user(
     ]
 
 
-@pytest.mark.parametrize("command", ("/easy", "/hard", "/история"))
+@pytest.mark.parametrize("command", ("/easy", "/hard", "/story"))
 def test_task_bank_commands_survive_durable_normalization(command) -> None:
     normalized = normalize_bot_command_update(
         _durable_command_update(77, command, chat_id=123456)

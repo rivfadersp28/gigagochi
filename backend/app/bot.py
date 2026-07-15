@@ -738,7 +738,7 @@ def _send_interactive_story_response(
             keyboard,
         )
     except Exception as exc:
-        _log_bot_error("Telegram /история generation failed", exc)
+        _log_bot_error("Telegram /story generation failed", exc)
         send_message(
             client,
             chat_id,
@@ -807,7 +807,7 @@ def handle_update(
                 "Открой Mini App, создай AI-питомца и общайся с ним внутри Telegram.\n\n"
                 "/easy — включить простой банк задач для всех\n"
                 "/hard — включить сложный банк задач для всех\n"
-                "/история — создать интерактивную историю сейчас"
+                "/story — создать интерактивную историю сейчас"
             ),
             keyboard,
         )
@@ -848,7 +848,7 @@ def handle_update(
             _send_push_response(client, chat_id, keyboard)
         return
 
-    if command == "/история":
+    if command == "/story":
         if submit_interactive_story is not None:
             if submit_interactive_story(chat_id, keyboard) is False:
                 send_message(client, chat_id, BOT_COMMAND_BUSY_MESSAGE, keyboard)
@@ -1022,7 +1022,7 @@ def _dispatch_pending_commands(
     should_stop: Callable[[], bool] | None = None,
 ) -> int:
     submitted_count = 0
-    async_commands = {"/full_story", "/push", "/история"}
+    async_commands = {"/full_story", "/push", "/story"}
     for command in inbox.list_ready(limit=ready_limit):
         if should_stop is not None and should_stop():
             break
