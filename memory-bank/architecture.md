@@ -651,31 +651,34 @@
 
 ## Interactive Travel Pilot
 
-- `/pet/[id]/travel` is the production travel flow: simple curated destination choices, character reaction, compact one-sentence portions, a direct task-bank question, user choice, generated consequence and a separate next episode in the same location theme.
-- The backend owns compact response mapping plus illustration/video generation; the frontend persists
-  presentation progress locally and renders video-only backgrounds across the full Telegram
-  viewport. Generated PNGs are intermediate video sources, not visible background fallbacks.
+- `/pet/[id]/travel` is the production travel flow: curated destination choices plus free input,
+  character reaction, the existing departure wait, then four task-bank episodes. Each ready episode
+  shows a fixed 382×456 media frame at 71 px from the top, the complete story and question in one auto-height/scrollable
+  text frame, and a horizontal row containing the four original choices. Story/result states do not
+  use speech bubbles, sentence portions, scene-tap replay or a free-form action.
+- The backend owns response mapping plus illustration/video generation; the frontend persists
+  presentation progress locally. The generated PNG is the poster/fallback inside the fixed media
+  frame and the MP4 replaces it when ready; a blurred crop of that same first frame fills the
+  backdrop. New travel posters and video sources use 4:5, the closest provider-supported ratio to
+  the 382×456 UI container, and the video request explicitly asks the provider for 4:5.
 - Interactive-travel stat effects commit with bounded local-only receipts inside the same
   `LocalPetState` write. `appliedResultParts` in the separate travel session is only a presentation
   projection and a legacy-migration hint; push snapshots intentionally exclude the receipts.
-- New interactive travels contain four independent episodes joined only by the
-  destination theme. The backend selects one unused task from the reviewed
-  task bank at a time; the model generates only that task's short fantasy
-  setup. The direct question, four choices, correct answer and child-readable
-  explanation stay server-authoritative and are never rewritten by the model.
-- The next episode is selected and generated only after the current answer.
-  `arcPlan` stores the generator version, used task IDs and answer metadata for
-  generated episodes; it does not pre-generate a shared plot or ending. After
-  episode four, the client adds one short line that the character is tired and
-  goes home. Unfinished `task-bank-location-v2` sessions retain their prepared
-  episodes for backward compatibility.
-- Each generated episode includes a standalone, child-readable question that
-  preserves the bank task's meaning but names the compared objects/actions, so
-  it remains understandable without earlier bubbles. After a choice, the model
-  returns consequence and explanation as separate natural phrases; the server
-  joins them without `Правильный ответ:`/`Почему:` labels. While choices are
-  visible, a non-control tap on the scene replays the current episode from its
-  first story bubble.
+- New interactive travels contain four independent episodes joined only by the destination.
+  Start samples all four unique tasks from the reviewed
+  `backend/data/задачи_путешественника_без_расчётов.md` bank before generation. Four neutral
+  location-only lead-ins are built by fixed templates from the selected destination; no text model
+  sees or rewrites the tasks. Continue is also deterministic and makes no text-model call.
+- The typed `plan` uses version `task-bank-location-v4` and stores four tasks with their lead-ins.
+  `situation`, `question`, all four `choices`, their four self-contained `choiceOutcomes` and
+  `correctChoice` are copied from the bank without model rewriting, sentence normalization or
+  clipping. The optional `explanation` remains only for persisted legacy plans. Plans without
+  `choiceOutcomes` also remain valid for persisted legacy sessions. `arcPlan` and legacy generator
+  branches are removed; only an asynchronous
+  `generationStatus=generating` shell may have no plan.
+- A choice is matched to the original bank answer and produces a deterministic result containing
+  exactly that choice's original self-contained branch. The next already-prepared episode is then
+  revealed; after episode four the character returns home.
 - Interactive travel uses its own daily rate-limit bucket. A diagnostic reset tombstones the
   current travel ID, deletes its generated directory and clears that diagnostic user's travel
   bucket so late image/video completions cannot restore stale assets.

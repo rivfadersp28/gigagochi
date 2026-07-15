@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { localPetMemoryStorageKey } from "./localPetMemoryStorage";
 import { clearLocalPetScopedData } from "./localPetScopedCleanup";
 import { writeLocalInteractiveTravel } from "./localInteractiveTravel";
+import {
+  interactiveTravelPartFixture,
+  interactiveTravelPlanFixture,
+} from "./interactiveTravelTestFixtures";
 import { PENDING_GENERATION_STORAGE_KEY } from "./pendingPetGeneration";
 import {
   clearPendingInteractiveTravelOperationsForTests,
@@ -49,20 +53,15 @@ describe("local pet scoped cleanup", () => {
 
   it("retains a durable server cancellation after deleting an in-progress pet", () => {
     const petId = "pet-with-travel";
+    const plan = interactiveTravelPlanFixture();
     writeLocalInteractiveTravel(petId, {
       travel: {
         travelId: "interactive-travel-cleanup",
         generatedAt: "2026-07-15T12:00:00Z",
         destination: "маяк",
         overallTitle: "Дорога к маяку",
-        arcPlan: { goal: "Зажечь свет" },
-        parts: [{
-          partNumber: 1,
-          title: "У берега",
-          storyText: "Персонаж вышел к морю.",
-          challenge: "Куда идти?",
-          actionSuggestions: ["К маяку"],
-        }],
+        plan,
+        parts: [interactiveTravelPartFixture(plan, 0)],
         completed: false,
       },
       appliedResultParts: [],

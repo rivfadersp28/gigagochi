@@ -10,6 +10,10 @@ import {
   parsePushSnapshotResponse,
 } from "./apiContracts";
 import { ApiContractError, ApiError, request } from "./apiTransport";
+import {
+  interactiveTravelPartFixture,
+  interactiveTravelPlanFixture,
+} from "./interactiveTravelTestFixtures";
 
 describe("API response contracts", () => {
   afterEach(() => {
@@ -227,6 +231,7 @@ describe("API response contracts", () => {
       outcomeValence: "positive",
       statImpacts: [],
     };
+    const plan = interactiveTravelPlanFixture();
 
     const parsed = parseInteractiveTravelResponse({
       travel: {
@@ -234,24 +239,15 @@ describe("API response contracts", () => {
         generatedAt: "2026-07-14T12:00:00Z",
         destination: "гора",
         overallTitle: "Путь",
-        arcPlan: {},
+        plan,
         parts: [
           {
-            partNumber: 1,
-            title: "Начало",
-            storyText: "Я подошла к мосту.",
-            challenge: "Что делать?",
-            actionSuggestions: [],
-            answer: "Идти",
+            ...interactiveTravelPartFixture(plan, 0, true),
             result: resolvedResult,
           },
           {
-            partNumber: 2,
-            title: "Продолжение",
-            storyText: "Через 4 часа я иду дальше.",
+            ...interactiveTravelPartFixture(plan, 1),
             transition: { elapsedHours: 4, summary: "Мир изменился.", departureHook },
-            challenge: "Куда идти?",
-            actionSuggestions: [],
           },
         ],
         completed: false,
@@ -261,57 +257,171 @@ describe("API response contracts", () => {
     expect(parsed.travel.parts[1].transition?.departureHook).toBe(departureHook);
   });
 
-  it("accepts the 34-entry task-bank arc plan produced by the backend", () => {
-    const arcPlan = Object.fromEntries(
-      Array.from({ length: 34 }, (_, index) => [`field${index + 1}`, `value${index + 1}`]),
-    );
-
+  it("accepts the typed four-task bank plan produced by the backend", () => {
+    const plan = interactiveTravelPlanFixture();
     const parsed = parseInteractiveTravelResponse({
       travel: {
         travelId: "interactive-travel-erudition-1",
         generatedAt: "2026-07-15T12:00:00Z",
         destination: "в пещеру",
         overallTitle: "Путь знаний",
-        arcPlan,
-        parts: [{
-          partNumber: 1,
-          title: "Часть 1",
-          storyText: "Я встречаю первое препятствие.",
-          challenge: "Что выбрать?",
-          actionSuggestions: ["Первое", "Второе", "Третье", "Четвёртое"],
-        }],
+        plan,
+        parts: [interactiveTravelPartFixture(plan, 0)],
         completed: false,
       },
     });
 
-    expect(Object.keys(parsed.travel.arcPlan)).toHaveLength(34);
+    expect(parsed.travel.plan).toEqual(plan);
   });
 
-  it("rejects an arc plan above the backend limit", () => {
-    const arcPlan = Object.fromEntries(
-      Array.from({ length: 41 }, (_, index) => [`field${index + 1}`, `value${index + 1}`]),
-    );
+  it("accepts four per-choice outcomes and keeps old v4 plans compatible", () => {
+    const plan = interactiveTravelPlanFixture();
+    const outcomes: [string, string, string, string] = [
+      "Первый исход.",
+      "Второй исход.",
+      "Третий исход.",
+      "Четвёртый исход.",
+    ];
+    plan.tasks[0].choiceOutcomes = outcomes;
+    delete plan.tasks[0].explanation;
 
+    const parsed = parseInteractiveTravelResponse({
+      travel: {
+        travelId: "interactive-travel-outcomes-1",
+        generatedAt: "2026-07-15T12:00:00Z",
+        destination: "в пещеру",
+        overallTitle: "Путь знаний",
+        plan,
+        parts: [interactiveTravelPartFixture(plan, 0)],
+        completed: false,
+      },
+    });
+
+    expect(parsed.travel.plan?.tasks[0].choiceOutcomes).toEqual(outcomes);
+    expect(parsed.travel.plan?.tasks[0].explanation).toBeUndefined();
+    expect(parsed.travel.plan?.tasks[1].choiceOutcomes).toBeUndefined();
+  });
+
+  it("requires exactly four resolved parts for a completed travel", () => {
+    const plan = interactiveTravelPlanFixture();
+    const parts = ([0, 1, 2, 3] as const).map((index) =>
+      interactiveTravelPartFixture(plan, index, true),
+    );
+    const completedTravel = {
+      travelId: "interactive-travel-completed-4",
+      generatedAt: "2026-07-15T12:00:00Z",
+      destination: "в пещеру",
+      overallTitle: "Путь знаний",
+      plan,
+      parts,
+      completed: true,
+      outcomeValence: "positive",
+    };
+
+    expect(parseInteractiveTravelResponse({ travel: completedTravel }).travel.parts).toHaveLength(4);
+    expect(() => parseInteractiveTravelResponse({
+      travel: { ...completedTravel, parts: parts.slice(0, 3) },
+    })).toThrow(ApiContractError);
+    expect(() => parseInteractiveTravelResponse({
+      travel: {
+        ...completedTravel,
+        parts: [...parts, { ...parts[3], partNumber: 5 }],
+      },
+    })).toThrow(ApiContractError);
+  });
+
+  it("rejects a part that diverges from its task-bank plan", () => {
+    const plan = interactiveTravelPlanFixture();
+    const baseTravel = {
+      travelId: "interactive-travel-plan-mismatch",
+      generatedAt: "2026-07-15T12:00:00Z",
+      destination: "в пещеру",
+      overallTitle: "Путь знаний",
+      plan,
+      parts: [interactiveTravelPartFixture(plan, 0)],
+      completed: false,
+    };
+
+    expect(() => parseInteractiveTravelResponse({
+      travel: {
+        ...baseTravel,
+        parts: [{ ...baseTravel.parts[0], challenge: "Подменённый вопрос" }],
+      },
+    })).toThrow(ApiContractError);
+  });
+
+  it.each([
+    ["duplicate task ids", (plan: ReturnType<typeof interactiveTravelPlanFixture>) => {
+      plan.tasks[1].taskId = plan.tasks[0].taskId;
+    }],
+    ["duplicate task choices", (plan: ReturnType<typeof interactiveTravelPlanFixture>) => {
+      plan.tasks[0].choices[1] = plan.tasks[0].choices[0].toUpperCase();
+    }],
+    ["a correct choice outside choices", (plan: ReturnType<typeof interactiveTravelPlanFixture>) => {
+      plan.tasks[0].correctChoice = "Ответа нет в списке";
+    }],
+    ["an overlong lead-in", (plan: ReturnType<typeof interactiveTravelPlanFixture>) => {
+      plan.tasks[0].leadIn = "л".repeat(201);
+    }],
+    ["three choice outcomes", (plan: ReturnType<typeof interactiveTravelPlanFixture>) => {
+      plan.tasks[0].choiceOutcomes = ["Первый", "Второй", "Третий"] as never;
+    }],
+    ["an overlong choice outcome", (plan: ReturnType<typeof interactiveTravelPlanFixture>) => {
+      plan.tasks[0].choiceOutcomes = ["и".repeat(701), "Второй", "Третий", "Четвёртый"];
+    }],
+    ["fewer than four tasks", (plan: ReturnType<typeof interactiveTravelPlanFixture>) => {
+      plan.tasks.pop();
+    }],
+  ])("rejects %s in a task-bank plan", (_caseName, mutate) => {
+    const plan = interactiveTravelPlanFixture();
+    mutate(plan);
     expect(() => parseInteractiveTravelResponse({
       travel: {
         travelId: "interactive-travel-erudition-1",
         generatedAt: "2026-07-15T12:00:00Z",
         destination: "в пещеру",
         overallTitle: "Путь знаний",
-        arcPlan,
-        parts: [{
-          partNumber: 1,
-          title: "Часть 1",
-          storyText: "Я встречаю первое препятствие.",
-          challenge: "Что выбрать?",
-          actionSuggestions: ["Первое", "Второе", "Третье"],
-        }],
+        plan,
+        parts: [interactiveTravelPartFixture(plan, 0)],
         completed: false,
       },
     })).toThrow(ApiContractError);
   });
 
+  it("accepts a generating shell without a plan and rejects a ready travel without one", () => {
+    const shell = {
+      travelId: "interactive-travel-generating-1",
+      generatedAt: "2026-07-15T12:00:00Z",
+      destination: "в пещеру",
+      overallTitle: "Путешествие готовится",
+      plan: null,
+      generationStatus: "generating",
+      parts: [{
+        partNumber: 1,
+        title: "Начало пути",
+        storyText: "Я собираюсь в путь.",
+        challenge: "Путешествие готовится.",
+        actionSuggestions: [],
+      }],
+      completed: false,
+    };
+    expect(parseInteractiveTravelResponse({ travel: shell }).travel.plan).toBeNull();
+    const shellWithoutPlan: Record<string, unknown> = { ...shell };
+    delete shellWithoutPlan.plan;
+    expect(parseInteractiveTravelResponse({ travel: shellWithoutPlan }).travel.plan).toBeNull();
+    expect(() => parseInteractiveTravelResponse({
+      travel: { ...shell, generationStatus: "ready" },
+    })).toThrow(ApiContractError);
+    expect(() => parseInteractiveTravelResponse({
+      travel: { ...shell, plan: interactiveTravelPlanFixture() },
+    })).toThrow(ApiContractError);
+    expect(() => parseInteractiveTravelResponse({
+      travel: { ...shell, generationStatus: "failed" },
+    })).toThrow(ApiContractError);
+  });
+
   it("rejects a departure hook above the shared persistence boundary", () => {
+    const plan = interactiveTravelPlanFixture();
     expect(() =>
       parseInteractiveTravelResponse({
         travel: {
@@ -319,36 +429,16 @@ describe("API response contracts", () => {
           generatedAt: "2026-07-14T12:00:00Z",
           destination: "гора",
           overallTitle: "Путь",
-          arcPlan: {},
+          plan,
           parts: [
+            interactiveTravelPartFixture(plan, 0, true),
             {
-              partNumber: 1,
-              title: "Начало",
-              storyText: "Я подошла к мосту.",
-              challenge: "Что делать?",
-              actionSuggestions: [],
-              answer: "Идти",
-              result: {
-                text: "Я перешла мост.",
-                adviceAssessment: "helpful",
-                reaction: "Хороший план!",
-                reactionTone: "enthusiastic",
-                consequence: "Путь открыт.",
-                outcomeValence: "positive",
-                statImpacts: [],
-              },
-            },
-            {
-              partNumber: 2,
-              title: "Продолжение",
-              storyText: "Через 4 часа я иду дальше.",
+              ...interactiveTravelPartFixture(plan, 1),
               transition: {
                 elapsedHours: 4,
                 summary: "Мир изменился.",
                 departureHook: "д".repeat(281),
               },
-              challenge: "Куда идти?",
-              actionSuggestions: [],
             },
           ],
           completed: false,
@@ -358,6 +448,7 @@ describe("API response contracts", () => {
   });
 
   it("rejects interactive travel ids outside the backend schema", () => {
+    const plan = interactiveTravelPlanFixture();
     expect(() =>
       parseInteractiveTravelResponse({
         travel: {
@@ -365,14 +456,8 @@ describe("API response contracts", () => {
           generatedAt: "2026-07-14T12:00:00Z",
           destination: "гора",
           overallTitle: "Путь",
-          arcPlan: {},
-          parts: [{
-            partNumber: 1,
-            title: "Начало",
-            storyText: "Я подошла к мосту.",
-            challenge: "Что делать?",
-            actionSuggestions: [],
-          }],
+          plan,
+          parts: [interactiveTravelPartFixture(plan, 0)],
           completed: false,
         },
       }),
@@ -382,15 +467,15 @@ describe("API response contracts", () => {
   it.each([
     [
       parseInteractiveTravelIllustrationResponse,
-      { partNumber: 7, imageUrl: "/static/generated/travel/part-7.png" },
+      { partNumber: 4, imageUrl: "/static/generated/travel/part-4.png" },
     ],
     [
       parseInteractiveTravelAnimationResponse,
-      { partNumber: 7, videoUrl: "/static/generated/travel/part-7.mp4" },
+      { partNumber: 4, videoUrl: "/static/generated/travel/part-4.mp4" },
     ],
-  ])("accepts media for the seventh interactive travel part", (parse, payload) => {
-    expect(parse(payload).partNumber).toBe(7);
-    expect(() => parse({ ...payload, partNumber: 8 })).toThrow(ApiContractError);
+  ])("accepts media for the fourth interactive travel part", (parse, payload) => {
+    expect(parse(payload).partNumber).toBe(4);
+    expect(() => parse({ ...payload, partNumber: 5 })).toThrow(ApiContractError);
   });
 
   it("maps an invalid successful payload to a safe API error", async () => {

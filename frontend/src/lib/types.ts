@@ -218,13 +218,36 @@ export type InteractiveTravelPart = {
   result?: InteractiveTravelResult;
 };
 
+export type InteractiveTravelTaskPlan = {
+  taskId: string;
+  leadIn: string;
+  situation: string;
+  question: string;
+  choices: [string, string, string, string];
+  correctChoice: string;
+  explanation?: string;
+  choiceOutcomes?: [string, string, string, string];
+};
+
+export type InteractiveTravelPlan = {
+  version: "task-bank-location-v4";
+  tasks: [
+    InteractiveTravelTaskPlan,
+    InteractiveTravelTaskPlan,
+    InteractiveTravelTaskPlan,
+    InteractiveTravelTaskPlan,
+  ];
+};
+
 export type InteractiveTravelState = {
   travelId: string;
   generatedAt: string;
   destination: string;
   overallTitle: string;
   introReaction?: InteractiveTravelIntroReaction;
-  arcPlan: Record<string, string>;
+  generationStatus?: "generating" | "ready" | "failed";
+  generationError?: string;
+  plan: InteractiveTravelPlan | null;
   parts: InteractiveTravelPart[];
   completed: boolean;
   outcomeValence?: "positive" | "negative";

@@ -6,7 +6,6 @@ import { ArrowLeft, Play, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   type FormEvent,
-  type MouseEvent,
   useCallback,
   useEffect,
   useRef,
@@ -19,18 +18,18 @@ import {
   animateInteractiveTravelPart,
   continueInteractiveTravel,
   getInteractiveTravelSuggestions,
+  getInteractiveTravelStatus,
   illustrateInteractiveTravelPart,
 } from "@/lib/api";
 import { presentError, type PresentedError } from "@/lib/errorPresentation";
 import {
-  challengePortions,
   currentPendingPart,
   interactiveTravelCharacterImageUrl,
   patchInteractiveTravelPartBackground,
   patchInteractiveTravelPartVideo,
-  resultPortions,
+  resolvedResultParagraphs,
   splitInteractiveTravelText,
-  storyPortions,
+  storyAndChallengeParagraphs,
 } from "@/lib/interactiveTravelPresentation";
 import {
   clearLocalInteractiveTravel,
@@ -50,10 +49,14 @@ import {
   getInteractiveTravelDemo,
   resetInteractiveTravelGeneration,
 } from "@/lib/interactiveTravelDebugApi";
-import { buildMemorySnapshotContext } from "@/lib/localPetMemoryRecall";
 import { startInteractiveTravelWithRecovery } from "@/lib/interactiveTravelStartRecovery";
-import { readLocalPetMemory } from "@/lib/localPetMemoryStorage";
-import { readLocalChatHistory } from "@/lib/localPetStorage";
+import {
+  firstSessionTravelConfirmation,
+  isLocalFirstSessionActive,
+  readLocalPetFirstSession,
+  updateLocalPetFirstSession,
+  type LocalPetFirstSession,
+} from "@/lib/localPetFirstSession";
 import {
   hapticNotification,
   setTelegramBackgroundColor,
@@ -70,13 +73,14 @@ import { PetThinkingIndicator } from "./pet-dashboard/PetThinkingIndicator";
 import styles from "./InteractiveTravelScreen.module.css";
 
 const DESTINATION_MAX_LENGTH = 500;
-const ADVICE_MAX_LENGTH = 1000;
 const INTRO_PORTION_DURATION_MS = 3_200;
 const CHARACTER_TRANSITION_DURATION_MS = 500;
 const MINIMUM_WAIT_DURATION_MS = 1_600;
 const DEMO_WAIT_DURATION_MS = 5_000;
 const MAXIMUM_DEPARTURE_WAIT_DURATION_MS = 90_000;
 const MEDIA_PATCH_LOCK_ACQUIRE_TIMEOUT_MS = 5 * 60_000 + 10_000;
+const STORY_CHARACTER_RISE_DURATION_MS = 300;
+const STORY_CHARACTER_RISE_STAGGER_MS = 12;
 const ENTRY_BACKGROUND_VIDEO = "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-2";
 const SPEECH_BUBBLE_SHAPE = "/figma/speech-bubble-new.svg";
 const VIDEO_FILTER = "/figma/video-filter-normal.webp?v=20260713-video-filter-lossless-webp-1";
@@ -119,8 +123,53 @@ function fallbackIntroReaction(destination: string | undefined) {
     : `Сейчас подготовлюсь и отправлюсь в путь — ${place}!`;
 }
 
+function AnimatedTravelParagraph({
+  animationKey,
+  startIndex,
+  text,
+}: {
+  animationKey: string;
+  startIndex: number;
+  text: string;
+}) {
+  let characterIndex = startIndex;
+  return (
+    <p aria-label={text}>
+      {text.split(/(\s+)/u).filter(Boolean).map((token, tokenIndex) => {
+        const isWhitespace = /^\s+$/u.test(token);
+        return (
+          <span
+            key={`${animationKey}:token:${tokenIndex}`}
+            aria-hidden="true"
+            className={isWhitespace ? styles.storyAnimatedWhitespace : styles.storyAnimatedWord}
+          >
+            {Array.from(token).map((character) => {
+              const delay = characterIndex * STORY_CHARACTER_RISE_STAGGER_MS;
+              const key = `${animationKey}:character:${characterIndex}`;
+              characterIndex += 1;
+              return (
+                <span
+                  key={key}
+                  className={styles.storyAnimatedCharacter}
+                  style={{ animationDelay: `${delay}ms` }}
+                >
+                  {character}
+                </span>
+              );
+            })}
+          </span>
+        );
+      })}
+    </p>
+  );
+}
+
 function partByNumber(parts: InteractiveTravelPart[], partNumber: number) {
   return parts.find((part) => part.partNumber === partNumber) ?? null;
+}
+
+function isTravelPlanReady(travel: InteractiveTravelState) {
+  return (travel.generationStatus ?? "ready") === "ready";
 }
 
 function presentationProgress(presentation: InteractiveTravelPresentation): number {
@@ -242,14 +291,15 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const [suggestionsNonce, setSuggestionsNonce] = useState(0);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(true);
   const [showCustomDestination, setShowCustomDestination] = useState(false);
-  const [showCustomAction, setShowCustomAction] = useState(false);
   const [destination, setDestination] = useState("");
-  const [advice, setAdvice] = useState("");
+  const [firstSession, setFirstSession] = useState<LocalPetFirstSession | null>(null);
+  const [firstSessionConfirmationPortion, setFirstSessionConfirmationPortion] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<PresentedError | null>(null);
   const [failedIllustrations, setFailedIllustrations] = useState<string[]>([]);
   const [failedAnimations, setFailedAnimations] = useState<string[]>([]);
   const [loadedVideos, setLoadedVideos] = useState<string[]>([]);
+  const [readyStoryVideos, setReadyStoryVideos] = useState<string[]>([]);
   const [waitElapsedKey, setWaitElapsedKey] = useState<string | null>(null);
   const [brokenVideos, setBrokenVideos] = useState<string[]>([]);
   const [visibleBackgroundVideoUrl, setVisibleBackgroundVideoUrl] = useState<string | null>(
@@ -259,6 +309,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const [isCharacterEntranceComplete, setIsCharacterEntranceComplete] = useState(false);
   const [exitingCharacterTravelId, setExitingCharacterTravelId] = useState<string | null>(null);
   const [isResettingTravel, setIsResettingTravel] = useState(false);
+  const [completedStoryRevealKey, setCompletedStoryRevealKey] = useState<string | null>(null);
   const travelResetInFlightRef = useRef(false);
   const demoAutoStartAttemptedRef = useRef(false);
   const submittingRef = useRef(false);
@@ -266,29 +317,47 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const illustrationRequestsRef = useRef(new Set<string>());
   const failedIllustrationsRef = useRef(new Set<string>());
   const animationRequestsRef = useRef(new Set<string>());
+  const generationStatusRequestRef = useRef<string | null>(null);
   const failedAnimationsRef = useRef(new Set<string>());
   const backgroundTransitionsRef = useRef(new Set<string>());
   const customDestinationTriggerRef = useRef<HTMLButtonElement>(null);
-  const customActionTriggerRef = useRef<HTMLButtonElement>(null);
   const wasCustomDestinationOpenRef = useRef(false);
-  const wasCustomActionOpenRef = useRef(false);
 
   const pet = localPet.pet;
   const petName = pet?.name?.trim() || "Персонаж";
+  const currentPetId = pet?.petId;
+  const currentPetIntroductionPending = pet?.introductionPending;
+
+  useEffect(() => {
+    let cancelled = false;
+    window.queueMicrotask(() => {
+      if (cancelled) {
+        return;
+      }
+      if (!currentPetId || currentPetId !== petId) {
+        setFirstSession(null);
+        return;
+      }
+      const restored = readLocalPetFirstSession({
+        petId: currentPetId,
+        introductionPending: currentPetIntroductionPending,
+      });
+      setFirstSession(restored);
+      setFirstSessionConfirmationPortion(0);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPetId, currentPetIntroductionPending, petId]);
 
   const goBack = useCallback(() => {
-    if (showCustomAction) {
-      setShowCustomAction(false);
-      setError(null);
-      return;
-    }
     if (showCustomDestination) {
       setShowCustomDestination(false);
       setError(null);
       return;
     }
     router.push(`/pet/${petId}`);
-  }, [petId, router, showCustomAction, showCustomDestination]);
+  }, [petId, router, showCustomDestination]);
 
   useTelegramBackButton(goBack);
 
@@ -306,14 +375,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   }, [showCustomDestination]);
 
   useEffect(() => {
-    const wasOpen = wasCustomActionOpenRef.current;
-    wasCustomActionOpenRef.current = showCustomAction;
-    if (wasOpen && !showCustomAction) {
-      customActionTriggerRef.current?.focus();
-    }
-  }, [showCustomAction]);
-
-  useEffect(() => {
     requestEpochRef.current += 1;
     activeTravelIdRef.current = null;
     queuedFinaleTravelIdRef.current = null;
@@ -321,6 +382,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     illustrationRequestsRef.current.clear();
     failedIllustrationsRef.current.clear();
     animationRequestsRef.current.clear();
+    generationStatusRequestRef.current = null;
     failedAnimationsRef.current.clear();
     backgroundTransitionsRef.current.clear();
     setIsRestored(false);
@@ -333,6 +395,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     setFailedIllustrations([]);
     setFailedAnimations([]);
     setLoadedVideos([]);
+    setReadyStoryVideos([]);
     setWaitElapsedKey(null);
     setBrokenVideos([]);
     setVisibleBackgroundVideoUrl(null);
@@ -342,6 +405,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       requestEpochRef.current += 1;
       activeTravelIdRef.current = null;
       submittingRef.current = false;
+      generationStatusRequestRef.current = null;
     };
   }, [petId]);
 
@@ -674,9 +738,93 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       });
   }, [canShowDebugMenu, isRestored, localPet.status, pet, session, suggestionsNonce]);
 
+  const sessionTravelId = session?.travel.travelId;
+  const sessionGenerationStatus = session?.travel.generationStatus;
+  const sessionPlanReady = Boolean(session && isTravelPlanReady(session.travel));
+
+  useEffect(() => {
+    if (!sessionTravelId || demoTravel || sessionGenerationStatus !== "generating") {
+      return;
+    }
+    const travelId = sessionTravelId;
+    let cancelled = false;
+    let timeoutId: number | null = null;
+
+    const scheduleNext = (delay: number) => {
+      timeoutId = window.setTimeout(() => void poll(), delay);
+    };
+    const poll = async () => {
+      if (cancelled || generationStatusRequestRef.current === travelId) {
+        return;
+      }
+      generationStatusRequestRef.current = travelId;
+      try {
+        const response = await getInteractiveTravelStatus(travelId);
+        if (cancelled || activeTravelIdRef.current !== travelId) {
+          return;
+        }
+        if (response.travel.generationStatus === "failed") {
+          await withLocalInteractiveTravelMutationLock(petId, () => {
+            const latest = readLocalInteractiveTravel(petId);
+            if (latest?.travel.travelId !== travelId) {
+              return;
+            }
+            clearLocalInteractiveTravel(petId);
+            activeTravelIdRef.current = null;
+            setSession(null);
+            setSuggestions(shuffledFallbackDestinations());
+            setIsLoadingSuggestions(false);
+            setError({
+              message: response.travel.generationError
+                ?? "Не получилось подготовить путешествие. Попробуй ещё раз.",
+            });
+          });
+          return;
+        }
+        await withLocalInteractiveTravelMutationLock(petId, ({ assertOwned }) => {
+          const latest = readLocalInteractiveTravel(petId);
+          if (!latest || latest.travel.travelId !== travelId) {
+            return;
+          }
+          assertOwned();
+          const stored = writeLocalInteractiveTravelDurably(petId, {
+            ...latest,
+            travel: response.travel,
+          });
+          if (!stored) {
+            throw new Error("Interactive travel generation status was not stored durably");
+          }
+          setSession(stored);
+        });
+        if (!cancelled && response.travel.generationStatus === "generating") {
+          scheduleNext(1_000);
+        }
+      } catch {
+        if (!cancelled) {
+          scheduleNext(2_000);
+        }
+      } finally {
+        if (generationStatusRequestRef.current === travelId) {
+          generationStatusRequestRef.current = null;
+        }
+      }
+    };
+
+    scheduleNext(0);
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      if (generationStatusRequestRef.current === travelId) {
+        generationStatusRequestRef.current = null;
+      }
+    };
+  }, [demoTravel, petId, sessionGenerationStatus, sessionTravelId]);
+
   const ensureAnimation = useCallback(
     async (travelSession: LocalInteractiveTravel, part: InteractiveTravelPart) => {
-      if (demoTravel) {
+      if (demoTravel || !isTravelPlanReady(travelSession.travel)) {
         return;
       }
       const travelId = travelSession.travel.travelId;
@@ -716,7 +864,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
 
   const ensureIllustration = useCallback(
     async (travelSession: LocalInteractiveTravel, part: InteractiveTravelPart) => {
-      if (demoTravel) {
+      if (demoTravel || !isTravelPlanReady(travelSession.travel)) {
         return;
       }
       const travelId = travelSession.travel.travelId;
@@ -780,6 +928,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     if (
       !session ||
       !activePart ||
+      !isTravelPlanReady(session.travel) ||
       phase !== "departureWait"
     ) {
       return;
@@ -790,6 +939,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   useEffect(() => {
     if (
       !session ||
+      !isTravelPlanReady(session.travel) ||
       phase === "introReaction" ||
       !activePart?.backgroundImageUrl ||
       activePart.backgroundVideoUrl
@@ -806,11 +956,16 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const presentationPortionIndex = session?.presentation.portionIndex ?? 0;
   const introCharacterTravelId =
     phase === "introReaction" ? session?.travel.travelId ?? null : null;
+  const isFirstSessionConfirmation = Boolean(
+    !session
+    && firstSession?.stage === "confirming-travel"
+    && firstSession.selectedDestination,
+  );
   const showTravelCharacter = Boolean(
-    characterImageSrc && introCharacterTravelId,
+    characterImageSrc && (introCharacterTravelId || isFirstSessionConfirmation),
   );
   const isIntroCharacterEntranceComplete =
-    introCharacterTravelId === null || isCharacterEntranceComplete;
+    introCharacterTravelId === null || !showTravelCharacter || isCharacterEntranceComplete;
   const isIntroCharacterExiting =
     introCharacterTravelId !== null && exitingCharacterTravelId === introCharacterTravelId;
 
@@ -874,7 +1029,12 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   }, [activePartNumber, isIntroCharacterExiting, updatePresentation]);
 
   useEffect(() => {
-    if (demoTravel || phase !== "departureWait" || !activeIllustrationKey) {
+    if (
+      demoTravel
+      || !sessionPlanReady
+      || phase !== "departureWait"
+      || !activeIllustrationKey
+    ) {
       return;
     }
     setWaitElapsedKey(null);
@@ -882,10 +1042,15 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       setWaitElapsedKey(activeIllustrationKey);
     }, MINIMUM_WAIT_DURATION_MS);
     return () => window.clearTimeout(timeoutId);
-  }, [activeIllustrationKey, demoTravel, phase]);
+  }, [activeIllustrationKey, demoTravel, phase, sessionPlanReady]);
 
   useEffect(() => {
-    if (demoTravel || !activePart || phase !== "departureWait") {
+    if (
+      demoTravel
+      || !sessionPlanReady
+      || !activePart
+      || phase !== "departureWait"
+    ) {
       return;
     }
     const timeoutId = window.setTimeout(() => {
@@ -896,7 +1061,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       });
     }, MAXIMUM_DEPARTURE_WAIT_DURATION_MS);
     return () => window.clearTimeout(timeoutId);
-  }, [activePart, demoTravel, phase, updatePresentation]);
+  }, [activePart, demoTravel, phase, sessionPlanReady, updatePresentation]);
 
   useEffect(() => {
     if (!demoTravel || !activePart || phase !== "departureWait") {
@@ -998,13 +1163,12 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       setIsLoadingSuggestions(false);
       setVisibleBackgroundVideoUrl(null);
       setLoadedVideos([]);
+      setReadyStoryVideos([]);
       setBrokenVideos([]);
       setFailedIllustrations([]);
       setFailedAnimations([]);
       setShowCustomDestination(false);
-      setShowCustomAction(false);
       setDestination("");
-      setAdvice("");
       hapticNotification("success");
     } catch (caught) {
       if (requestEpoch === requestEpochRef.current) {
@@ -1033,7 +1197,33 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     void handleStartDemo();
   }, [canShowDebugMenu, isRestored]);
 
-  async function beginTravel(rawDestination: string) {
+  function selectFirstSessionDestination(rawDestination: string) {
+    const value = rawDestination.trim();
+    if (!value) {
+      setError({ message: "Напиши, куда отправить персонажа" });
+      return;
+    }
+    if (!firstSession || !isLocalFirstSessionActive(firstSession)) {
+      void beginTravel(value);
+      return;
+    }
+    const next = updateLocalPetFirstSession(
+      firstSession,
+      "confirming-travel",
+      value,
+    );
+    setFirstSession(next);
+    setFirstSessionConfirmationPortion(0);
+    setShowCustomDestination(false);
+    setDestination("");
+    setError(null);
+    hapticNotification("success");
+  }
+
+  async function beginTravel(
+    rawDestination: string,
+    options: { completeFirstSession?: boolean } = {},
+  ) {
     const value = rawDestination.trim();
     if (!pet || submittingRef.current) {
       return;
@@ -1060,8 +1250,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         }
         const response = await startInteractiveTravelWithRecovery(value, pet, {
           includeDebug: canShowDebugMenu,
-          history: readLocalChatHistory().messages,
-          memoryContext: buildMemorySnapshotContext(readLocalPetMemory(pet.petId)),
         });
         assertOwned();
         if (requestEpoch !== requestEpochRef.current) {
@@ -1072,7 +1260,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           travel: response.travel,
           appliedResultParts: [],
           presentation: {
-            phase: "introReaction",
+            phase: options.completeFirstSession ? "departureWait" : "introReaction",
             partNumber: firstPart?.partNumber ?? 1,
             portionIndex: 0,
           },
@@ -1084,6 +1272,9 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         }
         setShowCustomDestination(false);
         setDestination("");
+        if (options.completeFirstSession && firstSession) {
+          setFirstSession(updateLocalPetFirstSession(firstSession, "completed"));
+        }
         hapticNotification("success");
       });
     } catch (caught) {
@@ -1123,8 +1314,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       setError(null);
       try {
         setSession(continueDemoSession(session, demoTravel));
-        setAdvice("");
-        setShowCustomAction(false);
         hapticNotification("success");
       } catch (caught) {
         setError(presentError(caught, "Не получилось продолжить демо-историю."));
@@ -1158,8 +1347,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           )
         ) {
           adoptStoredSession(latest);
-          setAdvice("");
-          setShowCustomAction(false);
           return;
         }
         const latestPendingPart = currentPendingPart(latest.travel);
@@ -1169,8 +1356,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         }
         const response = await continueInteractiveTravel(latest.travel, value, pet, {
           includeDebug: canShowDebugMenu,
-          history: readLocalChatHistory().messages,
-          memoryContext: buildMemorySnapshotContext(readLocalPetMemory(pet.petId)),
         });
         assertOwned();
         if (requestEpoch !== requestEpochRef.current) {
@@ -1193,8 +1378,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         if (nextPendingPart) {
           void ensureIllustration(next, nextPendingPart);
         }
-        setAdvice("");
-        setShowCustomAction(false);
         hapticNotification("success");
       });
     } catch (caught) {
@@ -1230,14 +1413,13 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     setSuggestionsNonce((current) => current + 1);
     setIsLoadingSuggestions(true);
     setShowCustomDestination(false);
-    setShowCustomAction(false);
     setDestination("");
-    setAdvice("");
     setIsSubmitting(false);
     setError(null);
     setFailedIllustrations([]);
     setFailedAnimations([]);
     setLoadedVideos([]);
+    setReadyStoryVideos([]);
     setWaitElapsedKey(null);
     setBrokenVideos([]);
     setVisibleBackgroundVideoUrl(null);
@@ -1311,6 +1493,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       activeTravelIdRef.current = demoTravel.travelId;
       setSession(next);
       setVisibleBackgroundVideoUrl(null);
+      setReadyStoryVideos([]);
       setError(null);
       setIsCharacterEntranceComplete(false);
       setExitingCharacterTravelId(null);
@@ -1347,66 +1530,8 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     }
   }
 
-  function handleSceneClick(event: MouseEvent<HTMLElement>) {
-    if (
-      phase !== "choice"
-      || !activePart
-      || isSubmitting
-      || showCustomAction
-    ) {
-      return;
-    }
-    const target = event.target;
-    if (
-      target instanceof Element
-      && target.closest("button, a, input, textarea, select, [role='button'], [role='dialog']")
-    ) {
-      return;
-    }
-    updatePresentation({
-      phase: "story",
-      partNumber: activePart.partNumber,
-      portionIndex: 0,
-    });
-  }
-
   function handleNext() {
-    if (!session || !activePart) {
-      return;
-    }
-    if (phase === "story") {
-      const portions = storyPortions(activePart);
-      const nextIndex = session.presentation.portionIndex + 1;
-      updatePresentation(
-        nextIndex < portions.length
-          ? { phase: "story", partNumber: activePart.partNumber, portionIndex: nextIndex }
-          : { phase: "choice", partNumber: activePart.partNumber, portionIndex: 0 },
-      );
-      return;
-    }
-    if (phase === "choice") {
-      const portions = challengePortions(activePart);
-      const nextIndex = session.presentation.portionIndex + 1;
-      if (nextIndex < portions.length) {
-        updatePresentation({
-          phase: "choice",
-          partNumber: activePart.partNumber,
-          portionIndex: nextIndex,
-        });
-      }
-      return;
-    }
-    if (phase !== "result") {
-      return;
-    }
-    const portions = resultPortions(activePart);
-    const nextIndex = session.presentation.portionIndex + 1;
-    if (nextIndex < portions.length) {
-      updatePresentation({
-        phase: "result",
-        partNumber: activePart.partNumber,
-        portionIndex: nextIndex,
-      });
+    if (!session || !activePart || phase !== "result") {
       return;
     }
     if (session.travel.completed) {
@@ -1426,7 +1551,11 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   }
 
   function handleSkipDepartureWait() {
-    if (!activePart || phase !== "departureWait") {
+    if (
+      !activePart
+      || (session && !isTravelPlanReady(session.travel))
+      || phase !== "departureWait"
+    ) {
       return;
     }
     updatePresentation({
@@ -1438,20 +1567,12 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
 
   function handleDestinationSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void beginTravel(destination);
-  }
-
-  function handleAdviceSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    void submitAdvice(advice);
+    selectFirstSessionDestination(destination);
   }
 
   const isLoading = localPet.status === "loading" || !isRestored;
   const isTravelLoading =
     isLoading || isLoadingSuggestions || isSubmitting || isResettingTravel;
-  const storyTextPortions = activePart ? storyPortions(activePart) : [];
-  const challengeTextPortions = activePart ? challengePortions(activePart) : [];
-  const resultTextPortions = activePart ? resultPortions(activePart) : [];
   const portionIndex = session?.presentation.portionIndex ?? 0;
   const messageText = (() => {
     if (!session) {
@@ -1461,23 +1582,15 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       return introPortions[Math.min(portionIndex, introPortions.length - 1)] ?? introText;
     }
     if (phase === "departureWait") {
+      if (session.travel.generationStatus === "generating") {
+        return `${petName} уже отправился в путь. Готовлю первую часть приключения...`;
+      }
       return (
         activePart?.transition?.departureHook ??
         (activePartNumber === 1
           ? `${petName} отправился в путь, дорога займет какое-то время...`
           : `${petName} продолжает путешествие. Дорога займет какое-то время...`)
       );
-    }
-    if (phase === "story") {
-      return storyTextPortions[Math.min(portionIndex, storyTextPortions.length - 1)] ?? "";
-    }
-    if (phase === "result") {
-      return resultTextPortions[Math.min(portionIndex, resultTextPortions.length - 1)] ?? "";
-    }
-    if (phase === "choice") {
-      const challenge = activePart?.challenge ?? "Что делать дальше?";
-      return challengeTextPortions[Math.min(portionIndex, challengeTextPortions.length - 1)]
-        ?? challenge;
     }
     return "Я устал — на сегодня хватит. Отправляюсь домой.";
   })();
@@ -1506,46 +1619,119 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const shouldRevealBackgroundVideo =
     backgroundVideoSrc === ENTRY_BACKGROUND_VIDEO
     || backgroundVideoSrc === visibleBackgroundVideoUrl;
-  const isChallengeComplete =
-    phase === "choice" && portionIndex >= Math.max(0, challengeTextPortions.length - 1);
-  const isChoices = isChallengeComplete && !showCustomAction;
-  const isChallengeContext = phase === "choice" && !isChallengeComplete;
-  const isNarrative = phase === "story" || phase === "result";
+  const isStoryQuestionPhase = phase === "story" || phase === "choice";
+  const isStoryLayout = isStoryQuestionPhase || phase === "result";
+  const storyParagraphs = activePart ? storyAndChallengeParagraphs(activePart) : [];
+  const resultParagraphs = activePart ? resolvedResultParagraphs(activePart) : [];
+  const visibleStoryParagraphs = phase === "result" ? resultParagraphs : storyParagraphs;
+  const storyRevealKey = isStoryLayout && activePart
+    ? `${session?.travel.travelId ?? "travel"}:${activePart.partNumber}:${
+        phase === "result" ? "result" : "question"
+      }`
+    : null;
+  const storyRevealCharacterCount = visibleStoryParagraphs.reduce(
+    (total, paragraph) => total + Array.from(paragraph).length,
+    0,
+  );
+  const isStoryTextRevealComplete = Boolean(
+    storyRevealKey && completedStoryRevealKey === storyRevealKey,
+  );
+  useEffect(() => {
+    if (!storyRevealKey) {
+      return;
+    }
+    const reducedMotion = typeof window.matchMedia === "function"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const revealDuration = reducedMotion || storyRevealCharacterCount === 0
+      ? 0
+      : STORY_CHARACTER_RISE_DURATION_MS
+        + (storyRevealCharacterCount - 1) * STORY_CHARACTER_RISE_STAGGER_MS;
+    const timeoutId = window.setTimeout(() => {
+      setCompletedStoryRevealKey(storyRevealKey);
+    }, revealDuration);
+    return () => window.clearTimeout(timeoutId);
+  }, [storyRevealCharacterCount, storyRevealKey]);
+  let storyCharacterOffset = 0;
+  const animatedStoryParagraphs = visibleStoryParagraphs.map((paragraph, index) => {
+    const startIndex = storyCharacterOffset;
+    storyCharacterOffset += Array.from(paragraph).length;
+    return (
+      <AnimatedTravelParagraph
+        key={`${storyRevealKey ?? "story"}:${index}`}
+        animationKey={`${storyRevealKey ?? "story"}:${index}`}
+        startIndex={startIndex}
+        text={paragraph}
+      />
+    );
+  });
+  const storyVideoSrc = activePart?.backgroundVideoUrl
+    && !brokenVideos.includes(activePart.backgroundVideoUrl)
+    ? activePart.backgroundVideoUrl
+    : null;
+  const isStoryVideoReady = Boolean(
+    storyVideoSrc && readyStoryVideos.includes(storyVideoSrc),
+  );
+  const firstSessionConfirmationText = firstSession?.selectedDestination
+    ? firstSessionTravelConfirmation(firstSession.selectedDestination)
+    : "";
+  const firstSessionConfirmationPortions = splitInteractiveTravelText(
+    firstSessionConfirmationText,
+  );
+  const firstSessionConfirmationTextPortion = firstSessionConfirmationPortions[
+    Math.min(
+      firstSessionConfirmationPortion,
+      Math.max(0, firstSessionConfirmationPortions.length - 1),
+    )
+  ] ?? firstSessionConfirmationText;
+  const isFirstSessionConfirmationComplete = firstSessionConfirmationPortion
+    >= Math.max(0, firstSessionConfirmationPortions.length - 1);
   return (
     <main
       className={styles.viewport}
       aria-busy={isTravelLoading}
     >
       <section
-        className={styles.scene}
+        className={`${styles.scene} ${isStoryLayout ? styles.storyScene : ""}`}
         aria-label="Интерактивное путешествие"
-        onClick={handleSceneClick}
       >
-        <SmoothBackgroundVideo
-          src={backgroundVideoSrc}
-          className={`${styles.background} ${styles.backgroundVideo}`}
-          revealWhenReady={shouldRevealBackgroundVideo}
-          onReady={(readySrc) => {
-            if (readySrc === ENTRY_BACKGROUND_VIDEO) {
-              return;
-            }
-            setLoadedVideos((current) => [...new Set([...current, readySrc])]);
-          }}
-          onError={(brokenSrc) => {
-            setBrokenVideos((current) => [...new Set([...current, brokenSrc])]);
-            if (visibleBackgroundVideoUrl === brokenSrc) {
-              setVisibleBackgroundVideoUrl(null);
-            }
-          }}
-        />
-        <img src={VIDEO_FILTER} alt="" className={styles.grain} aria-hidden="true" />
+        {isStoryLayout ? (
+          activePart?.backgroundImageUrl ? (
+            <img
+              src={activePart.backgroundImageUrl}
+              alt=""
+              className={styles.storyBackdrop}
+              aria-hidden="true"
+            />
+          ) : null
+        ) : (
+          <>
+            <SmoothBackgroundVideo
+              src={backgroundVideoSrc}
+              className={`${styles.background} ${styles.backgroundVideo}`}
+              revealWhenReady={shouldRevealBackgroundVideo}
+              onReady={(readySrc) => {
+                if (readySrc === ENTRY_BACKGROUND_VIDEO) {
+                  return;
+                }
+                setLoadedVideos((current) => [...new Set([...current, readySrc])]);
+              }}
+              onError={(brokenSrc) => {
+                setBrokenVideos((current) => [...new Set([...current, brokenSrc])]);
+                if (visibleBackgroundVideoUrl === brokenSrc) {
+                  setVisibleBackgroundVideoUrl(null);
+                }
+              }}
+            />
+            <img src={VIDEO_FILTER} alt="" className={styles.grain} aria-hidden="true" />
+          </>
+        )}
 
         {SHOW_LOCAL_CONTROLS && !isTravelLoading ? (
           <>
             <button type="button" onClick={goBack} className={styles.backButton}>
               <ArrowLeft aria-hidden="true" />
               <span className="sr-only">
-                {showCustomDestination || showCustomAction
+                {showCustomDestination
                   ? "Вернуться к вариантам"
                   : "Вернуться к персонажу"}
               </span>
@@ -1610,6 +1796,59 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           <div className={styles.travelLoadingIndicator}>
             <PetThinkingIndicator />
           </div>
+        ) : isFirstSessionConfirmation && firstSession?.selectedDestination ? (
+          <>
+            <div className={`${styles.bubbleAnchor} ${styles.bubbleAnchorCenter}`}>
+              <PetSpeechBubble
+                isVisible
+                message={{
+                  id: 7000 + firstSessionConfirmationPortion,
+                  text: firstSessionConfirmationTextPortion,
+                  playSpeechAudio: false,
+                  hasNextPortion: !isFirstSessionConfirmationComplete,
+                }}
+                scaleOrigin="bottom"
+                shapeSrc={SPEECH_BUBBLE_SHAPE}
+                maxLines={3}
+                minFontSize={14}
+              />
+            </div>
+            {!isFirstSessionConfirmationComplete ? (
+              <button
+                type="button"
+                onClick={() => setFirstSessionConfirmationPortion((current) => current + 1)}
+                className={`${styles.nextButton} ${styles.storyGlassButton}`}
+              >
+                Далее
+              </button>
+            ) : (
+              <div className={styles.completionActions}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFirstSession(updateLocalPetFirstSession(
+                      firstSession,
+                      "awaiting-travel",
+                    ));
+                    setFirstSessionConfirmationPortion(0);
+                  }}
+                  className={`${styles.completionButton} ${styles.storyGlassButton}`}
+                >
+                  Изменить
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void beginTravel(firstSession.selectedDestination ?? "", {
+                    completeFirstSession: true,
+                  })}
+                  className={styles.completionButton}
+                  disabled={isSubmitting}
+                >
+                  Подтвердить
+                </button>
+              </div>
+            )}
+          </>
         ) : !session ? (
           showCustomDestination ? (
             <form className={styles.customForm} onSubmit={handleDestinationSubmit}>
@@ -1653,7 +1892,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
                     type="button"
                     className={styles.optionButton}
                     disabled={isSubmitting}
-                    onClick={() => void beginTravel(suggestion)}
+                    onClick={() => selectFirstSessionDestination(suggestion)}
                   >
                     {suggestion}
                   </button>
@@ -1673,38 +1912,76 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
               </div>
             </div>
           )
-        ) : showCustomAction && phase === "choice" ? (
-          <form className={styles.customForm} onSubmit={handleAdviceSubmit}>
-            <h1 className="text-balance">Что подсказать {petName}?</h1>
-            <label className="sr-only" htmlFor="travel-advice">
-              Свой вариант действия
-            </label>
-            <input
-              id="travel-advice"
-              aria-describedby="travel-advice-requirement"
-              value={advice}
-              onChange={(event) => {
-                setAdvice(event.target.value);
-                setError(null);
-              }}
-              className={styles.promptInput}
-              maxLength={ADVICE_MAX_LENGTH}
-              placeholder="Свой вариант"
-              disabled={isSubmitting}
-              autoFocus
-              enterKeyHint="send"
-            />
-            <p id="travel-advice-requirement" className="sr-only">
-              Напиши совет, чтобы подсказать действие
-            </p>
-            <button
-              type="submit"
-              className={styles.primaryButton}
-              disabled={isSubmitting || !advice.trim()}
+        ) : isStoryLayout && activePart ? (
+          <div className={styles.storyContent}>
+            <div className={styles.storyMediaFrame} aria-hidden="true">
+              {activePart.backgroundImageUrl && !isStoryVideoReady ? (
+                <img
+                  src={activePart.backgroundImageUrl}
+                  alt=""
+                  className={styles.storyPoster}
+                />
+              ) : null}
+              {storyVideoSrc ? (
+                <SmoothBackgroundVideo
+                  src={storyVideoSrc}
+                  className={`${styles.storyVideo} ${
+                    isStoryVideoReady ? "" : styles.storyVideoPending
+                  }`}
+                  onReady={(readySrc) => {
+                    setLoadedVideos((current) => [...new Set([...current, readySrc])]);
+                    setReadyStoryVideos((current) => [
+                      ...new Set([...current, readySrc]),
+                    ]);
+                  }}
+                  onError={(brokenSrc) => {
+                    setBrokenVideos((current) => [...new Set([...current, brokenSrc])]);
+                  }}
+                />
+              ) : null}
+            </div>
+
+            <div
+              className={styles.storyTextFrame}
+              aria-label={phase === "result" ? "Результат выбора" : "История и вопрос"}
             >
-              Подсказать
-            </button>
-          </form>
+              {animatedStoryParagraphs}
+            </div>
+
+            {isStoryQuestionPhase && isStoryTextRevealComplete ? (
+              <div
+                className={styles.storyAnswersScroll}
+                role="group"
+                aria-label="Варианты ответа"
+              >
+                <div className={styles.storyAnswersRow}>
+                  {activePart.actionSuggestions.slice(0, 4).map((suggestion, index) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      className={styles.storyAnswerButton}
+                      style={{ animationDelay: `${index * 200}ms` }}
+                      disabled={isSubmitting}
+                      onClick={() => void submitAdvice(suggestion)}
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className={styles.storyResultActions}>
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  className={styles.storyResultButton}
+                  disabled={isSubmitting}
+                >
+                  {session.travel.completed ? "Завершить" : "Далее"}
+                </button>
+              </div>
+            )}
+          </div>
         ) : (
           <>
             <div
@@ -1720,10 +1997,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
                   id: messageId,
                   text: messageText,
                   playSpeechAudio: false,
-                  hasNextPortion:
-                    (phase === "story" && portionIndex < storyTextPortions.length - 1) ||
-                    (phase === "choice" && portionIndex < challengeTextPortions.length - 1) ||
-                    (phase === "result" && portionIndex < resultTextPortions.length - 1),
+                  hasNextPortion: false,
                 }}
                 scaleOrigin="bottom"
                 shapeSrc={SPEECH_BUBBLE_SHAPE}
@@ -1732,17 +2006,9 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
               />
             </div>
 
-            {isNarrative || isChallengeContext ? (
-              <button
-                type="button"
-                onClick={handleNext}
-                className={`${styles.nextButton} ${styles.storyGlassButton}`}
-              >
-                Далее
-              </button>
-            ) : null}
-
-            {phase === "departureWait" && !demoTravel ? (
+            {phase === "departureWait"
+              && !demoTravel
+              && isTravelPlanReady(session.travel) ? (
               <button
                 type="button"
                 onClick={handleSkipDepartureWait}
@@ -1750,40 +2016,6 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
               >
                 Продолжить без видео
               </button>
-            ) : null}
-
-            {isChoices && activePart ? (
-              <div
-                className={styles.actionsScroll}
-                role="group"
-                aria-label="Варианты действий"
-              >
-                <div className={styles.actionsRow}>
-                  {activePart.actionSuggestions.map((suggestion) => (
-                    <button
-                      key={suggestion}
-                      type="button"
-                      className={`${styles.actionButton} ${styles.storyGlassButton}`}
-                      disabled={isSubmitting}
-                      onClick={() => void submitAdvice(suggestion)}
-                    >
-                      {suggestion}
-                    </button>
-                  ))}
-                  <button
-                    ref={customActionTriggerRef}
-                    type="button"
-                    className={`${styles.actionButton} ${styles.storyGlassButton}`}
-                    disabled={isSubmitting}
-                    onClick={() => {
-                      setShowCustomAction(true);
-                      setError(null);
-                    }}
-                  >
-                    Свой вариант
-                  </button>
-                </div>
-              </div>
             ) : null}
 
             {phase === "completed" ? (

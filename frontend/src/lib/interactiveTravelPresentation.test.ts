@@ -2,23 +2,36 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TEST_PET_ASSET_SET_ID } from "./testPetFixture";
 import {
-  challengePortions,
   currentPendingPart,
+  interactiveTravelTextParagraphs,
   interactiveTravelCharacterImageUrl,
   nextResolvedPart,
   patchInteractiveTravelPartBackground,
   patchInteractiveTravelPartVideo,
-  resultPortions,
+  resolvedResultParagraphs,
   splitInteractiveTravelText,
-  storyPortions,
+  storyAndChallengeParagraphs,
 } from "./interactiveTravelPresentation";
 import type {
   InteractiveTravelPart,
+  InteractiveTravelPlan,
   InteractiveTravelState,
   LocalPetState,
 } from "./types";
 
 const now = "2026-07-14T12:00:00.000Z";
+const travelPlan: InteractiveTravelPlan = {
+  version: "task-bank-location-v4",
+  tasks: [1, 2, 3, 4].map((partNumber) => ({
+    taskId: `traveler-${partNumber}`,
+    leadIn: `У башни ${partNumber}`,
+    situation: `Ситуация ${partNumber}.`,
+    question: `Вопрос ${partNumber}?`,
+    choices: ["Плот", "Лодка", "Мост", "Брод"],
+    correctChoice: "Плот",
+    explanation: `Объяснение ${partNumber}.`,
+  })) as InteractiveTravelPlan["tasks"],
+};
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -52,7 +65,7 @@ function travel(parts: InteractiveTravelPart[]): InteractiveTravelState {
     generatedAt: now,
     destination: "далёкая гора",
     overallTitle: "Путь к вершине",
-    arcPlan: {},
+    plan: travelPlan,
     parts,
     completed: false,
   };
@@ -107,32 +120,25 @@ describe("interactive travel text portions", () => {
     ]);
   });
 
-  it("builds story portions and shows only the direct result after a choice", () => {
-    const resolved = part(1, true);
-
-    expect(storyPortions(resolved)).toEqual([
-      "Сначала герой вышел к реке",
-      "Потом заметил свет на другом берегу",
-    ]);
-    expect(resultPortions(resolved)).toEqual([
-      "Плот выдержал течение",
-      "Герой благополучно добрался до берега",
-    ]);
-    expect(resultPortions(part(2))).toEqual([]);
-  });
-
-  it("keeps the direct question as the final challenge portion", () => {
+  it("shows the whole story and exact question as punctuation-preserving paragraphs", () => {
     const pending = part(1);
-    pending.challenge =
-      "На воротах древнего святилища появилась цветная корочка. "
-      + "Страж считает её мхом, а алхимик — минералом. "
-      + "Кто образует лишайник?";
+    pending.challenge = "Кто образует лишайник?";
 
-    expect(challengePortions(pending)).toEqual([
-      "На воротах древнего святилища появилась цветная корочка",
-      "Страж считает её мхом, а алхимик — минералом",
+    expect(storyAndChallengeParagraphs(pending)).toEqual([
+      "Сначала герой вышел к реке.",
+      "Потом заметил свет на другом берегу.",
       "Кто образует лишайник?",
     ]);
+  });
+
+  it("keeps explicit paragraphs and exposes a resolved result all at once", () => {
+    expect(interactiveTravelTextParagraphs("Первая строка.\n\nВторая строка!"))
+      .toEqual(["Первая строка.", "Вторая строка!"]);
+    expect(resolvedResultParagraphs(part(1, true))).toEqual([
+      "Плот выдержал течение.",
+      "Герой благополучно добрался до берега.",
+    ]);
+    expect(resolvedResultParagraphs(part(2))).toEqual([]);
   });
 
   it("finds the current pending part and the next resolved part", () => {

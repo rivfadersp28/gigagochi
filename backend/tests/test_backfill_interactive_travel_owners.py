@@ -28,13 +28,31 @@ def _result(number: int) -> dict[str, object]:
 
 def _complete_travel(travel_id: str) -> dict[str, object]:
     parts: list[dict[str, object]] = []
-    for number in range(1, 4):
+    tasks: list[dict[str, object]] = []
+    for number in range(1, 5):
+        choices = [
+            f"решение {number}",
+            f"ошибка {number}-1",
+            f"ошибка {number}-2",
+            f"ошибка {number}-3",
+        ]
+        tasks.append(
+            {
+                "taskId": f"test-{number}",
+                "leadIn": "Передо мной",
+                "situation": f"препятствие {number}.",
+                "question": f"Как пройти препятствие {number}?",
+                "choices": choices,
+                "correctChoice": choices[0],
+                "explanation": f"Решение {number} позволяет пройти препятствие.",
+            }
+        )
         part: dict[str, object] = {
             "partNumber": number,
             "title": f"Часть {number}",
             "storyText": f"Передо мной препятствие {number}.",
             "challenge": f"Как пройти препятствие {number}?",
-            "actionSuggestions": ["Осмотреться"],
+            "actionSuggestions": choices,
             "answer": f"решение {number}",
             "result": _result(number),
         }
@@ -49,7 +67,7 @@ def _complete_travel(travel_id: str) -> dict[str, object]:
         "generatedAt": datetime(2026, 7, 15, 12, tzinfo=UTC).isoformat(),
         "destination": "синтетический город",
         "overallTitle": "Синтетическое путешествие",
-        "arcPlan": {"goal": "дойти до башни"},
+        "plan": {"version": "task-bank-location-v4", "tasks": tasks},
         "parts": parts,
         "completed": True,
         "outcomeValence": "positive",

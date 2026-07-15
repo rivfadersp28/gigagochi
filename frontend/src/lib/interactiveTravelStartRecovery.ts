@@ -1,24 +1,17 @@
 import { startInteractiveTravel } from "./api";
 import { ApiError } from "./apiTransport";
-import type { LocalPetMemoryContext } from "./localPetMemoryTypes";
 import {
   enqueueInteractiveTravelCancel,
   flushPendingInteractiveTravelOperations,
   readPendingInteractiveTravelOperations,
 } from "./pendingInteractiveTravelOperations";
-import type {
-  InteractiveTravelResponse,
-  LocalChatMessage,
-  LocalPetState,
-} from "./types";
+import type { InteractiveTravelResponse, LocalPetState } from "./types";
 
 const ACTIVE_TRAVEL_CODE = "INTERACTIVE_TRAVEL_ALREADY_ACTIVE";
 const TRAVEL_ID_PATTERN = /^interactive-travel-[A-Za-z0-9_-]+$/u;
 
 type InteractiveTravelStartOptions = {
   includeDebug?: boolean;
-  history?: LocalChatMessage[];
-  memoryContext?: LocalPetMemoryContext;
 };
 
 function recoverableTravelId(error: unknown): string | null {

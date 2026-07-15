@@ -14,11 +14,13 @@ from app.dependencies import get_telegram_user
 from app.main import app
 from app.routers import tma as tma_router
 from app.schemas import (
+    ContinueInteractiveTravelRequest,
     InteractiveTravelAnimationResponse,
     InteractiveTravelIllustrationResponse,
     InteractiveTravelResponse,
     InteractiveTravelSuggestionsResponse,
     LocalPetChatContext,
+    StartInteractiveTravelRequest,
 )
 from app.services.interactive_travel_session_store import (
     InteractiveTravelSessionStore,
@@ -74,7 +76,7 @@ def test_debug_demo_returns_prebuilt_story_without_generation(monkeypatch) -> No
     assert response.status_code == 200
     payload = response.json()
     assert payload["demoId"] == "sergey-latest-2026-07-15"
-    assert len(payload["travel"]["parts"]) == 3
+    assert len(payload["travel"]["parts"]) == 4
     assert all(part["backgroundVideoUrl"] for part in payload["travel"]["parts"])
 
 
@@ -104,6 +106,44 @@ def test_pet_fingerprint_uses_stable_pet_id_with_legacy_fallback() -> None:
 
 
 def _travel_response(travel_id: str) -> InteractiveTravelResponse:
+    tasks = [
+        {
+            "taskId": "test-1",
+            "leadIn": "Передо мной",
+            "situation": "появляется мост.",
+            "question": "Как перейти мост?",
+            "choices": ["Осмотреться", "Прыгнуть", "Позвать", "Ждать"],
+            "correctChoice": "Осмотреться",
+            "explanation": "Осмотр помогает найти безопасный путь.",
+        },
+        {
+            "taskId": "test-2",
+            "leadIn": "Я подхожу к",
+            "situation": "башне.",
+            "question": "Как открыть дверь?",
+            "choices": ["Постучать", "Толкнуть", "Обойти", "Ждать"],
+            "correctChoice": "Постучать",
+            "explanation": "Сначала стоит постучать.",
+        },
+        {
+            "taskId": "test-3",
+            "leadIn": "У вершины я вижу",
+            "situation": "закрытые ворота.",
+            "question": "Как открыть ворота?",
+            "choices": ["Открыть замок", "Кричать", "Уйти", "Ждать"],
+            "correctChoice": "Открыть замок",
+            "explanation": "Замок открывает ворота.",
+        },
+        {
+            "taskId": "test-4",
+            "leadIn": "На вершине я нахожу",
+            "situation": "пустой флагшток.",
+            "question": "Как завершить путь?",
+            "choices": ["Поднять флаг", "Спрятаться", "Уйти", "Ждать"],
+            "correctChoice": "Поднять флаг",
+            "explanation": "Флаг отмечает завершение пути.",
+        },
+    ]
     return InteractiveTravelResponse.model_validate(
         {
             "travel": {
@@ -111,14 +151,14 @@ def _travel_response(travel_id: str) -> InteractiveTravelResponse:
                 "generatedAt": datetime.now(UTC),
                 "destination": "облачный город",
                 "overallTitle": "Путешествие",
-                "arcPlan": {"goal": "добраться до башни"},
+                "plan": {"version": "task-bank-location-v4", "tasks": tasks},
                 "parts": [
                     {
                         "partNumber": 1,
                         "title": "Начало",
                         "storyText": "Передо мной появляется мост.",
                         "challenge": "Как перейти мост?",
-                        "actionSuggestions": ["Осмотреться"],
+                        "actionSuggestions": tasks[0]["choices"],
                     }
                 ],
             }
@@ -149,7 +189,7 @@ def _continued_travel_response(travel_id: str) -> InteractiveTravelResponse:
             "storyText": "Я подхожу к башне.",
             "transition": {"elapsedHours": 0, "summary": "Путь найден."},
             "challenge": "Как открыть дверь?",
-            "actionSuggestions": ["Постучать"],
+            "actionSuggestions": payload["plan"]["tasks"][1]["choices"],
         }
     )
     return InteractiveTravelResponse.model_validate({"travel": payload})
@@ -167,21 +207,97 @@ def _completed_travel_response(travel_id: str) -> InteractiveTravelResponse:
         "statImpacts": [],
     }
     payload["parts"][1].update({"answer": "Постучать", "result": result})
-    payload["parts"].append(
-        {
-            "partNumber": 3,
-            "title": "Финал",
-            "storyText": "Я добираюсь до вершины башни.",
-            "transition": {"elapsedHours": 1, "summary": "Дверь открылась."},
-            "challenge": "Как завершить путь?",
-            "actionSuggestions": [],
-            "answer": "Поднять флаг",
-            "result": result,
-        }
+    payload["parts"].extend(
+        [
+            {
+                "partNumber": 3,
+                "title": "Часть 3",
+                "storyText": "У вершины я вижу закрытые ворота.",
+                "transition": {"elapsedHours": 1, "summary": "Дверь открылась."},
+                "challenge": "Как открыть ворота?",
+                "actionSuggestions": payload["plan"]["tasks"][2]["choices"],
+                "answer": "Открыть замок",
+                "result": result,
+            },
+            {
+                "partNumber": 4,
+                "title": "Финал",
+                "storyText": "На вершине я нахожу пустой флагшток.",
+                "transition": {"elapsedHours": 1, "summary": "Ворота открылись."},
+                "challenge": "Как завершить путь?",
+                "actionSuggestions": payload["plan"]["tasks"][3]["choices"],
+                "answer": "Поднять флаг",
+                "result": result,
+            },
+        ]
     )
     payload["completed"] = True
     payload["outcomeValence"] = "positive"
     return InteractiveTravelResponse.model_validate({"travel": payload})
+
+
+def test_start_content_fingerprint_ignores_pet_debug_and_whitespace() -> None:
+    base_pet = _pet_payload()
+    changed_pet = {
+        **_pet_payload(),
+        "stats": {"hunger": 1, "happiness": 2, "energy": 3},
+        "assetImages": {"teen": {"idle": "https://cdn.example.test/pets/new-derived-idle.png"}},
+    }
+    base = StartInteractiveTravelRequest.model_validate(
+        {
+            "pet": base_pet,
+            "destination": "  облачный   город ",
+            "includeDebug": False,
+        }
+    )
+    cosmetic_change = StartInteractiveTravelRequest.model_validate(
+        {
+            "pet": changed_pet,
+            "destination": "облачный город",
+            "includeDebug": True,
+        }
+    )
+    changed_destination = cosmetic_change.model_copy(update={"destination": "старый лес"})
+
+    assert tma_router._interactive_travel_start_fingerprint(base) == (
+        tma_router._interactive_travel_start_fingerprint(cosmetic_change)
+    )
+    assert tma_router._interactive_travel_start_fingerprint(base) != (
+        tma_router._interactive_travel_start_fingerprint(changed_destination)
+    )
+
+
+def test_continue_content_fingerprint_uses_only_state_and_normalized_advice() -> None:
+    travel = _travel_response("interactive-travel-content-fingerprint").travel
+    changed_pet = {
+        **_pet_payload(),
+        "stats": {"hunger": 1, "happiness": 2, "energy": 3},
+        "assetImages": {"teen": {"idle": "https://cdn.example.test/pets/new-derived-idle.png"}},
+    }
+    base = ContinueInteractiveTravelRequest.model_validate(
+        {
+            "pet": _pet_payload(),
+            "travel": travel,
+            "advice": "  Осмотреться  ",
+            "includeDebug": False,
+        }
+    )
+    cosmetic_change = ContinueInteractiveTravelRequest.model_validate(
+        {
+            "pet": changed_pet,
+            "travel": travel,
+            "advice": "осмотреться",
+            "includeDebug": True,
+        }
+    )
+    changed_advice = cosmetic_change.model_copy(update={"advice": "Прыгнуть"})
+
+    assert tma_router._interactive_travel_continue_fingerprint(base) == (
+        tma_router._interactive_travel_continue_fingerprint(cosmetic_change)
+    )
+    assert tma_router._interactive_travel_continue_fingerprint(base) != (
+        tma_router._interactive_travel_continue_fingerprint(changed_advice)
+    )
 
 
 def _seed_authoritative_session(
@@ -600,7 +716,10 @@ def test_finale_capture_requires_completed_exact_authoritative_state(
     app.dependency_overrides[get_telegram_user] = _user
     api = TestClient(app)
     stale_payload = completed.travel.model_dump(mode="json")
-    stale_payload["parts"][0]["storyText"] = "Подменённая завершённая история."
+    stale_payload["plan"]["tasks"][0]["leadIn"] = "Подменённая подводка."
+    stale_payload["parts"][0]["storyText"] = (
+        "Подменённая подводка. " + stale_payload["plan"]["tasks"][0]["situation"]
+    )
     try:
         stale = api.post(
             "/api/travel/interactive/finale/capture",
@@ -762,12 +881,15 @@ def test_start_persists_private_owner_before_return(monkeypatch, tmp_path) -> No
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 200
+    assert response.status_code == 202
+    assert response.json()["travel"]["generationStatus"] == "generating"
     travel_id = response.json()["travel"]["travelId"]
-    owner = InteractiveTravelSessionStore(owner_path).get_owner(travel_id)
+    store = InteractiveTravelSessionStore(owner_path)
+    owner = store.get_owner(travel_id)
     assert owner is not None
     assert owner.telegram_id == 42
     assert owner.cancelled_at is None
+    assert store.read_response(travel_id, 42).travel.generationStatus == "ready"
 
 
 def test_concurrent_start_commits_one_result_and_replays_afterward(
@@ -783,13 +905,12 @@ def test_concurrent_start_commits_one_result_and_replays_afterward(
         http_llm_global_concurrency=4,
         http_llm_per_user_concurrency=2,
     )
-    generation_barrier = Barrier(2)
     calls = 0
 
     def concurrent_start(**kwargs):
         nonlocal calls
         calls += 1
-        generation_barrier.wait(timeout=3)
+        Event().wait(0.1)
         return _travel_response(kwargs["travel_id"])
 
     monkeypatch.setattr("app.routers.tma.get_settings", lambda: settings)
@@ -817,13 +938,17 @@ def test_concurrent_start_commits_one_result_and_replays_afterward(
     finally:
         app.dependency_overrides.clear()
 
-    assert [response.status_code for response in concurrent_responses] == [200, 200]
+    assert [response.status_code for response in concurrent_responses] == [202, 202]
     assert concurrent_responses[0].json() == concurrent_responses[1].json()
-    assert replay.status_code == 200
-    assert replay.json() == concurrent_responses[0].json()
+    assert replay.status_code == 202
+    assert replay.json()["travel"]["generationStatus"] == "ready"
+    assert (
+        replay.json()["travel"]["travelId"]
+        == (concurrent_responses[0].json()["travel"]["travelId"])
+    )
     assert changed.status_code == 409
     assert changed.json()["detail"]["code"] == "INTERACTIVE_TRAVEL_ALREADY_ACTIVE"
-    assert calls == 2
+    assert calls == 1
 
 
 def test_concurrent_continue_accepts_one_advice_and_replays_only_that_retry(
@@ -891,7 +1016,7 @@ def test_concurrent_continue_accepts_one_advice_and_replays_only_that_retry(
     assert calls == 2
 
 
-def test_failed_start_refunds_quota_without_persisting_placeholder(
+def test_failed_background_start_refunds_quota_and_allows_retry(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -925,16 +1050,21 @@ def test_failed_start_refunds_quota_without_persisting_placeholder(
     finally:
         app.dependency_overrides.clear()
 
-    assert failed.status_code == 502
-    assert succeeded.status_code == 200
-    assert replay.status_code == 200
-    assert replay.json() == succeeded.json()
+    assert failed.status_code == 202
+    assert failed.json()["travel"]["generationStatus"] == "generating"
+    assert succeeded.status_code == 202
+    assert succeeded.json()["travel"]["generationStatus"] == "generating"
+    assert replay.status_code == 202
+    assert replay.json()["travel"]["generationStatus"] == "ready"
+    assert replay.json()["travel"]["travelId"] == succeeded.json()["travel"]["travelId"]
     assert len(travel_ids) == 2
     assert travel_ids[0] != travel_ids[1]
 
     store = InteractiveTravelSessionStore(owner_path)
     assert store.get(travel_ids[0]) is None
-    assert store.get_owner(travel_ids[0]) is None
+    failed_owner = store.get_owner(travel_ids[0])
+    assert failed_owner is not None
+    assert failed_owner.cancelled_at is not None
     with sqlite3.connect(rate_path) as connection:
         event_count = connection.execute(
             """

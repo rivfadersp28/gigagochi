@@ -1,10 +1,5 @@
 import { parseInteractiveTravelResponse } from "./apiContracts";
-import {
-  challengePortions,
-  resultPortions,
-  splitInteractiveTravelText,
-  storyPortions,
-} from "./interactiveTravelPresentation";
+import { splitInteractiveTravelText } from "./interactiveTravelPresentation";
 import {
   LocalPetMutationLockError,
   withLocalPetMutationLock,
@@ -200,7 +195,6 @@ function expectedPartForPhase(
 
 function maximumPortionIndex(
   phase: InteractiveTravelPresentationPhase,
-  part: InteractiveTravelPart,
   travel: InteractiveTravelState,
 ): number {
   if (phase === "introReaction") {
@@ -208,15 +202,6 @@ function maximumPortionIndex(
       0,
       splitInteractiveTravelText(travel.introReaction?.text ?? "").length - 1,
     );
-  }
-  if (phase === "story") {
-    return Math.max(0, storyPortions(part).length - 1);
-  }
-  if (phase === "choice") {
-    return Math.max(0, challengePortions(part).length - 1);
-  }
-  if (phase === "result") {
-    return Math.max(0, resultPortions(part).length - 1);
   }
   return 0;
 }
@@ -234,7 +219,7 @@ function parsedPresentation(
     !PRESENTATION_PHASES.has(raw.phase as InteractiveTravelPresentationPhase) ||
     !Number.isSafeInteger(raw.partNumber) ||
     Number(raw.partNumber) < 1 ||
-    Number(raw.partNumber) > 7 ||
+    Number(raw.partNumber) > 4 ||
     !Number.isSafeInteger(raw.portionIndex) ||
     Number(raw.portionIndex) < 0
   ) {
@@ -250,7 +235,7 @@ function parsedPresentation(
     partNumber: part.partNumber,
     portionIndex: Math.min(
       Number(raw.portionIndex),
-      maximumPortionIndex(phase, part, travel),
+      maximumPortionIndex(phase, travel),
     ),
   };
 }

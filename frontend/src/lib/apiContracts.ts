@@ -10,6 +10,7 @@ import type {
   ConversationHappinessDelta,
   InteractiveTravelAnimationResponse,
   InteractiveTravelIllustrationResponse,
+  InteractiveTravelPlan,
   InteractiveTravelResponse,
   InteractiveTravelSuggestionsResponse,
   LiteFactExtractionResponse,
@@ -61,6 +62,9 @@ const FACE_HINTS = new Set<NonNullable<LocalChatResponse["faceHint"]>>([
 ]);
 const INTERACTIVE_TRAVEL_ASSESSMENTS = new Set(["helpful", "harmful", "ambiguous"] as const);
 const INTERACTIVE_TRAVEL_VALENCES = new Set(["positive", "negative"] as const);
+const INTERACTIVE_TRAVEL_GENERATION_STATUSES = new Set(
+  ["generating", "ready", "failed"] as const,
+);
 const INTERACTIVE_TRAVEL_REACTION_TONES = new Set(
   [
     "enthusiastic",
@@ -111,7 +115,7 @@ const MAX_MEMORY_EXTRACTION_OPERATIONS = 12;
 const MAX_MEMORY_CONSOLIDATION_OPERATIONS = 120;
 const MAX_CHARACTER_BIBLE_BYTES = 512_000;
 const MAX_GENERATION_ERROR_BYTES = 64_000;
-const MAX_INTERACTIVE_TRAVEL_ARC_PLAN_ENTRIES = 40;
+const INTERACTIVE_TRAVEL_PLAN_VERSION = "task-bank-location-v4" as const;
 
 function fail(path: string, expectation: string): never {
   throw new ApiContractError(`${path}: ожидалось ${expectation}`);
@@ -465,8 +469,8 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
   const payload = record(value, "interactiveTravelResponse");
   const travel = record(payload.travel, "interactiveTravelResponse.travel");
   const rawParts = array(travel.parts, "interactiveTravelResponse.travel.parts");
-  if (rawParts.length < 1 || rawParts.length > 7) {
-    return fail("interactiveTravelResponse.travel.parts", "1–7 parts");
+  if (rawParts.length < 1 || rawParts.length > 4) {
+    return fail("interactiveTravelResponse.travel.parts", "1–4 parts");
   }
   const parts = rawParts.map((item, index) => {
     const partPath = `interactiveTravelResponse.travel.parts[${index}]`;
@@ -475,7 +479,7 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
       part.partNumber,
       `${partPath}.partNumber`,
       1,
-      7,
+      4,
     );
     if (partNumber !== index + 1) {
       return fail(`${partPath}.partNumber`, `${index + 1}`);
@@ -597,8 +601,8 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
     };
   });
   const completed = boolean(travel.completed, "interactiveTravelResponse.travel.completed");
-  if (completed && parts.length < 3) {
-    return fail("interactiveTravelResponse.travel.completed", "at least three completed parts");
+  if (completed && parts.length !== 4) {
+    return fail("interactiveTravelResponse.travel.completed", "exactly four completed parts");
   }
   if (completed && parts.some((part) => !part.result)) {
     return fail("interactiveTravelResponse.travel.parts", "all completed parts resolved");
@@ -611,24 +615,96 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
       return fail("interactiveTravelResponse.travel.parts", "only the final part pending");
     }
   }
-  const arcPlanValue = record(travel.arcPlan, "interactiveTravelResponse.travel.arcPlan");
-  const arcPlanEntries = Object.entries(arcPlanValue);
-  if (arcPlanEntries.length > MAX_INTERACTIVE_TRAVEL_ARC_PLAN_ENTRIES) {
-    return fail(
-      "interactiveTravelResponse.travel.arcPlan",
-      `at most ${MAX_INTERACTIVE_TRAVEL_ARC_PLAN_ENTRIES} entries`,
-    );
-  }
-  const arcPlan: Record<string, string> = Object.create(null) as Record<string, string>;
-  for (const [key, item] of arcPlanEntries) {
-    if (key === "__proto__" || key === "constructor" || key === "prototype" || key.length > 80) {
-      return fail("interactiveTravelResponse.travel.arcPlan", "safe bounded keys");
-    }
-    arcPlan[key] = boundedString(
-      item,
-      `interactiveTravelResponse.travel.arcPlan.${key}`,
-      { max: 500 },
-    );
+  const planValue = optionalRecord(travel.plan, "interactiveTravelResponse.travel.plan");
+  const plan = planValue
+    ? (() => {
+        const planPath = "interactiveTravelResponse.travel.plan";
+        if (planValue.version !== INTERACTIVE_TRAVEL_PLAN_VERSION) {
+          return fail(`${planPath}.version`, INTERACTIVE_TRAVEL_PLAN_VERSION);
+        }
+        const rawTasks = array(planValue.tasks, `${planPath}.tasks`);
+        if (rawTasks.length !== 4) {
+          return fail(`${planPath}.tasks`, "exactly 4 tasks");
+        }
+        const taskIds = new Set<string>();
+        const tasks = rawTasks.map((item, index) => {
+          const taskPath = `${planPath}.tasks[${index}]`;
+          const task = record(item, taskPath);
+          const taskId = boundedString(task.taskId, `${taskPath}.taskId`, { max: 40 });
+          if (taskIds.has(taskId)) {
+            return fail(`${planPath}.tasks`, "4 unique taskId values");
+          }
+          taskIds.add(taskId);
+          const rawChoices = array(task.choices, `${taskPath}.choices`);
+          if (rawChoices.length !== 4) {
+            return fail(`${taskPath}.choices`, "exactly 4 choices");
+          }
+          const choices = rawChoices.map((choice, choiceIndex) =>
+            boundedString(choice, `${taskPath}.choices[${choiceIndex}]`, { max: 80 }),
+          ) as [string, string, string, string];
+          if (new Set(choices.map((choice) => choice.toLowerCase())).size !== 4) {
+            return fail(`${taskPath}.choices`, "4 unique choices");
+          }
+          const correctChoice = boundedString(
+            task.correctChoice,
+            `${taskPath}.correctChoice`,
+            { max: 80 },
+          );
+          if (!choices.includes(correctChoice)) {
+            return fail(`${taskPath}.correctChoice`, "one of the task choices");
+          }
+          const rawChoiceOutcomes = optionalArray(
+            task.choiceOutcomes,
+            `${taskPath}.choiceOutcomes`,
+          );
+          if (rawChoiceOutcomes.length !== 0 && rawChoiceOutcomes.length !== 4) {
+            return fail(`${taskPath}.choiceOutcomes`, "exactly 4 outcomes when provided");
+          }
+          const choiceOutcomes = rawChoiceOutcomes.length === 4
+            ? rawChoiceOutcomes.map((outcome, outcomeIndex) =>
+                boundedString(
+                  outcome,
+                  `${taskPath}.choiceOutcomes[${outcomeIndex}]`,
+                  { max: 700 },
+                ),
+              ) as [string, string, string, string]
+            : undefined;
+          const explanation = optionalBoundedString(
+            task.explanation,
+            `${taskPath}.explanation`,
+            { max: 300 },
+          );
+          return {
+            taskId,
+            leadIn: boundedString(task.leadIn, `${taskPath}.leadIn`, { max: 200 }),
+            situation: boundedString(task.situation, `${taskPath}.situation`, { max: 300 }),
+            question: boundedString(task.question, `${taskPath}.question`, { max: 120 }),
+            choices,
+            correctChoice,
+            ...(explanation ? { explanation } : {}),
+            ...(choiceOutcomes ? { choiceOutcomes } : {}),
+          };
+        }) as InteractiveTravelPlan["tasks"];
+        return { version: INTERACTIVE_TRAVEL_PLAN_VERSION, tasks };
+      })()
+    : null;
+  if (plan) {
+    parts.forEach((part, index) => {
+      const partPath = `interactiveTravelResponse.travel.parts[${index}]`;
+      const task = plan.tasks[index];
+      if (part.storyText !== `${task.leadIn} ${task.situation}`) {
+        fail(`${partPath}.storyText`, "the corresponding planned task story");
+      }
+      if (part.challenge !== task.question) {
+        fail(`${partPath}.challenge`, "the corresponding planned task question");
+      }
+      if (
+        part.actionSuggestions.length !== task.choices.length
+        || part.actionSuggestions.some((choice, choiceIndex) => choice !== task.choices[choiceIndex])
+      ) {
+        fail(`${partPath}.actionSuggestions`, "the corresponding planned task choices");
+      }
+    });
   }
   const impactValue = optionalRecord(
     travel.statImpact,
@@ -683,6 +759,35 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
         ),
       }
     : undefined;
+  const generationStatus = optionalEnumValue(
+    travel.generationStatus,
+    INTERACTIVE_TRAVEL_GENERATION_STATUSES,
+    "interactiveTravelResponse.travel.generationStatus",
+  );
+  const generationError = optionalBoundedString(
+    travel.generationError,
+    "interactiveTravelResponse.travel.generationError",
+    { max: 300 },
+  );
+  if (generationStatus === "failed" && !generationError) {
+    return fail("interactiveTravelResponse.travel.generationError", "failed generation error");
+  }
+  if (generationStatus !== "failed" && generationError) {
+    return fail("interactiveTravelResponse.travel.generationError", "failed status");
+  }
+  const effectiveGenerationStatus = generationStatus ?? "ready";
+  if (effectiveGenerationStatus === "ready" && !plan) {
+    return fail("interactiveTravelResponse.travel.plan", "task-bank plan for ready travel");
+  }
+  if (effectiveGenerationStatus !== "ready" && plan) {
+    return fail(
+      "interactiveTravelResponse.travel.plan",
+      "no task-bank plan before successful generation",
+    );
+  }
+  if (completed && !plan) {
+    return fail("interactiveTravelResponse.travel.plan", "task-bank plan for completed travel");
+  }
   return {
     travel: {
       travelId: interactiveTravelId(
@@ -704,7 +809,9 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
         { max: 120 },
       ),
       introReaction,
-      arcPlan,
+      ...(generationStatus ? { generationStatus } : {}),
+      ...(generationError ? { generationError } : {}),
+      plan,
       parts,
       completed,
       outcomeValence,
@@ -746,7 +853,7 @@ export function parseInteractiveTravelIllustrationResponse(
       payload.partNumber,
       "interactiveTravelIllustration.partNumber",
       1,
-      7,
+      4,
     ),
     imageUrl: boundedAssetUrl(payload.imageUrl, "interactiveTravelIllustration.imageUrl"),
   };
@@ -761,7 +868,7 @@ export function parseInteractiveTravelAnimationResponse(
       payload.partNumber,
       "interactiveTravelAnimation.partNumber",
       1,
-      7,
+      4,
     ),
     videoUrl: boundedAssetUrl(payload.videoUrl, "interactiveTravelAnimation.videoUrl"),
   };

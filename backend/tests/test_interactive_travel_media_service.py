@@ -71,9 +71,11 @@ def test_interactive_travel_video_returns_url_and_writes_mp4(monkeypatch, tmp_pa
     (output_dir / "interactive-travel-part-01-video-source.png").write_bytes(sample_png_bytes())
     monkeypatch.setattr(media_service, "generated_dir_for", lambda _travel_id: output_dir)
     reservation_events: list[str] = []
+    captured_options: dict[str, str] = {}
 
     @contextmanager
-    def reserved_video(_source, **_kwargs):
+    def reserved_video(_source, **kwargs):
+        captured_options.update(kwargs)
         reservation_events.append("enter")
         try:
             yield b"video-bytes"
@@ -95,6 +97,7 @@ def test_interactive_travel_video_returns_url_and_writes_mp4(monkeypatch, tmp_pa
     assert video_url.startswith(f"/static/generated/{travel_id}/interactive-travel-part-01.mp4?v=")
     assert (output_dir / "interactive-travel-part-01.mp4").read_bytes() == b"video-bytes"
     assert reservation_events == ["enter", "exit-after-commit"]
+    assert captured_options["aspect_ratio"] == "4:5"
 
 
 def test_interactive_travel_image_replay_reuses_persisted_media(
@@ -104,11 +107,13 @@ def test_interactive_travel_image_replay_reuses_persisted_media(
     travel_id = "interactive-travel-image-replay"
     output_dir = tmp_path / travel_id
     provider_calls = 0
+    captured_options: dict[str, str] = {}
     monkeypatch.setattr(media_service, "generated_dir_for", lambda _travel_id: output_dir)
 
-    def fake_provider(**_kwargs) -> bytes:
+    def fake_provider(**kwargs) -> bytes:
         nonlocal provider_calls
         provider_calls += 1
+        captured_options.update(kwargs)
         return sample_png_bytes()
 
     monkeypatch.setattr(
@@ -132,6 +137,12 @@ def test_interactive_travel_image_replay_reuses_persisted_media(
     assert provider_calls == 1
     assert first_url == second_url
     assert first_url.endswith(f"?v={persisted_mtime}")
+    assert captured_options["image_size"] == "1024x1280"
+    assert "4:5 portrait canvas" in captured_options["composition_direction"]
+    with Image.open(output_dir / "interactive-travel-part-01.png") as poster:
+        assert poster.size == (400, 500)
+    with Image.open(output_dir / "interactive-travel-part-01-video-source.png") as video_source:
+        assert video_source.size == (720, 900)
     assert not list(output_dir.glob(".*.tmp"))
 
 

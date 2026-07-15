@@ -25,10 +25,10 @@ from app.services.background_story_service import (
 )
 from app.services.image_service import generated_dir_for
 
-INTERACTIVE_TRAVEL_BACKGROUND_SIZE = (402, 874)
-INTERACTIVE_TRAVEL_VIDEO_SOURCE_SIZE = (720, 1280)
-INTERACTIVE_TRAVEL_VIDEO_ASPECT_RATIO = "9:16"
-INTERACTIVE_TRAVEL_PROVIDER_SIZE = "1024x1536"
+INTERACTIVE_TRAVEL_BACKGROUND_SIZE = (400, 500)
+INTERACTIVE_TRAVEL_VIDEO_SOURCE_SIZE = (720, 900)
+INTERACTIVE_TRAVEL_VIDEO_ASPECT_RATIO = "4:5"
+INTERACTIVE_TRAVEL_PROVIDER_SIZE = "1024x1280"
 _INTERACTIVE_TRAVEL_LOCK_BUCKET_COUNT = 256
 _INTERACTIVE_TRAVEL_CANCEL_RETENTION_SECONDS = 180 * 24 * 60 * 60
 _INTERACTIVE_TRAVEL_FILE_LOCKS = {
@@ -37,12 +37,12 @@ _INTERACTIVE_TRAVEL_FILE_LOCKS = {
 }
 
 INTERACTIVE_TRAVEL_VERTICAL_COMPOSITION = """
-VERTICAL FORMAT — COMPOSITION ONLY:
-- Compose for a tall 2:3 provider canvas that will be center-cropped to 201:437.
+PORTRAIT 4:5 FORMAT — COMPOSITION ONLY:
+- Compose directly for a 4:5 portrait canvas matching the travel media container.
 - Keep the complete main character, the decisive action and every required story object inside
-  the central 65% of the canvas width.
-- Use the outer side areas only for expendable atmosphere and scenery; do not put required objects
-  or body parts near the left or right edge.
+  the central 80% of the canvas width and height.
+- Use the outer edges only for expendable atmosphere and scenery; do not put required objects
+  or body parts near any edge.
 - Preserve the same art direction, materials, palette, lighting and character treatment as the
   standard story illustration. Change framing only.
 """.strip()

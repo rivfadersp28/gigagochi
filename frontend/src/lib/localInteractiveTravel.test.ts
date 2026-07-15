@@ -9,39 +9,23 @@ import {
   writeLocalInteractiveTravel,
   writeLocalInteractiveTravelDurably,
 } from "./localInteractiveTravel";
+import {
+  interactiveTravelPartFixture,
+  interactiveTravelPlanFixture,
+} from "./interactiveTravelTestFixtures";
 import type { InteractiveTravelState } from "./types";
 
 function completedTravel(): InteractiveTravelState {
+  const plan = interactiveTravelPlanFixture();
   return {
-    travelId: "interactive-travel-seven-parts",
+    travelId: "interactive-travel-four-parts",
     generatedAt: "2026-07-14T12:00:00Z",
     destination: "облачный город",
     overallTitle: "Часы облачного города",
-    arcPlan: { goal: "Запустить часы" },
-    parts: Array.from({ length: 7 }, (_, index) => ({
-      partNumber: index + 1,
-      title: `Часть ${index + 1}`,
-      storyText: `Ситуация ${index + 1}.`,
-      transition:
-        index === 0
-          ? undefined
-          : {
-              elapsedHours: 4,
-              summary: "За несколько часов конфликт изменился.",
-            },
-      challenge: "Что делать дальше?",
-      actionSuggestions: ["Идти дальше", "Осмотреться", "Позвать на помощь"],
-      answer: `Ответ ${index + 1}`,
-      result: {
-        text: `Результат ${index + 1}.`,
-        adviceAssessment: "helpful" as const,
-        reaction: "Так и поступлю!",
-        reactionTone: "determined" as const,
-        consequence: "История изменилась.",
-        outcomeValence: "positive" as const,
-        statImpacts: [],
-      },
-    })),
+    plan,
+    parts: ([0, 1, 2, 3] as const).map((index) =>
+      interactiveTravelPartFixture(plan, index, true),
+    ),
     completed: true,
     outcomeValence: "positive",
   };
@@ -56,7 +40,6 @@ function inProgressTravel(): InteractiveTravelState {
       index === 2
         ? {
             ...part,
-            storyText: "Первая фраза. Вторая фраза.",
             answer: undefined,
             result: undefined,
           }
@@ -100,14 +83,14 @@ describe("local interactive travel storage", () => {
     clearLocalInteractiveTravel("pet-1");
   });
 
-  it("keeps applied results through the seventh part and ignores invalid indexes", () => {
+  it("keeps applied results through the fourth part and ignores invalid indexes", () => {
     writeLocalInteractiveTravel("pet-1", {
       travel: completedTravel(),
-      appliedResultParts: [1, 5, 6, 7],
-      presentation: { phase: "completed", partNumber: 7, portionIndex: 0 },
+      appliedResultParts: [1, 4, 5, 7],
+      presentation: { phase: "completed", partNumber: 4, portionIndex: 0 },
     });
 
-    expect(readLocalInteractiveTravel("pet-1")?.appliedResultParts).toEqual([1, 5, 6, 7]);
+    expect(readLocalInteractiveTravel("pet-1")?.appliedResultParts).toEqual([1, 4]);
   });
 
   it("keeps applied results only for existing resolved parts", () => {
@@ -160,13 +143,13 @@ describe("local interactive travel storage", () => {
       phase: "story" as const,
       partNumber: 3,
       portionIndex: 99,
-      expectedPortionIndex: 1,
+      expectedPortionIndex: 0,
     },
     {
       phase: "result" as const,
       partNumber: 2,
       portionIndex: 99,
-      expectedPortionIndex: 1,
+      expectedPortionIndex: 0,
     },
     {
       phase: "choice" as const,
@@ -193,12 +176,12 @@ describe("local interactive travel storage", () => {
     writeLocalInteractiveTravel("pet-1", {
       travel: completedTravel(),
       appliedResultParts: [],
-      presentation: { phase: "choice", partNumber: 7, portionIndex: 0 },
+      presentation: { phase: "choice", partNumber: 4, portionIndex: 0 },
     });
 
     expect(readLocalInteractiveTravel("pet-1")?.presentation).toEqual({
       phase: "completed",
-      partNumber: 7,
+      partNumber: 4,
       portionIndex: 0,
     });
   });
@@ -206,7 +189,7 @@ describe("local interactive travel storage", () => {
   it("does not restore an incompatible v1 story", () => {
     window.localStorage.setItem(
       "gigagochi.interactive-travel.v1:pet-1",
-      JSON.stringify({ travel: completedTravel(), appliedImpactParts: [1, 2, 3] }),
+      JSON.stringify({ travel: completedTravel(), appliedImpactParts: [1, 2, 3, 4] }),
     );
 
     expect(readLocalInteractiveTravel("pet-1")).toBeNull();
@@ -215,12 +198,12 @@ describe("local interactive travel storage", () => {
   it("migrates a v2 story to a safe presentation phase", () => {
     window.localStorage.setItem(
       "gigagochi.interactive-travel.v2:pet-1",
-      JSON.stringify({ travel: completedTravel(), appliedResultParts: [1, 2, 3] }),
+      JSON.stringify({ travel: completedTravel(), appliedResultParts: [1, 2, 3, 4] }),
     );
 
     expect(readLocalInteractiveTravel("pet-1")?.presentation).toEqual({
       phase: "completed",
-      partNumber: 7,
+      partNumber: 4,
       portionIndex: 0,
     });
   });

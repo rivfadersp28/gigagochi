@@ -498,6 +498,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/travel/interactive/{travel_id}/status": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Interactive Travel Status */
+        readonly get: operations["interactive_travel_status_api_travel_interactive__travel_id__status_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/health": {
         readonly parameters: {
             readonly query?: never;
@@ -672,14 +689,11 @@ export interface components {
         readonly ContinueInteractiveTravelRequest: {
             /** Advice */
             readonly advice: string;
-            /** History */
-            readonly history?: readonly components["schemas"]["LocalChatHistoryItem"][];
             /**
              * Includedebug
              * @default false
              */
             readonly includeDebug: boolean;
-            readonly memoryContext?: components["schemas"]["LocalPetMemoryContext"] | null;
             readonly pet: components["schemas"]["LocalPetChatContext"];
             readonly travel: components["schemas"]["InteractiveTravelState"];
         };
@@ -899,6 +913,17 @@ export interface components {
             readonly title: string;
             readonly transition?: components["schemas"]["InteractiveTravelTransition"] | null;
         };
+        /** InteractiveTravelPlan */
+        readonly InteractiveTravelPlan: {
+            /** Tasks */
+            readonly tasks: readonly components["schemas"]["InteractiveTravelTaskPlan"][];
+            /**
+             * Version
+             * @default task-bank-location-v4
+             * @constant
+             */
+            readonly version: "task-bank-location-v4";
+        };
         /** InteractiveTravelResponse */
         readonly InteractiveTravelResponse: {
             readonly debug?: components["schemas"]["LocalChatDebug"] | null;
@@ -944,10 +969,6 @@ export interface components {
         };
         /** InteractiveTravelState */
         readonly InteractiveTravelState: {
-            /** Arcplan */
-            readonly arcPlan: {
-                readonly [key: string]: string;
-            };
             /**
              * Completed
              * @default false
@@ -960,6 +981,14 @@ export interface components {
              * Format: date-time
              */
             readonly generatedAt: string;
+            /** Generationerror */
+            readonly generationError?: string | null;
+            /**
+             * Generationstatus
+             * @default ready
+             * @enum {string}
+             */
+            readonly generationStatus: "generating" | "ready" | "failed";
             readonly introReaction?: components["schemas"]["InteractiveTravelIntroReaction"] | null;
             /** Outcomevalence */
             readonly outcomeValence?: ("positive" | "negative") | null;
@@ -967,6 +996,7 @@ export interface components {
             readonly overallTitle: string;
             /** Parts */
             readonly parts: readonly components["schemas"]["InteractiveTravelPart"][];
+            readonly plan?: components["schemas"]["InteractiveTravelPlan"] | null;
             readonly statImpact?: components["schemas"]["InteractiveTravelStatImpact"] | null;
             /** Travelid */
             readonly travelId: string;
@@ -985,6 +1015,25 @@ export interface components {
             readonly debug?: components["schemas"]["LocalChatDebug"] | null;
             /** Destinations */
             readonly destinations: readonly string[];
+        };
+        /** InteractiveTravelTaskPlan */
+        readonly InteractiveTravelTaskPlan: {
+            /** Choiceoutcomes */
+            readonly choiceOutcomes?: readonly string[];
+            /** Choices */
+            readonly choices: readonly string[];
+            /** Correctchoice */
+            readonly correctChoice: string;
+            /** Explanation */
+            readonly explanation?: string | null;
+            /** Leadin */
+            readonly leadIn: string;
+            /** Question */
+            readonly question: string;
+            /** Situation */
+            readonly situation: string;
+            /** Taskid */
+            readonly taskId: string;
         };
         /** InteractiveTravelTransition */
         readonly InteractiveTravelTransition: {
@@ -1429,14 +1478,11 @@ export interface components {
         readonly StartInteractiveTravelRequest: {
             /** Destination */
             readonly destination: string;
-            /** History */
-            readonly history?: readonly components["schemas"]["LocalChatHistoryItem"][];
             /**
              * Includedebug
              * @default false
              */
             readonly includeDebug: boolean;
-            readonly memoryContext?: components["schemas"]["LocalPetMemoryContext"] | null;
             readonly pet: components["schemas"]["LocalPetChatContext"];
         };
         /** TmaCapabilitiesResponse */
@@ -2338,7 +2384,7 @@ export interface operations {
         };
         readonly responses: {
             /** @description Successful Response */
-            readonly 200: {
+            readonly 202: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -2443,6 +2489,37 @@ export interface operations {
                     readonly "application/json": {
                         readonly [key: string]: boolean;
                     };
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly interactive_travel_status_api_travel_interactive__travel_id__status_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly travel_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InteractiveTravelResponse"];
                 };
             };
             /** @description Validation Error */

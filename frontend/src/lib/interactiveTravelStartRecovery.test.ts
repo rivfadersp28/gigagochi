@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { ApiError } from "./apiTransport";
+import {
+  interactiveTravelPartFixture,
+  interactiveTravelPlanFixture,
+} from "./interactiveTravelTestFixtures";
 import { startInteractiveTravelWithRecovery } from "./interactiveTravelStartRecovery";
 import {
   clearPendingInteractiveTravelOperationsForTests,
@@ -31,6 +35,7 @@ const pet: LocalPetState = {
   stats: { hunger: 80, happiness: 80, energy: 80 },
 };
 
+const responsePlan = interactiveTravelPlanFixture();
 const response = {
   travel: {
     travelId: "interactive-travel-new-session",
@@ -38,8 +43,8 @@ const response = {
     destination: "маяк",
     overallTitle: "Путь к маяку",
     introReaction: { text: "В путь!", tone: "enthusiastic" },
-    arcPlan: { goal: "Добраться до маяка" },
-    parts: [],
+    plan: responsePlan,
+    parts: [interactiveTravelPartFixture(responsePlan, 0)],
     completed: false,
   },
 } as InteractiveTravelResponse;
@@ -67,7 +72,7 @@ it("durably cancels the owner-bound stale session and retries start once", async
       { travelId: activeTravelId },
     ))
     .mockResolvedValueOnce(response);
-  const options = { includeDebug: false, history: [] };
+  const options = { includeDebug: false };
 
   await expect(startInteractiveTravelWithRecovery("маяк", pet, options))
     .resolves.toBe(response);

@@ -39,7 +39,21 @@ def _completed_travel() -> InteractiveTravelState:
             "generatedAt": "2026-07-15T10:00:00Z",
             "destination": "облачный город",
             "overallTitle": "Путь к башне",
-            "arcPlan": {"goal": "добраться до башни"},
+            "plan": {
+                "version": "task-bank-location-v4",
+                "tasks": [
+                    {
+                        "taskId": f"test-{part_number}",
+                        "leadIn": "Я иду к",
+                        "situation": "башне.",
+                        "question": "Найти безопасную дорогу.",
+                        "choices": ["Осмотреться.", "Повернуть.", "Ждать.", "Вернуться."],
+                        "correctChoice": "Осмотреться.",
+                        "explanation": "Осмотр помогает найти безопасную дорогу.",
+                    }
+                    for part_number in range(1, 5)
+                ],
+            },
             "parts": [
                 {
                     "partNumber": part_number,
@@ -51,11 +65,16 @@ def _completed_travel() -> InteractiveTravelState:
                         else {"elapsedHours": 1, "summary": "Прошёл один час."}
                     ),
                     "challenge": "Найти безопасную дорогу.",
-                    "actionSuggestions": [],
+                    "actionSuggestions": [
+                        "Осмотреться.",
+                        "Повернуть.",
+                        "Ждать.",
+                        "Вернуться.",
+                    ],
                     "answer": "Осмотреться.",
                     "result": result,
                 }
-                for part_number in range(1, 4)
+                for part_number in range(1, 5)
             ],
             "completed": True,
             "outcomeValence": "positive",

@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "./apiTransport";
 import {
+  interactiveTravelPartFixture,
+  interactiveTravelPlanFixture,
+} from "./interactiveTravelTestFixtures";
+import {
   clearPendingInteractiveTravelOperationsForTests,
   enqueueInteractiveTravelCancel,
   enqueueInteractiveTravelCapture,
@@ -21,33 +25,16 @@ vi.mock("./api", () => apiMocks);
 function completedTravel(
   travelId = "interactive-travel-queue-1",
 ): InteractiveTravelState {
+  const plan = interactiveTravelPlanFixture();
   return {
     travelId,
     generatedAt: "2026-07-15T12:00:00Z",
     destination: "облачный город",
     overallTitle: "Часы облачного города",
-    arcPlan: { goal: "Запустить часы" },
-    parts: Array.from({ length: 3 }, (_, index) => ({
-      partNumber: index + 1,
-      title: `Часть ${index + 1}`,
-      storyText: `Событие ${index + 1}.`,
-      transition:
-        index === 0
-          ? undefined
-          : { elapsedHours: 2, summary: "Прошло два часа." },
-      challenge: "Что делать дальше?",
-      actionSuggestions: ["Идти дальше"],
-      answer: "Идти дальше",
-      result: {
-        text: "Путь продолжился.",
-        adviceAssessment: "helpful" as const,
-        reaction: "Хороший план!",
-        reactionTone: "enthusiastic" as const,
-        consequence: "Часы снова идут.",
-        outcomeValence: "positive" as const,
-        statImpacts: [],
-      },
-    })),
+    plan,
+    parts: ([0, 1, 2, 3] as const).map((index) =>
+      interactiveTravelPartFixture(plan, index, true),
+    ),
     completed: true,
     outcomeValence: "positive",
   };

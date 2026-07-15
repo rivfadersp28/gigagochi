@@ -3,7 +3,9 @@
   inset: 0;
   width: 100%;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
   background: #000;
   color: #fff;
   font-family: var(--font-open-runde), "SF Pro Rounded", ui-rounded, system-ui, sans-serif;
@@ -59,6 +61,235 @@
 
 .backgroundVideo {
   transform: none;
+}
+
+.storyScene {
+  width: 100%;
+  height: auto;
+  min-height: max(100%, 874px);
+  overflow: hidden;
+  background: #000;
+}
+
+.storyBackdrop {
+  position: fixed;
+  z-index: -4;
+  top: -325px;
+  left: 50%;
+  display: block;
+  width: 580px;
+  height: 1209px;
+  max-width: none;
+  transform: translateX(-50%);
+  border-radius: 32px;
+  object-fit: cover;
+  opacity: 0.5;
+  filter: blur(62px);
+  pointer-events: none;
+  user-select: none;
+}
+
+.storyContent {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 402px;
+  max-width: 100%;
+  min-height: 874px;
+  margin: 0 auto;
+  padding-top: 71px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.storyMediaFrame {
+  position: relative;
+  width: 382px;
+  height: 456px;
+  flex: 0 0 456px;
+  overflow: hidden;
+  border-radius: 24px;
+  background: #242424;
+  isolation: isolate;
+}
+
+.storyPoster,
+.storyVideo {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.storyPoster {
+  z-index: 1;
+  max-width: none;
+  pointer-events: none;
+  user-select: none;
+}
+
+.storyVideo {
+  z-index: 2;
+  border-radius: inherit;
+  background: transparent;
+  opacity: 1;
+  transition: opacity 180ms ease-out;
+}
+
+.storyVideoPending {
+  opacity: 0;
+}
+
+.storyTextFrame {
+  box-sizing: border-box;
+  width: 362px;
+  min-height: 146px;
+  margin-top: 34px;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 13px;
+  color: #fff;
+  font-family: var(--font-open-runde), "SF Pro Rounded", ui-rounded, system-ui, sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: normal;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.storyTextFrame p {
+  margin: 0;
+}
+
+.storyAnimatedWord {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.storyAnimatedWhitespace {
+  white-space: pre;
+}
+
+.storyAnimatedCharacter {
+  display: inline-block;
+  opacity: 0;
+  backface-visibility: hidden;
+  transform: translate3d(0, 12px, 0);
+  transform-origin: 50% 55%;
+  will-change: transform, opacity;
+  animation: storyCharacterRise 300ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+@keyframes storyCharacterRise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.storyAnswersScroll {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 46px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0 0 59px 14px;
+  flex: 0 0 auto;
+  scroll-padding-left: 14px;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: none;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+}
+
+.storyAnswersScroll::-webkit-scrollbar {
+  display: none;
+}
+
+.storyAnswersRow {
+  display: flex;
+  width: max-content;
+  gap: 19px;
+  padding-right: 14px;
+}
+
+.storyAnswerButton,
+.storyResultButton {
+  box-sizing: border-box;
+  height: 62px;
+  border: 2px solid rgb(0 0 0 / 4%);
+  border-radius: 24px;
+  padding: 14px 17px 16px;
+  color: #e8e8e8;
+  background: rgb(255 255 255 / 20%);
+  box-shadow:
+    0 2px 4px rgb(0 0 0 / 0%) inset,
+    0 -3.768px 8px rgb(1 1 1 / 40%) inset;
+  font-family: "SF Pro Rounded", "SF Pro Display", var(--font-open-runde), ui-rounded,
+    system-ui, sans-serif;
+  font-size: 23.445px;
+  font-weight: 800;
+  line-height: normal;
+  white-space: nowrap;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  touch-action: manipulation;
+  transition:
+    transform 140ms ease,
+    opacity 140ms ease;
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.storyAnswerButton {
+  flex: 0 0 auto;
+  animation: storyAnswerSpringIn 300ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes storyAnswerSpringIn {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.storyAnswerButton:active,
+.storyResultButton:active {
+  transform: scale(0.97);
+}
+
+.storyAnswerButton:disabled,
+.storyResultButton:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.storyResultActions {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 46px;
+  padding: 0 20px 59px;
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.storyResultButton {
+  min-width: 130px;
 }
 
 .backButton,
@@ -314,6 +545,8 @@
 .primaryButton:focus-visible,
 .nextButton:focus-visible,
 .actionButton:focus-visible,
+.storyAnswerButton:focus-visible,
+.storyResultButton:focus-visible,
 .completionButton:focus-visible,
 .promptInput:focus-visible {
   outline: 3px solid #fff;
@@ -544,7 +777,20 @@
   .primaryButton,
   .nextButton,
   .actionButton,
+  .storyAnswerButton,
+  .storyResultButton,
   .completionButton {
     transition: none;
+  }
+
+  .storyVideo {
+    transition: none;
+  }
+
+  .storyAnimatedCharacter,
+  .storyAnswerButton {
+    opacity: 1;
+    transform: none;
+    animation: none;
   }
 }

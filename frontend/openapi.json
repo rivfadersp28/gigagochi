@@ -423,7 +423,7 @@
       "AnimateInteractiveTravelPartRequest": {
         "properties": {
           "partNumber": {
-            "maximum": 7.0,
+            "maximum": 4.0,
             "minimum": 1.0,
             "title": "Partnumber",
             "type": "integer"
@@ -463,28 +463,10 @@
             "title": "Advice",
             "type": "string"
           },
-          "history": {
-            "items": {
-              "$ref": "#/components/schemas/LocalChatHistoryItem"
-            },
-            "maxItems": 12,
-            "title": "History",
-            "type": "array"
-          },
           "includeDebug": {
             "default": false,
             "title": "Includedebug",
             "type": "boolean"
-          },
-          "memoryContext": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/LocalPetMemoryContext"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "pet": {
             "$ref": "#/components/schemas/LocalPetChatContext"
@@ -995,7 +977,7 @@
             "type": "string"
           },
           "partNumber": {
-            "maximum": 7.0,
+            "maximum": 4.0,
             "minimum": 1.0,
             "title": "Partnumber",
             "type": "integer"
@@ -1037,7 +1019,7 @@
       "InteractiveTravelAnimationResponse": {
         "properties": {
           "partNumber": {
-            "maximum": 7.0,
+            "maximum": 4.0,
             "minimum": 1.0,
             "title": "Partnumber",
             "type": "integer"
@@ -1084,7 +1066,7 @@
             "type": "string"
           },
           "partNumber": {
-            "maximum": 7.0,
+            "maximum": 4.0,
             "minimum": 1.0,
             "title": "Partnumber",
             "type": "integer"
@@ -1184,7 +1166,7 @@
             "type": "string"
           },
           "partNumber": {
-            "maximum": 7.0,
+            "maximum": 4.0,
             "minimum": 1.0,
             "title": "Partnumber",
             "type": "integer"
@@ -1229,6 +1211,30 @@
           "challenge"
         ],
         "title": "InteractiveTravelPart",
+        "type": "object"
+      },
+      "InteractiveTravelPlan": {
+        "properties": {
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/InteractiveTravelTaskPlan"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Tasks",
+            "type": "array"
+          },
+          "version": {
+            "const": "task-bank-location-v4",
+            "default": "task-bank-location-v4",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tasks"
+        ],
+        "title": "InteractiveTravelPlan",
         "type": "object"
       },
       "InteractiveTravelResponse": {
@@ -1357,19 +1363,6 @@
       },
       "InteractiveTravelState": {
         "properties": {
-          "arcPlan": {
-            "additionalProperties": {
-              "maxLength": 500,
-              "type": "string"
-            },
-            "maxProperties": 40,
-            "propertyNames": {
-              "maxLength": 80,
-              "minLength": 1
-            },
-            "title": "Arcplan",
-            "type": "object"
-          },
           "completed": {
             "default": false,
             "title": "Completed",
@@ -1384,6 +1377,29 @@
           "generatedAt": {
             "format": "date-time",
             "title": "Generatedat",
+            "type": "string"
+          },
+          "generationError": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generationerror"
+          },
+          "generationStatus": {
+            "default": "ready",
+            "enum": [
+              "generating",
+              "ready",
+              "failed"
+            ],
+            "title": "Generationstatus",
             "type": "string"
           },
           "introReaction": {
@@ -1421,10 +1437,20 @@
             "items": {
               "$ref": "#/components/schemas/InteractiveTravelPart"
             },
-            "maxItems": 7,
+            "maxItems": 4,
             "minItems": 1,
             "title": "Parts",
             "type": "array"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InteractiveTravelPlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "statImpact": {
             "anyOf": [
@@ -1449,7 +1475,6 @@
           "generatedAt",
           "destination",
           "overallTitle",
-          "arcPlan",
           "parts"
         ],
         "title": "InteractiveTravelState",
@@ -1500,6 +1525,84 @@
           "destinations"
         ],
         "title": "InteractiveTravelSuggestionsResponse",
+        "type": "object"
+      },
+      "InteractiveTravelTaskPlan": {
+        "properties": {
+          "choiceOutcomes": {
+            "items": {
+              "maxLength": 700,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Choiceoutcomes",
+            "type": "array"
+          },
+          "choices": {
+            "items": {
+              "maxLength": 80,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Choices",
+            "type": "array"
+          },
+          "correctChoice": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Correctchoice",
+            "type": "string"
+          },
+          "explanation": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explanation"
+          },
+          "leadIn": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Leadin",
+            "type": "string"
+          },
+          "question": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          },
+          "situation": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Situation",
+            "type": "string"
+          },
+          "taskId": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Taskid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId",
+          "leadIn",
+          "situation",
+          "question",
+          "choices",
+          "correctChoice"
+        ],
+        "title": "InteractiveTravelTaskPlan",
         "type": "object"
       },
       "InteractiveTravelTransition": {
@@ -3138,28 +3241,10 @@
             "title": "Destination",
             "type": "string"
           },
-          "history": {
-            "items": {
-              "$ref": "#/components/schemas/LocalChatHistoryItem"
-            },
-            "maxItems": 12,
-            "title": "History",
-            "type": "array"
-          },
           "includeDebug": {
             "default": false,
             "title": "Includedebug",
             "type": "boolean"
-          },
-          "memoryContext": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/LocalPetMemoryContext"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "pet": {
             "$ref": "#/components/schemas/LocalPetChatContext"
@@ -4435,7 +4520,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "202": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4593,6 +4678,51 @@
           }
         },
         "summary": "Interactive Travel Debug Reset",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/interactive/{travel_id}/status": {
+      "get": {
+        "operationId": "interactive_travel_status_api_travel_interactive__travel_id__status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "travel_id",
+            "required": true,
+            "schema": {
+              "maxLength": 160,
+              "minLength": 20,
+              "pattern": "^interactive-travel-[A-Za-z0-9_-]+$",
+              "title": "Travel Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InteractiveTravelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interactive Travel Status",
         "tags": [
           "telegram-mini-app"
         ]

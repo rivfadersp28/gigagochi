@@ -672,11 +672,7 @@ export function getInteractiveTravelSuggestions(
 export async function startInteractiveTravel(
   destination: string,
   pet: LocalPetState,
-  options: {
-    includeDebug?: boolean;
-    history?: LocalChatMessage[];
-    memoryContext?: LocalPetMemoryContext;
-  } = {},
+  options: { includeDebug?: boolean } = {},
 ): Promise<InteractiveTravelResponse> {
   const response = await request(
     "/api/travel/interactive/start",
@@ -686,10 +682,23 @@ export async function startInteractiveTravel(
       body: {
         destination: destination.trim().slice(0, 500),
         includeDebug: options.includeDebug ?? false,
-        history: chatHistoryForApi(options.history ?? []),
-        memoryContext: memoryContextForApi(options.memoryContext),
         pet: interactiveTravelPetContextForApi(pet),
       },
+    },
+    parseInteractiveTravelResponse,
+  );
+  return withPublicInteractiveTravelImages(response);
+}
+
+export async function getInteractiveTravelStatus(
+  travelId: string,
+): Promise<InteractiveTravelResponse> {
+  const response = await request(
+    `/api/travel/interactive/${encodeURIComponent(travelId)}/status`,
+    {
+      method: "GET",
+      headers: tmaAuthHeaders(),
+      timeoutMs: 15_000,
     },
     parseInteractiveTravelResponse,
   );
@@ -700,11 +709,7 @@ export async function continueInteractiveTravel(
   travel: InteractiveTravelState,
   advice: string,
   pet: LocalPetState,
-  options: {
-    includeDebug?: boolean;
-    history?: LocalChatMessage[];
-    memoryContext?: LocalPetMemoryContext;
-  } = {},
+  options: { includeDebug?: boolean } = {},
 ): Promise<InteractiveTravelResponse> {
   const response = await request(
     "/api/travel/interactive/continue",
@@ -715,8 +720,6 @@ export async function continueInteractiveTravel(
         travel,
         advice: advice.trim().slice(0, 1000),
         includeDebug: options.includeDebug ?? false,
-        history: chatHistoryForApi(options.history ?? []),
-        memoryContext: memoryContextForApi(options.memoryContext),
         pet: interactiveTravelPetContextForApi(pet),
       },
     },

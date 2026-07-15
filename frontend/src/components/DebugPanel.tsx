@@ -44,6 +44,9 @@ type DebugPanelProps = {
   isPetDead?: boolean;
   onOpenTestPet?: () => void;
   onOpenTravelDemo?: () => void;
+  firstSessionEnabled?: boolean;
+  onToggleFirstSession?: () => void;
+  onRestartFirstSession?: () => void;
   canShowSadAsset?: boolean;
   canShowHappyAsset?: boolean;
   visualModeOverride?: PetVisualMode | null;
@@ -405,6 +408,9 @@ export function DebugPanel({
   isPetDead = false,
   onOpenTestPet,
   onOpenTravelDemo,
+  firstSessionEnabled = false,
+  onToggleFirstSession,
+  onRestartFirstSession,
   canShowSadAsset = false,
   canShowHappyAsset = false,
   visualModeOverride = null,
@@ -537,8 +543,29 @@ export function DebugPanel({
             </div>
           </div>
 
-          {onResetPetStats || onKillPet || onRevivePet || onOpenTestPet || onOpenTravelDemo || onVisualModeOverrideChange || onVisualProviderChange ? (
+          {onResetPetStats || onKillPet || onRevivePet || onOpenTestPet || onOpenTravelDemo || onToggleFirstSession || onRestartFirstSession || onVisualModeOverrideChange || onVisualProviderChange ? (
             <div className="mt-4 grid gap-2">
+              {onToggleFirstSession ? (
+                <button
+                  type="button"
+                  aria-pressed={firstSessionEnabled}
+                  onClick={onToggleFirstSession}
+                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-[8px] bg-black/[0.055] px-3 text-[12px] font-medium leading-none text-black/62 transition-colors hover:bg-black/[0.085] hover:text-black/78 focus:outline-none focus:ring-2 focus:ring-black/10"
+                >
+                  <FlaskConical className="size-3.5" aria-hidden="true" />
+                  <span>Первая сессия: {firstSessionEnabled ? "включена" : "выключена"}</span>
+                </button>
+              ) : null}
+              {onRestartFirstSession && firstSessionEnabled ? (
+                <button
+                  type="button"
+                  onClick={onRestartFirstSession}
+                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-[8px] bg-black/[0.055] px-3 text-[12px] font-medium leading-none text-black/62 transition-colors hover:bg-black/[0.085] hover:text-black/78 focus:outline-none focus:ring-2 focus:ring-black/10"
+                >
+                  <RotateCcw className="size-3.5" aria-hidden="true" />
+                  <span>Перезапустить первую сессию</span>
+                </button>
+              ) : null}
               {onOpenTravelDemo ? (
                 <button
                   type="button"

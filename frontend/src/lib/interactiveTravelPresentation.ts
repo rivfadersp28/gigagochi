@@ -23,6 +23,32 @@ export function splitInteractiveTravelText(text: string): string[] {
   return splitPetReplySentences(text);
 }
 
+export function interactiveTravelTextParagraphs(text: string): string[] {
+  const blocks = text
+    .split(/\n\s*\n/u)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  if (typeof Intl.Segmenter !== "function") {
+    return blocks;
+  }
+
+  const segmenter = new Intl.Segmenter("ru", { granularity: "sentence" });
+  return blocks.flatMap((block) =>
+    [...segmenter.segment(block)]
+      .map(({ segment }) => segment.trim())
+      .filter(Boolean),
+  );
+}
+
+export function storyAndChallengeParagraphs(part: InteractiveTravelPart): string[] {
+  return [part.storyText, part.challenge].flatMap(interactiveTravelTextParagraphs);
+}
+
+export function resolvedResultParagraphs(part: InteractiveTravelPart): string[] {
+  return part.result ? interactiveTravelTextParagraphs(part.result.text) : [];
+}
+
 export function patchInteractiveTravelPartVideo(
   travel: InteractiveTravelState,
   partNumber: number,
@@ -41,22 +67,6 @@ export function patchInteractiveTravelPartVideo(
     return { ...part, backgroundVideoUrl };
   });
   return changed ? { ...travel, parts } : travel;
-}
-
-export function storyPortions(part: InteractiveTravelPart): string[] {
-  return splitInteractiveTravelText(part.storyText);
-}
-
-export function challengePortions(part: InteractiveTravelPart): string[] {
-  return splitInteractiveTravelText(part.challenge);
-}
-
-export function resultPortions(part: InteractiveTravelPart): string[] {
-  if (!part.result) {
-    return [];
-  }
-
-  return splitInteractiveTravelText(part.result.text);
 }
 
 export function currentPendingPart(

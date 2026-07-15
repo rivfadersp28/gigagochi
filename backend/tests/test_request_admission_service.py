@@ -54,10 +54,8 @@ def test_all_public_sync_provider_routes_have_async_admission_dependency() -> No
         "/api/chat/memory-consolidate": tma._llm_request_admission,
         "/api/chat/proactive": tma._llm_request_admission,
         "/api/travel/interactive/suggestions": tma._llm_request_admission,
-        "/api/travel/interactive/start": tma._llm_request_admission,
         "/api/travel/interactive/illustrate": tma._media_request_admission,
         "/api/travel/interactive/animate": tma._media_request_admission,
-        "/api/travel/interactive/continue": tma._llm_request_admission,
     }
     routes = {
         route.path: route

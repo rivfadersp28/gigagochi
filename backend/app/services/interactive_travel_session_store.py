@@ -546,6 +546,106 @@ class InteractiveTravelSessionStore:
                 raise
         return InteractiveTravelCommitResult(response, committed=True)
 
+    def read_response(self, travel_id: str, telegram_id: int) -> InteractiveTravelResponse:
+        with self._connect() as connection:
+            self._assert_active_owner_row(
+                self._owner_row(connection, travel_id),
+                travel_id,
+                telegram_id,
+            )
+            row = self._session_row(connection, travel_id)
+        if row is None:
+            raise InteractiveTravelStateConflictError(travel_id)
+        if int(row[0]) != telegram_id:
+            raise InteractiveTravelSessionOwnerMismatchError(travel_id)
+        return _parse_response(row[4])
+
+    def replace_start_generation(self, response: InteractiveTravelResponse) -> bool:
+        """Atomically replace a generating shell with its completed story plan."""
+
+        if response.travel.generationStatus != "ready":
+            raise ValueError("completed interactive travel start must be ready")
+        travel_id = response.travel.travelId
+        state_json = _canonical_json(response.travel.model_dump(mode="json"))
+        state_fingerprint = interactive_travel_state_fingerprint(response.travel)
+        response_json = _response_json(response)
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._session_row(connection, travel_id)
+                if row is None:
+                    connection.commit()
+                    return False
+                current = _parse_response(row[4])
+                if current.travel.generationStatus != "generating":
+                    connection.commit()
+                    return False
+                cursor = connection.execute(
+                    """
+                    UPDATE interactive_travel_sessions
+                    SET state_json = ?, state_fingerprint = ?, response_json = ?, updated_at = ?
+                    WHERE travel_id = ? AND state_fingerprint = ? AND completed_at IS NULL
+                    """,
+                    (
+                        state_json,
+                        state_fingerprint,
+                        response_json,
+                        now,
+                        travel_id,
+                        str(row[3]),
+                    ),
+                )
+                connection.commit()
+                return cursor.rowcount == 1
+            except BaseException:
+                connection.rollback()
+                raise
+
+    def mark_start_generation_failed(self, travel_id: str, message: str) -> bool:
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._session_row(connection, travel_id)
+                if row is None:
+                    connection.commit()
+                    return False
+                current = _parse_response(row[4])
+                if current.travel.generationStatus != "generating":
+                    connection.commit()
+                    return False
+                failed_travel = current.travel.model_copy(
+                    update={
+                        "generationStatus": "failed",
+                        "generationError": " ".join(message.split())[:300]
+                        or "Не получилось подготовить путешествие.",
+                    }
+                )
+                failed_response = InteractiveTravelResponse(travel=failed_travel)
+                state_json = _canonical_json(failed_travel.model_dump(mode="json"))
+                state_fingerprint = interactive_travel_state_fingerprint(failed_travel)
+                cursor = connection.execute(
+                    """
+                    UPDATE interactive_travel_sessions
+                    SET state_json = ?, state_fingerprint = ?, response_json = ?, updated_at = ?
+                    WHERE travel_id = ? AND state_fingerprint = ? AND completed_at IS NULL
+                    """,
+                    (
+                        state_json,
+                        state_fingerprint,
+                        _response_json(failed_response),
+                        now,
+                        travel_id,
+                        str(row[3]),
+                    ),
+                )
+                connection.commit()
+                return cursor.rowcount == 1
+            except BaseException:
+                connection.rollback()
+                raise
+
     @staticmethod
     def _session_row(
         connection: sqlite3.Connection,

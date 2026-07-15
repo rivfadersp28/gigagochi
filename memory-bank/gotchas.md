@@ -617,17 +617,23 @@
   cacheable. `preload="auto"` on the travel screen starts too late, while the generic `/figma/*`
   `no-store` header otherwise discards the warm download. Keep the scene at full viewport size;
   a fixed `402px` cap leaves side gutters in wider Telegram WebViews.
-- Interactive travel needs 9 text/image/video calls for a complete three-part route. Never charge
-  them to the pet-generation `3/day` bucket. The debug reset must invalidate the travel ID before
-  deleting its directory; deleting files alone lets an already-running provider call write them back.
+- A missing or failed transparent character foreground must count as a completed intro entrance.
+  Never gate the intro timer only on the image animation flag: `onError` intentionally clears the
+  foreground, and otherwise the reaction/departure flow stalls before the first story screen.
+- Interactive travel makes one text call for all four lead-ins and may make eight media calls
+  (image + video per part). Never charge them to the pet-generation `3/day` bucket. The debug reset
+  must invalidate the travel ID before deleting its directory; deleting files alone lets an
+  already-running provider call write them back.
 - Do not restore interactive-travel goals, target states, root matching, named-term checks, event
   counters, continuity anchors or validator-specific retries. The current product decision accepts
-  weak continuity in exchange for a fixed three-part generator that is easy to change.
-- GigaChat 3.5 may return arrays as nested objects/strings and may omit final JSON closers. Travel
-  choices therefore use three scalar schema fields. The provider repairs only missing trailing
-  brackets when a strict stack scan plus `json.loads` proves that no other syntax is damaged.
-- The simple travel generator supplies one reviewed fact for natural integration into part 1 but
-  does not validate the model's wording. Surrounding events are fiction and are not scientifically validated.
+  independent episodes in exchange for a fixed four-task generator that is easy to control.
+- `leadIn` is a fixed location-only template, not model output. Do not let it mention or paraphrase
+  the sampled situation: `storyText` appends the bank situation verbatim, so a content-aware lead-in
+  creates visible duplication. Do not normalize, clip or regenerate the bank's situation, question,
+  four choices, four self-contained outcome branches or correct answer; those reviewed strings are
+  the stability boundary of the feature. Keep legacy plans without outcome branches or with a
+  separate explanation readable, but every newly sampled bank task must carry all four branches in
+  choice order and display only the selected branch.
 - Treat every image-provider result as untrusted even after a compressed-byte limit. Validate it
   with Pillow before any `convert()`/`load()`, reject either side above 8192 px or more than
   16 million pixels, and reopen the bytes for subsequent processing; Pillow's default bomb warning

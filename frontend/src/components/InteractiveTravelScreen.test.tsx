@@ -5,8 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { LocalInteractiveTravel } from "@/lib/localInteractiveTravel";
 import { readLocalPetState, writeLocalPetState } from "@/lib/localPetStorage";
+import { setLocalFirstSessionEnabled } from "@/lib/localPetFirstSession";
 import { applyInteractiveTravelImpactsToPet } from "@/lib/localPetTravelImpacts";
-import type { InteractiveTravelPart, InteractiveTravelState, LocalPetState } from "@/lib/types";
+import type {
+  InteractiveTravelPart,
+  InteractiveTravelPlan,
+  InteractiveTravelState,
+  LocalPetState,
+} from "@/lib/types";
 
 import { InteractiveTravelScreen } from "./InteractiveTravelScreen";
 
@@ -30,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   enqueueInteractiveTravelCapture: vi.fn(),
   flushPendingInteractiveTravelOperations: vi.fn(),
   getInteractiveTravelDemo: vi.fn(),
+  getInteractiveTravelStatus: vi.fn(),
   getInteractiveTravelSuggestions: vi.fn(),
   illustrateInteractiveTravelPart: vi.fn(),
   isLocalInteractiveTravelStorageKey: vi.fn(
@@ -78,6 +85,8 @@ vi.mock("@/lib/api", () => ({
   continueInteractiveTravel: (...args: unknown[]) => mocks.continueInteractiveTravel(...args),
   getInteractiveTravelSuggestions: (...args: unknown[]) =>
     mocks.getInteractiveTravelSuggestions(...args),
+  getInteractiveTravelStatus: (...args: unknown[]) =>
+    mocks.getInteractiveTravelStatus(...args),
   illustrateInteractiveTravelPart: (...args: unknown[]) =>
     mocks.illustrateInteractiveTravelPart(...args),
   startInteractiveTravel: (...args: unknown[]) => mocks.startInteractiveTravel(...args),
@@ -200,10 +209,28 @@ function pendingPart(partNumber: number, storyText = "Сначала дорог�
         ? undefined
         : { elapsedHours: 4, summary: "Прошло несколько часов." },
     challenge: `Что делать на шаге ${partNumber}?`,
-    actionSuggestions: ["Идти вперёд", "Осмотреть мост", "Позвать сову"],
+    actionSuggestions: [
+      "Идти вперёд",
+      "Осмотреть мост",
+      "Позвать сову",
+      "Развести костёр",
+    ],
     backgroundImageUrl: `/story-${partNumber}.png`,
   };
 }
+
+const travelPlan: InteractiveTravelPlan = {
+  version: "task-bank-location-v4",
+  tasks: [1, 2, 3, 4].map((partNumber) => ({
+    taskId: `traveler-${partNumber}`,
+    leadIn: `У башни ${partNumber}`,
+    situation: `Ситуация ${partNumber}.`,
+    question: `Что делать на шаге ${partNumber}?`,
+    choices: ["Идти вперёд", "Осмотреть мост", "Позвать сову", "Развести костёр"],
+    correctChoice: "Идти вперёд",
+    explanation: `Объяснение ${partNumber}.`,
+  })) as InteractiveTravelPlan["tasks"],
+};
 
 function travel(parts: InteractiveTravelPart[], completed = false): InteractiveTravelState {
   return {
@@ -212,7 +239,7 @@ function travel(parts: InteractiveTravelPart[], completed = false): InteractiveT
     destination: "облачный город",
     overallTitle: "Часы облачного города",
     introReaction: { text: "Облачный город? Уже бегу!", tone: "enthusiastic" },
-    arcPlan: { goal: "Запустить часы" },
+    plan: travelPlan,
     parts,
     completed,
     outcomeValence: completed ? "positive" : undefined,
@@ -262,6 +289,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   window.history.replaceState({}, "", "/");
   window.localStorage.clear();
+  window.sessionStorage.clear();
   writeLocalPetState(pet);
   mocks.readLocalInteractiveTravel.mockReturnValue(null);
   mocks.withLocalInteractiveTravelMutationLock.mockImplementation(
@@ -335,6 +363,9 @@ beforeEach(() => {
   mocks.getInteractiveTravelSuggestions.mockResolvedValue({
     destinations: ["В горы", "В океан", "На Луну"],
   });
+  mocks.getInteractiveTravelStatus.mockResolvedValue({
+    travel: travel([pendingPart(1)]),
+  });
   mocks.illustrateInteractiveTravelPart.mockResolvedValue({
     partNumber: 2,
     imageUrl: "/story-2.png",
@@ -377,6 +408,29 @@ afterEach(() => {
 });
 
 describe("InteractiveTravelScreen", () => {
+  it("asks for onboarding confirmation before starting the selected travel", async () => {
+    setLocalFirstSessionEnabled(true);
+    mocks.startInteractiveTravel.mockResolvedValue({ travel: travel([pendingPart(1)]) });
+
+    render(<InteractiveTravelScreen petId="pet-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "В горы" }));
+
+    expect(mocks.startInteractiveTravel).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Отправиться — В горы/u)).toBeInTheDocument();
+    while (screen.queryByRole("button", { name: "Далее" })) {
+      fireEvent.click(screen.getByRole("button", { name: "Далее" }));
+    }
+    expect(screen.getByRole("button", { name: "Подтвердить" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Подтвердить" }));
+    await waitFor(() => expect(mocks.startInteractiveTravel).toHaveBeenCalledTimes(1));
+    expect(mocks.startInteractiveTravel).toHaveBeenCalledWith(
+      "В горы",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   it("auto-starts the demo opened from the main debug panel", async () => {
     mocks.canUseDebugMenu = true;
     window.history.replaceState({}, "", "/pet/pet-1/travel?demo=1");
@@ -387,7 +441,7 @@ describe("InteractiveTravelScreen", () => {
     expect(await screen.findByText("Демо начинается!")).toBeInTheDocument();
   });
 
-  it("renders a generated vertical video without exposing its still poster", async () => {
+  it("renders the generated video over the still poster in the fixed media frame", async () => {
     const animatedPart = {
       ...pendingPart(1),
       backgroundVideoUrl: "/story-1.mp4",
@@ -406,9 +460,40 @@ describe("InteractiveTravelScreen", () => {
     expect(video).not.toHaveAttribute("poster");
     expect(video).toHaveAttribute("autoplay");
     expect(video).toHaveAttribute("loop");
+    expect(document.querySelectorAll('img[src="/story-1.png"]')).toHaveLength(2);
+
+    fireEvent.loadedData(video as HTMLVideoElement);
+    await waitFor(() => {
+      expect(document.querySelectorAll('img[src="/story-1.png"]')).toHaveLength(1);
+    });
   });
 
-  it("keeps the entry video visible instead of rendering a generated still", async () => {
+  it("keeps the poster visible when the generated video fails", async () => {
+    mocks.readLocalInteractiveTravel.mockReturnValue(
+      restoredSession(travel([{
+        ...pendingPart(1),
+        backgroundVideoUrl: "/broken-story.mp4",
+      }]), "story"),
+    );
+
+    render(<InteractiveTravelScreen petId="pet-1" />);
+
+    const video = await waitFor(() => {
+      const candidate = document.querySelector<HTMLVideoElement>(
+        'video[src="/broken-story.mp4"]',
+      );
+      expect(candidate).not.toBeNull();
+      return candidate as HTMLVideoElement;
+    });
+    fireEvent.error(video);
+
+    await waitFor(() => {
+      expect(document.querySelector('video[src="/broken-story.mp4"]')).toBeNull();
+    });
+    expect(document.querySelectorAll('img[src="/story-1.png"]')).toHaveLength(2);
+  });
+
+  it("uses the generated image as poster and blurred backdrop while video is pending", async () => {
     mocks.animateInteractiveTravelPart.mockReturnValue(new Promise(() => undefined));
     mocks.readLocalInteractiveTravel.mockReturnValue(
       restoredSession(travel([pendingPart(1)]), "story"),
@@ -416,16 +501,14 @@ describe("InteractiveTravelScreen", () => {
 
     render(<InteractiveTravelScreen petId="pet-1" />);
 
-    await waitFor(() =>
-      expect(document.querySelector('video[src^="/figma/travel-entry-bg.mp4"]')).not.toBeNull(),
-    );
-    expect(document.querySelector('img[src="/story-1.png"]')).toBeNull();
+    expect(await screen.findByLabelText("История и вопрос")).toBeInTheDocument();
+    expect(document.querySelector('video[src^="/figma/travel-entry-bg.mp4"]')).toBeNull();
+    expect(document.querySelectorAll('img[src="/story-1.png"]')).toHaveLength(2);
     expect(cssRule("viewport")).toContain("position: fixed");
     expect(cssRule("viewport")).toContain("inset: 0");
-    expect(cssRule("scene")).toContain("width: 100%");
-    expect(cssRule("background")).toContain("object-fit: cover");
-    expect(cssRule("bubbleAnchor")).toContain("display: flex");
-    expect(cssRule("bubbleAnchor")).toContain("justify-content: center");
+    expect(cssRule("viewport")).toContain("overflow-y: auto");
+    expect(cssRule("storyBackdrop")).toContain("filter: blur(62px)");
+    expect(cssRule("storyMediaFrame")).toContain("width: 382px");
   });
 
   it("keeps the previous scene while preparing the next part", async () => {
@@ -469,7 +552,7 @@ describe("InteractiveTravelScreen", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Продолжить без видео" }));
 
-    expect(await screen.findByText("Сначала дорога петляет")).toBeInTheDocument();
+    expect(await screen.findByText("Сначала дорога петляет.")).toBeInTheDocument();
   });
 
   it("leaves departure wait automatically after its bounded deadline", async () => {
@@ -489,7 +572,7 @@ describe("InteractiveTravelScreen", () => {
       await vi.advanceTimersByTimeAsync(90_000);
     });
 
-    expect(screen.getByText("Сначала дорога петляет")).toBeInTheDocument();
+    expect(screen.getByText("Сначала дорога петляет.")).toBeInTheDocument();
   });
 
   it("resets server generations and local travel from the debug menu", async () => {
@@ -540,17 +623,42 @@ describe("InteractiveTravelScreen", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(4_999);
     });
-    expect(screen.queryByText("Готовая демо-история")).not.toBeInTheDocument();
+    expect(screen.queryByText("Готовая демо-история.")).not.toBeInTheDocument();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1);
     });
-    expect(screen.getByText("Готовая демо-история")).toBeInTheDocument();
+    expect(screen.getByText("Готовая демо-история.")).toBeInTheDocument();
 
     expect(mocks.continueInteractiveTravel).not.toHaveBeenCalled();
     expect(mocks.illustrateInteractiveTravelPart).not.toHaveBeenCalled();
     expect(mocks.animateInteractiveTravelPart).not.toHaveBeenCalled();
     expect(mocks.writeLocalInteractiveTravelDurably).not.toHaveBeenCalled();
     expect(window.localStorage.getItem("gigagochi.interactive-travel.v3:pet-1")).toBeNull();
+  });
+
+  it("continues the intro when the character foreground cannot load", async () => {
+    vi.useFakeTimers();
+    mocks.canUseDebugMenu = true;
+
+    render(<InteractiveTravelScreen petId="pet-1" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Запустить демо-историю" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.error(screen.getByRole("img", { name: "Листик" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_200);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    expect(screen.getByText("Листик отправился в путь, дорога займет какое-то время..."))
+      .toBeInTheDocument();
   });
 
   it("queues a durable cancellation before clearing the local session", async () => {
@@ -609,41 +717,20 @@ describe("InteractiveTravelScreen", () => {
     expect(submit).toBeEnabled();
   });
 
-  it("returns from a custom action to the current choices and restores focus", async () => {
+  it("offers only the four bank answers without a custom action", async () => {
     mocks.readLocalInteractiveTravel.mockReturnValue(
       restoredSession(travel([pendingPart(1)]), "choice"),
     );
 
     render(<InteractiveTravelScreen petId="pet-1" />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Свой вариант" }));
-    expect(screen.getByLabelText("Свой вариант действия")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Вернуться к вариантам" }));
-
-    const customTrigger = await screen.findByRole("button", { name: "Свой вариант" });
+    const answers = await screen.findAllByRole("button", {
+      name: /Идти вперёд|Осмотреть мост|Позвать сову|Развести костёр/u,
+    });
+    expect(answers).toHaveLength(4);
+    expect(screen.getByRole("group", { name: "Варианты ответа" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Свой вариант действия")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Идти вперёд" })).toBeInTheDocument();
-    expect(customTrigger).toHaveFocus();
-    expect(mocks.push).not.toHaveBeenCalled();
-  });
-
-  it("keeps the advice action visible and explains why it is disabled", async () => {
-    mocks.readLocalInteractiveTravel.mockReturnValue(
-      restoredSession(travel([pendingPart(1)]), "choice"),
-    );
-
-    render(<InteractiveTravelScreen petId="pet-1" />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Свой вариант" }));
-    const input = screen.getByLabelText("Свой вариант действия");
-    const submit = screen.getByRole("button", { name: "Подсказать" });
-    expect(input).toHaveAttribute("aria-describedby", "travel-advice-requirement");
-    expect(screen.getByText("Напиши совет, чтобы подсказать действие")).toBeInTheDocument();
-    expect(submit).toBeDisabled();
-
-    fireEvent.change(input, { target: { value: "Проверить мост" } });
-    expect(submit).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Свой вариант" })).not.toBeInTheDocument();
   });
 
   it("opens a native custom destination input and starts with the generated reaction", async () => {
@@ -664,12 +751,6 @@ describe("InteractiveTravelScreen", () => {
       pet,
       {
         includeDebug: false,
-        history: [],
-        memoryContext: {
-          relevantMemories: [],
-          summary: undefined,
-          userProfile: undefined,
-        },
       },
     );
     expect(screen.getByRole("img", { name: "Листик" })).toHaveAttribute(
@@ -677,6 +758,42 @@ describe("InteractiveTravelScreen", () => {
       "/teen-idle-foreground.png?travel_foreground_v=20260714-1",
     );
     expect(screen.getByRole("button", { name: "Создать новую историю" })).toBeInTheDocument();
+  });
+
+  it("shows the intro shell while the story plan is still generated in background", async () => {
+    const status = deferred<{ travel: InteractiveTravelState }>();
+    const generatingTravel: InteractiveTravelState = {
+      ...travel([pendingPart(1, "Я собираюсь в путь.")]),
+      overallTitle: "Путешествие готовится",
+      generationStatus: "generating",
+      plan: null,
+      parts: [{
+        ...pendingPart(1, "Я собираюсь в путь."),
+        challenge: "Путешествие готовится.",
+        actionSuggestions: [],
+        backgroundImageUrl: undefined,
+      }],
+    };
+    mocks.readLocalInteractiveTravel.mockReturnValue(null);
+    mocks.startInteractiveTravel.mockResolvedValue({ travel: generatingTravel });
+    mocks.getInteractiveTravelStatus.mockReturnValue(status.promise);
+
+    render(<InteractiveTravelScreen petId="pet-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "В горы" }));
+
+    expect(await screen.findByText("Облачный город?")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mocks.getInteractiveTravelStatus).toHaveBeenCalledWith("interactive-travel-1");
+    });
+
+    const readyTravel = travel([pendingPart(1)]);
+    status.resolve({ travel: readyTravel });
+    await waitFor(() => {
+      expect(mocks.writeLocalInteractiveTravelDurably).toHaveBeenCalledWith(
+        "pet-1",
+        expect.objectContaining({ travel: readyTravel }),
+      );
+    });
   });
 
   it("adopts a travel started by another tab before entering the start mutation", async () => {
@@ -695,35 +812,28 @@ describe("InteractiveTravelScreen", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Путешествие" }));
 
-    expect(await screen.findByText("Сначала дорога петляет")).toBeInTheDocument();
+    expect(await screen.findByText("Сначала дорога петляет.")).toBeInTheDocument();
     expect(mocks.startInteractiveTravel).not.toHaveBeenCalled();
   });
 
-  it("changes story portions only by Далее, then shows generated horizontal choices", async () => {
+  it("shows the complete story, exact question and horizontal answers at once", async () => {
     mocks.readLocalInteractiveTravel.mockReturnValue(
       restoredSession(travel([pendingPart(1)]), "story"),
     );
 
     render(<InteractiveTravelScreen petId="pet-1" />);
 
-    expect(await screen.findByText("Сначала дорога петляет")).toBeInTheDocument();
-    expect(screen.queryByText("Потом виден мост")).not.toBeInTheDocument();
-    const nextButton = screen.getByRole("button", { name: "Далее" });
-    expect(nextButton.className).toMatch(/storyGlassButton/u);
-    expect(screen.getByTestId("travel-speech").parentElement).not.toHaveAttribute("aria-live");
-    expect(screen.getByTestId("travel-speech")).toHaveAttribute("data-min-font-size", "14");
-    expect(screen.getByTestId("travel-speech")).toHaveAttribute("data-fixed-size", "false");
-    fireEvent.click(nextButton);
-    expect(await screen.findByText("Потом виден мост")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Далее" }));
-
+    expect(await screen.findByText("Сначала дорога петляет.")).toBeInTheDocument();
+    expect(screen.getByText("Потом виден мост.")).toBeInTheDocument();
     expect(await screen.findByText("Что делать на шаге 1?")).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Варианты действий" })).toBeInTheDocument();
+    expect(screen.queryByTestId("travel-speech")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Далее" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Варианты ответа" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Идти вперёд" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Свой вариант" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Свой вариант" })).not.toBeInTheDocument();
   });
 
-  it("shows every challenge portion before revealing choices with the direct question", async () => {
+  it("shows every challenge paragraph and the exact direct question without paging", async () => {
     const pending = pendingPart(1);
     pending.challenge =
       "На воротах древнего святилища появилась цветная корочка. "
@@ -736,19 +846,13 @@ describe("InteractiveTravelScreen", () => {
     render(<InteractiveTravelScreen petId="pet-1" />);
 
     expect(
-      await screen.findByText("На воротах древнего святилища появилась цветная корочка"),
+      await screen.findByText("На воротах древнего святилища появилась цветная корочка."),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Варианты действий" })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Далее" }));
     expect(
-      await screen.findByText("Страж считает её мхом, а алхимик — минералом"),
+      screen.getByText("Страж считает её мхом, а алхимик — минералом."),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Варианты действий" })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Далее" }));
-    expect(await screen.findByText("Кто образует лишайник?")).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Варианты действий" })).toBeInTheDocument();
+    expect(screen.getByText("Кто образует лишайник?")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Варианты ответа" })).toBeInTheDocument();
   });
 
   it("hides the travel interface and shows the standard thinking animation while starting", async () => {
@@ -815,7 +919,7 @@ describe("InteractiveTravelScreen", () => {
     expect(mocks.writeLocalInteractiveTravelDurably).not.toHaveBeenCalled();
   });
 
-  it("hides the custom action interface behind the standard loader while continuing", async () => {
+  it("hides the bank answers behind the standard loader while continuing", async () => {
     const response = deferred<{ travel: InteractiveTravelState }>();
     mocks.readLocalInteractiveTravel.mockReturnValue(
       restoredSession(travel([pendingPart(1)]), "choice"),
@@ -824,30 +928,40 @@ describe("InteractiveTravelScreen", () => {
 
     render(<InteractiveTravelScreen petId="pet-1" />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Свой вариант" }));
-    fireEvent.change(screen.getByLabelText("Свой вариант действия"), {
-      target: { value: "Прыгнуть через мост" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Подсказать" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Идти вперёд" }));
 
-    expect(screen.queryByRole("button", { name: "Подсказать" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Свой вариант действия")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Варианты ответа" })).not.toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Персонаж думает" })).toBeInTheDocument();
   });
 
-  it("keeps long choices and answers visually readable inside the fixed layout", () => {
-    const actionRule = cssRule("actionButton");
-    const actionsScrollRule = cssRule("actionsScroll");
-    const glassRule = cssRule("storyGlassButton");
+  it("matches the fixed Figma media, text and glass-answer layout", () => {
+    const mediaRule = cssRule("storyMediaFrame");
+    const posterRule = cssRule("storyPoster");
+    const textRule = cssRule("storyTextFrame");
+    const videoRule = [...travelScreenStyles.matchAll(/\.storyVideo\s*\{([^}]*)\}/gu)]
+      .find((match) => match[1]?.includes("z-index"))?.[1] ?? "";
+    const pendingVideoRule = cssRule("storyVideoPending");
+    const answersScrollRule = cssRule("storyAnswersScroll");
+    const answerRules = travelScreenStyles.match(
+      /\.storyAnswerButton,\s*\.storyResultButton\s*\{([^}]*)\}/u,
+    )?.[1] ?? "";
 
-    expect(actionRule).toContain("white-space: nowrap");
-    expect(actionRule).not.toContain("max-width");
-    expect(actionRule).not.toContain("text-overflow");
-    expect(actionsScrollRule).toContain("overflow-x: auto");
-    expect(actionsScrollRule).toContain("touch-action: pan-x");
-    expect(actionsScrollRule).not.toContain("scroll-snap-type");
-    expect(glassRule).toContain("background: rgb(22 22 22 / 94%)");
-    expect(glassRule).not.toContain("backdrop-filter");
+    expect(mediaRule).toContain("width: 382px");
+    expect(mediaRule).toContain("height: 456px");
+    expect(mediaRule).toContain("border-radius: 24px");
+    expect(posterRule).toContain("z-index: 1");
+    expect(videoRule).toContain("z-index: 2");
+    expect(pendingVideoRule).toContain("opacity: 0");
+    expect(textRule).toContain("width: 362px");
+    expect(textRule).toContain("font-size: 17px");
+    expect(textRule).toContain("gap: 13px");
+    expect(textRule).toContain("text-wrap: pretty");
+    expect(answerRules).toContain("height: 62px");
+    expect(answerRules).toContain("white-space: nowrap");
+    expect(answerRules).toContain("backdrop-filter: blur(10px)");
+    expect(answerRules).toContain("touch-action: manipulation");
+    expect(answersScrollRule).toContain("overflow-x: auto");
+    expect(answersScrollRule).toContain("touch-action: pan-x");
   });
 
   it("applies a resolved impact once and preloads the next illustration", async () => {
@@ -861,8 +975,11 @@ describe("InteractiveTravelScreen", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Идти вперёд" }));
 
     expect(
-      await screen.findByText("Листик перешёл мост и добрался до башни"),
+      await screen.findByText("Листик перешёл мост и добрался до башни."),
     ).toBeInTheDocument();
+    expect(screen.getByLabelText("Результат выбора")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Варианты ответа" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Далее" })).toBeInTheDocument();
     expect(screen.queryByText("Твой ответ")).not.toBeInTheDocument();
     expect(mocks.applyInteractiveTravelImpacts).toHaveBeenCalledTimes(1);
     expect(mocks.applyInteractiveTravelImpacts).toHaveBeenCalledWith(
@@ -885,6 +1002,21 @@ describe("InteractiveTravelScreen", () => {
     });
   });
 
+  it("shows the complete final result with one finish action", async () => {
+    const completedPart = resolvedFirstWithPendingSecond().parts[0];
+    mocks.readLocalInteractiveTravel.mockReturnValue(
+      restoredSession(travel([completedPart], true), "result"),
+    );
+
+    render(<InteractiveTravelScreen petId="pet-1" />);
+
+    expect(
+      await screen.findByText("Листик перешёл мост и добрался до башни."),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("travel-speech")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Завершить" })).toHaveLength(1);
+  });
+
   it("adopts a part advanced by another tab instead of continuing it twice", async () => {
     const initial = restoredSession(
       travel([{ ...pendingPart(1), backgroundVideoUrl: "/part-1.mp4" }]),
@@ -899,7 +1031,7 @@ describe("InteractiveTravelScreen", () => {
     fireEvent.click(choice);
 
     expect(
-      await screen.findByText("Листик перешёл мост и добрался до башни"),
+      await screen.findByText("Листик перешёл мост и добрался до башни."),
     ).toBeInTheDocument();
     expect(mocks.continueInteractiveTravel).not.toHaveBeenCalled();
   });
@@ -970,9 +1102,6 @@ describe("InteractiveTravelScreen", () => {
     render(<InteractiveTravelScreen petId="pet-1" />);
 
     await waitFor(() => expect(mocks.animateInteractiveTravelPart).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole("button", { name: "Далее" }));
-    await screen.findByText("Потом виден мост");
-    fireEvent.click(screen.getByRole("button", { name: "Далее" }));
     fireEvent.click(await screen.findByRole("button", { name: "Идти вперёд" }));
 
     await act(async () => {
@@ -1014,9 +1143,6 @@ describe("InteractiveTravelScreen", () => {
 
     render(<InteractiveTravelScreen petId="pet-1" />);
     await waitFor(() => expect(mocks.animateInteractiveTravelPart).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getByRole("button", { name: "Далее" }));
-    await screen.findByText("Потом виден мост");
-    fireEvent.click(screen.getByRole("button", { name: "Далее" }));
     fireEvent.click(await screen.findByRole("button", { name: "Идти вперёд" }));
     await waitFor(() => expect(mocks.continueInteractiveTravel).toHaveBeenCalledOnce());
 
@@ -1114,7 +1240,7 @@ describe("InteractiveTravelScreen", () => {
     });
 
     expect(
-      await screen.findByText("Листик перешёл мост и добрался до башни"),
+      await screen.findByText("Листик перешёл мост и добрался до башни."),
     ).toBeInTheDocument();
     await waitFor(() =>
       expect(mocks.writeLocalInteractiveTravelDurably).toHaveBeenCalled(),

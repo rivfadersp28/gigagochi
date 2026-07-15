@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   cancelInteractiveTravel,
+  continueInteractiveTravel,
   generatePetAssets,
   refreshPetBackgroundAssets,
   registerPetPushSnapshot,
@@ -9,12 +10,22 @@ import {
   startInteractiveTravel,
 } from "./api";
 import { buildMemoryContextForMessage } from "./localPetMemoryRecall";
+import {
+  interactiveTravelPartFixture,
+  interactiveTravelPlanFixture,
+} from "./interactiveTravelTestFixtures";
 import type { LocalPetMemoryContext } from "./localPetMemoryTypes";
 import {
   compactPushSnapshotPayload,
   serializedJsonBytes,
 } from "./pushSnapshotPayload";
-import type { LocalChatMessage, LocalPetAssetSet, LocalPetState, PetMood } from "./types";
+import type {
+  InteractiveTravelState,
+  LocalChatMessage,
+  LocalPetAssetSet,
+  LocalPetState,
+  PetMood,
+} from "./types";
 
 function assetImages(prefix: string): LocalPetAssetSet["images"] {
   const stageImages = (stage: "baby" | "teen" | "adult"): Record<PetMood, string> => ({
@@ -75,6 +86,7 @@ describe("API request payloads", () => {
   });
 
   it("sends the stable local pet id in interactive travel context", async () => {
+    const plan = interactiveTravelPlanFixture();
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
         travel: {
@@ -82,14 +94,8 @@ describe("API request payloads", () => {
           generatedAt: "2026-07-15T12:00:00Z",
           destination: "маяк",
           overallTitle: "Путь к маяку",
-          arcPlan: { goal: "добраться до маяка" },
-          parts: [{
-            partNumber: 1,
-            title: "Начало",
-            storyText: "Я вижу маяк вдали.",
-            challenge: "Как добраться?",
-            actionSuggestions: ["Идти по тропе"],
-          }],
+          plan,
+          parts: [interactiveTravelPartFixture(plan, 0)],
           completed: false,
         },
       }), {
@@ -104,6 +110,45 @@ describe("API request payloads", () => {
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const payload = JSON.parse(String(requestInit.body));
     expect(payload.pet.petId).toBe("pet-1");
+    expect(payload).not.toHaveProperty("history");
+    expect(payload).not.toHaveProperty("memoryContext");
+  });
+
+  it("continues travel with only the authoritative travel, answer, pet, and debug flag", async () => {
+    const plan = interactiveTravelPlanFixture();
+    const travel: InteractiveTravelState = {
+      travelId: "interactive-travel-api-continue",
+      generatedAt: "2026-07-15T12:00:00Z",
+      destination: "маяк",
+      overallTitle: "Путь к маяку",
+      generationStatus: "ready",
+      plan,
+      parts: [interactiveTravelPartFixture(plan, 0)],
+      completed: false,
+    };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ travel }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await continueInteractiveTravel(travel, plan.tasks[0].correctChoice, petState(), {
+      includeDebug: true,
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const payload = JSON.parse(String(requestInit.body));
+    expect(Object.keys(payload).sort()).toEqual(["advice", "includeDebug", "pet", "travel"]);
+    expect(payload).toMatchObject({
+      advice: plan.tasks[0].correctChoice,
+      includeDebug: true,
+      pet: { petId: "pet-1" },
+      travel: { travelId: travel.travelId, plan },
+    });
+    expect(payload).not.toHaveProperty("history");
+    expect(payload).not.toHaveProperty("memoryContext");
   });
 
   it("removes invalid legacy chat and memory entries before sending", async () => {

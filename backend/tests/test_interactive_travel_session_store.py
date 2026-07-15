@@ -23,6 +23,51 @@ from app.services.interactive_travel_session_store import (
 
 
 def _started_response(travel_id: str) -> InteractiveTravelResponse:
+    tasks = [
+        {
+            "taskId": f"test-{number}",
+            "leadIn": lead_in,
+            "situation": situation,
+            "question": question,
+            "choices": choices,
+            "correctChoice": choices[0],
+            "explanation": explanation,
+        }
+        for number, lead_in, situation, question, choices, explanation in (
+            (
+                1,
+                "Передо мной",
+                "появляется мост.",
+                "Как перейти мост?",
+                ["Осмотреться", "Прыгнуть", "Позвать", "Ждать"],
+                "Осмотр помогает найти путь.",
+            ),
+            (
+                2,
+                "Я подхожу к",
+                "башне.",
+                "Как открыть дверь?",
+                ["Постучать", "Толкнуть", "Обойти", "Ждать"],
+                "Сначала стоит постучать.",
+            ),
+            (
+                3,
+                "У вершины я вижу",
+                "закрытые ворота.",
+                "Как открыть ворота?",
+                ["Открыть замок", "Кричать", "Уйти", "Ждать"],
+                "Замок открывает ворота.",
+            ),
+            (
+                4,
+                "На вершине я нахожу",
+                "пустой флагшток.",
+                "Как завершить путь?",
+                ["Поднять флаг", "Спрятаться", "Уйти", "Ждать"],
+                "Флаг завершает путь.",
+            ),
+        )
+    ]
     return InteractiveTravelResponse.model_validate(
         {
             "travel": {
@@ -30,14 +75,14 @@ def _started_response(travel_id: str) -> InteractiveTravelResponse:
                 "generatedAt": "2026-07-15T00:00:00Z",
                 "destination": "облачный город",
                 "overallTitle": "Путешествие",
-                "arcPlan": {"goal": "добраться до башни"},
+                "plan": {"version": "task-bank-location-v4", "tasks": tasks},
                 "parts": [
                     {
                         "partNumber": 1,
                         "title": "Начало",
                         "storyText": "Передо мной появляется мост.",
                         "challenge": "Как перейти мост?",
-                        "actionSuggestions": ["Осмотреться"],
+                        "actionSuggestions": tasks[0]["choices"],
                     }
                 ],
             }
@@ -68,7 +113,7 @@ def _continued_response(travel: InteractiveTravelState) -> InteractiveTravelResp
             "storyText": "Я подхожу к башне.",
             "transition": {"elapsedHours": 0, "summary": "Путь найден."},
             "challenge": "Как открыть дверь?",
-            "actionSuggestions": ["Постучать"],
+            "actionSuggestions": payload["plan"]["tasks"][1]["choices"],
         }
     )
     return InteractiveTravelResponse(travel=InteractiveTravelState.model_validate(payload))
@@ -86,17 +131,29 @@ def _completed_response(travel: InteractiveTravelState) -> InteractiveTravelResp
         "statImpacts": [],
     }
     payload["parts"][-1].update({"answer": "Постучать", "result": result})
-    payload["parts"].append(
-        {
-            "partNumber": 3,
-            "title": "Финал",
-            "storyText": "Я добираюсь до вершины башни.",
-            "transition": {"elapsedHours": 1, "summary": "Дверь открылась."},
-            "challenge": "Как завершить путь?",
-            "actionSuggestions": [],
-            "answer": "Поднять флаг",
-            "result": result,
-        }
+    payload["parts"].extend(
+        [
+            {
+                "partNumber": 3,
+                "title": "Часть 3",
+                "storyText": "У вершины я вижу закрытые ворота.",
+                "transition": {"elapsedHours": 1, "summary": "Дверь открылась."},
+                "challenge": "Как открыть ворота?",
+                "actionSuggestions": payload["plan"]["tasks"][2]["choices"],
+                "answer": "Открыть замок",
+                "result": result,
+            },
+            {
+                "partNumber": 4,
+                "title": "Финал",
+                "storyText": "На вершине я нахожу пустой флагшток.",
+                "transition": {"elapsedHours": 1, "summary": "Ворота открылись."},
+                "challenge": "Как завершить путь?",
+                "actionSuggestions": payload["plan"]["tasks"][3]["choices"],
+                "answer": "Поднять флаг",
+                "result": result,
+            },
+        ]
     )
     payload["completed"] = True
     payload["outcomeValence"] = "positive"
@@ -299,7 +356,10 @@ def test_continue_cas_ignores_late_media_but_rejects_story_mutation(tmp_path) ->
     )
 
     mutated_payload = started.travel.model_dump(mode="json")
-    mutated_payload["parts"][0]["storyText"] = "Подменённая клиентом история."
+    mutated_payload["plan"]["tasks"][0]["leadIn"] = "Подменённая подводка."
+    mutated_payload["parts"][0]["storyText"] = (
+        "Подменённая подводка. " + mutated_payload["plan"]["tasks"][0]["situation"]
+    )
     mutated = InteractiveTravelState.model_validate(mutated_payload)
     with pytest.raises(InteractiveTravelStateConflictError):
         store.preflight_continue(

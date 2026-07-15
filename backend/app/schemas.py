@@ -61,8 +61,13 @@ FaceHintValue = Literal["happy", "excited", "curious", "content", "grumpy", "sle
 HappinessDeltaValue = Literal[-80, -60, -40, -20, 0, 30, 100]
 ComplimentKeyValue = Annotated[str, Field(min_length=1, max_length=120)]
 InteractiveTravelSuggestionValue = Annotated[str, Field(min_length=1, max_length=72)]
-InteractiveTravelArcPlanKey = Annotated[str, Field(min_length=1, max_length=80)]
-InteractiveTravelArcPlanValue = Annotated[str, Field(max_length=500)]
+InteractiveTravelTaskId = Annotated[str, Field(min_length=1, max_length=40)]
+InteractiveTravelLeadIn = Annotated[str, Field(min_length=1, max_length=200)]
+InteractiveTravelTaskSituation = Annotated[str, Field(min_length=1, max_length=300)]
+InteractiveTravelTaskQuestion = Annotated[str, Field(min_length=1, max_length=120)]
+InteractiveTravelTaskChoice = Annotated[str, Field(min_length=1, max_length=80)]
+InteractiveTravelTaskExplanation = Annotated[str, Field(min_length=1, max_length=300)]
+InteractiveTravelTaskOutcome = Annotated[str, Field(min_length=1, max_length=700)]
 PET_STAGE_VALUES: tuple[PetStageValue, ...] = ("baby", "teen", "adult")
 PET_STATE_VALUES: tuple[PetStateValue, ...] = ("idle", "happy", "hungry", "sad")
 HAPPINESS_DELTA_VALUES: tuple[HappinessDeltaValue, ...] = (-80, -60, -40, -20, 0, 30, 100)
@@ -328,7 +333,7 @@ class InteractiveTravelTransition(BaseModel):
 
 
 class InteractiveTravelPart(BaseModel):
-    partNumber: int = Field(ge=1, le=7)
+    partNumber: int = Field(ge=1, le=4)
     title: str = Field(min_length=1, max_length=120)
     storyText: str = Field(min_length=1, max_length=700)
     transition: InteractiveTravelTransition | None = None
@@ -354,30 +359,68 @@ class InteractiveTravelPart(BaseModel):
         return self
 
 
+class InteractiveTravelTaskPlan(BaseModel):
+    taskId: InteractiveTravelTaskId
+    leadIn: InteractiveTravelLeadIn
+    situation: InteractiveTravelTaskSituation
+    question: InteractiveTravelTaskQuestion
+    choices: list[InteractiveTravelTaskChoice] = Field(min_length=4, max_length=4)
+    correctChoice: InteractiveTravelTaskChoice
+    explanation: InteractiveTravelTaskExplanation | None = None
+    choiceOutcomes: list[InteractiveTravelTaskOutcome] = Field(default_factory=list, max_length=4)
+
+    @model_validator(mode="after")
+    def validate_choices(self) -> InteractiveTravelTaskPlan:
+        normalized = [choice.casefold() for choice in self.choices]
+        if len(set(normalized)) != 4:
+            raise ValueError("interactive travel task choices must be unique")
+        if self.correctChoice not in self.choices:
+            raise ValueError("interactive travel correct choice must be one of the choices")
+        if self.choiceOutcomes and len(self.choiceOutcomes) != len(self.choices):
+            raise ValueError("interactive travel task outcomes must match the task choices")
+        return self
+
+
+class InteractiveTravelPlan(BaseModel):
+    version: Literal["task-bank-location-v4"] = "task-bank-location-v4"
+    tasks: list[InteractiveTravelTaskPlan] = Field(min_length=4, max_length=4)
+
+    @model_validator(mode="after")
+    def validate_unique_tasks(self) -> InteractiveTravelPlan:
+        if len({task.taskId for task in self.tasks}) != 4:
+            raise ValueError("interactive travel plan tasks must be unique")
+        return self
+
+
 class InteractiveTravelState(BaseModel):
     travelId: InteractiveTravelId
     generatedAt: datetime
     destination: str = Field(min_length=1, max_length=500)
     overallTitle: str = Field(min_length=1, max_length=120)
-    arcPlan: dict[InteractiveTravelArcPlanKey, InteractiveTravelArcPlanValue] = Field(max_length=40)
+    plan: InteractiveTravelPlan | None = None
     introReaction: InteractiveTravelIntroReaction | None = None
-    parts: list[InteractiveTravelPart] = Field(min_length=1, max_length=7)
+    generationStatus: Literal["generating", "ready", "failed"] = "ready"
+    generationError: str | None = Field(default=None, min_length=1, max_length=300)
+    parts: list[InteractiveTravelPart] = Field(min_length=1, max_length=4)
     completed: bool = False
     outcomeValence: Literal["positive", "negative"] | None = None
     statImpact: InteractiveTravelStatImpact | None = None
 
-    @field_validator("arcPlan")
-    @classmethod
-    def reject_unsafe_arc_plan_keys(
-        cls,
-        value: dict[str, str],
-    ) -> dict[str, str]:
-        if any(key in {"__proto__", "constructor", "prototype"} for key in value):
-            raise ValueError("interactive travel arc plan contains an unsafe key")
-        return value
-
     @model_validator(mode="after")
     def validate_part_sequence(self) -> InteractiveTravelState:
+        if self.generationStatus == "generating":
+            if self.plan is not None:
+                raise ValueError("generating interactive travel cannot contain a plan")
+            if self.completed:
+                raise ValueError("generating interactive travel cannot be completed")
+        elif self.generationStatus == "ready" and self.plan is None:
+            raise ValueError("ready interactive travel must contain a plan")
+        elif self.generationStatus == "failed" and (self.plan is not None or self.completed):
+            raise ValueError("failed interactive travel cannot contain a plan or be completed")
+        if self.generationStatus == "failed" and self.generationError is None:
+            raise ValueError("failed interactive travel generation must contain an error")
+        if self.generationStatus != "failed" and self.generationError is not None:
+            raise ValueError("interactive travel generation error requires failed status")
         expected = list(range(1, len(self.parts) + 1))
         actual = [part.partNumber for part in self.parts]
         if actual != expected:
@@ -386,9 +429,17 @@ class InteractiveTravelState(BaseModel):
             raise ValueError("the first interactive travel part cannot have elapsed story time")
         if any(part.transition is None for part in self.parts[1:]):
             raise ValueError("later interactive travel parts must have elapsed story time")
-        if self.completed and len(self.parts) < 3:
-            raise ValueError("completed interactive travel must contain at least three parts")
+        if self.plan is not None:
+            for part, task in zip(self.parts, self.plan.tasks, strict=False):
+                if part.storyText != f"{task.leadIn} {task.situation}":
+                    raise ValueError("interactive travel part story must match its planned task")
+                if part.challenge != task.question:
+                    raise ValueError("interactive travel challenge must match its planned task")
+                if part.actionSuggestions != task.choices:
+                    raise ValueError("interactive travel choices must match their planned task")
         if self.completed:
+            if len(self.parts) != 4:
+                raise ValueError("completed interactive travel must contain four parts")
             if any(part.result is None for part in self.parts):
                 raise ValueError("completed interactive travel cannot contain a pending part")
             if self.outcomeValence is None:
@@ -406,8 +457,6 @@ class InteractiveTravelState(BaseModel):
 class StartInteractiveTravelRequest(BaseModel):
     pet: LocalPetChatContext
     destination: str = Field(min_length=1, max_length=500)
-    history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
-    memoryContext: LocalPetMemoryContext | None = None
     includeDebug: bool = False
 
 
@@ -425,23 +474,23 @@ class IllustrateInteractiveTravelPartRequest(BaseModel):
     pet: LocalPetChatContext
     travelId: InteractiveTravelId
     destination: str = Field(min_length=1, max_length=500)
-    partNumber: int = Field(ge=1, le=7)
+    partNumber: int = Field(ge=1, le=4)
     title: str = Field(min_length=1, max_length=120)
     storyText: str = Field(min_length=1, max_length=700)
 
 
 class InteractiveTravelIllustrationResponse(BaseModel):
-    partNumber: int = Field(ge=1, le=7)
+    partNumber: int = Field(ge=1, le=4)
     imageUrl: str = Field(min_length=1, max_length=1000)
 
 
 class AnimateInteractiveTravelPartRequest(BaseModel):
     travelId: InteractiveTravelId
-    partNumber: int = Field(ge=1, le=7)
+    partNumber: int = Field(ge=1, le=4)
 
 
 class InteractiveTravelAnimationResponse(BaseModel):
-    partNumber: int = Field(ge=1, le=7)
+    partNumber: int = Field(ge=1, le=4)
     videoUrl: str = Field(min_length=1, max_length=1000)
 
 
@@ -449,8 +498,6 @@ class ContinueInteractiveTravelRequest(BaseModel):
     pet: LocalPetChatContext
     travel: InteractiveTravelState
     advice: str = Field(min_length=1, max_length=1000)
-    history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
-    memoryContext: LocalPetMemoryContext | None = None
     includeDebug: bool = False
 
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from fastapi import Path as PathParameter
 from pydantic import BaseModel
 
@@ -101,6 +101,7 @@ from app.services.interactive_travel_service import (
     continue_interactive_travel,
     generate_interactive_travel_suggestions,
     illustrate_interactive_travel_part,
+    prepare_interactive_travel_start,
     start_interactive_travel,
 )
 from app.services.interactive_travel_session_store import (
@@ -169,6 +170,8 @@ GenerationIdempotencyKey = Annotated[
     ),
 ]
 logger = logging.getLogger(__name__)
+_interactive_travel_start_jobs_lock = Lock()
+_interactive_travel_start_jobs: set[str] = set()
 DEFAULT_GENERATION_RATE_LIMIT_PER_DAY = 0
 DEFAULT_CHAT_RATE_LIMIT_PER_HOUR = 0
 DEFAULT_LITE_FACTS_RATE_LIMIT_PER_HOUR = 0
@@ -487,16 +490,24 @@ def _interactive_travel_pet_fingerprint(payload: Any) -> str:
     return fingerprint_payload(identity)
 
 
+def _normalized_interactive_travel_text(value: str, *, casefold: bool = False) -> str:
+    normalized = " ".join(value.split())
+    return normalized.casefold() if casefold else normalized
+
+
 def _interactive_travel_start_fingerprint(payload: StartInteractiveTravelRequest) -> str:
-    return fingerprint_payload(payload.model_dump(mode="json", exclude_none=True))
+    return fingerprint_payload(
+        {"destination": _normalized_interactive_travel_text(payload.destination)}
+    )
 
 
 def _interactive_travel_continue_fingerprint(payload: ContinueInteractiveTravelRequest) -> str:
-    request_payload = payload.model_dump(mode="json", exclude_none=True)
-    request_payload["travel"] = {
-        "stateFingerprint": interactive_travel_state_fingerprint(payload.travel)
-    }
-    return fingerprint_payload(request_payload)
+    return fingerprint_payload(
+        {
+            "stateFingerprint": interactive_travel_state_fingerprint(payload.travel),
+            "advice": _normalized_interactive_travel_text(payload.advice, casefold=True),
+        }
+    )
 
 
 def _interactive_travel_session_http_exception(
@@ -606,6 +617,96 @@ def _interactive_travel_start_rate_request_key(request_fingerprint: str) -> str:
 
 def _interactive_travel_continue_rate_request_key(request_fingerprint: str) -> str:
     return f"interactive-continue:{request_fingerprint}"
+
+
+def _run_interactive_travel_start_generation(
+    *,
+    travel_id: str,
+    destination: str,
+    user: TelegramUserContext,
+    include_debug: bool,
+    rate_reservation: RateLimitReservation | None = None,
+) -> None:
+    with _interactive_travel_start_jobs_lock:
+        if travel_id in _interactive_travel_start_jobs:
+            return
+        _interactive_travel_start_jobs.add(travel_id)
+    lease: RequestAdmissionLease | None = None
+    prompt_log_token = None
+    try:
+        try:
+            current = _interactive_travel_session_store().read_response(
+                travel_id,
+                user.telegram_id,
+            )
+        except InteractiveTravelSessionError:
+            return
+        if current.travel.generationStatus != "generating":
+            return
+        try:
+            lease = _acquire_public_request_admission(
+                user,
+                bucket="llm",
+                global_setting="http_llm_global_concurrency",
+                per_user_setting="http_llm_per_user_concurrency",
+                default_global_limit=DEFAULT_HTTP_LLM_GLOBAL_CONCURRENCY,
+                default_per_user_limit=DEFAULT_HTTP_LLM_PER_USER_CONCURRENCY,
+            )
+        except HTTPException:
+            # Keep the durable shell in `generating`; a later status poll will resume it.
+            return
+        prompt_log_token = set_prompt_log_context(
+            {"endpoint": "/api/travel/interactive/start/background"}
+        )
+        response = start_interactive_travel(
+            destination=destination,
+            travel_id=travel_id,
+            include_debug=include_debug,
+        )
+        _interactive_travel_session_store().replace_start_generation(response)
+    except Exception as exc:
+        _refund_optional_rate_limit(rate_reservation)
+        code = chat_error_code(exc)
+        _interactive_travel_session_store().mark_start_generation_failed(
+            travel_id,
+            travel_error_message(code),
+        )
+        log_ai_request_failure(
+            "/api/travel/interactive/start/background",
+            error_detail(
+                "interactive_travel_start_failed",
+                code,
+                travel_error_message(code),
+                exc,
+            ),
+            exc,
+        )
+    finally:
+        if prompt_log_token is not None:
+            reset_prompt_log_context(prompt_log_token)
+        if lease is not None:
+            lease.release()
+        with _interactive_travel_start_jobs_lock:
+            _interactive_travel_start_jobs.discard(travel_id)
+
+
+def _schedule_interactive_travel_start_generation(
+    background_tasks: BackgroundTasks,
+    *,
+    travel_id: str,
+    destination: str,
+    user: TelegramUserContext,
+    include_debug: bool,
+    rate_reservation: RateLimitReservation | None = None,
+) -> None:
+    background_tasks.add_task(
+        _run_interactive_travel_start_generation,
+        travel_id=travel_id,
+        destination=destination,
+        user=user,
+        include_debug=include_debug,
+        rate_reservation=rate_reservation,
+    )
 
 
 def _require_diagnostic_user(user: TelegramUser) -> None:
@@ -1207,10 +1308,11 @@ def interactive_travel_demo(user: TelegramUser) -> InteractiveTravelDemoResponse
     "/travel/interactive/start",
     response_model=InteractiveTravelResponse,
     response_model_exclude_none=True,
-    dependencies=[Depends(_llm_request_admission)],
+    status_code=status.HTTP_202_ACCEPTED,
 )
 def interactive_travel_start(
     payload: StartInteractiveTravelRequest,
+    background_tasks: BackgroundTasks,
     user: TelegramUser,
 ) -> InteractiveTravelResponse:
     _require_interactive_travel_pilot(user)
@@ -1226,23 +1328,48 @@ def interactive_travel_start(
     except InteractiveTravelSessionError as exc:
         raise _interactive_travel_session_http_exception(exc) from None
     if attempt.replay is not None:
-        return attempt.replay
+        if attempt.replay.travel.generationStatus == "failed":
+            try:
+                session_store.cancel(attempt.travel_id, user.telegram_id)
+                attempt = session_store.preflight_start(
+                    telegram_id=user.telegram_id,
+                    pet_fingerprint=_interactive_travel_pet_fingerprint(payload.pet),
+                    request_fingerprint=request_fingerprint,
+                )
+            except InteractiveTravelSessionError as exc:
+                raise _interactive_travel_session_http_exception(exc) from None
+        elif attempt.replay.travel.generationStatus == "generating":
+            _schedule_interactive_travel_start_generation(
+                background_tasks,
+                travel_id=attempt.travel_id,
+                destination=attempt.replay.travel.destination,
+                user=user,
+                include_debug=payload.includeDebug,
+            )
+            return attempt.replay
+        else:
+            return attempt.replay
     rate_reservation = check_rate_limit(
         "interactive_travel",
         user,
         request_key=_interactive_travel_start_rate_request_key(request_fingerprint),
     )
-    prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel/interactive/start"})
     try:
-        response = start_interactive_travel(
-            pet=payload.pet,
+        response = prepare_interactive_travel_start(
             destination=payload.destination,
             travel_id=attempt.travel_id,
-            history=payload.history,
-            memory_context=payload.memoryContext,
-            include_debug=payload.includeDebug,
         )
-        return session_store.commit_start(attempt, response).response
+        committed = session_store.commit_start(attempt, response).response
+        if committed.travel.generationStatus == "generating":
+            _schedule_interactive_travel_start_generation(
+                background_tasks,
+                travel_id=committed.travel.travelId,
+                destination=committed.travel.destination,
+                user=user,
+                include_debug=payload.includeDebug,
+                rate_reservation=rate_reservation,
+            )
+        return committed
     except InteractiveTravelSessionError as exc:
         _refund_optional_rate_limit(rate_reservation)
         raise _interactive_travel_session_http_exception(exc) from None
@@ -1260,8 +1387,42 @@ def interactive_travel_start(
             exc,
             include_diagnostic=_is_diagnostic_user(user.telegram_id),
         ) from exc
-    finally:
-        reset_prompt_log_context(prompt_log_token)
+
+
+@router.get(
+    "/travel/interactive/{travel_id}/status",
+    response_model=InteractiveTravelResponse,
+    response_model_exclude_none=True,
+)
+def interactive_travel_status(
+    travel_id: Annotated[
+        str,
+        PathParameter(
+            min_length=20,
+            max_length=160,
+            pattern=r"^interactive-travel-[A-Za-z0-9_-]+$",
+        ),
+    ],
+    background_tasks: BackgroundTasks,
+    user: TelegramUser,
+) -> InteractiveTravelResponse:
+    _require_interactive_travel_pilot(user)
+    try:
+        response = _interactive_travel_session_store().read_response(
+            travel_id,
+            user.telegram_id,
+        )
+    except InteractiveTravelSessionError as exc:
+        raise _interactive_travel_session_http_exception(exc) from None
+    if response.travel.generationStatus == "generating":
+        _schedule_interactive_travel_start_generation(
+            background_tasks,
+            travel_id=travel_id,
+            destination=response.travel.destination,
+            user=user,
+            include_debug=False,
+        )
+    return response
 
 
 @router.post(
@@ -1402,7 +1563,6 @@ def interactive_travel_animate(
     "/travel/interactive/continue",
     response_model=InteractiveTravelResponse,
     response_model_exclude_none=True,
-    dependencies=[Depends(_llm_request_admission)],
 )
 def interactive_travel_continue(
     payload: ContinueInteractiveTravelRequest,
@@ -1428,14 +1588,10 @@ def interactive_travel_continue(
         user,
         request_key=_interactive_travel_continue_rate_request_key(request_fingerprint),
     )
-    prompt_log_token = set_prompt_log_context({"endpoint": "/api/travel/interactive/continue"})
     try:
         response = continue_interactive_travel(
-            pet=payload.pet,
             travel=payload.travel,
             advice=payload.advice,
-            history=payload.history,
-            memory_context=payload.memoryContext,
             include_debug=payload.includeDebug,
         )
         committed = session_store.commit_continue(attempt, response)
@@ -1470,8 +1626,6 @@ def interactive_travel_continue(
             exc,
             include_diagnostic=_is_diagnostic_user(user.telegram_id),
         ) from exc
-    finally:
-        reset_prompt_log_context(prompt_log_token)
 
 
 @router.post("/travel/interactive/finale/capture")

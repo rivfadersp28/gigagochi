@@ -58,6 +58,17 @@ import {
 import { withLocalPetMutationLock } from "@/lib/localPetMutationLock";
 import { claimPetIntroduction } from "@/lib/localPetIntroduction";
 import {
+  FIRST_SESSION_COPY,
+  firstSessionDashboardMessage,
+  isLocalFirstSessionActive,
+  isLocalFirstSessionEnabled,
+  readLocalPetFirstSession,
+  restartLocalPetFirstSession,
+  setLocalFirstSessionEnabled,
+  updateLocalPetFirstSession,
+  type LocalPetFirstSession,
+} from "@/lib/localPetFirstSession";
+import {
   splitPetReplyPortions,
   splitPetReplySentences,
 } from "@/lib/petReplySentences";
@@ -373,6 +384,31 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     };
   }, []);
   const pet = localPet.pet;
+  const [firstSession, setFirstSession] = useState<LocalPetFirstSession | null | undefined>(
+    undefined,
+  );
+  const firstSessionActive = isLocalFirstSessionActive(firstSession);
+  const currentPetId = pet?.petId;
+  const currentPetIntroductionPending = pet?.introductionPending;
+  useEffect(() => {
+    let cancelled = false;
+    window.queueMicrotask(() => {
+      if (cancelled) {
+        return;
+      }
+      if (!currentPetId || currentPetId !== petId) {
+        setFirstSession(null);
+        return;
+      }
+      setFirstSession(readLocalPetFirstSession({
+        petId: currentPetId,
+        introductionPending: currentPetIntroductionPending,
+      }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPetId, currentPetIntroductionPending, petId]);
   useEffect(() => {
     const refreshedAssetSet = refreshedTestPetAssetSet(pet?.assetSet);
     if (!refreshedAssetSet) {
@@ -625,10 +661,24 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     if (
       !pet
       || pet.diedAt
+      || firstSessionActive
       || ambientSessionPetIdRef.current === pet.petId
-      || hasShownAmbientReplyInSession(pet.petId)
       || ambientSessionPendingRef.current
     ) {
+      return;
+    }
+
+    if (hasShownAmbientReplyInSession(pet.petId)) {
+      const previousReply = readRecentAmbientReplies(pet.petId).at(-1);
+      if (previousReply) {
+        showPetReplyMessage(previousReply, true, {
+          dialogueHook: true,
+          voiceMode: "generated",
+          maxPortions: IDLE_REPLY_MAX_PORTIONS,
+          autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
+        });
+      }
+      ambientSessionPetIdRef.current = pet.petId;
       return;
     }
 
@@ -722,7 +772,14 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           setIsGeneratingIdleReply(false);
         }
       });
-  }, [beginIdleThinking, includePromptDebug, localPet, pet, showPetReplyMessage]);
+  }, [
+    beginIdleThinking,
+    firstSessionActive,
+    includePromptDebug,
+    localPet,
+    pet,
+    showPetReplyMessage,
+  ]);
 
   const closeChatMode = useCallback(() => {
     cancelReplyAutoAdvance();
@@ -1011,7 +1068,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [localPet.status, pet, petId, router]);
 
   function handleFeed() {
-    if (!pet) {
+    if (
+      !pet
+      || (firstSessionActive
+        && firstSession?.stage !== "awaiting-first-food"
+        && firstSession?.stage !== "awaiting-remedy")
+    ) {
       return;
     }
 
@@ -1088,6 +1150,20 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     if (!pet) {
       return false;
     }
+    if (
+      firstSession?.stage === "awaiting-first-food"
+      && foodId !== "berry-bowl"
+    ) {
+      hapticNotification("warning");
+      return false;
+    }
+    if (
+      firstSession?.stage === "awaiting-remedy"
+      && foodId !== "leaf-crunch"
+    ) {
+      hapticNotification("warning");
+      return false;
+    }
 
     cancelReplyAutoAdvance();
     setFeedError(null);
@@ -1108,6 +1184,41 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     void playPetFeedSound();
     void primePetSpeechAudio();
     hapticNotification("success");
+
+    if (firstSession?.stage === "awaiting-first-food") {
+      const nextFirstSession = updateLocalPetFirstSession(
+        firstSession,
+        "awaiting-remedy",
+      );
+      setFirstSession(nextFirstSession);
+      showPetReplyMessage(FIRST_SESSION_COPY.afterFirstFood, true, {
+        showInFeed: true,
+        voiceMode: "generated",
+        maxPortions: IDLE_REPLY_MAX_PORTIONS,
+        autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
+      });
+      foodReactionAbortRef.current = null;
+      setIsFeeding(false);
+      return true;
+    }
+
+    if (firstSession?.stage === "awaiting-remedy") {
+      const nextFirstSession = updateLocalPetFirstSession(
+        firstSession,
+        "awaiting-travel",
+      );
+      setFirstSession(nextFirstSession);
+      showPetReplyMessage(FIRST_SESSION_COPY.afterRemedy, true, {
+        voiceMode: "generated",
+        maxPortions: IDLE_REPLY_MAX_PORTIONS,
+        autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
+      });
+      foodReactionAbortRef.current = null;
+      setIsFeeding(false);
+      setIsFeedMode(false);
+      return true;
+    }
+
     void generateFoodReaction(nextPet, foodId, requestId, controller.signal);
     return true;
   }
@@ -1131,7 +1242,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }
 
   function handleTravel() {
-    if (!pet) {
+    if (
+      !pet
+      || (firstSessionActive
+        && firstSession?.stage !== "awaiting-travel"
+        && firstSession?.stage !== "confirming-travel")
+    ) {
       return;
     }
 
@@ -1151,6 +1267,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }
 
   function handleOpenChatMode() {
+    if (firstSessionActive && firstSession?.stage !== "awaiting-chat") {
+      return;
+    }
     cancelReplyAutoAdvance();
     cancelIdleReplyGeneration();
     setIsFeedMode(false);
@@ -1222,7 +1341,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           requestedPetId,
         );
       });
-      showPetReplyMessage(response.reply, true, {
+      const isFirstSessionChat = firstSession?.stage === "awaiting-chat";
+      if (isFirstSessionChat) {
+        setFirstSession(updateLocalPetFirstSession(
+          firstSession,
+          "awaiting-first-food",
+        ));
+      }
+      const visibleReply = isFirstSessionChat
+        ? `${response.reply} ${FIRST_SESSION_COPY.afterChat}`
+        : response.reply;
+      showPetReplyMessage(visibleReply, true, {
         showInConversation: true,
         autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
       });
@@ -1293,6 +1422,39 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     hapticNotification("success");
   }
 
+  function restartFirstSessionFlow() {
+    if (!pet) {
+      return;
+    }
+    cancelReplyAutoAdvance();
+    cancelIdleReplyGeneration();
+    setIsChatMode(false);
+    setIsFeedMode(false);
+    const restarted = restartLocalPetFirstSession(pet.petId);
+    setFirstSession(restarted);
+    if (restarted) {
+      showPetReplyMessage(firstSessionDashboardMessage(pet, restarted) ?? "", true, {
+        dialogueHook: true,
+        voiceMode: "generated",
+        maxPortions: IDLE_REPLY_MAX_PORTIONS,
+        autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
+      });
+    }
+    setIsDebugPanelOpen(false);
+  }
+
+  function toggleFirstSessionFlow() {
+    const enabled = !isLocalFirstSessionEnabled();
+    setLocalFirstSessionEnabled(enabled);
+    if (enabled) {
+      restartFirstSessionFlow();
+      return;
+    }
+    setFirstSession(null);
+    setIsDebugPanelOpen(false);
+    requestAmbientReply();
+  }
+
   function handleStartOver() {
     if (localPet.reset()) {
       router.replace("/");
@@ -1324,6 +1486,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   useEffect(() => {
     if (
       localPet.status === "loading" ||
+      firstSession === undefined ||
       !pet ||
       pet.diedAt ||
       pet.petId !== petId ||
@@ -1339,6 +1502,23 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
     proactiveAttemptedRef.current = true;
+
+    if (firstSessionActive && firstSession) {
+      // Claim the legacy introduction marker so it cannot replay after onboarding completes.
+      claimPetIntroduction(pet);
+      const message = firstSessionDashboardMessage(pet, firstSession);
+      if (message) {
+        window.queueMicrotask(() => {
+          showPetReplyMessage(message, true, {
+            dialogueHook: true,
+            voiceMode: "generated",
+            maxPortions: IDLE_REPLY_MAX_PORTIONS,
+            autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
+          });
+        });
+      }
+      return;
+    }
 
     const introduction = claimPetIntroduction(pet);
     if (introduction) {
@@ -1455,6 +1635,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [
     assetsReadyForPetId,
     beginIdleThinking,
+    firstSession,
+    firstSessionActive,
     includePromptDebug,
     localPet,
     pet,
@@ -1532,6 +1714,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         setIsDebugPanelOpen(false);
         router.push(`/pet/${pet.petId}/travel?demo=1`);
       }}
+      firstSessionEnabled={isLocalFirstSessionEnabled()}
+      onToggleFirstSession={toggleFirstSessionFlow}
+      onRestartFirstSession={restartFirstSessionFlow}
       canShowSadAsset={hasSadAssets}
       canShowHappyAsset={hasHappyAssets}
       visualModeOverride={visualModeOverride}
@@ -1617,6 +1802,14 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const roundedHungerPercent = Math.round(hungerPercent);
   const roundedMoodPercent = Math.round(moodPercent);
   const roundedHealthPercent = Math.round(healthPercent);
+  const firstSessionChatDisabled = firstSessionActive
+    && firstSession?.stage !== "awaiting-chat";
+  const firstSessionFeedDisabled = firstSessionActive
+    && firstSession?.stage !== "awaiting-first-food"
+    && firstSession?.stage !== "awaiting-remedy";
+  const firstSessionTravelDisabled = firstSessionActive
+    && firstSession?.stage !== "awaiting-travel"
+    && firstSession?.stage !== "confirming-travel";
   const conversationSceneStyle: ConversationSceneStyle = {
     "--conversation-input-offset-y": `${conversationInputOffsetY}px`,
   };
@@ -1820,7 +2013,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
                 <DraggableFoodToken
                   key={food.id}
                   food={food}
-                  disabled={false}
+                  disabled={
+                    firstSession?.stage === "awaiting-first-food"
+                      ? food.id !== "berry-bowl"
+                      : firstSession?.stage === "awaiting-remedy"
+                        ? food.id !== "leaf-crunch"
+                        : false
+                  }
                   onDrop={handleFoodDrop}
                   onActivate={serveFood}
                 />
@@ -1842,6 +2041,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             type="button"
             className="main-action-button main-action-button--chat"
             onClick={handleOpenChatMode}
+            disabled={firstSessionChatDisabled}
           >
             <img
               src={actionIconSrc.chat}
@@ -1855,7 +2055,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           <button
             type="button"
             onClick={handleFeed}
-            disabled={isFeeding}
+            disabled={isFeeding || firstSessionFeedDisabled}
             className="main-action-button main-action-button--feed disabled:cursor-not-allowed disabled:opacity-70"
           >
             {isFeeding ? (
@@ -1876,6 +2076,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             <button
               type="button"
               onClick={handleTravel}
+              disabled={firstSessionTravelDisabled}
               className="main-action-button main-action-button--travel"
             >
               <img

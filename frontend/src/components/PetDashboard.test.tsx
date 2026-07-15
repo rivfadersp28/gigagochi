@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   generateLocalAmbientMessage: vi.fn(),
   hapticNotification: vi.fn(),
   introduction: "Привет" as string | null,
+  interactiveTravel: false,
   localPet: undefined as unknown,
   router: {
     push: vi.fn(),
@@ -82,7 +83,10 @@ vi.mock("@/lib/telegram", async (importOriginal) => ({
 }));
 
 vi.mock("@/lib/useTelegramCapabilities", () => ({
-  useTelegramCapabilities: () => ({ debugMenu: false, interactiveTravel: false }),
+  useTelegramCapabilities: () => ({
+    debugMenu: false,
+    interactiveTravel: mocks.interactiveTravel,
+  }),
 }));
 
 vi.mock("./pet-dashboard/useConversationKeyboardOffset", () => ({
@@ -166,6 +170,7 @@ beforeEach(() => {
     ) => mutation({ assertOwned: vi.fn() }),
   );
   mocks.introduction = "Привет";
+  mocks.interactiveTravel = false;
   mocks.storyHistory = [];
   window.localStorage.clear();
   window.sessionStorage.clear();
@@ -197,6 +202,81 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+it("keeps the bottom actions enabled when onboarding is not opted in", async () => {
+  const petWithPendingIntroduction: LocalPetState = {
+    ...pet,
+    introductionPending: true,
+  };
+  writeLocalPetState(petWithPendingIntroduction);
+  (mocks.localPet as { pet: LocalPetState }).pet = petWithPendingIntroduction;
+  mocks.interactiveTravel = true;
+
+  render(<PetDashboard petId={petWithPendingIntroduction.petId} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  expect(screen.getByRole("button", { name: "Покормить" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "В путешествие" })).toBeEnabled();
+});
+
+it("guides the local first session through chat and both cards", async () => {
+  const firstSessionPet: LocalPetState = {
+    ...pet,
+    name: "Листик",
+    introductionPending: true,
+  };
+  window.localStorage.setItem("tamagochi:v1:first-session-enabled", "1");
+  writeLocalPetState(firstSessionPet);
+  const localPetMock = mocks.localPet as {
+    pet: LocalPetState;
+    feed: ReturnType<typeof vi.fn>;
+  };
+  localPetMock.pet = firstSessionPet;
+  localPetMock.feed.mockReturnValue(firstSessionPet);
+  mocks.interactiveTravel = true;
+  mocks.runLocalPetChatTurn.mockResolvedValue({
+    response: { reply: "Очень приятно!", happinessDelta: 0 },
+  });
+
+  render(<PetDashboard petId={firstSessionPet.petId} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  expect(screen.getByRole("button", { name: "Поболтать" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Покормить" })).toBeDisabled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Поболтать" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Сообщение персонажу" }), {
+    target: { value: "Меня зовут Сергей" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(4_000);
+  });
+
+  const backHandler = mocks.useTelegramBackButton.mock.calls.at(-1)?.[0] as
+    | (() => void)
+    | undefined;
+  act(() => backHandler?.());
+  expect(screen.getByRole("button", { name: "Покормить" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Покормить" }));
+
+  const berries = screen.getByRole("button", { name: "Дать персонажу ягоды" });
+  const remedy = screen.getByRole("button", { name: "Дать персонажу листик" });
+  expect(berries).toBeEnabled();
+  expect(remedy).toBeDisabled();
+  fireEvent.click(berries);
+  expect(berries).toBeDisabled();
+  expect(remedy).toBeEnabled();
+
+  fireEvent.click(remedy);
+  expect(screen.getByRole("button", { name: "В путешествие" })).toBeEnabled();
+  expect(localPetMock.feed).toHaveBeenNthCalledWith(1, "berry-bowl");
+  expect(localPetMock.feed).toHaveBeenNthCalledWith(2, "leaf-crunch");
 });
 
 it("does not show a late chat error after the pet is reset", async () => {
@@ -347,6 +427,23 @@ it("generates only one ambient reply during a dashboard session", async () => {
   act(() => backHandler?.());
 
   expect(mocks.generateLocalAmbientMessage).toHaveBeenCalledOnce();
+});
+
+it("restores the session ambient reply when the dashboard opens again", async () => {
+  mocks.introduction = null;
+  window.localStorage.setItem(
+    `tamagochi:v1:ambient-replies:${pet.petId}`,
+    JSON.stringify(["Лёд плавает из-за меньшей плотности"]),
+  );
+  window.sessionStorage.setItem(`tamagochi:v1:ambient-shown:${pet.petId}`, "1");
+
+  render(<PetDashboard petId={pet.petId} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  expect(mocks.generateLocalAmbientMessage).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Лёд плавает из-за меньшей плотности")).toBeInTheDocument();
 });
 
 it("offers a keyboard action for petting the pet", async () => {
