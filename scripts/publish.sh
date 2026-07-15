@@ -28,6 +28,19 @@ require_command() {
   fi
 }
 
+wait_for_health() {
+  local attempt
+  for ((attempt = 1; attempt <= 20; attempt += 1)); do
+    if curl --fail --silent --show-error "$HEALTH_URL"; then
+      echo
+      return 0
+    fi
+    echo "Production health is not ready ($attempt/20)"
+    sleep 3
+  done
+  return 1
+}
+
 if [ -z "$COMMIT_MESSAGE" ]; then
   usage
   exit 1
@@ -75,6 +88,5 @@ git push "$REMOTE" "$BRANCH"
 ssh -i "$SSH_KEY" "$SSH_TARGET" \
   "set -e; cd '$REMOTE_PATH'; git pull --ff-only '$REMOTE' '$BRANCH'; docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build; docker compose --env-file .env.production -f docker-compose.prod.yml ps"
 
-curl --fail --silent --show-error "$HEALTH_URL"
-echo
+wait_for_health
 echo "Published $(git rev-parse --short HEAD) to $HEALTH_URL"
