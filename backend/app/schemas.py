@@ -335,7 +335,7 @@ class InteractiveTravelPart(BaseModel):
     challenge: str = Field(min_length=1, max_length=280)
     actionSuggestions: list[InteractiveTravelSuggestionValue] = Field(
         default_factory=list,
-        max_length=3,
+        max_length=4,
     )
     backgroundImageUrl: str | None = Field(default=None, min_length=1, max_length=1000)
     backgroundVideoUrl: str | None = Field(default=None, min_length=1, max_length=1000)
@@ -359,7 +359,7 @@ class InteractiveTravelState(BaseModel):
     generatedAt: datetime
     destination: str = Field(min_length=1, max_length=500)
     overallTitle: str = Field(min_length=1, max_length=120)
-    arcPlan: dict[InteractiveTravelArcPlanKey, InteractiveTravelArcPlanValue] = Field(max_length=32)
+    arcPlan: dict[InteractiveTravelArcPlanKey, InteractiveTravelArcPlanValue] = Field(max_length=40)
     introReaction: InteractiveTravelIntroReaction | None = None
     parts: list[InteractiveTravelPart] = Field(min_length=1, max_length=7)
     completed: bool = False

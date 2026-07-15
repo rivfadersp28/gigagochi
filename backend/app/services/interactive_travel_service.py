@@ -36,10 +36,8 @@ from app.services.pet_reply_engine.speech_runtime import background_story_reason
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
 
 STORY_PART_COUNT = 4
-GENERATOR_VERSION = "erudition-4-v1"
-STORY_APPLICATION_RULE = (
-    "Верный ответ нужно применить, чтобы преодолеть препятствие и пройти дальше."
-)
+GENERATOR_VERSION = "task-bank-location-v2"
+FIXED_PLAN_GENERATOR_VERSIONS = {"erudition-4-v1", GENERATOR_VERSION}
 MIN_TIMEOUT_SECONDS = 120.0
 CHOICE_MAX_WORDS = 3
 CHOICE_MAX_LENGTH = 40
@@ -91,15 +89,18 @@ CHOICE_FALLBACKS = (
     "Идти дальше",
 )
 
-SYSTEM_PROMPT = "\n".join(
+START_SYSTEM_PROMPT = "\n".join(
     (
-        "Создай законченную интерактивную фэнтези-историю из четырёх частей.",
-        "В каждой части героя останавливает препятствие или враг, которого можно преодолеть "
-        "только знанием из задачи на эрудицию.",
-        "Используй физику, окружающий мир, математику или логику не сложнее 8 класса.",
-        "У каждой задачи три коротких понятных ответа и ровно один правильный.",
+        "Создай простую фэнтези-историю из четырёх коротких эпизодов в заданной локации.",
+        "Для каждого эпизода напиши только короткую подводку к переданной задаче.",
+        "Не переписывай, не усложняй и не решай задачи: сервер добавит их дословно.",
         "Верни только JSON по схеме.",
     )
+)
+
+RESULT_SYSTEM_PROMPT = (
+    "Покажи простой результат выбранного ответа в текущем фэнтезийном эпизоде. "
+    "Не добавляй новую задачу, локацию или сюжетную линию. Верни только JSON по схеме."
 )
 
 CHOICE_SCHEMA: dict[str, Any] = {
@@ -114,55 +115,17 @@ PLAN_PART_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "situation": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 300,
-            "description": (
-                "Одно-два коротких предложения от первого лица: куда я пришёл и что случилось."
-            ),
-        },
-        "obstacle": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240,
-            "description": (
-                "Одно короткое законченное предложение: конкретное препятствие или враг и "
-                "почему без правильного ответа герой не может продолжить путь."
-            ),
-        },
-        "question": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 120,
-        },
-        "subject": {
-            "type": "string",
-            "enum": ["physics", "nature", "math", "logic"],
-        },
-        "choices": {
-            "type": "array",
-            "minItems": 3,
-            "maxItems": 3,
-            "items": CHOICE_SCHEMA,
-        },
-        "correctChoice": CHOICE_SCHEMA,
-        "explanation": {
+        "fantasySetup": {
             "type": "string",
             "minLength": 1,
             "maxLength": 180,
-            "description": "Короткое объективное объяснение правильного ответа.",
+            "description": (
+                "Одно короткое предложение от первого лица: где в выбранной локации герой "
+                "встречает эту задачу. Не повторяй условие и вопрос."
+            ),
         },
     },
-    "required": [
-        "situation",
-        "obstacle",
-        "question",
-        "subject",
-        "choices",
-        "correctChoice",
-        "explanation",
-    ],
+    "required": ["fantasySetup"],
 }
 
 
@@ -171,15 +134,11 @@ START_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "properties": {
         "title": {"type": "string", "minLength": 1, "maxLength": 80},
-        "goal": {"type": "string", "minLength": 1, "maxLength": 180},
         "ending": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 260,
-            "description": (
-                "Готовая развязка с конкретным предметом или результатом: что именно я получил, "
-                "как достиг цели и что могу вернуться домой."
-            ),
+            "maxLength": 180,
+            "description": "Одно короткое предложение: герой завершает путь в этой локации.",
         },
         "parts": {
             "type": "array",
@@ -188,7 +147,7 @@ START_SCHEMA: dict[str, Any] = {
             "items": PLAN_PART_SCHEMA,
         },
     },
-    "required": ["title", "goal", "ending", "parts"],
+    "required": ["title", "ending", "parts"],
 }
 
 RESULT_PROPERTIES: dict[str, Any] = {
@@ -236,6 +195,15 @@ FINAL_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "properties": RESULT_PROPERTIES,
     "required": list(RESULT_PROPERTIES),
+}
+
+FIXED_RESULT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "result": {"type": "string", "minLength": 1, "maxLength": 240},
+    },
+    "required": ["result"],
 }
 
 
@@ -383,14 +351,7 @@ def _task_bank() -> tuple[dict[str, Any], ...]:
 
 
 def _select_story_tasks() -> list[dict[str, Any]]:
-    selected: list[dict[str, Any]] = []
-    for task in random.sample(list(_task_bank()), STORY_PART_COUNT):
-        answer = task["answer"]
-        wrong_choices = [choice for choice in task["choices"] if choice != answer]
-        choices = [answer, *random.sample(wrong_choices, 2)]
-        random.shuffle(choices)
-        selected.append({**task, "choices": choices})
-    return selected
+    return list(random.sample(list(_task_bank()), STORY_PART_COUNT))
 
 
 def _task_bank_prompt(tasks: list[dict[str, Any]]) -> str:
@@ -399,13 +360,10 @@ def _task_bank_prompt(tasks: list[dict[str, Any]]) -> str:
         blocks.append(
             "\n".join(
                 (
-                    f"ИСПЫТАНИЕ {index}",
-                    f"Область: {task['subject']}",
-                    f"Исходная ситуация: {task['situation']}",
+                    f"ЗАДАЧА {index}",
+                    f"Условие: {task['situation']}",
                     f"Вопрос: {task['question']}",
                     f"Варианты: {' | '.join(task['choices'])}",
-                    f"Правильный ответ: {task['answer']}",
-                    f"Пояснение: {task['explanation']}",
                 )
             )
         )
@@ -420,6 +378,7 @@ def _apply_story_tasks(payload: dict[str, Any], tasks: list[dict[str, Any]]) -> 
         if not isinstance(raw_part, dict):
             raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_PLAN_INCOMPLETE")
         raw_part.update(
+            taskSituation=task["situation"],
             question=task["question"],
             subject=task["subject"],
             choices=task["choices"],
@@ -427,6 +386,20 @@ def _apply_story_tasks(payload: dict[str, Any], tasks: list[dict[str, Any]]) -> 
             explanation=task["explanation"],
         )
     return payload
+
+
+def _generated_story_plan_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_parts = payload.get("parts")
+    if not isinstance(raw_parts, list) or len(raw_parts) != STORY_PART_COUNT:
+        raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_PLAN_INCOMPLETE")
+    for raw_part in raw_parts:
+        if (
+            not isinstance(raw_part, dict)
+            or not isinstance(raw_part.get("fantasySetup"), str)
+            or not raw_part["fantasySetup"].strip()
+        ):
+            raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_PLAN_INCOMPLETE")
+    return raw_parts
 
 
 def _story_plan_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -438,7 +411,12 @@ def _story_plan_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
             raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_PLAN_INCOMPLETE")
         if any(
             not isinstance(raw_part.get(field), str) or not raw_part[field].strip()
-            for field in ("situation", "obstacle", "question", "explanation")
+            for field in (
+                "fantasySetup",
+                "taskSituation",
+                "question",
+                "explanation",
+            )
         ):
             raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_PLAN_INCOMPLETE")
         if raw_part.get("subject") not in {"physics", "nature", "math", "logic"}:
@@ -446,7 +424,7 @@ def _story_plan_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
         choices = raw_part.get("choices")
         if (
             not isinstance(choices, list)
-            or len(choices) != 3
+            or len(choices) != 4
             or any(not isinstance(choice, str) or not choice.strip() for choice in choices)
         ):
             raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_PLAN_INCOMPLETE")
@@ -468,16 +446,11 @@ def _parts_from_plan_payload(payload: dict[str, Any]) -> list[InteractiveTravelP
             storyText=" ".join(
                 (
                     _sentence(
-                        raw_part["situation"],
-                        fallback="На пути происходит что-то неожиданное",
-                        limit=200,
+                        raw_part["fantasySetup"],
+                        fallback="На пути меня ждёт новая встреча",
+                        limit=180,
                     ),
-                    _sentence(
-                        raw_part["obstacle"],
-                        fallback="Без правильного ответа путь дальше закрыт",
-                        limit=220,
-                    ),
-                    STORY_APPLICATION_RULE,
+                    raw_part["taskSituation"],
                 )
             ),
             challenge=_sentence(
@@ -486,22 +459,25 @@ def _parts_from_plan_payload(payload: dict[str, Any]) -> list[InteractiveTravelP
                 limit=280,
                 question=True,
             ),
-            actionSuggestions=_choices(raw_part["choices"]),
+            actionSuggestions=list(raw_part["choices"]),
         )
         for part_number, raw_part in enumerate(_story_plan_items(payload), start=1)
     ]
 
 
 def _arc_plan_from_payload(
-    payload: dict[str, Any], *, parts: list[InteractiveTravelPart], task_ids: list[str]
+    payload: dict[str, Any],
+    *,
+    parts: list[InteractiveTravelPart],
+    task_ids: list[str],
 ) -> dict[str, str]:
     raw_parts = _story_plan_items(payload)
     arc_plan = {
         "generatorVersion": GENERATOR_VERSION,
         "taskBankIds": ",".join(task_ids),
         "storyGoal": _sentence(
-            payload.get("goal"),
-            fallback="Завершить путешествие",
+            "Пройти четыре встречи и вернуться домой",
+            fallback="Пройти четыре встречи и вернуться домой",
             limit=180,
         ),
         "storyEnding": _sentence(
@@ -545,6 +521,7 @@ def _planned_part_from_arc(
     elapsed_hours: int,
 ) -> InteractiveTravelPart:
     prefix = f"part{part_number}"
+    choice_count = 4 if arc_plan.get("generatorVersion") == GENERATOR_VERSION else 3
     return InteractiveTravelPart(
         partNumber=part_number,
         title=f"Часть {part_number}",
@@ -557,7 +534,7 @@ def _planned_part_from_arc(
         challenge=_required_arc_value(arc_plan, f"{prefix}Question"),
         actionSuggestions=[
             _required_arc_value(arc_plan, f"{prefix}Choice{choice_number}")
-            for choice_number in range(1, 4)
+            for choice_number in range(1, choice_count + 1)
         ],
     )
 
@@ -608,6 +585,7 @@ def _request(
     label: str,
     schema_name: str,
     schema: dict[str, Any],
+    system_content: str,
     user_content: str,
     client: Any | None,
     model: str | None,
@@ -618,7 +596,7 @@ def _request(
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_content},
             {"role": "user", "content": user_content},
         ],
         "response_format": {
@@ -640,7 +618,7 @@ def _request(
         ):
             raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_PLAN_INCOMPLETE")
         if require_story_plan:
-            _story_plan_items(payload)
+            _generated_story_plan_items(payload)
         return payload
 
     try:
@@ -768,31 +746,23 @@ def start_interactive_travel(
     clean_destination = _compact_text(destination, 500, "в путешествие")
     story_tasks = _select_story_tasks()
     payload, debug = _request(
-        label="interactive_travel/start_erudition_4",
-        schema_name="interactive_travel_erudition_story_v1",
+        label="interactive_travel/start_task_bank_location_v2",
+        schema_name="interactive_travel_task_bank_location_v2",
         schema=START_SCHEMA,
+        system_content=START_SYSTEM_PROMPT,
         user_content=(
-            "Создай историю в стиле фэнтези с законченным сюжетом из 4 частей.\n"
-            f"Главный герой: {_character_summary(pet)}.\n\n"
-            "В каждой части — ситуация или препятствие, которое герой преодолевает выбором "
-            "ответа. Каждое испытание содержит задачу на эрудицию: физика, окружающий мир, "
-            "математика или логика, уровень сложности — до 8 класса. Ответы должны быть "
-            "короткими и понятными, а правильный выбор ведёт к развитию сюжета.\n"
-            "Все четыре части составляют один связный сюжет с ясной целью и конкретной "
-            "развязкой. Для каждой части верни три разных ответа в choices, ровно один из них "
-            "дословно повтори в correctChoice. Не ставь правильный ответ всегда на одну позицию.\n"
-            "Используй четыре испытания ниже в указанном порядке. Не заменяй их другими задачами "
-            "и не меняй правильные ответы. Для каждого испытания придумай конкретное препятствие "
-            "или врага. Ответ должен быть не пропуском за викторину, а полезным знанием: герой "
-            "применяет его к действию, механизму, среде или слабости врага и благодаря этому "
-            "проходит дальше. В obstacle прямо укажи, что перекрывает путь и почему без решения "
-            "задачи его не преодолеть. Придумай только связующие фэнтезийные ситуации.\n\n"
+            f"Локация: {clean_destination}.\n"
+            "Придумай название и четыре простые фэнтезийные подводки — по одной к каждой "
+            "задаче. Все встречи происходят в этой локации. Подводка — одно короткое "
+            "предложение от первого лица о месте встречи. Не пересказывай условие, не меняй "
+            "вопрос и не объясняй ответ. Эпизодам не нужна сложная причинная связь. В ending "
+            "одним предложением закончи путешествие в этой же локации.\n\n"
             f"{_task_bank_prompt(story_tasks)}"
         ),
         client=client,
         model=model,
         timeout=timeout,
-        required_text_fields=("title", "goal", "ending"),
+        required_text_fields=("title", "ending"),
         require_story_plan=True,
     )
     payload = _apply_story_tasks(payload, story_tasks)
@@ -847,12 +817,11 @@ def continue_interactive_travel(
     clean_advice = _compact_text(advice, 1000, "идти дальше")
     is_final = current_part.partNumber >= STORY_PART_COUNT
     elapsed_hours = 0 if is_final else random.randint(TIME_SKIP_MIN_HOURS, TIME_SKIP_MAX_HOURS)
-    uses_fixed_plan = travel.arcPlan.get("generatorVersion") == GENERATOR_VERSION
+    uses_fixed_plan = travel.arcPlan.get("generatorVersion") in FIXED_PLAN_GENERATOR_VERSIONS
     story_ending: str | None = None
     answer_rule = ""
     answer_is_correct = False
     if uses_fixed_plan:
-        story_goal = _required_arc_value(travel.arcPlan, "storyGoal")
         correct_choice = _required_arc_value(
             travel.arcPlan,
             f"part{current_part.partNumber}CorrectChoice",
@@ -863,37 +832,29 @@ def continue_interactive_travel(
         )
         answer_is_correct = clean_advice.casefold() == correct_choice.casefold()
         answer_rule = (
-            f"Выбранный ответ правильный: {correct_choice}. Объяснение: {correct_explanation} "
-            "Покажи, как знание помогает герою."
+            f"Ответ верный. Объяснение из базы: {correct_explanation}"
             if answer_is_correct
             else (
-                f"Выбранный ответ неправильный. Правильный ответ: {correct_choice}. "
-                f"Объяснение: {correct_explanation} "
-                "Коротко покажи локальную неудачу и объясни верный ответ внутри события."
+                f"Ответ неверный. Правильный ответ: {correct_choice}. "
+                f"Объяснение из базы: {correct_explanation}"
             )
         )
         if is_final:
             story_ending = _required_arc_value(travel.arcPlan, "storyEnding")
-            instruction = (
-                "Это четвёртая и последняя часть. Покажи только прямой результат выбранного "
-                "действия в текущей ситуации. Не начинай новую задачу и не повторяй готовую "
-                f"развязку — сервер добавит её следом: {story_ending} Исходная цель: {story_goal}"
-            )
+            instruction = "Это последний эпизод. Развязку путешествия сервер добавит отдельно."
         else:
-            next_situation = _required_arc_value(
-                travel.arcPlan,
-                f"part{current_part.partNumber + 1}Situation",
-            )
-            instruction = (
-                "Покажи только результат действия в текущей ситуации. После него герой всё равно "
-                f"может продолжить путь и через {_hours_phrase(elapsed_hours)} попадает в уже "
-                f"готовую следующую ситуацию: {next_situation} "
-                "Закончи результат словами о том, что я иду дальше. Не меняй и не решай "
-                "следующую ситуацию сейчас."
-            )
-        schema = FINAL_SCHEMA
+            instruction = "Заверши только этот эпизод. Следующую встречу сервер покажет отдельно."
+        schema = FIXED_RESULT_SCHEMA
         label = f"interactive_travel/part_{current_part.partNumber}_result_fixed"
-        schema_name = "interactive_travel_part_result_fixed_v1"
+        schema_name = "interactive_travel_part_result_fixed_v2"
+        result_user_content = (
+            f"Локация: {travel.destination}.\n"
+            f"Текущий эпизод: {current_part.storyText}\n"
+            f"Выбранный ответ: {clean_advice}.\n"
+            f"{answer_rule}\n{instruction}\n"
+            "Напиши максимум два коротких предложения с прямым результатом выбора. "
+            "Не придумывай новую задачу, правило, предмет или место."
+        )
     else:
         instruction = (
             "Покажи результат действия и закончи приключение. Не придумывай новую ситуацию."
@@ -911,23 +872,22 @@ def continue_interactive_travel(
             if is_final
             else "interactive_travel_continue_simple_v1"
         )
+        result_user_content = (
+            "Покажи результат выбора в приключении.\n"
+            f"Главный герой: {_character_summary(pet)}.\n"
+            f"Сейчас: {current_part.storyText}\n"
+            f"Я делаю: {clean_advice}.\n\n"
+            f"{instruction}\n"
+            "Пиши просто, максимум два коротких предложения. Действие должно реально "
+            "повлиять на текущую ситуацию: хорошо или плохо. Если это не финал, верни новую "
+            "ситуацию, вопрос и три действия по схеме."
+        )
     payload, debug = _request(
         label=label,
         schema_name=schema_name,
         schema=schema,
-        user_content=(
-            "Покажи результат выбора в приключении.\n"
-            f"Главный герой: {_character_summary(pet)}.\n"
-            f"Цель: {travel.arcPlan.get('storyGoal', 'завершить путешествие')}\n"
-            f"Сейчас: {current_part.storyText}\n"
-            f"Я делаю: {clean_advice}.\n\n"
-            f"{answer_rule}\n{instruction}\n"
-            "Пиши просто, максимум два коротких предложения. "
-            "Действие должно реально повлиять "
-            "на текущую ситуацию: хорошо или плохо. Можно изменить один показатель hunger, "
-            "happiness или energy на число от -15 до 15. Если показатель не меняется, верни "
-            "stat=none, amount=0 и короткую reason. Не добавляй научные факты."
-        ),
+        system_content=RESULT_SYSTEM_PROMPT,
+        user_content=result_user_content,
         client=client,
         model=model,
         timeout=timeout,

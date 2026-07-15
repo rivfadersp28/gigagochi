@@ -111,7 +111,7 @@ const MAX_MEMORY_EXTRACTION_OPERATIONS = 12;
 const MAX_MEMORY_CONSOLIDATION_OPERATIONS = 120;
 const MAX_CHARACTER_BIBLE_BYTES = 512_000;
 const MAX_GENERATION_ERROR_BYTES = 64_000;
-const MAX_INTERACTIVE_TRAVEL_ARC_PLAN_ENTRIES = 32;
+const MAX_INTERACTIVE_TRAVEL_ARC_PLAN_ENTRIES = 40;
 
 function fail(path: string, expectation: string): never {
   throw new ApiContractError(`${path}: ожидалось ${expectation}`);
@@ -515,8 +515,8 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
       part.actionSuggestions,
       `${partPath}.actionSuggestions`,
     );
-    if (rawActionSuggestions.length > 3) {
-      return fail(`${partPath}.actionSuggestions`, "0–3 suggestions");
+    if (rawActionSuggestions.length > 4) {
+      return fail(`${partPath}.actionSuggestions`, "0–4 suggestions");
     }
     const actionSuggestions = rawActionSuggestions.map((suggestion, suggestionIndex) =>
       boundedString(

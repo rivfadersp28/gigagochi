@@ -1134,7 +1134,7 @@
               "minLength": 1,
               "type": "string"
             },
-            "maxItems": 3,
+            "maxItems": 4,
             "title": "Actionsuggestions",
             "type": "array"
           },
@@ -1362,7 +1362,7 @@
               "maxLength": 500,
               "type": "string"
             },
-            "maxProperties": 32,
+            "maxProperties": 40,
             "propertyNames": {
               "maxLength": 80,
               "minLength": 1

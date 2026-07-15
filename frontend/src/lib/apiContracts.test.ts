@@ -261,9 +261,9 @@ describe("API response contracts", () => {
     expect(parsed.travel.parts[1].transition?.departureHook).toBe(departureHook);
   });
 
-  it("accepts the 31-entry erudition arc plan produced by the backend", () => {
+  it("accepts the 34-entry task-bank arc plan produced by the backend", () => {
     const arcPlan = Object.fromEntries(
-      Array.from({ length: 31 }, (_, index) => [`field${index + 1}`, `value${index + 1}`]),
+      Array.from({ length: 34 }, (_, index) => [`field${index + 1}`, `value${index + 1}`]),
     );
 
     const parsed = parseInteractiveTravelResponse({
@@ -278,18 +278,18 @@ describe("API response contracts", () => {
           title: "Часть 1",
           storyText: "Я встречаю первое препятствие.",
           challenge: "Что выбрать?",
-          actionSuggestions: ["Первое", "Второе", "Третье"],
+          actionSuggestions: ["Первое", "Второе", "Третье", "Четвёртое"],
         }],
         completed: false,
       },
     });
 
-    expect(Object.keys(parsed.travel.arcPlan)).toHaveLength(31);
+    expect(Object.keys(parsed.travel.arcPlan)).toHaveLength(34);
   });
 
   it("rejects an arc plan above the backend limit", () => {
     const arcPlan = Object.fromEntries(
-      Array.from({ length: 33 }, (_, index) => [`field${index + 1}`, `value${index + 1}`]),
+      Array.from({ length: 41 }, (_, index) => [`field${index + 1}`, `value${index + 1}`]),
     );
 
     expect(() => parseInteractiveTravelResponse({
