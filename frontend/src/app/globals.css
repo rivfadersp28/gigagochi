@@ -424,7 +424,7 @@ body {
   position: absolute;
   bottom: calc(100% - 291px);
   left: 50%;
-  z-index: 30;
+  z-index: 50;
   transform: translate3d(-50%, 0, 0);
 }
 
