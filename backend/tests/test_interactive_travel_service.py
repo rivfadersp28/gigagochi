@@ -350,6 +350,25 @@ def test_easy_task_bank_is_valid_and_keeps_explanations() -> None:
     assert all(task["explanation"] for task in tasks)
 
 
+def test_scheduled_episode_keeps_all_four_bank_choices(monkeypatch) -> None:
+    task = {
+        "title": "Переправа",
+        "situation": "На пути появилась река.",
+        "question": "Как перейти?",
+        "choices": ["Мост", "Лист", "Песок", "Облако"],
+        "outcomes": ["Исход 1", "Исход 2", "Исход 3", "Исход 4"],
+        "answer": "Мост",
+    }
+    monkeypatch.setattr(interactive_travel_service, "_task_bank", lambda: (task,))
+    monkeypatch.setattr(interactive_travel_service.random, "choice", lambda values: values[0])
+
+    plan = interactive_travel_service.generate_scheduled_interactive_episode_plan()
+
+    assert plan["storyText"] == task["situation"]
+    assert plan["choices"] == task["choices"]
+    assert plan["outcomes"] == task["outcomes"]
+
+
 def test_task_bank_rejects_answer_text_that_disagrees_with_its_letter(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

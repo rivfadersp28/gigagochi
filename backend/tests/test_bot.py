@@ -71,6 +71,16 @@ def _full_story_update() -> dict:
     }
 
 
+def _interactive_story_update() -> dict:
+    return {
+        "message": {
+            "chat": {"id": TEST_TELEGRAM_ID},
+            "from": {"id": TEST_TELEGRAM_ID, "first_name": "Serge"},
+            "text": "/история",
+        }
+    }
+
+
 def _durable_story_update(update_id: int = 42) -> dict:
     update = _story_update()
     update["update_id"] = update_id
@@ -1582,7 +1592,7 @@ def test_task_bank_commands_are_available_to_any_user(
     ]
 
 
-@pytest.mark.parametrize("command", ("/easy", "/hard"))
+@pytest.mark.parametrize("command", ("/easy", "/hard", "/история"))
 def test_task_bank_commands_survive_durable_normalization(command) -> None:
     normalized = normalize_bot_command_update(
         _durable_command_update(77, command, chat_id=123456)
@@ -2027,6 +2037,41 @@ def test_full_story_command_can_be_submitted_without_blocking_polling(monkeypatc
     )
 
     assert submitted[0][0] == TEST_TELEGRAM_ID
+
+
+def test_interactive_story_command_can_be_submitted_without_blocking_polling(monkeypatch) -> None:
+    submitted: list[tuple[int, dict]] = []
+    monkeypatch.setattr(
+        bot,
+        "get_settings",
+        lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
+    )
+
+    bot.handle_update(
+        httpx.Client(),
+        _interactive_story_update(),
+        submit_interactive_story=lambda chat_id, keyboard: submitted.append((chat_id, keyboard)),
+    )
+
+    assert submitted[0][0] == TEST_TELEGRAM_ID
+
+
+def test_interactive_story_command_generates_for_requesting_user(monkeypatch) -> None:
+    calls: list[int] = []
+    monkeypatch.setattr(
+        bot,
+        "get_settings",
+        lambda: SimpleNamespace(bot_token="bot-token", webapp_url="https://example.com/app"),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_scheduled_short_story_for_telegram_user",
+        lambda *, telegram_id: calls.append(telegram_id) or {"sent": True},
+    )
+
+    bot.handle_update(httpx.Client(), _interactive_story_update())
+
+    assert calls == [TEST_TELEGRAM_ID]
 
 
 def test_full_story_command_generates_for_requesting_user(monkeypatch) -> None:

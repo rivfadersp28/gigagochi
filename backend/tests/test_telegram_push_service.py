@@ -1609,14 +1609,16 @@ def test_scheduled_short_story_config_defaults_fail_closed() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.scheduled_short_story_enabled is False
-    assert settings.scheduled_short_story_interval_seconds == 600
+    assert settings.scheduled_short_story_interval_seconds == 60
+    assert settings.scheduled_short_story_hours == list(range(10, 22))
+    assert settings.scheduled_short_story_timezone == "Europe/Moscow"
     assert settings.scheduled_short_story_telegram_ids == set()
 
 
 def test_due_scheduled_short_stories_only_selects_allowlisted_reachable_user(
     monkeypatch,
 ) -> None:
-    now = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
+    now = datetime(2026, 7, 15, 12, 15, tzinfo=UTC)
     records = {
         str(TEST_TELEGRAM_ID): {
             "telegramId": TEST_TELEGRAM_ID,
@@ -1633,7 +1635,8 @@ def test_due_scheduled_short_stories_only_selects_allowlisted_reachable_user(
     }
     settings = SimpleNamespace(
         scheduled_short_story_telegram_ids={TEST_TELEGRAM_ID},
-        scheduled_short_story_interval_seconds=600,
+        scheduled_short_story_hours=list(range(10, 22)),
+        scheduled_short_story_timezone="Europe/Moscow",
     )
     monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
     monkeypatch.setattr(
@@ -1649,12 +1652,47 @@ def test_due_scheduled_short_stories_only_selects_allowlisted_reachable_user(
     ] == [TEST_TELEGRAM_ID]
 
     records[str(TEST_TELEGRAM_ID)]["lastScheduledShortStoryAt"] = (
-        now - timedelta(minutes=9, seconds=59)
+        now - timedelta(minutes=10)
     ).isoformat()
     assert telegram_push_service._due_scheduled_short_story_records(now) == []
 
+    records[str(TEST_TELEGRAM_ID)].pop("lastScheduledShortStoryAt")
+    assert telegram_push_service._due_scheduled_short_story_records(
+        datetime(2026, 7, 15, 19, 0, tzinfo=UTC)
+    ) == []
 
-def test_scheduled_interactive_story_generates_three_videos(monkeypatch, tmp_path) -> None:
+
+@pytest.mark.parametrize(
+    "now",
+    (
+        datetime(2026, 7, 15, 7, 5, tzinfo=UTC),
+        datetime(2026, 7, 15, 18, 5, tzinfo=UTC),
+    ),
+)
+def test_scheduled_short_story_includes_moscow_boundary_hours(monkeypatch, now) -> None:
+    record = {
+        "telegramId": TEST_TELEGRAM_ID,
+        "petId": "pet-sergey",
+        "pet": {},
+        "chatReachable": True,
+    }
+    settings = SimpleNamespace(
+        scheduled_short_story_telegram_ids={TEST_TELEGRAM_ID},
+        scheduled_short_story_hours=list(range(10, 22)),
+        scheduled_short_story_timezone="Europe/Moscow",
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_read_store",
+        lambda: {"version": 1, "records": {str(TEST_TELEGRAM_ID): record}},
+    )
+    monkeypatch.setattr(telegram_push_service, "_record_is_dead", lambda *_args: False)
+
+    assert telegram_push_service._due_scheduled_short_story_records(now) == [record]
+
+
+def test_scheduled_interactive_story_generates_five_videos(monkeypatch, tmp_path) -> None:
     now = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
     record = {
         "telegramId": TEST_TELEGRAM_ID,
@@ -1667,7 +1705,7 @@ def test_scheduled_interactive_story_generates_three_videos(monkeypatch, tmp_pat
     settings = SimpleNamespace(
         bot_token="token",
         webapp_url="https://example.com/app",
-        scheduled_short_story_interval_seconds=600,
+        scheduled_short_story_interval_seconds=60,
     )
     monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
 
@@ -1679,8 +1717,9 @@ def test_scheduled_interactive_story_generates_three_videos(monkeypatch, tmp_pat
 
     monkeypatch.setattr(telegram_push_service, "_update_record", update)
     plan = {"destination": "в лес", "title": "Путь", "storyText": "Ситуация.",
-            "question": "Что делать?", "choices": ["А", "Б"],
-            "outcomes": ["Исход А", "Исход Б"], "correctChoice": "А"}
+            "question": "Что делать?", "choices": ["А", "Б", "В", "Г"],
+            "outcomes": ["Исход А", "Исход Б", "Исход В", "Исход Г"],
+            "correctChoice": "А"}
     monkeypatch.setattr(telegram_push_service, "generate_scheduled_interactive_episode_plan",
                         lambda: plan)
     monkeypatch.setattr(telegram_push_service, "generated_dir_for", lambda _travel_id: tmp_path)
@@ -1712,6 +1751,8 @@ def test_scheduled_interactive_story_generates_three_videos(monkeypatch, tmp_pat
     assert record["pendingInteractiveStory"]["outcomeFiles"] == [
         "interactive-travel-part-01-outcome-0.mp4",
         "interactive-travel-part-01-outcome-1.mp4",
+        "interactive-travel-part-01-outcome-2.mp4",
+        "interactive-travel-part-01-outcome-3.mp4",
     ]
     assert record["automaticInteractiveStories"] == [record["pendingInteractiveStory"]]
     assert record["lastScheduledShortStoryAttemptAt"]
@@ -1726,15 +1767,40 @@ def test_interactive_story_callback_returns_selected_video(monkeypatch, tmp_path
         "pet": {},
         "chatReachable": True,
         "pendingInteractiveStory": {"token": "abc", "travelId": "interactive-travel-auto-x",
-            "outcomes": ["Исход А", "Исход Б"], "outcomeFiles": ["a.mp4", "b.mp4"]},
+            "outcomes": ["Исход А", "Исход Б", "Исход В", "Исход Г"],
+            "outcomeFiles": ["a.mp4", "b.mp4", "c.mp4", "d.mp4"]},
     }
-    (tmp_path / "b.mp4").write_bytes(b"outcome-b")
+    (tmp_path / "d.mp4").write_bytes(b"outcome-d")
     monkeypatch.setattr(telegram_push_service, "_record_by_telegram_id", lambda _id: record)
     monkeypatch.setattr(telegram_push_service, "generated_dir_for", lambda _id: tmp_path)
     video, caption = telegram_push_service.interactive_story_outcome_for_callback(
-        telegram_id=TEST_TELEGRAM_ID, token="abc", choice_index=1)
-    assert video == b"outcome-b"
-    assert caption == "Исход Б"
+        telegram_id=TEST_TELEGRAM_ID, token="abc", choice_index=3)
+    assert video == b"outcome-d"
+    assert caption == "Исход Г"
+
+
+def test_automatic_interactive_story_returns_all_four_outcomes(monkeypatch) -> None:
+    episode = {
+        "token": "abc",
+        "travelId": "interactive-travel-auto-x",
+        "choices": ["А", "Б", "В", "Г"],
+        "outcomes": ["Исход А", "Исход Б", "Исход В", "Исход Г"],
+        "outcomeFiles": ["a.mp4", "b.mp4", "c.mp4", "d.mp4"],
+    }
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_record_by_telegram_id",
+        lambda _id: {"pendingInteractiveStory": episode},
+    )
+
+    story = telegram_push_service.automatic_interactive_story(
+        telegram_id=TEST_TELEGRAM_ID,
+        token="abc",
+    )
+
+    assert story["choices"] == ["А", "Б", "В", "Г"]
+    assert len(story["outcomeImageUrls"]) == 4
+    assert len(story["outcomeVideoUrls"]) == 4
 
 
 def test_background_story_paid_media_budget_uses_durable_global_counter(

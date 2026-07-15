@@ -129,7 +129,13 @@ class Settings(BaseSettings):
     )
     background_story_window_minutes: int = Field(default=120, ge=5, le=180)
     scheduled_short_story_enabled: bool = False
-    scheduled_short_story_interval_seconds: int = Field(default=600, ge=60, le=86_400)
+    scheduled_short_story_interval_seconds: int = Field(default=60, ge=60, le=86_400)
+    scheduled_short_story_hours: list[ScheduleHour] = Field(
+        default_factory=lambda: list(range(10, 22)),
+        min_length=1,
+        max_length=24,
+    )
+    scheduled_short_story_timezone: str = "Europe/Moscow"
     scheduled_short_story_telegram_ids: set[int] = Field(default_factory=set)
     interactive_travel_task_bank_mode_path: str = (
         "data/push/interactive_travel_task_bank_mode.txt"

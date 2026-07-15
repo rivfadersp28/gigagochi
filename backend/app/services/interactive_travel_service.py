@@ -28,7 +28,6 @@ from app.services.interactive_travel_media_service import (
 from app.services.task_bank_mode import TaskBankMode, read_task_bank_mode
 
 STORY_PART_COUNT = 4
-INTERACTIVE_TRAVEL_CHOICE_LIMIT = 2  # Temporary paid-media test mode; restore to 4 later.
 GENERATOR_VERSION = "task-bank-location-v4"
 TASK_BANK_PATH = (
     Path(__file__).resolve().parents[2] / "data" / "задачи_путешественника_без_расчётов.md"
@@ -250,17 +249,6 @@ def _select_story_tasks() -> list[dict[str, Any]]:
     return list(random.sample(list(_task_bank()), STORY_PART_COUNT))
 
 
-def _test_mode_choices(task: dict[str, Any]) -> tuple[list[str], list[str]]:
-    correct_index = task["choices"].index(task["answer"])
-    wrong_indices = [index for index in range(4) if index != correct_index]
-    selected_indices = [correct_index, random.choice(wrong_indices)]
-    random.shuffle(selected_indices)
-    return (
-        [task["choices"][index] for index in selected_indices],
-        [task["outcomes"][index] for index in selected_indices],
-    )
-
-
 def _task_plan(task: dict[str, Any], lead_in: str) -> InteractiveTravelTaskPlan:
     return InteractiveTravelTaskPlan(
         taskId=task["id"], leadIn=lead_in, situation=task["situation"],
@@ -273,14 +261,13 @@ def _task_plan(task: dict[str, Any], lead_in: str) -> InteractiveTravelTaskPlan:
 def generate_scheduled_interactive_episode_plan() -> dict[str, Any]:
     destination = random.choice(DESTINATION_FALLBACKS)
     task = random.choice(_task_bank())
-    choices, outcomes = _test_mode_choices(task)
     return {
         "destination": destination,
         "title": task["title"],
-        "storyText": f"{_location_lead_ins(destination)[0]} {task['situation']}",
+        "storyText": task["situation"],
         "question": task["question"],
-        "choices": choices,
-        "outcomes": outcomes,
+        "choices": list(task["choices"]),
+        "outcomes": list(task["outcomes"]),
         "correctChoice": task["answer"],
     }
 

@@ -3901,9 +3901,54 @@ def send_due_pushes() -> list[dict[str, Any]]:
     return _run_due_pushes().results
 
 
-def _scheduled_short_story_interval(settings: Any) -> timedelta:
-    seconds = max(60, int(getattr(settings, "scheduled_short_story_interval_seconds", 600)))
-    return timedelta(seconds=seconds)
+DEFAULT_SCHEDULED_SHORT_STORY_HOURS = tuple(range(10, 22))
+DEFAULT_SCHEDULED_SHORT_STORY_TIMEZONE = "Europe/Moscow"
+
+
+def _scheduled_short_story_hours(settings: Any) -> tuple[int, ...]:
+    raw_hours = getattr(
+        settings,
+        "scheduled_short_story_hours",
+        DEFAULT_SCHEDULED_SHORT_STORY_HOURS,
+    )
+    if not isinstance(raw_hours, (list, tuple, set)):
+        return DEFAULT_SCHEDULED_SHORT_STORY_HOURS
+    hours: list[int] = []
+    for raw_hour in raw_hours:
+        try:
+            hour = int(raw_hour)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= hour <= 23 and hour not in hours:
+            hours.append(hour)
+    return tuple(sorted(hours)) or DEFAULT_SCHEDULED_SHORT_STORY_HOURS
+
+
+def _scheduled_short_story_timezone(settings: Any) -> ZoneInfo:
+    timezone_name = str(
+        getattr(
+            settings,
+            "scheduled_short_story_timezone",
+            DEFAULT_SCHEDULED_SHORT_STORY_TIMEZONE,
+        )
+    )
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo(DEFAULT_SCHEDULED_SHORT_STORY_TIMEZONE)
+
+
+def _scheduled_short_story_slot(record: dict[str, Any], now: datetime) -> datetime | None:
+    settings = get_settings()
+    local_now = now.astimezone(_scheduled_short_story_timezone(settings))
+    if local_now.hour not in _scheduled_short_story_hours(settings):
+        return None
+    slot = local_now.replace(minute=0, second=0, microsecond=0).astimezone(UTC)
+    latest = _latest_time(
+        record.get("lastScheduledShortStoryAt"),
+        record.get("lastScheduledShortStoryAttemptAt"),
+    )
+    return slot if latest is None or slot > latest else None
 
 
 def _due_scheduled_short_story_records(now: datetime) -> list[dict[str, Any]]:
@@ -3911,7 +3956,6 @@ def _due_scheduled_short_story_records(now: datetime) -> list[dict[str, Any]]:
     target_ids = set(getattr(settings, "scheduled_short_story_telegram_ids", set()) or set())
     if not target_ids:
         return []
-    interval = _scheduled_short_story_interval(settings)
     records = _read_store().get("records", {})
     due: list[dict[str, Any]] = []
     for telegram_id in sorted(target_ids):
@@ -3922,11 +3966,7 @@ def _due_scheduled_short_story_records(now: datetime) -> list[dict[str, Any]]:
             continue
         if _record_is_dead(record, now):
             continue
-        latest = _latest_time(
-            record.get("lastScheduledShortStoryAt"),
-            record.get("lastScheduledShortStoryAttemptAt"),
-        )
-        if latest is None or now - latest >= interval:
+        if _scheduled_short_story_slot(record, now) is not None:
             due.append(record)
     return due
 
@@ -4023,7 +4063,7 @@ def _send_scheduled_short_story(record: dict[str, Any], *, now: datetime) -> dic
             ),
             "outcomeImageUrls": [
                 f"/static/generated/{travel_id}/interactive-travel-part-01-outcome-{index}.png"
-                for index in range(2)
+                for index in range(len(plan["outcomes"]))
             ],
             "outcomeVideoUrls": [
                 f"/static/generated/{travel_id}/{name}" for name in outcome_files
@@ -4054,6 +4094,11 @@ def _send_scheduled_short_story(record: dict[str, Any], *, now: datetime) -> dic
         "deliveredAt": delivered_at,
         "story": plan,
     }
+
+
+def send_scheduled_short_story_for_telegram_user(*, telegram_id: int) -> dict[str, Any]:
+    record = _record_by_telegram_id(telegram_id)
+    return _send_scheduled_short_story(record, now=_now())
 
 
 def _run_due_scheduled_short_stories() -> _SchedulerBatchResult:
@@ -4142,15 +4187,15 @@ def automatic_interactive_story(*, telegram_id: int, token: str) -> dict[str, An
     travel_id = str(episode.get("travelId") or "")
     choices = episode.get("choices")
     outcomes = episode.get("outcomes")
-    if not isinstance(choices, list) or len(choices) != 2:
+    if not isinstance(choices, list) or len(choices) != 4:
         raise TelegramPushError("INTERACTIVE_STORY_INVALID", "История повреждена.")
-    if not isinstance(outcomes, list) or len(outcomes) != 2:
+    if not isinstance(outcomes, list) or len(outcomes) != len(choices):
         raise TelegramPushError("INTERACTIVE_STORY_INVALID", "Исходы истории повреждены.")
     situation_url = episode.get("situationVideoUrl") or (
         f"/static/generated/{travel_id}/interactive-travel-part-01.mp4"
     )
     outcome_urls = episode.get("outcomeVideoUrls")
-    if not isinstance(outcome_urls, list) or len(outcome_urls) != 2:
+    if not isinstance(outcome_urls, list) or len(outcome_urls) != len(choices):
         files = episode.get("outcomeFiles") or []
         outcome_urls = [f"/static/generated/{travel_id}/{name}" for name in files]
     return {
@@ -4175,7 +4220,7 @@ def automatic_interactive_story(*, telegram_id: int, token: str) -> dict[str, An
                 episode.get("outcomeImageUrls")
                 or [
                     f"/static/generated/{travel_id}/interactive-travel-part-01-outcome-{index}.png"
-                    for index in range(2)
+                    for index in range(len(choices))
                 ]
             )
         ],
@@ -4367,7 +4412,10 @@ async def _background_story_loop() -> None:
 
 async def _scheduled_short_story_loop() -> None:
     settings = get_settings()
-    cadence = int(_scheduled_short_story_interval(settings).total_seconds())
+    cadence = max(
+        60,
+        int(getattr(settings, "scheduled_short_story_interval_seconds", 60)),
+    )
     await _scheduler_leadership_loop(
         "scheduledShortStory",
         _run_due_scheduled_short_stories,

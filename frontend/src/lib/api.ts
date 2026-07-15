@@ -92,14 +92,14 @@ export type AutomaticInteractiveStory = {
   title: string;
   storyText: string;
   question: string;
-  choices: [string, string];
-  outcomes: [string, string];
+  choices: [string, string, string, string];
+  outcomes: [string, string, string, string];
   selectedChoice?: string;
   result?: InteractiveTravelResult;
   situationImageUrl: string;
   situationVideoUrl: string;
-  outcomeImageUrls: [string, string];
-  outcomeVideoUrls: [string, string];
+  outcomeImageUrls: [string, string, string, string];
+  outcomeVideoUrls: [string, string, string, string];
 };
 
 function parseAutomaticInteractiveStory(payload: unknown): AutomaticInteractiveStory {
@@ -112,11 +112,16 @@ function parseAutomaticInteractiveStory(payload: unknown): AutomaticInteractiveS
     }
     return value.trim();
   };
-  const pair = (value: unknown, field: string): [string, string] => {
-    if (!Array.isArray(value) || value.length !== 2) {
+  const quartet = (value: unknown, field: string): [string, string, string, string] => {
+    if (!Array.isArray(value) || value.length !== 4) {
       throw new ApiContractError(`automatic story: invalid ${field}`);
     }
-    return [text(value[0], `${field}[0]`), text(value[1], `${field}[1]`)];
+    return [
+      text(value[0], `${field}[0]`),
+      text(value[1], `${field}[1]`),
+      text(value[2], `${field}[2]`),
+      text(value[3], `${field}[3]`),
+    ];
   };
   const resultPayload = isRecord(payload.result) ? payload.result : undefined;
   const result: InteractiveTravelResult | undefined = resultPayload ? {
@@ -153,16 +158,16 @@ function parseAutomaticInteractiveStory(payload: unknown): AutomaticInteractiveS
     title: text(payload.title, "title"),
     storyText: text(payload.storyText, "storyText"),
     question: text(payload.question, "question"),
-    choices: pair(payload.choices, "choices"),
-    outcomes: pair(payload.outcomes, "outcomes"),
+    choices: quartet(payload.choices, "choices"),
+    outcomes: quartet(payload.outcomes, "outcomes"),
     selectedChoice: typeof payload.selectedChoice === "string"
       ? payload.selectedChoice.trim() || undefined
       : undefined,
     result,
     situationImageUrl: publicImageUrl(text(payload.situationImageUrl, "situationImageUrl")),
     situationVideoUrl: publicImageUrl(text(payload.situationVideoUrl, "situationVideoUrl")),
-    outcomeImageUrls: pair(payload.outcomeImageUrls, "outcomeImageUrls").map(publicImageUrl) as [string, string],
-    outcomeVideoUrls: pair(payload.outcomeVideoUrls, "outcomeVideoUrls").map(publicImageUrl) as [string, string],
+    outcomeImageUrls: quartet(payload.outcomeImageUrls, "outcomeImageUrls").map(publicImageUrl) as [string, string, string, string],
+    outcomeVideoUrls: quartet(payload.outcomeVideoUrls, "outcomeVideoUrls").map(publicImageUrl) as [string, string, string, string],
   };
 }
 

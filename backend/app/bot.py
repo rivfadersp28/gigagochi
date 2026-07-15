@@ -714,6 +714,47 @@ def _push_worker(
 _DEFAULT_PUSH_WORKER = _push_worker
 
 
+def _send_interactive_story_response(
+    client: httpx.Client,
+    chat_id: int,
+    keyboard: dict[str, Any],
+) -> None:
+    from app.services.telegram_push_service import (
+        TelegramPushError,
+        send_scheduled_short_story_for_telegram_user,
+    )
+
+    try:
+        send_scheduled_short_story_for_telegram_user(telegram_id=chat_id)
+    except TelegramPushError as exc:
+        send_message(
+            client,
+            chat_id,
+            _diagnostic_message(
+                chat_id,
+                "Не получилось создать интерактивную историю. Попробуй позже.",
+                f"{exc.code}: {exc.message}",
+            ),
+            keyboard,
+        )
+    except Exception as exc:
+        _log_bot_error("Telegram /история generation failed", exc)
+        send_message(
+            client,
+            chat_id,
+            "Не получилось создать интерактивную историю. Попробуй позже.",
+            keyboard,
+        )
+
+
+def _interactive_story_worker(chat_id: int, keyboard: dict[str, Any]) -> None:
+    with _new_worker_http_client() as client:
+        _send_interactive_story_response(client, chat_id, keyboard)
+
+
+_DEFAULT_INTERACTIVE_STORY_WORKER = _interactive_story_worker
+
+
 def handle_update(
     client: httpx.Client,
     update: dict[str, Any],
@@ -721,11 +762,12 @@ def handle_update(
     submit_story: Callable[[int, dict[str, Any]], bool | None] | None = None,
     submit_full_story: Callable[[int, dict[str, Any]], bool | None] | None = None,
     submit_push: Callable[[int, dict[str, Any]], bool | None] | None = None,
+    submit_interactive_story: Callable[[int, dict[str, Any]], bool | None] | None = None,
 ) -> None:
     callback = update.get("callback_query")
     if isinstance(callback, dict):
         data = str(callback.get("data") or "")
-        match = re.fullmatch(r"it:([a-f0-9]{16}):([01])", data)
+        match = re.fullmatch(r"it:([a-f0-9]{16}):([0-3])", data)
         message = callback.get("message") or {}
         chat_id = (message.get("chat") or {}).get("id")
         if match and isinstance(chat_id, int):
@@ -764,7 +806,8 @@ def handle_update(
             (
                 "Открой Mini App, создай AI-питомца и общайся с ним внутри Telegram.\n\n"
                 "/easy — включить простой банк задач для всех\n"
-                "/hard — включить сложный банк задач для всех"
+                "/hard — включить сложный банк задач для всех\n"
+                "/история — создать интерактивную историю сейчас"
             ),
             keyboard,
         )
@@ -803,6 +846,14 @@ def handle_update(
                 send_message(client, chat_id, BOT_COMMAND_BUSY_MESSAGE, keyboard)
         else:
             _send_push_response(client, chat_id, keyboard)
+        return
+
+    if command == "/история":
+        if submit_interactive_story is not None:
+            if submit_interactive_story(chat_id, keyboard) is False:
+                send_message(client, chat_id, BOT_COMMAND_BUSY_MESSAGE, keyboard)
+        else:
+            _send_interactive_story_response(client, chat_id, keyboard)
         return
 
     if command in {"/start", "/app"}:
@@ -971,7 +1022,7 @@ def _dispatch_pending_commands(
     should_stop: Callable[[], bool] | None = None,
 ) -> int:
     submitted_count = 0
-    async_commands = {"/full_story", "/push"}
+    async_commands = {"/full_story", "/push", "/история"}
     for command in inbox.list_ready(limit=ready_limit):
         if should_stop is not None and should_stop():
             break
@@ -1043,6 +1094,7 @@ def _dispatch_pending_commands(
                 submit_story=make_submit(_story_worker),
                 submit_full_story=make_submit(_full_story_worker),
                 submit_push=make_submit(_push_worker),
+                submit_interactive_story=make_submit(_interactive_story_worker),
             )
         except BaseException as exc:
             lease_keeper.remove(command.update_id)
