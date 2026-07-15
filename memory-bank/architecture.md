@@ -653,7 +653,7 @@
 
 - `/pet/[id]/travel` is the production travel flow: curated destination choices plus free input,
   character reaction, the existing departure wait, then four task-bank episodes. Each ready episode
-  shows a fixed 382×456 media frame at 71 px from the top, the complete story and question in one auto-height/scrollable
+  shows a fixed 382×461 media frame at 66 px from the top, the complete story and question in one auto-height/scrollable
   text frame, and a horizontal row containing the four original choices. Story/result states do not
   use speech bubbles, sentence portions, scene-tap replay or a free-form action.
 - The backend owns response mapping plus illustration/video generation; the frontend persists

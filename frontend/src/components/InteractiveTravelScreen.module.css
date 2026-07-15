@@ -97,7 +97,7 @@
   max-width: 100%;
   min-height: 874px;
   margin: 0 auto;
-  padding-top: 71px;
+  padding-top: 66px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -106,10 +106,10 @@
 .storyMediaFrame {
   position: relative;
   width: 382px;
-  height: 456px;
-  flex: 0 0 456px;
+  height: 461px;
+  flex: 0 0 461px;
   overflow: hidden;
-  border-radius: 24px;
+  border-radius: 20px;
   background: #242424;
   isolation: isolate;
 }
@@ -152,17 +152,21 @@
   flex: 0 0 auto;
   flex-direction: column;
   gap: 13px;
+  align-items: stretch;
   color: #fff;
   font-family: var(--font-open-runde), "SF Pro Rounded", ui-rounded, system-ui, sans-serif;
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 700;
   line-height: normal;
+  text-align: left;
   overflow-wrap: anywhere;
   text-wrap: pretty;
 }
 
 .storyTextFrame p {
+  width: 100%;
   margin: 0;
+  text-align: left;
 }
 
 .storyAnimatedWord {
@@ -199,7 +203,7 @@
 .storyAnswersScroll {
   box-sizing: border-box;
   width: 100%;
-  margin-top: 46px;
+  margin-top: 40px;
   overflow-x: auto;
   overflow-y: hidden;
   padding: 0 0 59px 14px;

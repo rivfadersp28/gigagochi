@@ -976,13 +976,14 @@ describe("InteractiveTravelScreen", () => {
     )?.[1] ?? "";
 
     expect(mediaRule).toContain("width: 382px");
-    expect(mediaRule).toContain("height: 456px");
-    expect(mediaRule).toContain("border-radius: 24px");
+    expect(mediaRule).toContain("height: 461px");
+    expect(mediaRule).toContain("border-radius: 20px");
     expect(posterRule).toContain("z-index: 1");
     expect(videoRule).toContain("z-index: 2");
     expect(pendingVideoRule).toContain("opacity: 0");
     expect(textRule).toContain("width: 362px");
-    expect(textRule).toContain("font-size: 17px");
+    expect(textRule).toContain("font-size: 20px");
+    expect(textRule).toContain("text-align: left");
     expect(textRule).toContain("gap: 13px");
     expect(textRule).toContain("text-wrap: pretty");
     expect(answerRules).toContain("height: 62px");
