@@ -587,7 +587,7 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
               resultValue.experienceGained ?? 0,
               `${resultPath}.experienceGained`,
               0,
-              50,
+              150,
             ),
             statImpacts,
           };

@@ -48,6 +48,7 @@ function resolvedPart(
       reactionTone: "enthusiastic",
       consequence: "Путь открыт.",
       outcomeValence: "positive",
+      experienceGained: 125,
       statImpacts: statImpacts.map((impact) => ({ ...impact, reason: "Результат" })),
     },
   };
@@ -68,9 +69,11 @@ describe("local pet interactive-travel impact receipts", () => {
     );
 
     expect(first.pet.stats.hunger).toBe(54);
+    expect(first.pet.experience).toBe(575);
     expect(first.pet.travelImpactReceipts).toEqual(["travel-1:1"]);
     expect(replay.pet).toBe(first.pet);
     expect(replay.pet.stats.hunger).toBe(54);
+    expect(replay.pet.experience).toBe(575);
     expect(replay.appliedResultParts).toEqual([1]);
     expect(replay.newlyAppliedResultParts).toEqual([]);
   });
@@ -94,6 +97,7 @@ describe("local pet interactive-travel impact receipts", () => {
     );
 
     expect(second.pet.stats).toEqual({ hunger: 51, happiness: 50, energy: 55 });
+    expect(second.pet.experience).toBe(700);
     expect(second.pet.travelImpactReceipts).toEqual(["travel-1:1", "travel-1:2"]);
     expect(second.appliedResultParts).toEqual([1, 2]);
     expect(second.newlyAppliedResultParts).toEqual([2]);
@@ -111,6 +115,7 @@ describe("local pet interactive-travel impact receipts", () => {
     );
 
     expect(migrated.pet.stats.hunger).toBe(54);
+    expect(migrated.pet.experience).toBe(450);
     expect(migrated.pet.travelImpactReceipts).toEqual(["travel-legacy:1"]);
     expect(migrated.newlyAppliedResultParts).toEqual([]);
   });

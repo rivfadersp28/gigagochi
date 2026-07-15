@@ -32,6 +32,10 @@ import {
   withPetInteraction,
 } from "./localPetStats";
 import { applyFoodEffect, FOOD_IDS, type FoodId } from "./localPetFood";
+import {
+  clampPetExperience,
+  PET_INITIAL_EXPERIENCE,
+} from "./localPetExperience";
 import { markLocalPetSnapshotDirty } from "./localPetSnapshotRevision";
 import {
   applyInteractiveTravelImpactsToPet,
@@ -993,6 +997,7 @@ function normalizePetState(value: unknown): LocalPetStateV2 | null {
   return {
     version: 2,
     petId: value.petId.trim().slice(0, 120),
+    experience: clampPetExperience(value.experience),
     petTapProgress:
       typeof value.petTapProgress === "number" && Number.isFinite(value.petTapProgress)
         ? Math.max(0, Math.min(4, Math.floor(value.petTapProgress)))
@@ -1453,6 +1458,7 @@ export function createLocalPetState(
   return {
     version: 2,
     petId: createLocalId("pet"),
+    experience: PET_INITIAL_EXPERIENCE,
     petTapProgress: 0,
     introductionPending: true,
     name: characterNameFromAssetSet(characterAssetSet),

@@ -84,6 +84,11 @@ import {
   DASHBOARD_BACKGROUND_COLOR,
 } from "@/lib/theme";
 import {
+  clampPetExperience,
+  PET_EXPERIENCE_MAX,
+  petExperiencePercent,
+} from "@/lib/localPetExperience";
+import {
   refreshedTestPetAssetSet,
   TEST_PET_ASSET_SET,
   TEST_PET_DESCRIPTION,
@@ -1799,6 +1804,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const hungerPercent = Math.max(0, Math.min(100, pet.stats.hunger));
   const moodPercent = Math.max(0, Math.min(100, pet.stats.happiness));
   const healthPercent = Math.max(0, Math.min(100, pet.stats.energy));
+  const experience = clampPetExperience(pet.experience);
+  const experiencePercent = petExperiencePercent(experience);
   const roundedHungerPercent = Math.round(hungerPercent);
   const roundedMoodPercent = Math.round(moodPercent);
   const roundedHealthPercent = Math.round(healthPercent);
@@ -1912,11 +1919,25 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         <div className="sr-only">
           Стадия: {accessibleStageLabels[pet.stage]}. Состояние: {accessibleMoodLabels[pet.mood]}.
           Голод: {roundedHungerPercent} из 100. Настроение: {roundedMoodPercent} из 100.
-          Здоровье: {roundedHealthPercent} из 100.
+          Здоровье: {roundedHealthPercent} из 100. Опыт: {experience} из {PET_EXPERIENCE_MAX}.
         </div>
 
-        <div className="pet-status-name">
-          {displayedPetName}
+        <div className="pet-status-level">
+          Уровень: Малыш
+        </div>
+
+        <div
+          className="pet-experience-track"
+          role="progressbar"
+          aria-label={`Опыт ${experience} из ${PET_EXPERIENCE_MAX}`}
+          aria-valuemin={0}
+          aria-valuemax={PET_EXPERIENCE_MAX}
+          aria-valuenow={experience}
+        >
+          <span
+            className="pet-experience-progress"
+            style={{ width: `${experiencePercent}%` }}
+          />
         </div>
 
         <div

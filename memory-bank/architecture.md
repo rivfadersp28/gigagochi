@@ -670,6 +670,10 @@
 - Interactive-travel stat effects commit with bounded local-only receipts inside the same
   `LocalPetState` write. `appliedResultParts` in the separate travel session is only a presentation
   projection and a legacy-migration hint; push snapshots intentionally exclude the receipts.
+- Pet experience is local state with a `0..3000` bound and a migration default of `450`. A newly
+  committed successful interactive-travel result grants `100..150` EXP through the same bounded
+  receipt path as stat impacts, so replaying a result cannot grant EXP twice. The dashboard renders
+  the current EXP as an accessible progress bar.
 - New interactive travels contain four independent episodes joined only by the destination.
   Start samples all four unique tasks from the reviewed
   `backend/data/задачи_путешественника_без_расчётов.md` bank before generation. Four neutral

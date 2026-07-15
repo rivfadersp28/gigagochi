@@ -1,4 +1,8 @@
 import { applyStatsPatch } from "./localPetStats";
+import {
+  clampPetExperience,
+  PET_STORY_EXPERIENCE_MAX,
+} from "./localPetExperience";
 import type {
   InteractiveTravelPart,
   LocalPetState,
@@ -89,6 +93,7 @@ export function applyInteractiveTravelImpactsToPet(
   const appliedResultParts = new Set<number>();
   const newlyAppliedResultParts: number[] = [];
   const patchedStats: NonNullable<PetStatsPatch["stats"]> = {};
+  let nextExperience = clampPetExperience(state.experience);
 
   for (const part of parts) {
     if (!part.result) {
@@ -110,6 +115,12 @@ export function applyInteractiveTravelImpactsToPet(
     }
 
     newlyAppliedResultParts.push(part.partNumber);
+    const experienceGained = part.result.experienceGained;
+    if (typeof experienceGained === "number" && Number.isFinite(experienceGained)) {
+      nextExperience = clampPetExperience(
+        nextExperience + Math.max(0, Math.min(PET_STORY_EXPERIENCE_MAX, experienceGained)),
+      );
+    }
     for (const impact of part.result.statImpacts) {
       if (
         !(["hunger", "happiness", "energy"] as const).includes(impact.stat)
@@ -138,6 +149,7 @@ export function applyInteractiveTravelImpactsToPet(
   return {
     pet: {
       ...stateWithStats,
+      experience: nextExperience,
       travelImpactReceipts: nextReceipts.slice(-MAX_TRAVEL_IMPACT_RECEIPTS),
     },
     appliedResultParts: [...appliedResultParts].sort((left, right) => left - right),

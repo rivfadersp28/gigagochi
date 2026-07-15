@@ -353,7 +353,7 @@ def _deterministic_result(
         reactionTone="determined" if is_correct else "worried",
         consequence=consequence,
         outcomeValence="positive" if is_correct else "negative",
-        experienceGained=random.randint(18, 30) if is_correct else 0,
+        experienceGained=random.randint(100, 150) if is_correct else 0,
         statImpacts=[] if is_correct else [
             {
                 "stat": affected_stat,
