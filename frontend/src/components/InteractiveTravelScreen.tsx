@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 /* eslint-disable react-hooks/set-state-in-effect -- effects drive the persisted travel state machine */
 import { ArrowLeft, Play, RotateCcw } from "lucide-react";
+import { useGlimm } from "glimm/react";
 import { useRouter } from "next/navigation";
 import {
   type FormEvent,
@@ -11,6 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { SmoothBackgroundVideo } from "@/components/SmoothBackgroundVideo";
 
@@ -189,6 +191,7 @@ function continueDemoSession(
 
 export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps) {
   const router = useRouter();
+  const { sweep } = useGlimm();
   const localPet = useLocalPetState();
   const [session, setSession] = useState<LocalInteractiveTravel | null>(null);
   const [demoTravel, setDemoTravel] = useState<InteractiveTravelState | null>(null);
@@ -650,11 +653,15 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         });
         return;
       }
-      setVisibleBackgroundVideoUrl(backgroundVideoUrl);
-      updatePresentation({
-        phase: "story",
-        partNumber: activePart.partNumber,
-        portionIndex: 0,
+      sweep(() => {
+        flushSync(() => {
+          setVisibleBackgroundVideoUrl(backgroundVideoUrl);
+          updatePresentation({
+            phase: "story",
+            partNumber: activePart.partNumber,
+            portionIndex: 0,
+          });
+        });
       });
       return;
     }
@@ -675,6 +682,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     loadedVideos,
     phase,
     session,
+    sweep,
     updatePresentation,
     visibleBackgroundVideoUrl,
     waitElapsedKey,

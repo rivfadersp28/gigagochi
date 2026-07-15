@@ -12,6 +12,10 @@ const travelScreenStyles = readFileSync(
   "src/components/InteractiveTravelScreen.module.css",
   "utf8",
 );
+const travelScreenSource = readFileSync(
+  "src/components/InteractiveTravelScreen.tsx",
+  "utf8",
+);
 
 function cssRule(className: string) {
   return travelScreenStyles.match(new RegExp(`\\.${className}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
@@ -240,6 +244,12 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("InteractiveTravelScreen", () => {
+  it("runs the Glimm sweep when the generated background replaces the current scene", () => {
+    expect(travelScreenSource).toContain("const { sweep } = useGlimm()");
+    expect(travelScreenSource).toContain("sweep(() => {");
+    expect(travelScreenSource).toContain("setVisibleBackgroundVideoUrl(backgroundVideoUrl)");
+  });
+
   it("starts the demo in memory without generation or local travel writes", async () => {
     mocks.canUseDebugMenu = true;
     mocks.readLocalInteractiveTravel.mockReturnValue(null);
