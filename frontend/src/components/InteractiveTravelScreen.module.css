@@ -175,7 +175,7 @@
 }
 
 .storyAnimatedWhitespace {
-  white-space: pre;
+  white-space: normal;
 }
 
 .storyAnimatedCharacter {
@@ -204,27 +204,18 @@
   box-sizing: border-box;
   width: 100%;
   margin-top: 40px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 0 0 59px 14px;
+  overflow: visible;
+  padding: 0 20px 59px;
   flex: 0 0 auto;
-  scroll-padding-left: 14px;
-  scrollbar-width: none;
-  overscroll-behavior-x: contain;
-  overscroll-behavior-y: none;
-  touch-action: pan-x;
-  -webkit-overflow-scrolling: touch;
-}
-
-.storyAnswersScroll::-webkit-scrollbar {
-  display: none;
+  touch-action: manipulation;
 }
 
 .storyAnswersRow {
   display: flex;
-  width: max-content;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 19px;
-  padding-right: 14px;
 }
 
 .storyAnswerButton,
@@ -255,25 +246,34 @@
 }
 
 .storyAnswerButton {
+  --story-answer-rotation: -2deg;
   flex: 0 0 auto;
   animation: storyAnswerSpringIn 300ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.storyAnswerButton:nth-child(even) {
+  --story-answer-rotation: 2deg;
 }
 
 @keyframes storyAnswerSpringIn {
   from {
     opacity: 0;
-    transform: scale(0.6);
+    transform: rotate(var(--story-answer-rotation)) scale(0.6);
   }
 
   to {
     opacity: 1;
-    transform: scale(1);
+    transform: rotate(var(--story-answer-rotation)) scale(1);
   }
 }
 
 .storyAnswerButton:active,
 .storyResultButton:active {
   transform: scale(0.97);
+}
+
+.storyAnswerButton:active {
+  transform: rotate(var(--story-answer-rotation)) scale(0.97);
 }
 
 .storyAnswerButton:disabled,
@@ -742,7 +742,14 @@
   .storyAnimatedCharacter,
   .storyAnswerButton {
     opacity: 1;
-    transform: none;
     animation: none;
+  }
+
+  .storyAnimatedCharacter {
+    transform: none;
+  }
+
+  .storyAnswerButton {
+    transform: rotate(var(--story-answer-rotation));
   }
 }

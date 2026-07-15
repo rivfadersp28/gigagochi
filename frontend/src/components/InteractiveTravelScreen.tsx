@@ -137,11 +137,23 @@ function AnimatedTravelParagraph({
     <p aria-label={text}>
       {text.split(/(\s+)/u).filter(Boolean).map((token, tokenIndex) => {
         const isWhitespace = /^\s+$/u.test(token);
+        if (isWhitespace) {
+          characterIndex += Array.from(token).length;
+          return (
+            <span
+              key={`${animationKey}:token:${tokenIndex}`}
+              aria-hidden="true"
+              className={styles.storyAnimatedWhitespace}
+            >
+              {" "}
+            </span>
+          );
+        }
         return (
           <span
             key={`${animationKey}:token:${tokenIndex}`}
             aria-hidden="true"
-            className={isWhitespace ? styles.storyAnimatedWhitespace : styles.storyAnimatedWord}
+            className={styles.storyAnimatedWord}
           >
             {Array.from(token).map((character) => {
               const delay = characterIndex * STORY_CHARACTER_RISE_STAGGER_MS;

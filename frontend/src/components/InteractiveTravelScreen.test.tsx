@@ -845,7 +845,7 @@ describe("InteractiveTravelScreen", () => {
     expect(mocks.startInteractiveTravel).not.toHaveBeenCalled();
   });
 
-  it("shows the complete story, exact question and horizontal answers at once", async () => {
+  it("shows the complete story, exact question and vertical answers at once", async () => {
     mocks.readLocalInteractiveTravel.mockReturnValue(
       restoredSession(travel([pendingPart(1)]), "story"),
     );
@@ -990,8 +990,11 @@ describe("InteractiveTravelScreen", () => {
     expect(answerRules).toContain("white-space: nowrap");
     expect(answerRules).toContain("backdrop-filter: blur(10px)");
     expect(answerRules).toContain("touch-action: manipulation");
-    expect(answersScrollRule).toContain("overflow-x: auto");
-    expect(answersScrollRule).toContain("touch-action: pan-x");
+    expect(answersScrollRule).toContain("overflow: visible");
+    expect(answersScrollRule).toContain("padding: 0 20px 59px");
+    expect(cssRule("storyAnswersRow")).toContain("flex-direction: column");
+    expect(cssRule("storyAnswerButton")).toContain("--story-answer-rotation: -2deg");
+    expect(travelScreenStyles).toContain("--story-answer-rotation: 2deg");
   });
 
   it("applies a resolved impact once and preloads the next illustration", async () => {

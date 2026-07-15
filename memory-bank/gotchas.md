@@ -205,6 +205,10 @@
   stay varied and dialogue-oriented; retrieval is only for relevant context.
   Generic wording like `фан-факт`, `вопрос`, or `скажи что-нибудь` must not be a
   hidden world-context trigger.
+- In interactive-travel character-by-character text, do not render whitespace
+  as animated inline-block characters with `white-space: pre`. A preserved
+  space can wrap onto the next visual line and create a false left indent;
+  render inter-word whitespace as normal collapsible text instead.
 - Do not add a post-check/regenerate loop for replies unless explicitly requested. The current architecture avoids point 5 and keeps generation single-pass, with optional background extraction only for new story entities.
 - Full stories are the explicit exception to the single-pass reply rule. A
   single prose call tends to produce four action summaries instead of four
