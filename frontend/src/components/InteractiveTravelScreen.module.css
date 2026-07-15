@@ -117,6 +117,7 @@
   top: calc(var(--tma-safe-top, 0px) + 12px);
   left: 12px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 5px 6px 5px 10px;

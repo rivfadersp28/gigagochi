@@ -20,6 +20,7 @@ from app.schemas import (
     GenerationStatsResponse,
     IllustrateInteractiveTravelPartRequest,
     InteractiveTravelAnimationResponse,
+    InteractiveTravelDemoResponse,
     InteractiveTravelIllustrationResponse,
     InteractiveTravelResponse,
     InteractiveTravelState,
@@ -68,6 +69,7 @@ from app.services.image_service import (
     generate_pet_video_for_image_asset_set,
     generation_error_code,
 )
+from app.services.interactive_travel_demo_service import read_interactive_travel_demo
 from app.services.interactive_travel_finale_service import save_interactive_travel_finale
 from app.services.interactive_travel_service import (
     animate_interactive_travel_part,
@@ -765,6 +767,15 @@ def interactive_travel_finale_capture(
         first_name=user.first_name,
     )
     return {"saved": True}
+
+
+@router.get(
+    "/travel/interactive/debug/demo",
+    response_model=InteractiveTravelDemoResponse,
+)
+def interactive_travel_demo(user: TelegramUser) -> InteractiveTravelDemoResponse:
+    _require_diagnostic_user(user)
+    return read_interactive_travel_demo()
 
 
 @router.post("/travel/interactive/{travel_id}/debug/reset")

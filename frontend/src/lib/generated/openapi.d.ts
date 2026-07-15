@@ -362,6 +362,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/travel/interactive/debug/demo": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Interactive Travel Demo */
+        readonly get: operations["interactive_travel_demo_api_travel_interactive_debug_demo_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/travel/interactive/finale/capture": {
         readonly parameters: {
             readonly query?: never;
@@ -864,6 +881,12 @@ export interface components {
             readonly partNumber: number;
             /** Videourl */
             readonly videoUrl: string;
+        };
+        /** InteractiveTravelDemoResponse */
+        readonly InteractiveTravelDemoResponse: {
+            /** Demoid */
+            readonly demoId: string;
+            readonly travel: components["schemas"]["InteractiveTravelState"];
         };
         /** InteractiveTravelIllustrationResponse */
         readonly InteractiveTravelIllustrationResponse: {
@@ -2225,6 +2248,26 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly interactive_travel_demo_api_travel_interactive_debug_demo_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InteractiveTravelDemoResponse"];
                 };
             };
         };

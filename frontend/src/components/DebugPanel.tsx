@@ -8,6 +8,7 @@ import {
   FlaskConical,
   Frown,
   MessageSquareText,
+  Play,
   RotateCcw,
   Skull,
   Smile,
@@ -42,6 +43,7 @@ type DebugPanelProps = {
   onRevivePet?: () => void;
   isPetDead?: boolean;
   onOpenTestPet?: () => void;
+  onOpenTravelDemo?: () => void;
   canShowSadAsset?: boolean;
   canShowHappyAsset?: boolean;
   visualModeOverride?: PetVisualMode | null;
@@ -402,6 +404,7 @@ export function DebugPanel({
   onRevivePet,
   isPetDead = false,
   onOpenTestPet,
+  onOpenTravelDemo,
   canShowSadAsset = false,
   canShowHappyAsset = false,
   visualModeOverride = null,
@@ -534,8 +537,18 @@ export function DebugPanel({
             </div>
           </div>
 
-          {onResetPetStats || onKillPet || onRevivePet || onOpenTestPet || onVisualModeOverrideChange || onVisualProviderChange ? (
+          {onResetPetStats || onKillPet || onRevivePet || onOpenTestPet || onOpenTravelDemo || onVisualModeOverrideChange || onVisualProviderChange ? (
             <div className="mt-4 grid gap-2">
+              {onOpenTravelDemo ? (
+                <button
+                  type="button"
+                  onClick={onOpenTravelDemo}
+                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-[8px] bg-black px-3 text-[12px] font-medium leading-none text-white transition-colors hover:bg-black/80 focus:outline-none focus:ring-2 focus:ring-black/10"
+                >
+                  <Play className="size-3.5" aria-hidden="true" />
+                  <span>Запустить демо-историю</span>
+                </button>
+              ) : null}
               {onOpenTestPet ? (
                 <button
                   type="button"

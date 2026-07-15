@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   applyStatsPatch: vi.fn(),
   clearLocalInteractiveTravel: vi.fn(),
   continueInteractiveTravel: vi.fn(),
+  getInteractiveTravelDemo: vi.fn(),
   getInteractiveTravelSuggestions: vi.fn(),
   illustrateInteractiveTravelPart: vi.fn(),
   push: vi.fn(),
@@ -62,6 +63,7 @@ vi.mock("@/lib/localInteractiveTravel", () => ({
 }));
 
 vi.mock("@/lib/interactiveTravelDebugApi", () => ({
+  getInteractiveTravelDemo: (...args: unknown[]) => mocks.getInteractiveTravelDemo(...args),
   resetInteractiveTravelGeneration: (...args: unknown[]) =>
     mocks.resetInteractiveTravelGeneration(...args),
 }));
@@ -201,6 +203,25 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.canUseDebugMenu = false;
   mocks.resetInteractiveTravelGeneration.mockResolvedValue(undefined);
+  mocks.getInteractiveTravelDemo.mockResolvedValue({
+    demoId: "demo-1",
+    travel: travel([
+      {
+        ...pendingPart(1, "Готовая демо-история."),
+        backgroundVideoUrl: "/story-1.mp4",
+        answer: "Идти вперёд",
+        result: {
+          text: "Готовый демо-результат.",
+          adviceAssessment: "helpful",
+          reaction: "Выбираю готовый путь.",
+          reactionTone: "determined",
+          consequence: "История завершена.",
+          outcomeValence: "positive",
+          statImpacts: [],
+        },
+      },
+    ], true),
+  });
   mocks.getInteractiveTravelSuggestions.mockResolvedValue({
     destinations: ["В горы", "В океан", "На Луну"],
   });
@@ -219,6 +240,26 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("InteractiveTravelScreen", () => {
+  it("starts the demo in memory without generation or local travel writes", async () => {
+    mocks.canUseDebugMenu = true;
+    mocks.readLocalInteractiveTravel.mockReturnValue(null);
+
+    render(<InteractiveTravelScreen petId="pet-1" />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Запустить демо-историю" }),
+    );
+
+    expect(await screen.findByText("Облачный город?")).toBeInTheDocument();
+    expect(mocks.getInteractiveTravelDemo).toHaveBeenCalledOnce();
+    expect(mocks.writeLocalInteractiveTravel).not.toHaveBeenCalled();
+    expect(mocks.startInteractiveTravel).not.toHaveBeenCalled();
+    expect(mocks.continueInteractiveTravel).not.toHaveBeenCalled();
+    expect(mocks.illustrateInteractiveTravelPart).not.toHaveBeenCalled();
+    expect(mocks.animateInteractiveTravelPart).not.toHaveBeenCalled();
+    expect(mocks.applyStatsPatch).not.toHaveBeenCalled();
+  });
+
   it("renders a generated vertical video without exposing its still poster", async () => {
     const animatedPart = {
       ...pendingPart(1),

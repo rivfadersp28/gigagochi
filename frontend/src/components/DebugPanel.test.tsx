@@ -51,6 +51,21 @@ function generatedAssetSet(
 }
 
 describe("DebugPanel visual mode selector", () => {
+  it("opens the interactive travel demo", () => {
+    const onOpenTravelDemo = vi.fn();
+    render(
+      <DebugPanel
+        pet={pet()}
+        isOpen
+        onClose={() => undefined}
+        onOpenTravelDemo={onOpenTravelDemo}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Запустить демо-историю" }));
+    expect(onOpenTravelDemo).toHaveBeenCalledOnce();
+  });
+
   it("switches to Kandinsky only after comparison assets are ready", () => {
     const onProviderChange = vi.fn();
     const { rerender } = render(

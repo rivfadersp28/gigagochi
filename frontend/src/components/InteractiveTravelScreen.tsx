@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 /* eslint-disable react-hooks/set-state-in-effect -- effects drive the persisted travel state machine */
-import { ArrowLeft, RotateCcw } from "lucide-react";
+import { ArrowLeft, Play, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   type FormEvent,
@@ -39,7 +39,10 @@ import {
   type InteractiveTravelPresentation,
   type LocalInteractiveTravel,
 } from "@/lib/localInteractiveTravel";
-import { resetInteractiveTravelGeneration } from "@/lib/interactiveTravelDebugApi";
+import {
+  getInteractiveTravelDemo,
+  resetInteractiveTravelGeneration,
+} from "@/lib/interactiveTravelDebugApi";
 import { buildMemorySnapshotContext } from "@/lib/localPetMemoryRecall";
 import { readLocalPetMemory } from "@/lib/localPetMemoryStorage";
 import { readLocalChatHistory } from "@/lib/localPetStorage";
@@ -49,7 +52,7 @@ import {
   setTelegramBackgroundColor,
   useTelegramBackButton,
 } from "@/lib/telegram";
-import type { InteractiveTravelPart } from "@/lib/types";
+import type { InteractiveTravelPart, InteractiveTravelState } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
 
 import { ErrorNotice } from "./ErrorNotice";
@@ -62,6 +65,7 @@ const ADVICE_MAX_LENGTH = 1000;
 const INTRO_PORTION_DURATION_MS = 3_200;
 const CHARACTER_TRANSITION_DURATION_MS = 500;
 const MINIMUM_WAIT_DURATION_MS = 1_600;
+const DEMO_WAIT_DURATION_MS = 5_000;
 const ENTRY_BACKGROUND_VIDEO = "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-2";
 const SPEECH_BUBBLE_SHAPE = "/figma/speech-bubble-new.svg";
 const VIDEO_FILTER = "/figma/video-filter-normal.webp?v=20260713-video-filter-lossless-webp-1";
@@ -121,10 +125,73 @@ function restoredBackgroundVideo(session: LocalInteractiveTravel | null) {
   );
 }
 
+function pendingDemoPart(part: InteractiveTravelPart): InteractiveTravelPart {
+  return { ...part, answer: undefined, result: undefined };
+}
+
+function initialDemoSession(travel: InteractiveTravelState): LocalInteractiveTravel {
+  const firstPart = travel.parts[0];
+  if (!firstPart) {
+    throw new Error("Demo travel has no parts");
+  }
+  return {
+    travel: {
+      ...travel,
+      parts: [pendingDemoPart(firstPart)],
+      completed: false,
+      outcomeValence: undefined,
+      statImpact: undefined,
+    },
+    appliedResultParts: [],
+    presentation: {
+      phase: "introReaction",
+      partNumber: firstPart.partNumber,
+      portionIndex: 0,
+    },
+  };
+}
+
+function continueDemoSession(
+  session: LocalInteractiveTravel,
+  canonicalTravel: InteractiveTravelState,
+): LocalInteractiveTravel {
+  const pendingPart = currentPendingPart(session.travel);
+  if (!pendingPart) {
+    throw new Error("Demo travel has no pending part");
+  }
+  const completedPart = partByNumber(canonicalTravel.parts, pendingPart.partNumber);
+  if (!completedPart?.result || !completedPart.answer) {
+    throw new Error("Demo travel part is incomplete");
+  }
+  const nextCanonicalPart = partByNumber(canonicalTravel.parts, pendingPart.partNumber + 1);
+  const parts = session.travel.parts.map((part) =>
+    part.partNumber === pendingPart.partNumber ? completedPart : part,
+  );
+  if (nextCanonicalPart) {
+    parts.push(pendingDemoPart(nextCanonicalPart));
+  }
+  return {
+    ...session,
+    travel: {
+      ...session.travel,
+      parts,
+      completed: !nextCanonicalPart,
+      outcomeValence: nextCanonicalPart ? undefined : canonicalTravel.outcomeValence,
+      statImpact: nextCanonicalPart ? undefined : canonicalTravel.statImpact,
+    },
+    presentation: {
+      phase: "result",
+      partNumber: pendingPart.partNumber,
+      portionIndex: 0,
+    },
+  };
+}
+
 export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps) {
   const router = useRouter();
   const localPet = useLocalPetState();
   const [session, setSession] = useState<LocalInteractiveTravel | null>(null);
+  const [demoTravel, setDemoTravel] = useState<InteractiveTravelState | null>(null);
   const capturedFinaleTravelIdRef = useRef<string | null>(null);
   const [isRestored, setIsRestored] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -159,6 +226,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const customActionTriggerRef = useRef<HTMLButtonElement>(null);
   const wasCustomDestinationOpenRef = useRef(false);
   const wasCustomActionOpenRef = useRef(false);
+  const demoAutoStartAttemptedRef = useRef(false);
 
   const pet = localPet.pet;
   const petName = pet?.name?.trim() || "Персонаж";
@@ -211,14 +279,18 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
 
   useEffect(() => {
     const travel = session?.travel;
-    if (!travel?.completed || capturedFinaleTravelIdRef.current === travel.travelId) {
+    if (
+      demoTravel ||
+      !travel?.completed ||
+      capturedFinaleTravelIdRef.current === travel.travelId
+    ) {
       return;
     }
     capturedFinaleTravelIdRef.current = travel.travelId;
     void captureInteractiveTravelFinale(travel).catch(() => {
       capturedFinaleTravelIdRef.current = null;
     });
-  }, [session]);
+  }, [demoTravel, session]);
 
   useEffect(() => {
     if (localPet.status === "empty") {
@@ -245,15 +317,17 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
 
   const persistSession = useCallback(
     (next: LocalInteractiveTravel) => {
-      writeLocalInteractiveTravel(petId, next);
+      if (!demoTravel) {
+        writeLocalInteractiveTravel(petId, next);
+      }
       setSession(next);
     },
-    [petId],
+    [demoTravel, petId],
   );
 
   const applyPartImpacts = useCallback(
     (next: LocalInteractiveTravel) => {
-      if (!pet) {
+      if (demoTravel || !pet) {
         return next;
       }
       const applied = new Set(next.appliedResultParts);
@@ -277,7 +351,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       }
       return { ...next, appliedResultParts: [...applied].sort() };
     },
-    [localPet, pet],
+    [demoTravel, localPet, pet],
   );
 
   const updatePresentation = useCallback(
@@ -287,15 +361,17 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           return current;
         }
         const next = { ...current, presentation };
-        writeLocalInteractiveTravel(petId, next);
+        if (!demoTravel) {
+          writeLocalInteractiveTravel(petId, next);
+        }
         return next;
       });
     },
-    [petId],
+    [demoTravel, petId],
   );
 
   useEffect(() => {
-    if (!isRestored || session || !pet || localPet.status !== "ready") {
+    if (!isRestored || session || demoTravel || !pet || localPet.status !== "ready") {
       return;
     }
     const requestEpoch = ++requestEpochRef.current;
@@ -319,7 +395,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
           setIsLoadingSuggestions(false);
         }
       });
-  }, [isRestored, localPet.status, pet, session, suggestionsNonce]);
+  }, [demoTravel, isRestored, localPet.status, pet, session, suggestionsNonce]);
 
   const ensureAnimation = useCallback(
     async (travelSession: LocalInteractiveTravel, part: InteractiveTravelPart) => {
@@ -432,17 +508,19 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   useEffect(() => {
     if (
       !session ||
+      demoTravel ||
       !activePart ||
       phase !== "departureWait"
     ) {
       return;
     }
     void ensureIllustration(session, activePart);
-  }, [activePart, ensureIllustration, phase, session]);
+  }, [activePart, demoTravel, ensureIllustration, phase, session]);
 
   useEffect(() => {
     if (
       !session ||
+      demoTravel ||
       phase === "introReaction" ||
       !activePart?.backgroundImageUrl ||
       activePart.backgroundVideoUrl
@@ -450,7 +528,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       return;
     }
     void ensureAnimation(session, activePart);
-  }, [activePart, ensureAnimation, phase, session]);
+  }, [activePart, demoTravel, ensureAnimation, phase, session]);
 
   const introText =
     session?.travel.introReaction?.text ??
@@ -527,7 +605,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   }, [activePartNumber, isIntroCharacterExiting, updatePresentation]);
 
   useEffect(() => {
-    if (phase !== "departureWait" || !activeIllustrationKey) {
+    if (demoTravel || phase !== "departureWait" || !activeIllustrationKey) {
       return;
     }
     setWaitElapsedKey(null);
@@ -535,11 +613,12 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       setWaitElapsedKey(activeIllustrationKey);
     }, MINIMUM_WAIT_DURATION_MS);
     return () => window.clearTimeout(timeoutId);
-  }, [activeIllustrationKey, phase]);
+  }, [activeIllustrationKey, demoTravel, phase]);
 
   useEffect(() => {
     if (
       !session ||
+      demoTravel ||
       !activePart ||
       phase !== "departureWait" ||
       waitElapsedKey !== activeIllustrationKey
@@ -590,6 +669,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     activeIllustrationKey,
     activePart,
     brokenVideos,
+    demoTravel,
     failedAnimations,
     failedIllustrations,
     loadedVideos,
@@ -599,6 +679,71 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     visibleBackgroundVideoUrl,
     waitElapsedKey,
   ]);
+
+  useEffect(() => {
+    if (!demoTravel || !activePart || phase !== "departureWait") {
+      return;
+    }
+    setVisibleBackgroundVideoUrl(activePart.backgroundVideoUrl ?? null);
+    const timeoutId = window.setTimeout(() => {
+      updatePresentation({
+        phase: "story",
+        partNumber: activePart.partNumber,
+        portionIndex: 0,
+      });
+    }, DEMO_WAIT_DURATION_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [activePart, demoTravel, phase, updatePresentation]);
+
+  async function handleStartDemo() {
+    if (submittingRef.current) {
+      return;
+    }
+    submittingRef.current = true;
+    const requestEpoch = ++requestEpochRef.current;
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const response = await getInteractiveTravelDemo();
+      if (requestEpoch !== requestEpochRef.current) {
+        return;
+      }
+      setDemoTravel(response.travel);
+      setSession(initialDemoSession(response.travel));
+      setVisibleBackgroundVideoUrl(null);
+      setShowCustomDestination(false);
+      setShowCustomAction(false);
+      setDestination("");
+      setAdvice("");
+      setIsLoadingSuggestions(false);
+      hapticNotification("success");
+    } catch (caught) {
+      if (requestEpoch !== requestEpochRef.current) {
+        return;
+      }
+      setIsLoadingSuggestions(false);
+      setError(presentError(caught, "Не получилось запустить демо-историю."));
+      hapticNotification("error");
+    } finally {
+      if (requestEpoch === requestEpochRef.current) {
+        submittingRef.current = false;
+        setIsSubmitting(false);
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (
+      demoAutoStartAttemptedRef.current ||
+      !canUseDebugMenu() ||
+      !isRestored ||
+      new URLSearchParams(window.location.search).get("demo") !== "1"
+    ) {
+      return;
+    }
+    demoAutoStartAttemptedRef.current = true;
+    void handleStartDemo();
+  }, [isRestored]);
 
   async function beginTravel(rawDestination: string) {
     const value = rawDestination.trim();
@@ -664,6 +809,24 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     if (!pendingPart) {
       return;
     }
+    if (demoTravel) {
+      submittingRef.current = true;
+      setIsSubmitting(true);
+      setError(null);
+      try {
+        setSession(continueDemoSession(session, demoTravel));
+        setAdvice("");
+        setShowCustomAction(false);
+        hapticNotification("success");
+      } catch (caught) {
+        setError(presentError(caught, "Не получилось продолжить демо-историю."));
+        hapticNotification("error");
+      } finally {
+        submittingRef.current = false;
+        setIsSubmitting(false);
+      }
+      return;
+    }
     submittingRef.current = true;
     const requestEpoch = ++requestEpochRef.current;
     setIsSubmitting(true);
@@ -717,6 +880,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     failedAnimationsRef.current.clear();
     backgroundTransitionsRef.current.clear();
     clearLocalInteractiveTravel(petId);
+    setDemoTravel(null);
     setSession(null);
     setSuggestions([]);
     setSuggestionsNonce((current) => current + 1);
@@ -736,11 +900,35 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   }
 
   function handleNewTravel() {
+    if (demoTravel) {
+      requestEpochRef.current += 1;
+      const restoredSession = readLocalInteractiveTravel(petId);
+      setDemoTravel(null);
+      setSession(restoredSession);
+      setVisibleBackgroundVideoUrl(restoredBackgroundVideo(restoredSession));
+      setShowCustomAction(false);
+      setAdvice("");
+      setError(null);
+      if (!restoredSession) {
+        setSuggestions([]);
+        setSuggestionsNonce((current) => current + 1);
+      }
+      return;
+    }
     resetLocalTravel();
   }
 
   async function handleDebugRestart() {
     if (isResettingTravel) {
+      return;
+    }
+    if (demoTravel) {
+      setSession(initialDemoSession(demoTravel));
+      setVisibleBackgroundVideoUrl(null);
+      setError(null);
+      setIsCharacterEntranceComplete(false);
+      setExitingCharacterTravelId(null);
+      hapticNotification("success");
       return;
     }
     const travelId = session?.travel.travelId;
@@ -922,13 +1110,23 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
         {canUseDebugMenu() && !isTravelLoading ? (
           <div className={styles.debugMenu} aria-label="Debug путешествия">
             <span>Debug</span>
+            {!demoTravel ? (
+              <button
+                type="button"
+                onClick={() => void handleStartDemo()}
+                disabled={isResettingTravel}
+              >
+                <Play aria-hidden="true" />
+                <span>Запустить демо-историю</span>
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => void handleDebugRestart()}
               disabled={isResettingTravel}
             >
               <RotateCcw aria-hidden="true" />
-              <span>Перезапустить путешествие</span>
+              <span>{demoTravel ? "Перезапустить демо" : "Перезапустить путешествие"}</span>
             </button>
           </div>
         ) : null}

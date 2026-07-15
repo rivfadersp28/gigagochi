@@ -524,6 +524,13 @@
   bucket so late image/video completions cannot restore stale assets.
 - Access is canaried on both UI and API through `INTERACTIVE_TRAVEL_PILOT_TELEGRAM_IDS`; the initial production allowlist contains only Telegram ID `62943754`.
 - Destination suggestions are sampled from a small server-side vocabulary without an LLM call.
+- Diagnostic demo playback is a separate read-only path. Its canonical completed
+  fixture is stored in `backend/data/interactive_travel_demo.json`, immutable media
+  lives under `backend/static/demo/interactive-travel/`, and the diagnostic API
+  returns it only to debug users. The frontend stages archived parts in React memory,
+  advances them with fixed five-second waits, and never writes a demo session to
+  localStorage, calls generation, applies pet stats, or captures a finale. Exiting
+  the demo restores any ordinary per-pet travel session unchanged.
 
 ## Local Admin
 

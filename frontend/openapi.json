@@ -1251,6 +1251,25 @@
         "title": "InteractiveTravelAnimationResponse",
         "type": "object"
       },
+      "InteractiveTravelDemoResponse": {
+        "properties": {
+          "demoId": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Demoid",
+            "type": "string"
+          },
+          "travel": {
+            "$ref": "#/components/schemas/InteractiveTravelState"
+          }
+        },
+        "required": [
+          "demoId",
+          "travel"
+        ],
+        "title": "InteractiveTravelDemoResponse",
+        "type": "object"
+      },
       "InteractiveTravelIllustrationResponse": {
         "properties": {
           "imageUrl": {
@@ -4446,6 +4465,27 @@
           }
         },
         "summary": "Interactive Travel Continue",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/interactive/debug/demo": {
+      "get": {
+        "operationId": "interactive_travel_demo_api_travel_interactive_debug_demo_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InteractiveTravelDemoResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Interactive Travel Demo",
         "tags": [
           "telegram-mini-app"
         ]

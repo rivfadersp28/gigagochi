@@ -75,6 +75,28 @@ def test_travel_routes_reject_users_outside_pilot(monkeypatch) -> None:
     assert response.json()["detail"]["code"] == "INTERACTIVE_TRAVEL_NOT_AVAILABLE"
 
 
+def test_debug_demo_returns_completed_story_without_generation(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            allow_dev_tma_auth=False,
+            diagnostic_telegram_ids={42},
+        ),
+    )
+    app.dependency_overrides[get_telegram_user] = _user
+    try:
+        response = TestClient(app).get("/api/travel/interactive/debug/demo")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["demoId"] == "sergey-latest-2026-07-15"
+    assert payload["travel"]["completed"] is True
+    assert len(payload["travel"]["parts"]) == 3
+    assert all(part["backgroundVideoUrl"] for part in payload["travel"]["parts"])
+
+
 def test_suggestions_route_returns_three_destinations(client, monkeypatch) -> None:
     captured: dict[str, object] = {}
 

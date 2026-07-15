@@ -261,6 +261,11 @@ export type InteractiveTravelResponse = {
   debug?: LocalChatResponse["debug"];
 };
 
+export type InteractiveTravelDemoResponse = {
+  demoId: string;
+  travel: InteractiveTravelState;
+};
+
 export type InteractiveTravelSuggestionsResponse = {
   destinations: string[];
   debug?: LocalChatResponse["debug"];

@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "demoId": "sergey-latest-2026-07-15",
+  "travel": {
+    "travelId": "interactive-travel-1f483f340e2d4838a2388d73cce86f72",
+    "generatedAt": "2026-07-15T06:39:42.487326Z",
+    "destination": "на кладбище",
+    "overallTitle": "Замёрзшие ворота",
+    "arcPlan": {
+      "generatorVersion": "simple-1",
+      "funFact": "На холодной поверхности водяной пар из воздуха превращается в жидкие капли"
+    },
+    "introReaction": {
+      "text": "Пора отправляться на кладбище. Скоро узнаю, что там происходит.",
+      "tone": "determined"
+    },
+    "parts": [
+      {
+        "partNumber": 1,
+        "title": "Часть 1",
+        "storyText": "Туман оседает каплями на старых железных воротах кладбища, и они мгновенно леденеют. Я не могу их открыть — створки схвачены льдом.",
+        "transition": null,
+        "challenge": "Как мне пройти за ворота?",
+        "actionSuggestions": [
+          "Согреть замок дыханием",
+          "Поцарапать лёд когтями",
+          "Облететь поверху"
+        ],
+        "backgroundImageUrl": "/static/demo/interactive-travel/part-01.png",
+        "backgroundVideoUrl": "/static/demo/interactive-travel/part-01.mp4",
+        "answer": "Поцарапать лёд когтями",
+        "result": {
+          "text": "Лёд трещит и осыпается, ворота со скрипом расходятся.",
+          "adviceAssessment": "helpful",
+          "reaction": "Выбираю: Поцарапать лёд когтями.",
+          "reactionTone": "determined",
+          "consequence": "Лёд трещит и осыпается, ворота со скрипом расходятся.",
+          "outcomeValence": "positive",
+          "statImpacts": []
+        }
+      },
+      {
+        "partNumber": 2,
+        "title": "Часть 2",
+        "storyText": "Через два часа я выхожу к ледяному мосту над ущельем. Ветер сдул настил из досок — остались только скользкие балки.",
+        "transition": {
+          "elapsedHours": 2,
+          "summary": "Лёд трещит и осыпается, ворота со скрипом расходятся.",
+          "departureHook": "Я продолжаю путь. Проходит 2 часа.",
+          "continuityAnchor": null
+        },
+        "challenge": "Как мне перебраться через ущелье?",
+        "actionSuggestions": [
+          "Пройти по балкам",
+          "Перелететь пропасть",
+          "Заморозить туман в"
+        ],
+        "backgroundImageUrl": "/static/demo/interactive-travel/part-02.png",
+        "backgroundVideoUrl": "/static/demo/interactive-travel/part-02.mp4",
+        "answer": "Перелететь пропасть",
+        "result": {
+          "text": "Я расправляю крылья и перелетаю ущелье. Внизу воют ветра, но я мягко приземляюсь на другой стороне.",
+          "adviceAssessment": "helpful",
+          "reaction": "Выбираю: Перелететь пропасть.",
+          "reactionTone": "determined",
+          "consequence": "Я расправляю крылья и перелетаю ущелье. Внизу воют ветра, но я мягко приземляюсь на другой стороне.",
+          "outcomeValence": "positive",
+          "statImpacts": []
+        }
+      },
+      {
+        "partNumber": 3,
+        "title": "Часть 3",
+        "storyText": "Через два часа выхожу к ледяным воротам с рунами. Страж — каменный голем требует пароль. Без него путь закрыт.",
+        "transition": {
+          "elapsedHours": 2,
+          "summary": "Я расправляю крылья и перелетаю ущелье. Внизу воют ветра, но я мягко приземляюсь на другой стороне.",
+          "departureHook": "Я продолжаю путь. Проходит 2 часа.",
+          "continuityAnchor": null
+        },
+        "challenge": "Что скажу или сделаю у ворот?",
+        "actionSuggestions": [
+          "Назвать своё имя",
+          "Спеть зимнюю песню",
+          "Показать льдинку-ключ"
+        ],
+        "backgroundImageUrl": "/static/demo/interactive-travel/part-03.png",
+        "backgroundVideoUrl": "/static/demo/interactive-travel/part-03.mp4",
+        "answer": "Спеть зимнюю песню",
+        "result": {
+          "text": "Мой ледяной голос оживляет руны. Голем кивает и открывает ворота, путь свободен.",
+          "adviceAssessment": "helpful",
+          "reaction": "Выбираю: Спеть зимнюю песню.",
+          "reactionTone": "determined",
+          "consequence": "Мой ледяной голос оживляет руны. Голем кивает и открывает ворота, путь свободен.",
+          "outcomeValence": "positive",
+          "statImpacts": []
+        }
+      }
+    ],
+    "completed": true,
+    "outcomeValence": "positive",
+    "statImpact": null
+  }
+}

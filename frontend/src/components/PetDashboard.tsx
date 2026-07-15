@@ -1302,6 +1302,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       onKillPet={handleKillPet}
       onRevivePet={handleRevivePet}
       onOpenTestPet={handleOpenTestPet}
+      onOpenTravelDemo={() => {
+        setIsDebugPanelOpen(false);
+        router.push(`/pet/${pet.petId}/travel?demo=1`);
+      }}
       canShowSadAsset={hasSadAssets}
       canShowHappyAsset={hasHappyAssets}
       visualModeOverride={visualModeOverride}

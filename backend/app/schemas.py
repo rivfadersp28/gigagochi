@@ -415,6 +415,10 @@ class InteractiveTravelResponse(BaseModel):
     debug: LocalChatDebug | None = None
 
 
+class InteractiveTravelDemoResponse(BaseModel):
+    demoId: str = Field(min_length=1, max_length=120)
+    travel: InteractiveTravelState
+
 
 class LocalChatResponse(BaseModel):
     reply: str

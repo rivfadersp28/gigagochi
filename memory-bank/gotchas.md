@@ -467,6 +467,12 @@
 - Interactive travel needs 9–21 text/image/video calls for a complete 3–7-part route. Never charge
   them to the pet-generation `3/day` bucket. The debug reset must invalidate the travel ID before
   deleting its directory; deleting files alone lets an already-running provider call write them back.
+- Do not place a completed archived travel directly into the normal local session:
+  presentation reconciliation treats it as already finished and skips the interactive
+  reveal. Demo playback must stage pending/revealed parts only in ephemeral React state.
+- Versioned demo media belongs under `backend/static/demo`, not `static/generated`:
+  production mounts the generated-assets volume over the latter, which would hide
+  repository fixtures and couple the demo to runtime generation storage.
 - Do not restore interactive-travel root matching, named-term checks, event counters, continuity
   anchors or validator-specific retries. They made semantic heuristics drive generation and caused
   valid Russian output to fail. Do not restore a parallel `step1...stepN` plot either: the model can
