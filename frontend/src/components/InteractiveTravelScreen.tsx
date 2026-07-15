@@ -22,6 +22,7 @@ import {
 } from "@/lib/api";
 import { presentError, type PresentedError } from "@/lib/errorPresentation";
 import {
+  challengePortions,
   currentPendingPart,
   interactiveTravelCharacterImageUrl,
   patchInteractiveTravelPartBackground,
@@ -1359,6 +1360,18 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
       );
       return;
     }
+    if (phase === "choice") {
+      const portions = challengePortions(activePart);
+      const nextIndex = session.presentation.portionIndex + 1;
+      if (nextIndex < portions.length) {
+        updatePresentation({
+          phase: "choice",
+          partNumber: activePart.partNumber,
+          portionIndex: nextIndex,
+        });
+      }
+      return;
+    }
     if (phase !== "result") {
       return;
     }
@@ -1413,6 +1426,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const isTravelLoading =
     isLoading || isLoadingSuggestions || isSubmitting || isResettingTravel;
   const storyTextPortions = activePart ? storyPortions(activePart) : [];
+  const challengeTextPortions = activePart ? challengePortions(activePart) : [];
   const resultTextPortions = activePart ? resultPortions(activePart) : [];
   const portionIndex = session?.presentation.portionIndex ?? 0;
   const messageText = (() => {
@@ -1438,7 +1452,8 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
     }
     if (phase === "choice") {
       const challenge = activePart?.challenge ?? "Что делать дальше?";
-      return splitInteractiveTravelText(challenge)[0] ?? challenge;
+      return challengeTextPortions[Math.min(portionIndex, challengeTextPortions.length - 1)]
+        ?? challenge;
     }
     return `${petName} вернулся домой. Путешествие завершено!`;
   })();
@@ -1467,7 +1482,10 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
   const shouldRevealBackgroundVideo =
     backgroundVideoSrc === ENTRY_BACKGROUND_VIDEO
     || backgroundVideoSrc === visibleBackgroundVideoUrl;
-  const isChoices = phase === "choice" && !showCustomAction;
+  const isChallengeComplete =
+    phase === "choice" && portionIndex >= Math.max(0, challengeTextPortions.length - 1);
+  const isChoices = isChallengeComplete && !showCustomAction;
+  const isChallengeContext = phase === "choice" && !isChallengeComplete;
   const isNarrative = phase === "story" || phase === "result";
   return (
     <main
@@ -1676,6 +1694,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
                   playSpeechAudio: false,
                   hasNextPortion:
                     (phase === "story" && portionIndex < storyTextPortions.length - 1) ||
+                    (phase === "choice" && portionIndex < challengeTextPortions.length - 1) ||
                     (phase === "result" && portionIndex < resultTextPortions.length - 1),
                 }}
                 scaleOrigin="bottom"
@@ -1685,7 +1704,7 @@ export function InteractiveTravelScreen({ petId }: InteractiveTravelScreenProps)
               />
             </div>
 
-            {isNarrative ? (
+            {isNarrative || isChallengeContext ? (
               <button
                 type="button"
                 onClick={handleNext}

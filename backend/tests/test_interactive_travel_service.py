@@ -300,6 +300,21 @@ def test_start_builds_four_erudition_challenges(
     assert schema["schema"]["properties"]["ending"]["maxLength"] == 260
 
 
+def test_task_bank_condition_is_not_repeated_inside_direct_question() -> None:
+    payload = _start_payload()
+    task = _test_story_tasks()[0] | {
+        "situation": "На воротах появилась цветная корочка.",
+        "question": "Кто образует лишайник?",
+    }
+
+    applied = interactive_travel_service._apply_story_tasks(
+        payload,
+        [task, *_test_story_tasks()[1:]],
+    )
+
+    assert applied["parts"][0]["question"] == "Кто образует лишайник?"
+
+
 def test_task_bank_is_deduplicated_and_has_enough_tasks() -> None:
     interactive_travel_service._task_bank.cache_clear()
     tasks = interactive_travel_service._task_bank()

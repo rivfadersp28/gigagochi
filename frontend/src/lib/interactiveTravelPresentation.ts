@@ -98,6 +98,10 @@ export function storyPortions(part: InteractiveTravelPart): string[] {
   return splitInteractiveTravelText(part.storyText);
 }
 
+export function challengePortions(part: InteractiveTravelPart): string[] {
+  return splitInteractiveTravelText(part.challenge);
+}
+
 export function resultPortions(part: InteractiveTravelPart): string[] {
   if (!part.result) {
     return [];

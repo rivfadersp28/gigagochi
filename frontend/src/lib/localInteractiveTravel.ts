@@ -1,5 +1,6 @@
 import { parseInteractiveTravelResponse } from "./apiContracts";
 import {
+  challengePortions,
   resultPortions,
   splitInteractiveTravelText,
   storyPortions,
@@ -210,6 +211,9 @@ function maximumPortionIndex(
   }
   if (phase === "story") {
     return Math.max(0, storyPortions(part).length - 1);
+  }
+  if (phase === "choice") {
+    return Math.max(0, challengePortions(part).length - 1);
   }
   if (phase === "result") {
     return Math.max(0, resultPortions(part).length - 1);

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TEST_PET_ASSET_SET_ID } from "./testPetFixture";
 import {
+  challengePortions,
   currentPendingPart,
   interactiveTravelCharacterImageUrl,
   nextResolvedPart,
@@ -119,6 +120,20 @@ describe("interactive travel text portions", () => {
       "Герой благополучно добрался до берега",
     ]);
     expect(resultPortions(part(2))).toEqual([]);
+  });
+
+  it("keeps the direct question as the final challenge portion", () => {
+    const pending = part(1);
+    pending.challenge =
+      "На воротах древнего святилища появилась цветная корочка. "
+      + "Страж считает её мхом, а алхимик — минералом. "
+      + "Кто образует лишайник?";
+
+    expect(challengePortions(pending)).toEqual([
+      "На воротах древнего святилища появилась цветная корочка",
+      "Страж считает её мхом, а алхимик — минералом",
+      "Кто образует лишайник?",
+    ]);
   });
 
   it("finds the current pending part and the next resolved part", () => {

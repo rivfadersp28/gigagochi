@@ -721,6 +721,34 @@ describe("InteractiveTravelScreen", () => {
     expect(screen.getByRole("button", { name: "Свой вариант" })).toBeInTheDocument();
   });
 
+  it("shows every challenge portion before revealing choices with the direct question", async () => {
+    const pending = pendingPart(1);
+    pending.challenge =
+      "На воротах древнего святилища появилась цветная корочка. "
+      + "Страж считает её мхом, а алхимик — минералом. "
+      + "Кто образует лишайник?";
+    mocks.readLocalInteractiveTravel.mockReturnValue(
+      restoredSession(travel([pending]), "choice"),
+    );
+
+    render(<InteractiveTravelScreen petId="pet-1" />);
+
+    expect(
+      await screen.findByText("На воротах древнего святилища появилась цветная корочка"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Варианты действий" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Далее" }));
+    expect(
+      await screen.findByText("Страж считает её мхом, а алхимик — минералом"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Варианты действий" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Далее" }));
+    expect(await screen.findByText("Кто образует лишайник?")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Варианты действий" })).toBeInTheDocument();
+  });
+
   it("hides the travel interface and shows the standard thinking animation while starting", async () => {
     const response = deferred<{ travel: InteractiveTravelState }>();
     mocks.readLocalInteractiveTravel.mockReturnValue(null);

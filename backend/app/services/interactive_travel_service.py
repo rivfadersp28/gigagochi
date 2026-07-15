@@ -420,7 +420,7 @@ def _apply_story_tasks(payload: dict[str, Any], tasks: list[dict[str, Any]]) -> 
         if not isinstance(raw_part, dict):
             raise InteractiveTravelGenerationError("INTERACTIVE_TRAVEL_PLAN_INCOMPLETE")
         raw_part.update(
-            question=f"{task['situation']} {task['question']}",
+            question=task["question"],
             subject=task["subject"],
             choices=task["choices"],
             correctChoice=task["answer"],
