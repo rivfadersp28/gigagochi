@@ -1,6 +1,7 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
+import { useGlimm } from "glimm/react";
 import { Bug, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { flushSync } from "react-dom";
@@ -250,6 +251,7 @@ function isPointNearRect(clientX: number, clientY: number, rect: DOMRect, paddin
 
 export function PetDashboard({ petId }: PetDashboardProps) {
   const router = useRouter();
+  const { sweep } = useGlimm();
   const localPet = useLocalPetState();
   const {
     canvasRef: petTapBulgeCanvasRef,
@@ -297,6 +299,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const chatInputRef = useRef<HTMLInputElement>(null);
   const sceneRef = useRef<HTMLElement>(null);
   const sceneVideoRef = useRef<HTMLVideoElement>(null);
+  const sceneTransitionTargetRef = useRef<string | null>(null);
   const petTapParticleBurstIdRef = useRef(0);
   const feedDropTargetRef = useRef<HTMLDivElement>(null);
   const foodReactionRequestIdRef = useRef(0);
@@ -382,8 +385,19 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const requestedSceneVideoSrc = visualPet && !isPetDead
     ? generatedSceneVideoUrl(visualPet, visualMode)
     : null;
-  const sceneBackgroundSrc = requestedSceneBackgroundSrc;
+  const [visibleSceneMedia, setVisibleSceneMedia] = useState<{
+    petId: string;
+    backgroundSrc: string;
+    videoSrc: string | null;
+  } | null>(null);
+  const visibleSceneMediaForPet = visibleSceneMedia?.petId === petId
+    ? visibleSceneMedia
+    : null;
+  const sceneBackgroundSrc = visibleSceneMediaForPet?.backgroundSrc
+    ?? requestedSceneBackgroundSrc;
   const sceneVideoSrc = requestedSceneVideoSrc;
+  const revealSceneVideo = !visibleSceneMediaForPet
+    || visibleSceneMediaForPet.videoSrc === requestedSceneVideoSrc;
   const conversationInputOffsetY = useConversationKeyboardOffset(isChatMode, sceneRef);
   usePetBackgroundAssets({
     assetSet: pet?.assetSet,
@@ -1442,8 +1456,38 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             <SmoothBackgroundVideo
               src={sceneVideoSrc}
               className="main-scene-video"
+              revealWhenReady={revealSceneVideo}
               onActiveVideoChange={(video) => {
                 sceneVideoRef.current = video;
+              }}
+              onReady={(readySrc) => {
+                if (
+                  readySrc !== requestedSceneVideoSrc
+                  || !requestedSceneBackgroundSrc
+                ) {
+                  return;
+                }
+                const transitionKey = `${petId}:${requestedSceneBackgroundSrc}:${readySrc}`;
+                if (sceneTransitionTargetRef.current === transitionKey) {
+                  return;
+                }
+                sceneTransitionTargetRef.current = transitionKey;
+                const nextSceneMedia = {
+                  petId,
+                  backgroundSrc: requestedSceneBackgroundSrc,
+                  videoSrc: readySrc,
+                };
+                const reveal = () => {
+                  if (sceneTransitionTargetRef.current !== transitionKey) {
+                    return;
+                  }
+                  flushSync(() => setVisibleSceneMedia(nextSceneMedia));
+                };
+                if (!visibleSceneMediaForPet || document.visibilityState !== "visible") {
+                  reveal();
+                  return;
+                }
+                sweep(reveal);
               }}
             />
           ) : null}
