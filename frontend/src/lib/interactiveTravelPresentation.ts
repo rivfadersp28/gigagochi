@@ -15,6 +15,46 @@ export type ResolvedInteractiveTravelPart = InteractiveTravelPart & {
   result: InteractiveTravelResult;
 };
 
+function graphemes(text: string): string[] {
+  if (typeof Intl.Segmenter === "function") {
+    return Array.from(
+      new Intl.Segmenter("ru", { granularity: "grapheme" }).segment(text),
+      ({ segment }) => segment,
+    );
+  }
+  return Array.from(text);
+}
+
+function splitOversizedSentence(sentence: string, maxCharacters: number): string[] {
+  if (graphemes(sentence).length <= maxCharacters) {
+    return [sentence];
+  }
+
+  const portions: string[] = [];
+  let current = "";
+  for (const word of sentence.split(/\s+/u)) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (graphemes(candidate).length <= maxCharacters) {
+      current = candidate;
+      continue;
+    }
+    if (current) {
+      portions.push(current);
+      current = "";
+    }
+
+    const wordUnits = graphemes(word);
+    while (wordUnits.length > maxCharacters) {
+      portions.push(wordUnits.splice(0, maxCharacters).join(""));
+    }
+    current = wordUnits.join("");
+  }
+  if (current) {
+    portions.push(current);
+  }
+  return portions;
+}
+
 type InteractiveTravelPartWithBackground = InteractiveTravelPart & {
   backgroundImageUrl?: string;
   backgroundVideoUrl?: string;
@@ -28,7 +68,10 @@ export function splitInteractiveTravelText(
     return [];
   }
 
-  return splitPetReplySentences(text);
+  const boundedMaxCharacters = Math.max(1, Math.floor(maxCharacters));
+  return splitPetReplySentences(text).flatMap((sentence) =>
+    splitOversizedSentence(sentence, boundedMaxCharacters),
+  );
 }
 
 export function patchInteractiveTravelPartVideo(

@@ -144,14 +144,14 @@ export function TravelFinaleLab() {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="mb-2 text-sm text-muted-foreground">Local lab · Seedance 2.0 · 15 сек · 9:16</p>
-          <h1 className="text-3xl font-semibold">Финальный ролик путешествия</h1>
+          <h1 className="text-balance text-3xl font-semibold">Финальный ролик путешествия</h1>
         </div>
         <Button variant="outline" onClick={() => void loadList()} disabled={busy !== null}>
           <RefreshCw className={busy === "load" ? "animate-spin" : ""} /> Обновить
         </Button>
       </header>
 
-      {error ? <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm">{error}</div> : null}
+      {error ? <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm">{error}</div> : null}
 
       <section className="grid gap-4 rounded-2xl border border-border bg-card p-5 lg:grid-cols-[1fr_1.4fr]">
         <div className="space-y-3">
@@ -192,21 +192,27 @@ export function TravelFinaleLab() {
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.75fr)]">
           <div className="space-y-6">
             <section className="space-y-3 rounded-2xl border border-border bg-card p-5">
-              <h2 className="text-lg font-semibold">Собранный сюжет</h2>
+              <h2 className="text-balance text-lg font-semibold">Собранный сюжет</h2>
               <pre className="max-h-[36rem] overflow-auto whitespace-pre-wrap rounded-xl bg-muted/40 p-4 text-sm leading-6 text-muted-foreground">{detail.story}</pre>
             </section>
 
             <section className="space-y-4 rounded-2xl border border-border bg-card p-5">
-              <h2 className="text-lg font-semibold">Режиссёрский промпт</h2>
-              <textarea className="min-h-48 w-full rounded-xl border border-input bg-background p-4 text-sm leading-6" value={direction} onChange={(event) => setDirection(event.target.value)} />
+              <h2 className="text-balance text-lg font-semibold">Режиссёрский промпт</h2>
+              <label className="sr-only" htmlFor="travel-finale-direction">
+                Режиссёрский промпт
+              </label>
+              <textarea id="travel-finale-direction" className="min-h-48 w-full rounded-xl border border-input bg-background p-4 text-sm leading-6" value={direction} onChange={(event) => setDirection(event.target.value)} />
               <Button onClick={() => void handleCompilePrompt()} disabled={!direction.trim() || busy !== null}>
                 {busy === "prompt" ? <LoaderCircle className="animate-spin" /> : <Sparkles />} Собрать video prompt
               </Button>
             </section>
 
             <section className="space-y-4 rounded-2xl border border-border bg-card p-5">
-              <h2 className="text-lg font-semibold">Video prompt</h2>
-              <textarea className="min-h-72 w-full rounded-xl border border-input bg-background p-4 font-mono text-sm leading-6" value={videoPrompt} onChange={(event) => setVideoPrompt(event.target.value)} />
+              <h2 className="text-balance text-lg font-semibold">Video prompt</h2>
+              <label className="sr-only" htmlFor="travel-finale-video-prompt">
+                Video prompt
+              </label>
+              <textarea id="travel-finale-video-prompt" className="min-h-72 w-full rounded-xl border border-input bg-background p-4 font-mono text-sm leading-6" value={videoPrompt} onChange={(event) => setVideoPrompt(event.target.value)} />
               <label className="block text-sm font-medium" htmlFor="reference-base-url">Публичная база исходных видео</label>
               <input id="reference-base-url" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={referenceBaseUrl} onChange={(event) => setReferenceBaseUrl(event.target.value)} />
               <Button onClick={() => void handleGenerateVideo()} disabled={!videoPrompt.trim() || busy !== null}>
@@ -216,7 +222,7 @@ export function TravelFinaleLab() {
           </div>
 
           <aside className="space-y-4">
-            <h2 className="text-lg font-semibold">Попытки</h2>
+            <h2 className="text-balance text-lg font-semibold">Попытки</h2>
             {detail.attempts.length ? detail.attempts.map((item: TravelFinaleAttempt) => (
               <article key={item.id} className="space-y-3 rounded-2xl border border-border bg-card p-4">
                 <video className="aspect-[9/16] w-full rounded-xl bg-black object-cover" src={finaleAssetUrl(item.videoUrl)} controls playsInline />

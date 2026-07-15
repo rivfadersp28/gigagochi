@@ -8,6 +8,8 @@ from urllib.parse import parse_qsl
 
 from pydantic import BaseModel
 
+MAX_TELEGRAM_INIT_DATA_CHARS = 16 * 1024
+
 
 class TelegramAuthError(ValueError):
     def __init__(self, code: str) -> None:
@@ -39,10 +41,13 @@ def validate_init_data(
     init_data: str,
     bot_token: str,
     max_age_seconds: int = 60 * 60 * 24,
+    max_future_skew_seconds: int = 60,
     now: datetime | None = None,
 ) -> TelegramUserContext:
     if not init_data:
         raise TelegramAuthError("missing_init_data")
+    if len(init_data) > MAX_TELEGRAM_INIT_DATA_CHARS:
+        raise TelegramAuthError("init_data_too_large")
     if not bot_token:
         raise TelegramAuthError("missing_bot_token")
 
@@ -58,8 +63,13 @@ def validate_init_data(
     if not auth_date_raw or not auth_date_raw.isdigit():
         raise TelegramAuthError("expired")
 
-    auth_date = datetime.fromtimestamp(int(auth_date_raw), tz=UTC)
+    try:
+        auth_date = datetime.fromtimestamp(int(auth_date_raw), tz=UTC)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise TelegramAuthError("expired") from exc
     current_time = now or datetime.now(UTC)
+    if auth_date - current_time > timedelta(seconds=max_future_skew_seconds):
+        raise TelegramAuthError("expired")
     if current_time - auth_date > timedelta(seconds=max_age_seconds):
         raise TelegramAuthError("expired")
 

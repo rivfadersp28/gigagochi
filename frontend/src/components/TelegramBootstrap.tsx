@@ -3,6 +3,10 @@
 import { useEffect } from "react";
 
 import {
+  flushPendingInteractiveTravelOperations,
+  PENDING_INTERACTIVE_TRAVEL_OPERATIONS_EVENT,
+} from "@/lib/pendingInteractiveTravelOperations";
+import {
   expandTelegramWebApp,
   getTelegramWebApp,
   hapticImpact,
@@ -12,6 +16,7 @@ import {
 } from "@/lib/telegram";
 
 const BUTTON_PRESS_SOUND_SRC = "/sounds/button-press.wav";
+const PENDING_TRAVEL_RETRY_INTERVAL_MS = 30_000;
 
 let buttonPressAudio: HTMLAudioElement | null = null;
 
@@ -87,6 +92,20 @@ export function TelegramBootstrap() {
 
     document.addEventListener("click", handleClick, { capture: true });
 
+    const flushPendingTravelOperations = () => {
+      void flushPendingInteractiveTravelOperations().catch(() => undefined);
+    };
+    flushPendingTravelOperations();
+    window.addEventListener("online", flushPendingTravelOperations);
+    window.addEventListener(
+      PENDING_INTERACTIVE_TRAVEL_OPERATIONS_EVENT,
+      flushPendingTravelOperations,
+    );
+    const pendingTravelIntervalId = window.setInterval(
+      flushPendingTravelOperations,
+      PENDING_TRAVEL_RETRY_INTERVAL_MS,
+    );
+
     return () => {
       window.removeEventListener("resize", updateViewport);
       webApp?.offEvent?.("viewportChanged", updateViewport);
@@ -95,6 +114,12 @@ export function TelegramBootstrap() {
       webApp?.offEvent?.("fullscreenChanged", updateViewport);
       webApp?.offEvent?.("fullscreenFailed", updateViewport);
       document.removeEventListener("click", handleClick, { capture: true });
+      window.removeEventListener("online", flushPendingTravelOperations);
+      window.removeEventListener(
+        PENDING_INTERACTIVE_TRAVEL_OPERATIONS_EVENT,
+        flushPendingTravelOperations,
+      );
+      window.clearInterval(pendingTravelIntervalId);
     };
   }, []);
 

@@ -9,6 +9,8 @@ import type {
   MemoryOperation,
   UserMemoryKind,
 } from "./localPetMemoryTypes";
+import { readLocalPetState } from "./localPetStorage";
+import { markLocalPetSnapshotDirty } from "./localPetSnapshotRevision";
 
 const PET_MEMORY_STORAGE_KEY_PREFIX = "tamagochi:v1:pet-memory:";
 const MAX_LEARNINGS = 100;
@@ -29,6 +31,9 @@ const USER_MEMORY_KINDS: UserMemoryKind[] = [
   "boundary",
 ];
 const CORE_MEMORY_KEYS = new Set(["user-name", "pet-nickname"]);
+const inMemoryPetMemories = new Map<string, LocalPetMemoryStateV1>();
+const pendingMemoryPersistence = new Map<string, "write" | "remove">();
+let resetAllMemoriesNeedsPersistence = false;
 const NORMALIZED_KEY_ALIASES = new Map([
   ["name", "user-name"],
   ["user", "user-name"],
@@ -47,7 +52,48 @@ function storage() {
   if (typeof window === "undefined") {
     return null;
   }
-  return window.localStorage;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function flushLocalPetMemoryPersistence(store: Storage | null) {
+  if (!store) {
+    return;
+  }
+
+  if (resetAllMemoriesNeedsPersistence) {
+    try {
+      for (let index = store.length - 1; index >= 0; index -= 1) {
+        const key = store.key(index);
+        if (key?.startsWith(PET_MEMORY_STORAGE_KEY_PREFIX)) {
+          store.removeItem(key);
+        }
+      }
+      resetAllMemoriesNeedsPersistence = false;
+    } catch {
+      return;
+    }
+  }
+
+  for (const [petId, operation] of pendingMemoryPersistence) {
+    try {
+      if (operation === "write") {
+        const memory = inMemoryPetMemories.get(petId);
+        if (!memory) {
+          continue;
+        }
+        store.setItem(localPetMemoryStorageKey(petId), JSON.stringify(memory));
+      } else {
+        store.removeItem(localPetMemoryStorageKey(petId));
+      }
+      pendingMemoryPersistence.delete(petId);
+    } catch {
+      // This pet's session snapshot stays authoritative until persistence recovers.
+    }
+  }
 }
 
 function nowIso() {
@@ -293,40 +339,65 @@ function normalizeMemoryState(value: unknown, petId: string): LocalPetMemoryStat
 
 export function readLocalPetMemory(petId: string): LocalPetMemoryStateV1 {
   const store = storage();
-  if (!store) {
-    return createEmptyLocalPetMemory(petId);
+  flushLocalPetMemoryPersistence(store);
+  if (
+    resetAllMemoriesNeedsPersistence
+    || pendingMemoryPersistence.has(petId)
+    || !store
+  ) {
+    const sessionMemory = inMemoryPetMemories.get(petId) ?? createEmptyLocalPetMemory(petId);
+    inMemoryPetMemories.set(petId, sessionMemory);
+    return sessionMemory;
   }
   try {
     const rawValue = store.getItem(localPetMemoryStorageKey(petId));
-    return rawValue
+    const memory = rawValue
       ? normalizeMemoryState(JSON.parse(rawValue), petId)
       : createEmptyLocalPetMemory(petId);
+    inMemoryPetMemories.set(petId, memory);
+    return memory;
   } catch {
-    return createEmptyLocalPetMemory(petId);
+    const sessionMemory = inMemoryPetMemories.get(petId) ?? createEmptyLocalPetMemory(petId);
+    inMemoryPetMemories.set(petId, sessionMemory);
+    return sessionMemory;
   }
 }
 
-export function writeLocalPetMemory(memory: LocalPetMemoryStateV1) {
-  storage()?.setItem(
-    localPetMemoryStorageKey(memory.petId),
-    JSON.stringify(trimMemoryState(memory)),
-  );
+export function writeLocalPetMemory(
+  memory: LocalPetMemoryStateV1,
+  expectedPetId?: string,
+): boolean {
+  if (
+    expectedPetId !== undefined
+    && (memory.petId !== expectedPetId || readLocalPetState()?.petId !== expectedPetId)
+  ) {
+    return false;
+  }
+
+  const nextMemory = trimMemoryState(memory);
+  inMemoryPetMemories.set(memory.petId, nextMemory);
+  pendingMemoryPersistence.set(memory.petId, "write");
+  flushLocalPetMemoryPersistence(storage());
+  markLocalPetSnapshotDirty(memory.petId);
+  return true;
 }
 
 export function resetLocalPetMemory(petId?: string) {
-  const store = storage();
-  if (!store) {
-    return;
-  }
   if (petId) {
-    store.removeItem(localPetMemoryStorageKey(petId));
+    inMemoryPetMemories.delete(petId);
+    pendingMemoryPersistence.set(petId, "remove");
+    flushLocalPetMemoryPersistence(storage());
+    markLocalPetSnapshotDirty(petId);
     return;
   }
-  for (let index = store.length - 1; index >= 0; index -= 1) {
-    const key = store.key(index);
-    if (key?.startsWith(PET_MEMORY_STORAGE_KEY_PREFIX)) {
-      store.removeItem(key);
-    }
+
+  const activePetId = readLocalPetState()?.petId;
+  inMemoryPetMemories.clear();
+  pendingMemoryPersistence.clear();
+  resetAllMemoriesNeedsPersistence = true;
+  flushLocalPetMemoryPersistence(storage());
+  if (activePetId) {
+    markLocalPetSnapshotDirty(activePetId);
   }
 }
 

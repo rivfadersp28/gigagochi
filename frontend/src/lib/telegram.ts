@@ -56,8 +56,15 @@ type TelegramWindow = Window &
   };
 
 let lockedTelegramViewportHeight: number | null = null;
-const INTERACTIVE_TRAVEL_PILOT_TELEGRAM_IDS = new Set([62943754]);
+let lockedTelegramViewportWidth: number | null = null;
+let lockedTelegramViewportWebApp: TelegramWebApp | null = null;
 const LOCAL_DEBUG_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"]);
+type TelegramServerCapabilities = {
+  telegramUserId: number;
+  debugMenu: boolean;
+  interactiveTravel: boolean;
+};
+let serverCapabilities: TelegramServerCapabilities | null = null;
 
 function telegramWindow() {
   if (typeof window === "undefined") {
@@ -94,10 +101,15 @@ export function getTelegramUserId(): number | null {
   return null;
 }
 
+export function setTelegramServerCapabilities(capabilities: TelegramServerCapabilities | null) {
+  serverCapabilities = capabilities;
+}
+
 export function canUseDebugMenu(): boolean {
   const telegramUserId = getTelegramUserId();
   if (telegramUserId !== null) {
-    return true;
+    return serverCapabilities?.telegramUserId === telegramUserId
+      && serverCapabilities.debugMenu;
   }
   if (typeof window === "undefined" || process.env.NODE_ENV === "production") {
     return false;
@@ -108,7 +120,8 @@ export function canUseDebugMenu(): boolean {
 export function canUseInteractiveTravel(): boolean {
   const telegramUserId = getTelegramUserId();
   if (telegramUserId !== null) {
-    return INTERACTIVE_TRAVEL_PILOT_TELEGRAM_IDS.has(telegramUserId);
+    return serverCapabilities?.telegramUserId === telegramUserId
+      && serverCapabilities.interactiveTravel;
   }
   if (typeof window === "undefined" || process.env.NODE_ENV === "production") {
     return false;
@@ -211,9 +224,30 @@ export function setTelegramViewportCssVars() {
   const root = document.documentElement;
   const viewportHeight = webApp.stableViewportHeight ?? webApp.viewportHeight;
   if (viewportHeight) {
-    lockedTelegramViewportHeight = webApp.stableViewportHeight
+    const viewportWidth = window.innerWidth > 0 ? window.innerWidth : null;
+    if (lockedTelegramViewportWebApp !== webApp) {
+      lockedTelegramViewportHeight = null;
+      lockedTelegramViewportWidth = null;
+      lockedTelegramViewportWebApp = webApp;
+    }
+    const previousLandscape = lockedTelegramViewportWidth !== null
+      && lockedTelegramViewportHeight !== null
+      && lockedTelegramViewportWidth > lockedTelegramViewportHeight;
+    const currentLandscape = viewportWidth !== null && viewportWidth > viewportHeight;
+    const orientationChanged = lockedTelegramViewportWidth !== null
+      && previousLandscape !== currentLandscape;
+    const widthChangedSubstantially = viewportWidth !== null
+      && lockedTelegramViewportWidth !== null
+      && Math.abs(viewportWidth - lockedTelegramViewportWidth)
+        >= Math.max(80, lockedTelegramViewportWidth * 0.2);
+    lockedTelegramViewportHeight = (
+      webApp.stableViewportHeight
+      || orientationChanged
+      || widthChangedSubstantially
+    )
       ? viewportHeight
       : Math.max(lockedTelegramViewportHeight ?? 0, viewportHeight);
+    lockedTelegramViewportWidth = viewportWidth;
     root.style.setProperty("--tma-viewport-height", `${lockedTelegramViewportHeight}px`);
   }
 

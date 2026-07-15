@@ -11,6 +11,8 @@ from app.services.telegram_auth_service import (
     validate_init_data,
 )
 
+DEV_TMA_AUTH_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "testclient"})
+
 
 def _init_data_from_request(request: Request) -> str:
     authorization = request.headers.get("authorization", "")
@@ -23,7 +25,12 @@ async def get_telegram_user(request: Request) -> TelegramUserContext:
     settings = get_settings()
     init_data = _init_data_from_request(request)
 
-    if settings.allow_dev_tma_auth and (not init_data or init_data == "dev"):
+    client_host = request.client.host if request.client else ""
+    if (
+        settings.allow_dev_tma_auth
+        and client_host in DEV_TMA_AUTH_HOSTS
+        and (not init_data or init_data == "dev")
+    ):
         user = TelegramUserContext(
             telegram_id=0,
             username="dev",

@@ -53,10 +53,6 @@ function boolean(value: unknown, path: string): boolean {
   return value;
 }
 
-function stringArray(value: unknown, path: string): void {
-  array(value, path).forEach((item, index) => string(item, `${path}[${index}]`));
-}
-
 function validateSavedFile(value: unknown, path: string): void {
   const file = record(value, path);
   string(file.id, `${path}.id`);
@@ -65,28 +61,13 @@ function validateSavedFile(value: unknown, path: string): void {
   number(file.sizeBytes, `${path}.sizeBytes`);
 }
 
-function validateDialogueItem(value: unknown, path: string): void {
-  const item = record(value, path);
-  string(item.id, `${path}.id`);
-  string(item.label, `${path}.label`);
-  if (item.role !== undefined) {
-    nullableString(item.role, `${path}.role`);
-  }
-  stringArray(item.surfaces, `${path}.surfaces`);
-  string(item.source, `${path}.source`);
-  boolean(item.editable, `${path}.editable`);
-  nullableString(item.fileId, `${path}.fileId`);
-  nullableString(item.configPath, `${path}.configPath`);
-  string(item.summary, `${path}.summary`);
-}
-
 function validateSpeechFile(value: unknown, path: string): void {
   const file = record(value, path);
   string(file.id, `${path}.id`);
   string(file.label, `${path}.label`);
   string(file.path, `${path}.path`);
-  if (file.format !== "json" && file.format !== "jsonl") {
-    fail(`${path}.format`, "json or jsonl");
+  if (file.format !== "json") {
+    fail(`${path}.format`, "json");
   }
   string(file.description, `${path}.description`);
   boolean(file.exists, `${path}.exists`);
@@ -105,12 +86,6 @@ export function parseAdminSpeechManifest(value: unknown): AdminSpeechManifest {
   array(payload.files, "adminManifest.files").forEach((file, index) =>
     validateSpeechFile(file, `adminManifest.files[${index}]`),
   );
-  const dialogue = record(payload.dialogue, "adminManifest.dialogue");
-  for (const key of ["modifiers", "collections"] as const) {
-    array(dialogue[key], `adminManifest.dialogue.${key}`).forEach((item, index) =>
-      validateDialogueItem(item, `adminManifest.dialogue.${key}[${index}]`),
-    );
-  }
   const sync = record(payload.sync, "adminManifest.sync");
   string(sync.status, "adminManifest.sync.status");
   string(sync.message, "adminManifest.sync.message");

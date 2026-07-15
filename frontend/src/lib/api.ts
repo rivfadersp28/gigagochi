@@ -1,6 +1,5 @@
 import type {
   GeneratePetResponse,
-  GenerateTravelResponse,
   InteractiveTravelAnimationResponse,
   InteractiveTravelIllustrationResponse,
   InteractiveTravelPart,
@@ -23,10 +22,13 @@ import type {
 } from "./localPetMemoryTypes";
 import { buildExistingMemoryBrief } from "./localPetMemoryStorage";
 import { characterNameFromAssetSet } from "./localPetCharacter";
+import { nextPushSnapshotOrder } from "./pushSnapshotRevision";
+import { compactPushSnapshotPayload } from "./pushSnapshotPayload";
+import { resolveApiAssetUrl } from "./publicAssetUrl";
 import { getTelegramInitData } from "./telegram";
 import {
   parseGeneratePetJobResponse,
-  parseGenerateTravelResponse,
+  parseDeletePushSnapshotResponse,
   parseInteractiveTravelAnimationResponse,
   parseInteractiveTravelIllustrationResponse,
   parseInteractiveTravelResponse,
@@ -38,10 +40,10 @@ import {
   parsePushSnapshotResponse,
   type GeneratePetApiResponse,
   type GeneratePetJobResponse,
+  type DeletePushSnapshotResponse,
   type PushSnapshotResponse,
 } from "./apiContracts";
 import {
-  API_URL,
   ApiContractError,
   ApiError,
   apiErrorFromDetail,
@@ -75,6 +77,32 @@ export type GenerationDurationSummary = {
   maxSeconds?: number;
 };
 
+export type TelegramCapabilities = {
+  telegramUserId: number;
+  debugMenu: boolean;
+  interactiveTravel: boolean;
+};
+
+function parseTelegramCapabilities(payload: unknown): TelegramCapabilities {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new ApiContractError("capabilities: expected an object");
+  }
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.telegramUserId !== "number"
+    || !Number.isSafeInteger(value.telegramUserId)
+    || typeof value.debugMenu !== "boolean"
+    || typeof value.interactiveTravel !== "boolean"
+  ) {
+    throw new ApiContractError("capabilities: invalid capability fields");
+  }
+  return {
+    telegramUserId: value.telegramUserId,
+    debugMenu: value.debugMenu,
+    interactiveTravel: value.interactiveTravel,
+  };
+}
+
 export type GenerationStats = {
   windowDays: number;
   totalJobs: number;
@@ -96,10 +124,23 @@ const REQUIRED_STAGES = ["baby", "teen", "adult"] as const satisfies readonly Pe
 const REQUIRED_MOODS = ["idle", "happy", "hungry", "sad"] as const satisfies readonly PetMood[];
 const GENERATION_POLL_INTERVAL_MS = 2000;
 const MAX_GENERATION_POLL_MS = 25 * 60 * 1000;
+const MEDIA_REQUEST_TIMEOUT_MS = 20 * 60 * 1000;
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new DOMException("Request aborted", "AbortError"));
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      signal?.removeEventListener("abort", handleAbort);
+      resolve();
+    }, ms);
+    const handleAbort = () => {
+      window.clearTimeout(timeoutId);
+      reject(signal?.reason ?? new DOMException("Request aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", handleAbort, { once: true });
   });
 }
 
@@ -305,7 +346,7 @@ export function characterBibleForApi(pet: LocalPetState): Record<string, unknown
 
 function petContextForApi(pet: LocalPetState) {
   return {
-    name: petNameForApi(pet),
+    name: cleanApiText(petNameForApi(pet), 80),
     description: cleanApiText(pet.description, 300) ?? "Персонаж",
     characterBible: characterBibleForApi(pet),
     stage: pet.stage,
@@ -317,6 +358,7 @@ function petContextForApi(pet: LocalPetState) {
 function interactiveTravelPetContextForApi(pet: LocalPetState) {
   return {
     ...petContextForApi(pet),
+    petId: pet.petId,
     assetImages: publicAssetImagesForApi(pet.assetSet?.images),
   };
 }
@@ -334,6 +376,18 @@ function tmaAuthHeaders(): HeadersInit {
 
 export function canUseTmaApi() {
   return Boolean(getTelegramInitData()) || shouldUseDevTmaAuth();
+}
+
+export async function fetchTelegramCapabilities(): Promise<TelegramCapabilities> {
+  return request(
+    "/api/capabilities",
+    {
+      method: "GET",
+      headers: tmaAuthHeaders(),
+      timeoutMs: 15_000,
+    },
+    parseTelegramCapabilities,
+  );
 }
 
 function shouldUseDevTmaAuth() {
@@ -356,7 +410,11 @@ function browserTimezone() {
 }
 
 function publicImageUrl(imageUrl: string): string {
-  return resolveImageUrl(imageUrl) ?? imageUrl;
+  const resolved = resolveImageUrl(imageUrl);
+  if (!resolved) {
+    throw new ApiContractError("Invalid public asset URL");
+  }
+  return resolved;
 }
 
 function absolutePublicImageUrl(imageUrl: string): string {
@@ -379,22 +437,22 @@ function publicAssetImagesForApi(
 
   return {
     baby: {
-      idle: absolutePublicImageUrl(images.baby.idle),
-      happy: absolutePublicImageUrl(images.baby.happy),
-      hungry: absolutePublicImageUrl(images.baby.hungry),
-      sad: absolutePublicImageUrl(images.baby.sad),
+      idle: absolutePublicImageUrl(images.baby.idle).slice(0, 1000),
+      happy: absolutePublicImageUrl(images.baby.happy).slice(0, 1000),
+      hungry: absolutePublicImageUrl(images.baby.hungry).slice(0, 1000),
+      sad: absolutePublicImageUrl(images.baby.sad).slice(0, 1000),
     },
     teen: {
-      idle: absolutePublicImageUrl(images.teen.idle),
-      happy: absolutePublicImageUrl(images.teen.happy),
-      hungry: absolutePublicImageUrl(images.teen.hungry),
-      sad: absolutePublicImageUrl(images.teen.sad),
+      idle: absolutePublicImageUrl(images.teen.idle).slice(0, 1000),
+      happy: absolutePublicImageUrl(images.teen.happy).slice(0, 1000),
+      hungry: absolutePublicImageUrl(images.teen.hungry).slice(0, 1000),
+      sad: absolutePublicImageUrl(images.teen.sad).slice(0, 1000),
     },
     adult: {
-      idle: absolutePublicImageUrl(images.adult.idle),
-      happy: absolutePublicImageUrl(images.adult.happy),
-      hungry: absolutePublicImageUrl(images.adult.hungry),
-      sad: absolutePublicImageUrl(images.adult.sad),
+      idle: absolutePublicImageUrl(images.adult.idle).slice(0, 1000),
+      happy: absolutePublicImageUrl(images.adult.happy).slice(0, 1000),
+      hungry: absolutePublicImageUrl(images.adult.hungry).slice(0, 1000),
+      sad: absolutePublicImageUrl(images.adult.sad).slice(0, 1000),
     },
   };
 }
@@ -513,45 +571,50 @@ function generatedPetResponseFromJob(job: GeneratePetJobResponse): GeneratePetRe
 export async function generatePetAssets(
   description: string,
   options: {
+    requestKey: string;
     onJobQueued?: (jobId: string) => void;
-  } = {},
+    signal?: AbortSignal;
+  },
 ): Promise<GeneratePetResponse> {
   const job = await request(
     "/api/generate-pet",
     {
       method: "POST",
       headers: tmaAuthHeaders(),
+      idempotencyKey: options.requestKey,
+      signal: options.signal,
       body: {
         description,
-        style: "cute mobile game pet",
-        stages: ["baby", "teen", "adult"],
-        moods: ["idle", "happy", "hungry", "sad"],
       },
     },
     parseGeneratePetJobResponse,
   );
   options.onJobQueued?.(job.jobId);
-  return generatedPetResponseFromJob(await waitForGeneratedPet(job));
+  return generatedPetResponseFromJob(await waitForGeneratedPet(job, options.signal));
 }
 
-export async function resumePetGeneration(jobId: string): Promise<GeneratePetResponse> {
+export async function resumePetGeneration(
+  jobId: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<GeneratePetResponse> {
   const job = await request(
     `/api/generate-pet/jobs/${encodeURIComponent(jobId)}`,
-    { headers: tmaAuthHeaders() },
+    { headers: tmaAuthHeaders(), signal: options.signal },
     parseGeneratePetJobResponse,
   );
-  return generatedPetResponseFromJob(await waitForGeneratedPet(job));
+  return generatedPetResponseFromJob(await waitForGeneratedPet(job, options.signal));
 }
 
 export async function refreshPetBackgroundAssets(
   assetSet: LocalPetAssetSet,
+  options: { signal?: AbortSignal } = {},
 ): Promise<LocalPetAssetSet> {
   if (!assetSet.generationJobId) {
     return assetSet;
   }
   const job = await request(
     `/api/generate-pet/jobs/${encodeURIComponent(assetSet.generationJobId)}`,
-    { headers: tmaAuthHeaders() },
+    { headers: tmaAuthHeaders(), signal: options.signal },
     parseGeneratePetJobResponse,
   );
   if (!job.result) {
@@ -560,38 +623,11 @@ export async function refreshPetBackgroundAssets(
       ...backgroundGenerationState(job),
     };
   }
+  const refreshed = generatedPetResponseFromJob(job);
   return {
     ...assetSet,
-    ...generatedPetResponseFromJob(job),
-  };
-}
-
-export async function generatePetTravel(
-  pet: LocalPetState,
-  options: { includeDebug?: boolean } = {},
-): Promise<GenerateTravelResponse> {
-  const response = await request(
-    "/api/travel",
-    {
-      method: "POST",
-      headers: tmaAuthHeaders(),
-      body: {
-        includeDebug: options.includeDebug ?? false,
-        pet: {
-          ...petContextForApi(pet),
-          assetImages: publicAssetImagesForApi(pet.assetSet?.images),
-        },
-      },
-    },
-    parseGenerateTravelResponse,
-  );
-
-  return {
-    ...response,
-    images: response.images.map((image) => ({
-      ...image,
-      imageUrl: publicImageUrl(image.imageUrl),
-    })),
+    ...refreshed,
+    characterBible: assetSet.characterBible ?? refreshed.characterBible,
   };
 }
 
@@ -708,6 +744,26 @@ export async function captureInteractiveTravelFinale(
   );
 }
 
+export async function cancelInteractiveTravel(travelId: string): Promise<void> {
+  await request(
+    `/api/travel/interactive/${encodeURIComponent(travelId)}/cancel`,
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+    },
+    (payload) => {
+      if (
+        !payload ||
+        typeof payload !== "object" ||
+        (payload as { cancelled?: unknown }).cancelled !== true
+      ) {
+        throw new ApiContractError("Invalid interactive travel cancellation response");
+      }
+      return undefined;
+    },
+  );
+}
+
 export async function illustrateInteractiveTravelPart(
   travel: InteractiveTravelState,
   part: InteractiveTravelPart,
@@ -718,6 +774,7 @@ export async function illustrateInteractiveTravelPart(
     {
       method: "POST",
       headers: tmaAuthHeaders(),
+      timeoutMs: MEDIA_REQUEST_TIMEOUT_MS,
       body: {
         travelId: travel.travelId,
         destination: travel.destination,
@@ -741,6 +798,7 @@ export async function animateInteractiveTravelPart(
     {
       method: "POST",
       headers: tmaAuthHeaders(),
+      timeoutMs: MEDIA_REQUEST_TIMEOUT_MS,
       body: {
         travelId: travel.travelId,
         partNumber: part.partNumber,
@@ -753,6 +811,7 @@ export async function animateInteractiveTravelPart(
 
 async function waitForGeneratedPet(
   initialJob: GeneratePetJobResponse,
+  signal?: AbortSignal,
 ): Promise<GeneratePetJobResponse> {
   let job = initialJob;
   const deadline = Date.now() + MAX_GENERATION_POLL_MS;
@@ -763,8 +822,15 @@ async function waitForGeneratedPet(
     }
 
     if (job.status === "failed") {
-      const { message, code, diagnostic } = apiErrorFromDetail(job.error ?? {});
-      throw new ApiError(message, code, undefined, { diagnostic });
+      const { message, code, diagnostic, activeJobId, activeDescription, travelId } =
+        apiErrorFromDetail(job.error ?? {});
+      throw new ApiError(message, code, undefined, {
+        diagnostic,
+        activeJobId,
+        activeDescription,
+        travelId,
+        generationTerminal: true,
+      });
     }
 
     if (Date.now() > deadline) {
@@ -774,11 +840,12 @@ async function waitForGeneratedPet(
       );
     }
 
-    await delay(GENERATION_POLL_INTERVAL_MS);
+    await delay(GENERATION_POLL_INTERVAL_MS, signal);
     job = await request(
       `/api/generate-pet/jobs/${encodeURIComponent(job.jobId)}`,
       {
         headers: tmaAuthHeaders(),
+        signal,
       },
       parseGeneratePetJobResponse,
     );
@@ -882,30 +949,57 @@ export async function registerPetPushSnapshot(
     recentAmbientReplies?: string[];
   } = {},
 ): Promise<PushSnapshotResponse> {
+  const snapshotOrder = nextPushSnapshotOrder();
+  const snapshotPayload = compactPushSnapshotPayload({
+    petId: pet.petId,
+    snapshotWriterId: snapshotOrder.writerId,
+    snapshotRevision: snapshotOrder.revision,
+    createdAt: pet.createdAt,
+    updatedAt: pet.updatedAt,
+    lastStatsTickAt: pet.lastStatsTickAt,
+    lastStatTickAt: pet.lastStatTickAt,
+    zeroStatSinceAt: pet.zeroStatSinceAt,
+    diedAt: pet.diedAt,
+    timezone: browserTimezone(),
+    memoryContext: memoryContextForApi(memoryContext),
+    history: chatHistoryForApi(options.history ?? []),
+    recentAmbientReplies: (options.recentAmbientReplies ?? [])
+      .flatMap((reply) => cleanApiText(reply, 1000) ?? [])
+      .slice(-30),
+    pet: {
+      ...petContextForApi(pet),
+      assetImages: publicAssetImagesForApi(pet.assetSet?.images),
+    },
+  });
   return request(
     "/api/push/snapshot",
     {
       method: "POST",
       headers: tmaAuthHeaders(),
-      body: {
-        petId: pet.petId,
-        createdAt: pet.createdAt,
-        updatedAt: pet.updatedAt,
-        lastStatsTickAt: pet.lastStatsTickAt,
-        lastStatTickAt: pet.lastStatTickAt,
-        zeroStatSinceAt: pet.zeroStatSinceAt,
-        diedAt: pet.diedAt,
-        timezone: browserTimezone(),
-        memoryContext: memoryContextForApi(memoryContext),
-        history: chatHistoryForApi(options.history ?? []),
-        recentAmbientReplies: (options.recentAmbientReplies ?? []).slice(-30),
-        pet: {
-          ...petContextForApi(pet),
-          assetImages: publicAssetImagesForApi(pet.assetSet?.images),
-        },
-      },
+      body: snapshotPayload,
     },
     parsePushSnapshotResponse,
+  );
+}
+
+export async function unregisterPetPushSnapshot(
+  petId: string,
+  options: { signal?: AbortSignal; keepalive?: boolean } = {},
+): Promise<DeletePushSnapshotResponse> {
+  const normalizedPetId = petId.trim();
+  if (!normalizedPetId || normalizedPetId.length > 120) {
+    throw new ApiContractError("push snapshot pet id must contain 1–120 characters");
+  }
+  return request(
+    `/api/push/snapshot/${encodeURIComponent(normalizedPetId)}`,
+    {
+      method: "DELETE",
+      headers: tmaAuthHeaders(),
+      signal: options.signal,
+      keepalive: options.keepalive ?? true,
+      timeoutMs: 15_000,
+    },
+    parseDeletePushSnapshotResponse,
   );
 }
 
@@ -956,11 +1050,5 @@ export async function extractLocalLiteFacts(
 }
 
 export function resolveImageUrl(imageUrl: string | null): string | null {
-  if (!imageUrl) {
-    return null;
-  }
-  if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) {
-    return imageUrl;
-  }
-  return `${API_URL}${imageUrl}`;
+  return resolveApiAssetUrl(imageUrl);
 }

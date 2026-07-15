@@ -1,18 +1,27 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
 import re
+import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from app.llm.compat import complete_chat
 from app.schemas import InteractiveTravelState
 from app.services.image_service import (
-    generate_video_from_image_bytes,
+    reserve_video_from_image_bytes,
     strip_generated_video_auxiliary_streams,
+)
+from app.services.interactive_travel_media_service import (
+    _assert_interactive_travel_generation_active,
+    _interactive_travel_file_lock,
 )
 
 GENERATED_ROOT = Path(__file__).resolve().parents[2] / "static" / "generated"
@@ -21,6 +30,7 @@ FINALE_VIDEO_MODEL = "bytedance/seedance-2.0"
 FINALE_DURATION_SECONDS = 15
 FINALE_RESOLUTION = "720p"
 FINALE_ASPECT_RATIO = "9:16"
+_FINALE_ATTEMPT_LOCK_BUCKETS = tuple(Lock() for _ in range(64))
 
 DEFAULT_DIRECTION = (
     "Create a single coherent 15-second vertical cinematic montage of this journey.\n"
@@ -38,10 +48,102 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _atomic_write(path: Path, content: bytes) -> None:
+    if not content:
+        raise ValueError("finale artifact must not be empty")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("xb") as output:
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _nonempty_file(path: Path) -> bool:
+    try:
+        return path.is_file() and not path.is_symlink() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+@contextmanager
+def _finale_attempt_lock(output_dir: Path, fingerprint: str):
+    lock_dir = output_dir / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"{fingerprint}.lock"
+    bucket = int(fingerprint[:8], 16) % len(_FINALE_ATTEMPT_LOCK_BUCKETS)
+    with _FINALE_ATTEMPT_LOCK_BUCKETS[bucket], lock_path.open("a+b") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def _travel_dir(travel_id: str) -> Path:
     if not re.fullmatch(r"interactive-travel-[A-Za-z0-9_-]+", travel_id):
         raise ValueError("invalid interactive travel id")
-    return GENERATED_ROOT / travel_id
+    root = GENERATED_ROOT.resolve(strict=False)
+    output_dir = GENERATED_ROOT / travel_id
+    if output_dir.is_symlink():
+        raise ValueError("interactive travel directory must not be a symlink")
+    resolved = output_dir.resolve(strict=False)
+    if resolved.parent != root or resolved.name != travel_id:
+        raise ValueError("interactive travel directory escapes generated root")
+    return output_dir
+
+
+def _read_finale_payload(path: Path) -> dict[str, Any]:
+    if path.is_symlink():
+        raise ValueError("interactive travel finale must not be a symlink")
+    if not path.exists():
+        raise FileNotFoundError(path)
+    if not path.is_file():
+        raise ValueError("interactive travel finale must be a regular file")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("interactive travel finale must contain an object")
+    return payload
+
+
+def _merge_saved_finale_media(
+    travel: InteractiveTravelState,
+    target: Path,
+) -> tuple[InteractiveTravelState, str | None]:
+    if not target.exists() and not target.is_symlink():
+        return travel, None
+    existing_payload = _read_finale_payload(target)
+    existing = InteractiveTravelState.model_validate(existing_payload.get("travel"))
+    if existing.travelId != travel.travelId:
+        raise ValueError("interactive travel finale id mismatch")
+    existing_parts = {part.partNumber: part for part in existing.parts}
+    incoming_payload = travel.model_dump(mode="json")
+    for part in incoming_payload["parts"]:
+        saved_part = existing_parts.get(part["partNumber"])
+        if saved_part is None:
+            continue
+        if not part.get("backgroundImageUrl") and saved_part.backgroundImageUrl:
+            part["backgroundImageUrl"] = saved_part.backgroundImageUrl
+        if not part.get("backgroundVideoUrl") and saved_part.backgroundVideoUrl:
+            part["backgroundVideoUrl"] = saved_part.backgroundVideoUrl
+    media_updated_at = existing_payload.get("mediaUpdatedAt")
+    return (
+        InteractiveTravelState.model_validate(incoming_payload),
+        media_updated_at if isinstance(media_updated_at, str) else None,
+    )
 
 
 def save_interactive_travel_finale(
@@ -54,30 +156,86 @@ def save_interactive_travel_finale(
     if not travel.completed:
         raise ValueError("interactive travel finale must be completed")
     output_dir = _travel_dir(travel.travelId)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "schemaVersion": 1,
-        "savedAt": _now_iso(),
-        "owner": {
-            "telegramId": telegram_id,
-            "username": username,
-            "firstName": first_name,
-        },
-        "travel": travel.model_dump(mode="json"),
-    }
     target = output_dir / FINALE_FILENAME
-    temporary = target.with_suffix(".json.tmp")
-    temporary.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(target)
+    with _interactive_travel_file_lock(output_dir, "lifecycle", travel.travelId):
+        _assert_interactive_travel_generation_active(travel.travelId, output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        archived_travel, media_updated_at = _merge_saved_finale_media(travel, target)
+        payload = {
+            "schemaVersion": 1,
+            "savedAt": _now_iso(),
+            "owner": {
+                "telegramId": telegram_id,
+                "username": username,
+                "firstName": first_name,
+            },
+            "travel": archived_travel.model_dump(mode="json"),
+        }
+        if media_updated_at is not None:
+            payload["mediaUpdatedAt"] = media_updated_at
+        _atomic_write(
+            target,
+            (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        )
     return payload
+
+
+def patch_interactive_travel_finale_media(
+    travel_id: str,
+    *,
+    part_number: int,
+    image_url: str | None = None,
+    video_url: str | None = None,
+) -> bool:
+    """Atomically add late media URLs to an already-saved finale archive."""
+
+    if not 1 <= part_number <= 7:
+        raise ValueError("invalid interactive travel part number")
+    if image_url is None and video_url is None:
+        raise ValueError("at least one interactive travel media URL is required")
+    output_dir = _travel_dir(travel_id)
+    target = output_dir / FINALE_FILENAME
+    with _interactive_travel_file_lock(output_dir, "lifecycle", travel_id):
+        if target.is_symlink():
+            raise ValueError("interactive travel finale must not be a symlink")
+        if not target.exists():
+            return False
+        payload = _read_finale_payload(target)
+        travel = InteractiveTravelState.model_validate(payload.get("travel"))
+        if travel.travelId != travel_id:
+            raise ValueError("interactive travel finale id mismatch")
+        travel_payload = travel.model_dump(mode="json")
+        part = next(
+            (item for item in travel_payload["parts"] if item["partNumber"] == part_number),
+            None,
+        )
+        if part is None:
+            raise ValueError("interactive travel finale part is missing")
+        updates = {
+            key: value
+            for key, value in (
+                ("backgroundImageUrl", image_url),
+                ("backgroundVideoUrl", video_url),
+            )
+            if value is not None
+        }
+        if all(part.get(key) == value for key, value in updates.items()):
+            return True
+        part.update(updates)
+        payload["travel"] = InteractiveTravelState.model_validate(travel_payload).model_dump(
+            mode="json"
+        )
+        payload["mediaUpdatedAt"] = _now_iso()
+        _atomic_write(
+            target,
+            (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        )
+        return True
 
 
 def read_interactive_travel_finale(travel_id: str) -> dict[str, Any]:
     path = _travel_dir(travel_id) / FINALE_FILENAME
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = _read_finale_payload(path)
     payload["travel"] = InteractiveTravelState.model_validate(payload["travel"]).model_dump(
         mode="json"
     )
@@ -213,42 +371,43 @@ def generate_interactive_travel_finale_video(
     output_dir.mkdir(parents=True, exist_ok=True)
     video_path = output_dir / f"{fingerprint}.mp4"
     metadata_path = output_dir / f"{fingerprint}.json"
-    if not video_path.exists():
-        references = [
-            {"type": "video_url", "video_url": {"url": url}} for url in reference_urls
-        ]
-        video_bytes = generate_video_from_image_bytes(
-            None,
-            label="interactive_travel_finale/video",
-            prompt=prompt.strip(),
-            resolution=FINALE_RESOLUTION,
-            aspect_ratio=FINALE_ASPECT_RATIO,
-            duration=FINALE_DURATION_SECONDS,
-            provider="openrouter",
-            input_references=references,
-            model=FINALE_VIDEO_MODEL,
-        )
-        video_path.write_bytes(strip_generated_video_auxiliary_streams(video_bytes))
-        metadata_path.write_text(
-            json.dumps(
-                {
-                    "id": fingerprint,
-                    "createdAt": _now_iso(),
-                    "prompt": prompt.strip(),
-                    "model": FINALE_VIDEO_MODEL,
-                    "durationSeconds": FINALE_DURATION_SECONDS,
-                    "referenceUrls": reference_urls,
-                },
-                ensure_ascii=False,
-                indent=2,
+    with _finale_attempt_lock(output_dir, fingerprint):
+        if not _nonempty_file(video_path):
+            references = [
+                {"type": "video_url", "video_url": {"url": url}} for url in reference_urls
+            ]
+            with reserve_video_from_image_bytes(
+                None,
+                label="interactive_travel_finale/video",
+                prompt=prompt.strip(),
+                resolution=FINALE_RESOLUTION,
+                aspect_ratio=FINALE_ASPECT_RATIO,
+                duration=FINALE_DURATION_SECONDS,
+                provider="openrouter",
+                input_references=references,
+                model=FINALE_VIDEO_MODEL,
+            ) as video_bytes:
+                _atomic_write(video_path, strip_generated_video_auxiliary_streams(video_bytes))
+
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if not isinstance(metadata, dict) or metadata.get("id") != fingerprint:
+                raise ValueError("invalid finale metadata")
+        except (OSError, ValueError, json.JSONDecodeError):
+            created_at = datetime.fromtimestamp(video_path.stat().st_mtime, tz=UTC).isoformat()
+            metadata = {
+                "id": fingerprint,
+                "createdAt": created_at.replace("+00:00", "Z"),
+                "prompt": prompt.strip(),
+                "model": FINALE_VIDEO_MODEL,
+                "durationSeconds": FINALE_DURATION_SECONDS,
+                "referenceUrls": reference_urls,
+            }
+            _atomic_write(
+                metadata_path,
+                (json.dumps(metadata, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
             )
-            + "\n",
-            encoding="utf-8",
-        )
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    metadata["videoUrl"] = (
-        f"/static/generated/{travel.travelId}/finale-attempts/{fingerprint}.mp4"
-    )
+    metadata["videoUrl"] = f"/static/generated/{travel.travelId}/finale-attempts/{fingerprint}.mp4"
     return metadata
 
 

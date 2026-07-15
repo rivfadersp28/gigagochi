@@ -1,21 +1,29 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import sqlite3
 import time
-from datetime import UTC, datetime
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
+from threading import Event
 from types import SimpleNamespace
 
+import anyio
 import httpx
 import pytest
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+import app.main as main_module
 from app.dependencies import get_telegram_user
 from app.llm import LLMProviderError
 from app.main import app
+from app.routers import tma as tma_router
 from app.schemas import (
     GeneratePetAssetResponse,
-    GenerateTravelResponse,
     LocalChatResponse,
     LocalPetPushSnapshotResponse,
     LocalProactiveResponse,
@@ -23,13 +31,41 @@ from app.schemas import (
     MemoryExtractionResponse,
 )
 from app.services.ai_error_service import (
+    ai_failure_http_exception,
     error_detail,
     generation_error_message,
     provider_error_details,
     public_error_detail,
 )
-from app.services.rate_limit_service import rate_limiter
+from app.services.rate_limit_service import get_rate_limiter
+from app.services.storage_health_service import StorageCapacityError
 from app.services.telegram_auth_service import TelegramUserContext
+from app.services.telegram_push_store import (
+    TelegramPushRecordTooLargeError,
+    TelegramPushStoreCapacityError,
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_tma_runtime() -> None:
+    """Keep FastAPI overrides and generation executors local to each test."""
+
+    def stop_generation_service() -> None:
+        service = tma_router.generation_job_service
+        if service is None:
+            return
+        try:
+            service.shutdown(wait=True)
+        finally:
+            tma_router.generation_job_service = None
+
+    stop_generation_service()
+    app.dependency_overrides.clear()
+    try:
+        yield
+    finally:
+        app.dependency_overrides.clear()
+        stop_generation_service()
 
 
 def override_user() -> TelegramUserContext:
@@ -44,7 +80,10 @@ def override_user() -> TelegramUserContext:
 
 def tma_client() -> TestClient:
     app.dependency_overrides[get_telegram_user] = override_user
-    return TestClient(app)
+    return TestClient(
+        app,
+        headers={"Idempotency-Key": f"test-request:{uuid.uuid4()}"},
+    )
 
 
 def wait_for_generation_job(client: TestClient, job_id: str) -> dict[str, object]:
@@ -70,9 +109,44 @@ def test_generate_pet_requires_auth(monkeypatch) -> None:
     app.dependency_overrides.clear()
     client = TestClient(app)
 
-    response = client.post("/api/generate-pet", json={"description": "маленький дракон"})
+    response = client.post(
+        "/api/generate-pet",
+        headers={"Idempotency-Key": "pet-request-auth-0001"},
+        json={"description": "маленький дракон"},
+    )
 
     assert response.status_code == 401
+
+
+def test_capabilities_come_from_backend_configuration(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tma_router,
+        "get_settings",
+        lambda: SimpleNamespace(
+            diagnostic_telegram_ids={42},
+            interactive_travel_pilot_telegram_ids={42},
+            allow_dev_tma_auth=False,
+        ),
+    )
+
+    response = tma_client().get("/api/capabilities")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "telegramUserId": 42,
+        "debugMenu": True,
+        "interactiveTravel": True,
+    }
+
+
+def test_paid_generation_requires_idempotency_key() -> None:
+    app.dependency_overrides[get_telegram_user] = override_user
+    client = TestClient(app)
+
+    response = client.post("/api/generate-pet", json={"description": "маленький дракон"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "INVALID_REQUEST"
 
 
 def test_generate_pet_uses_default_parallel_pipeline(monkeypatch) -> None:
@@ -88,10 +162,11 @@ def test_generate_pet_uses_default_parallel_pipeline(monkeypatch) -> None:
         ),
     )
 
-    def fake_submit(description, user):
+    def fake_submit(description, user, request_key=None):
         captured.update(
             description=description,
             owner_id=user.telegram_id,
+            request_key=request_key,
         )
         return {
             "jobId": "job-kandinsky",
@@ -110,11 +185,34 @@ def test_generate_pet_uses_default_parallel_pipeline(monkeypatch) -> None:
     )
 
     assert response.status_code == 202
+    request_key = captured.pop("request_key")
+    assert isinstance(request_key, str) and request_key.startswith("test-request:")
     assert captured == {
         "description": "дракон",
         "owner_id": 42,
     }
     app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_pet_comparison_pipeline_is_explicit_opt_in(monkeypatch, enabled) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        tma_router,
+        "get_settings",
+        lambda: SimpleNamespace(pet_comparison_enabled=enabled),
+    )
+
+    def fake_service(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(shutdown=lambda *, wait=False: None)
+
+    monkeypatch.setattr(tma_router, "GenerationJobService", fake_service)
+
+    tma_router._generation_job_service()
+
+    assert (captured["generate_comparison_images"] is not None) is enabled
 
 
 def test_chat_requires_auth(monkeypatch) -> None:
@@ -157,9 +255,15 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
             enable_in_memory_rate_limit=False,
             openai_api_key="test-openai-key",
             openrouter_api_key="test-openrouter-key",
+            pet_comparison_enabled=False,
         ),
     )
     captured: dict[str, object] = {}
+    notifications: list[int] = []
+    monkeypatch.setattr(
+        "app.routers.tma.send_generation_ready_notification",
+        notifications.append,
+    )
 
     def fake_generate_pet_image_asset_set(description: str, **kwargs):
         captured["description"] = description
@@ -239,11 +343,7 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
     )
     monkeypatch.setattr(
         "app.routers.tma.generate_kandinsky_pet_comparison_assets",
-        lambda _description, _character_bible: {
-            "assetSetId": "asset-kandinsky",
-            "generatedAt": datetime(2026, 7, 3, 12, 1, tzinfo=UTC),
-            "images": generated_response["images"],
-        },
+        lambda *_args, **_kwargs: pytest.fail("comparison must be opt-in"),
     )
     client = tma_client()
 
@@ -260,7 +360,11 @@ def test_generate_pet_response_contains_all_stages_and_moods(monkeypatch) -> Non
     assert result["assetSetId"] == "asset-1"
     assert result["characterBible"]["species"] == "small dragon mascot"
     assert captured["description"] == "маленький дракон"
-    assert captured["kwargs"] == {"image_provider": "openai"}
+    assert captured["kwargs"] == {
+        "image_provider": "openai",
+        "asset_set_id": uuid.UUID(job["jobId"]),
+    }
+    assert notifications == [42]
     assert result["sadVideoUrl"] == "/static/generated/asset-1/teen-sad.mp4"
     assert result["happyVideoUrl"] == "/static/generated/asset-1/teen-happy.mp4"
     for stage in ("baby", "teen", "adult"):
@@ -296,6 +400,26 @@ def test_generation_error_message_handles_image_postprocess_failure() -> None:
         generation_error_message("IMAGE_POSTPROCESS_FAILED")
         == "Не получилось подготовить питомца. Попробуйте ещё раз."
     )
+
+
+def test_storage_capacity_error_maps_to_retryable_503(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.ai_error_service.log_ai_request_failure",
+        lambda *_args, **_kwargs: None,
+    )
+    error = StorageCapacityError(media_kind="image", reason="LOW_DISK_SPACE")
+
+    response_error = ai_failure_http_exception(
+        "/api/travel/interactive/illustrate",
+        "travel_failed",
+        error.code,
+        "Путешествие временно нельзя сохранить. Попробуйте позже.",
+        error,
+    )
+
+    assert response_error.status_code == 503
+    assert response_error.detail["code"] == "STORAGE_CAPACITY_LOW"
+    assert response_error.headers == {"Retry-After": "300"}
 
 
 def test_chat_accepts_local_pet_state(monkeypatch) -> None:
@@ -353,108 +477,63 @@ def test_chat_accepts_local_pet_state(monkeypatch) -> None:
     app.dependency_overrides.clear()
 
 
-def test_travel_accepts_local_pet_state(monkeypatch) -> None:
+def test_chat_rejects_deep_character_bible_before_service(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
-        lambda: SimpleNamespace(
-            enable_in_memory_rate_limit=False,
-            openai_api_key="test-openai-key",
-            openrouter_api_key="test-openrouter-key",
-        ),
+        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
     )
-    captured: dict[str, object] = {}
+    called = False
 
-    def fake_generate_travel(payload):
-        captured["pet"] = payload.pet.model_dump()
-        captured["includeDebug"] = payload.includeDebug
-        return GenerateTravelResponse(
-            travelId="travel-1",
-            generatedAt=datetime(2026, 7, 6, 12, 0, tzinfo=UTC),
-            story={
-                "title": "Лунная ярмарка",
-                "summary": "Питомец нашел теплый огонек и вернулся довольным.",
-                "scenes": [
-                    {
-                        "index": index,
-                        "arc": arc,
-                        "title": f"Сцена {index}",
-                        "text": f"Короткая теплая сцена {index}.",
-                        "visualBrief": f"Pet in scene {index}.",
-                    }
-                    for index, arc in [
-                        (1, "beginning"),
-                        (2, "exploration"),
-                        (3, "discovery"),
-                        (4, "discovery"),
-                        (5, "reward"),
-                        (6, "reward"),
-                        (7, "final"),
-                    ]
-                ],
-            },
-            images=[
-                {
-                    "sceneIndex": 1,
-                    "imageUrl": "/static/generated/travel-1/travel-scene-01.png",
-                }
-            ],
-        )
+    def unexpected_chat(_payload):
+        nonlocal called
+        called = True
+        raise AssertionError("invalid character bible reached the chat service")
 
-    monkeypatch.setattr("app.routers.tma.generate_travel", fake_generate_travel)
+    monkeypatch.setattr("app.routers.tma.chat_with_local_pet", unexpected_chat)
+    nested_bible = '{"next":' * 500 + '"leaf"' + "}" * 500
+    body = (
+        '{"message":"x","pet":{"description":"pet","stage":"baby",'
+        '"mood":"idle","stats":{"hunger":1,"happiness":1,"energy":1},'
+        f'"characterBible":{nested_bible}}}'
+    )
     client = tma_client()
 
     response = client.post(
-        "/api/travel",
-        json={
-            "pet": {
-                "name": "Листик",
-                "description": "маленький листолицый питомец",
-                "characterBible": {
-                    "identity": {"name": "Листик"},
-                    "main_colors": ["green", "cream"],
-                },
-                "assetImages": {
-                    "baby": {
-                        "happy": "https://cdn.example.test/assets/baby-happy.png",
-                        "idle": "https://cdn.example.test/assets/baby-idle.png",
-                    }
-                },
-                "stage": "baby",
-                "mood": "happy",
-                "stats": {
-                    "hunger": 80,
-                    "happiness": 90,
-                    "energy": 75,
-                },
-            },
-            "includeDebug": True,
-        },
+        "/api/chat",
+        content=body,
+        headers={"content-type": "application/json"},
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["travelId"] == "travel-1"
-    assert payload["story"]["title"] == "Лунная ярмарка"
-    assert payload["story"]["scenes"][0]["index"] == 1
-    assert payload["images"] == [
-        {
-            "sceneIndex": 1,
-            "imageUrl": "/static/generated/travel-1/travel-scene-01.png",
-        }
-    ]
-    assert captured["pet"]["characterBible"] == {
-        "identity": {"name": "Листик"},
-        "main_colors": ["green", "cream"],
-    }
-    assert captured["pet"]["assetImages"] == {
-        "baby": {
-            "happy": "https://cdn.example.test/assets/baby-happy.png",
-            "idle": "https://cdn.example.test/assets/baby-idle.png",
-        }
-    }
-    assert captured["includeDebug"] is False
-
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "INVALID_REQUEST"
+    assert called is False
     app.dependency_overrides.clear()
+
+
+def test_debug_payload_requires_dev_mode_and_trusted_user(monkeypatch) -> None:
+    class DebugPayload:
+        includeDebug = True
+
+        def model_copy(self, *, update):
+            return SimpleNamespace(includeDebug=update["includeDebug"])
+
+    payload = DebugPayload()
+    monkeypatch.setattr(
+        tma_router,
+        "get_settings",
+        lambda: SimpleNamespace(
+            allow_dev_tma_auth=True,
+            diagnostic_telegram_ids={62943754},
+        ),
+    )
+
+    untrusted = override_user()
+    diagnostic = SimpleNamespace(telegram_id=62943754)
+    local_fallback = SimpleNamespace(telegram_id=0)
+
+    assert tma_router._without_untrusted_debug(payload, untrusted).includeDebug is False
+    assert tma_router._without_untrusted_debug(payload, diagnostic) is payload
+    assert tma_router._without_untrusted_debug(payload, local_fallback) is payload
 
 
 def test_chat_wraps_unhandled_error_with_cors(monkeypatch, caplog) -> None:
@@ -843,6 +922,11 @@ def test_proactive_endpoint_returns_reply(monkeypatch) -> None:
 def test_push_snapshot_endpoint_registers_pet(monkeypatch) -> None:
     captured = {}
 
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+    )
+
     def fake_register_push_snapshot(user, payload):
         captured["telegram_id"] = user.telegram_id
         captured["pet_id"] = payload.petId
@@ -898,91 +982,1031 @@ def test_push_snapshot_endpoint_registers_pet(monkeypatch) -> None:
     app.dependency_overrides.clear()
 
 
-def test_generation_rate_limit(monkeypatch) -> None:
+def test_delete_push_snapshot_is_authenticated_and_pet_scoped(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    rate_limit_buckets: list[str] = []
+
+    def fake_unregister(telegram_id: int, pet_id: str) -> bool:
+        captured.update({"telegramId": telegram_id, "petId": pet_id})
+        return True
+
+    monkeypatch.setattr(
+        "app.routers.tma.check_rate_limit",
+        lambda bucket, *_args, **_kwargs: rate_limit_buckets.append(bucket),
+    )
+    monkeypatch.setattr("app.routers.tma.unregister_push_snapshot", fake_unregister)
+    client = tma_client()
+
+    response = client.delete("/api/push/snapshot/pet-1")
+
+    assert response.status_code == 200
+    assert response.json() == {"unregistered": True, "petId": "pet-1"}
+    assert captured == {"telegramId": 42, "petId": "pet-1"}
+    assert rate_limit_buckets == ["push_snapshot_delete"]
+    app.dependency_overrides.clear()
+
+
+def test_delete_push_snapshot_requires_auth(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.dependencies.get_settings",
+        lambda: SimpleNamespace(
+            allow_dev_tma_auth=False,
+            bot_token=None,
+            telegram_init_data_max_age_seconds=86400,
+        ),
+    )
+    app.dependency_overrides.clear()
+
+    response = TestClient(app).delete("/api/push/snapshot/pet-1")
+
+    assert response.status_code == 401
+
+
+def test_delete_push_snapshot_normalizes_pet_id_and_rejects_blank(monkeypatch) -> None:
+    captured_pet_ids: list[str] = []
+    rate_limit_buckets: list[str] = []
+    monkeypatch.setattr(
+        "app.routers.tma.check_rate_limit",
+        lambda bucket, *_args, **_kwargs: rate_limit_buckets.append(bucket),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.unregister_push_snapshot",
+        lambda _telegram_id, pet_id: captured_pet_ids.append(pet_id) or True,
+    )
+    client = tma_client()
+
+    normalized = client.delete("/api/push/snapshot/%20pet-1%20")
+    blank = client.delete("/api/push/snapshot/%20%20")
+
+    assert normalized.status_code == 200
+    assert normalized.json() == {"unregistered": True, "petId": "pet-1"}
+    assert blank.status_code == 422
+    assert captured_pet_ids == ["pet-1"]
+    assert rate_limit_buckets == ["push_snapshot_delete"]
+    app.dependency_overrides.clear()
+
+
+def test_delete_push_snapshot_has_an_independent_rate_limit(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(
             enable_in_memory_rate_limit=True,
+            rate_limit_store_path=str(tmp_path / "rate-limits.sqlite3"),
+            push_snapshot_delete_rate_limit_per_hour=1,
+        ),
+    )
+    unregister_calls = 0
+
+    def unregister(_telegram_id: int, _pet_id: str) -> bool:
+        nonlocal unregister_calls
+        unregister_calls += 1
+        return True
+
+    monkeypatch.setattr("app.routers.tma.unregister_push_snapshot", unregister)
+    client = tma_client()
+
+    assert client.delete("/api/push/snapshot/pet-1").status_code == 200
+    limited = client.delete("/api/push/snapshot/pet-2")
+
+    assert limited.status_code == 429
+    assert limited.json()["detail"]["code"] == "rate_limited"
+    assert unregister_calls == 1
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status", "expected_code"),
+    [
+        (
+            TelegramPushRecordTooLargeError(actual_bytes=2_000, max_bytes=1_000),
+            413,
+            "PUSH_RECORD_TOO_LARGE",
+        ),
+        (
+            TelegramPushStoreCapacityError("full"),
+            507,
+            "PUSH_STORE_CAPACITY",
+        ),
+    ],
+)
+def test_delete_push_snapshot_maps_capacity_errors_to_public_response(
+    monkeypatch,
+    error,
+    expected_status,
+    expected_code,
+) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+    )
+
+    def fail_unregister(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr("app.routers.tma.unregister_push_snapshot", fail_unregister)
+    response = tma_client().delete("/api/push/snapshot/pet-1")
+
+    assert response.status_code == expected_status
+    assert response.json()["detail"]["code"] == expected_code
+    app.dependency_overrides.clear()
+
+
+def test_push_snapshot_rate_limit_deduplicates_modern_revision(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=True,
+            rate_limit_store_path=str(tmp_path / "rate-limits.sqlite3"),
+            push_snapshot_rate_limit_per_hour=60,
+            push_snapshot_attempt_rate_limit_per_hour=1_000,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.register_push_snapshot",
+        lambda user, _payload: LocalPetPushSnapshotResponse(
+            registered=True,
+            telegramId=user.telegram_id,
+            updatedAt="2026-07-15T12:00:00Z",
+        ),
+    )
+    client = tma_client()
+    payload = {
+        "petId": "pet-1",
+        "snapshotWriterId": "writer-session-00000009",
+        "snapshotRevision": 1,
+        "pet": {
+            "description": "маленький космический котенок",
+            "stage": "baby",
+            "mood": "idle",
+            "stats": {"hunger": 80, "happiness": 70, "energy": 60},
+        },
+    }
+
+    assert client.post("/api/push/snapshot", json=payload).status_code == 200
+    assert client.post("/api/push/snapshot", json=payload).status_code == 200
+    for revision in range(2, 61):
+        assert (
+            client.post(
+                "/api/push/snapshot",
+                json={**payload, "snapshotRevision": revision},
+            ).status_code
+            == 200
+        )
+
+    response = client.post(
+        "/api/push/snapshot",
+        json={**payload, "snapshotRevision": 61},
+    )
+
+    assert response.status_code == 429
+    assert response.json()["detail"]["code"] == "rate_limited"
+    app.dependency_overrides.clear()
+
+
+def test_push_snapshot_attempt_limit_caps_replays_of_same_revision(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=True,
+            rate_limit_store_path=str(tmp_path / "rate-limits.sqlite3"),
+            push_snapshot_rate_limit_per_hour=60,
+            push_snapshot_attempt_rate_limit_per_hour=2,
+        ),
+    )
+    calls = 0
+
+    def register(user, _payload):
+        nonlocal calls
+        calls += 1
+        return LocalPetPushSnapshotResponse(
+            registered=True,
+            telegramId=user.telegram_id,
+            updatedAt="2026-07-15T12:00:00Z",
+        )
+
+    monkeypatch.setattr("app.routers.tma.register_push_snapshot", register)
+    client = tma_client()
+    payload = {
+        "petId": "pet-1",
+        "snapshotWriterId": "writer-session-00000010",
+        "snapshotRevision": 1,
+        "pet": {
+            "description": "маленький космический котенок",
+            "stage": "baby",
+            "mood": "idle",
+            "stats": {"hunger": 80, "happiness": 70, "energy": 60},
+        },
+    }
+
+    assert client.post("/api/push/snapshot", json=payload).status_code == 200
+    assert client.post("/api/push/snapshot", json=payload).status_code == 200
+    response = client.post("/api/push/snapshot", json=payload)
+
+    assert response.status_code == 429
+    assert calls == 2
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status", "expected_code"),
+    [
+        (
+            TelegramPushRecordTooLargeError(actual_bytes=2_000, max_bytes=1_000),
+            413,
+            "PUSH_RECORD_TOO_LARGE",
+        ),
+        (
+            TelegramPushStoreCapacityError("full"),
+            507,
+            "PUSH_STORE_CAPACITY",
+        ),
+    ],
+)
+def test_push_snapshot_maps_capacity_errors_to_public_response(
+    monkeypatch,
+    error,
+    expected_status,
+    expected_code,
+) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(enable_in_memory_rate_limit=False),
+    )
+
+    def fail_register(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr("app.routers.tma.register_push_snapshot", fail_register)
+    client = tma_client()
+    response = client.post(
+        "/api/push/snapshot",
+        json={
+            "petId": "pet-1",
+            "pet": {
+                "description": "маленький космический котенок",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": {"hunger": 80, "happiness": 70, "energy": 60},
+            },
+        },
+    )
+
+    assert response.status_code == expected_status
+    assert response.json()["detail"]["code"] == expected_code
+    app.dependency_overrides.clear()
+
+
+def test_generation_rate_limit(monkeypatch, tmp_path) -> None:
+    now = datetime.now(UTC)
+    submissions = 0
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=True,
+            rate_limit_store_path=str(tmp_path / "rate-limits.sqlite3"),
             generation_rate_limit_per_day=3,
             openai_api_key="test-openai-key",
             openrouter_api_key="test-openrouter-key",
         ),
     )
-    generated_response = {
-        "assetSetId": "asset-1",
-        "generatedAt": datetime(2026, 7, 3, 12, 0, tzinfo=UTC),
-        "images": {
-            "baby": {
-                "idle": "/static/generated/asset-1/baby-idle.png",
-                "happy": "/static/generated/asset-1/baby-happy.png",
-                "hungry": "/static/generated/asset-1/baby-hungry.png",
-                "sad": "/static/generated/asset-1/baby-sad.png",
-            },
-            "teen": {
-                "idle": "/static/generated/asset-1/teen-idle.png",
-                "happy": "/static/generated/asset-1/teen-happy.png",
-                "hungry": "/static/generated/asset-1/teen-hungry.png",
-                "sad": "/static/generated/asset-1/teen-sad.png",
-            },
-            "adult": {
-                "idle": "/static/generated/asset-1/adult-idle.png",
-                "happy": "/static/generated/asset-1/adult-happy.png",
-                "hungry": "/static/generated/asset-1/adult-hungry.png",
-                "sad": "/static/generated/asset-1/adult-sad.png",
-            },
-        },
-        "spriteSheetUrl": "/static/generated/asset-1/sprite-sheet.png",
-        "videoUrl": "/static/generated/asset-1/teen-idle.mp4",
-    }
-    monkeypatch.setattr(
-        "app.routers.tma.generate_pet_image_asset_set",
-        lambda description, **kwargs: SimpleNamespace(asset_set_id="asset-1"),
-    )
-    monkeypatch.setattr(
-        "app.routers.tma.generate_pet_video_for_image_asset_set",
-        lambda _image_set: SimpleNamespace(name="teen-idle.mp4"),
-    )
-    monkeypatch.setattr(
-        "app.routers.tma.generate_pet_sad_scene_path",
-        lambda _image_set, **_kwargs: SimpleNamespace(name="teen-sad.png"),
-    )
-    monkeypatch.setattr(
-        "app.routers.tma.generate_pet_sad_video_for_image_asset_set",
-        lambda _image_set, _sad_scene_path: SimpleNamespace(name="teen-sad.mp4"),
-    )
-    monkeypatch.setattr(
-        "app.routers.tma.generate_pet_happy_scene_path",
-        lambda _image_set, **_kwargs: SimpleNamespace(name="teen-happy.png"),
-    )
-    monkeypatch.setattr(
-        "app.routers.tma.generate_pet_happy_video_for_image_asset_set",
-        lambda _image_set, _happy_scene_path: SimpleNamespace(name="teen-happy.mp4"),
-    )
-    monkeypatch.setattr(
-        "app.routers.tma.build_pet_asset_set_response",
-        lambda *_args: generated_response,
-    )
-    with rate_limiter._lock:
-        rate_limiter._events.clear()
+
+    def fake_submit(_description, _user, request_key=None):
+        nonlocal submissions
+        assert request_key is not None
+        submissions += 1
+        return {
+            "jobId": f"synthetic-job-{submissions}",
+            "status": "queued",
+            "phase": "queued",
+            "createdAt": now,
+            "updatedAt": now,
+        }
+
+    monkeypatch.setattr("app.routers.tma.submit_generation_job", fake_submit)
     client = tma_client()
 
-    for _ in range(3):
-        assert client.post("/api/generate-pet", json={"description": "дракон"}).status_code == 202
+    for index in range(3):
+        assert (
+            client.post(
+                "/api/generate-pet",
+                headers={"Idempotency-Key": f"pet-request-quota-{index:04d}"},
+                json={"description": "дракон"},
+            ).status_code
+            == 202
+        )
 
-    response = client.post("/api/generate-pet", json={"description": "дракон"})
+    response = client.post(
+        "/api/generate-pet",
+        headers={"Idempotency-Key": "pet-request-quota-9999"},
+        json={"description": "дракон"},
+    )
 
     assert response.status_code == 429
     assert response.json()["detail"]["code"] == "rate_limited"
     assert response.json()["detail"]["retryAfterSeconds"] > 0
+    assert submissions == 3
 
     app.dependency_overrides.clear()
 
 
-def test_chat_rate_limit(monkeypatch) -> None:
+@pytest.mark.parametrize("openai_api_key", [None, "   "])
+def test_generate_pet_missing_credentials_does_not_consume_quota(
+    monkeypatch,
+    tmp_path,
+    openai_api_key,
+) -> None:
+    store_path = tmp_path / "rate-limits.sqlite3"
     monkeypatch.setattr(
         "app.routers.tma.get_settings",
         lambda: SimpleNamespace(
             enable_in_memory_rate_limit=True,
+            rate_limit_store_path=str(store_path),
+            generation_job_store_path=str(tmp_path / "generation-jobs.sqlite3"),
+            generation_rate_limit_per_day=1,
+            openai_api_key=openai_api_key,
+        ),
+    )
+    client = tma_client()
+
+    first = client.post("/api/generate-pet", json={"description": "мышонок"})
+    second = client.post("/api/generate-pet", json={"description": "мышонок"})
+
+    assert first.status_code == 500
+    assert second.status_code == 500
+    assert not store_path.exists()
+    app.dependency_overrides.clear()
+
+
+def test_generate_pet_queue_rejection_refunds_quota(monkeypatch, tmp_path) -> None:
+    store_path = tmp_path / "rate-limits.sqlite3"
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=True,
+            rate_limit_store_path=str(store_path),
+            generation_job_store_path=str(tmp_path / "generation-jobs.sqlite3"),
+            generation_rate_limit_per_day=1,
+            openai_api_key="test-openai-key",
+        ),
+    )
+
+    def reject_submission(_description, _user, request_key=None):
+        assert request_key is not None
+        raise HTTPException(status_code=503, detail={"code": "GENERATION_QUEUE_FULL"})
+
+    monkeypatch.setattr("app.routers.tma.submit_generation_job", reject_submission)
+    client = tma_client()
+
+    response = client.post("/api/generate-pet", json={"description": "мышонок"})
+
+    assert response.status_code == 503
+    with sqlite3.connect(store_path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM rate_limit_events WHERE bucket = 'generation'"
+        ).fetchone()[0]
+    assert count == 0
+    app.dependency_overrides.clear()
+
+
+def test_generate_pet_idempotency_key_reuses_quota_event(monkeypatch, tmp_path) -> None:
+    store_path = tmp_path / "rate-limits.sqlite3"
+    now = datetime.now(UTC)
+    captured: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=True,
+            rate_limit_store_path=str(store_path),
+            generation_job_store_path=str(tmp_path / "generation-jobs.sqlite3"),
+            generation_rate_limit_per_day=1,
+            openai_api_key="test-openai-key",
+        ),
+    )
+
+    def fake_submit(description, _user, request_key=None):
+        captured.append((description, request_key))
+        return {
+            "jobId": "job-idempotent",
+            "status": "queued",
+            "phase": "queued",
+            "createdAt": now,
+            "updatedAt": now,
+        }
+
+    monkeypatch.setattr("app.routers.tma.submit_generation_job", fake_submit)
+    monkeypatch.setattr("app.routers.tma.find_generation_job_by_request_key", lambda *_args: None)
+    client = tma_client()
+    headers = {"Idempotency-Key": "pet-request-0001"}
+
+    first = client.post(
+        "/api/generate-pet",
+        headers=headers,
+        json={"description": "мышонок"},
+    )
+    replay = client.post(
+        "/api/generate-pet",
+        headers=headers,
+        json={"description": "мышонок"},
+    )
+
+    assert first.status_code == 202
+    assert replay.status_code == 202
+    assert first.json() == replay.json()
+    assert captured == [
+        ("мышонок", "pet-request-0001"),
+        ("мышонок", "pet-request-0001"),
+    ]
+    with sqlite3.connect(store_path) as connection:
+        rows = connection.execute(
+            "SELECT request_key FROM rate_limit_events WHERE bucket = 'generation'"
+        ).fetchall()
+    assert rows == [("generate-pet:pet-request-0001",)]
+    app.dependency_overrides.clear()
+
+
+def test_generate_pet_replay_returns_job_before_credentials_or_quota(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    now = datetime.now(UTC)
+    existing = {
+        "jobId": "job-existing",
+        "status": "queued",
+        "phase": "queued",
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    monkeypatch.setattr(
+        "app.routers.tma.find_generation_job_by_request_key",
+        lambda request_key, user, *_payload: (
+            existing
+            if request_key == "pet-request-existing-0001" and user.telegram_id == 42
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            generation_job_store_path=str(tmp_path / "generation-jobs.sqlite3"),
+        ),
+    )
+    monkeypatch.setattr(
+        "app.routers.tma.submit_generation_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("replay started a new generation job")
+        ),
+    )
+    client = tma_client()
+
+    response = client.post(
+        "/api/generate-pet",
+        headers={"Idempotency-Key": "pet-request-existing-0001"},
+        json={"description": "мышонок"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["jobId"] == "job-existing"
+    app.dependency_overrides.clear()
+
+
+def test_generate_pet_rejects_idempotency_key_reused_for_another_payload(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class ConflictingService:
+        def find_by_request_key(self, *_args):
+            raise tma_router.GenerationIdempotencyConflictError("synthetic conflict")
+
+    monkeypatch.setattr(tma_router, "_generation_job_service", lambda: ConflictingService())
+    monkeypatch.setattr(
+        tma_router,
+        "get_settings",
+        lambda: SimpleNamespace(
+            generation_job_store_path=str(tmp_path / "generation-jobs.sqlite3"),
+        ),
+    )
+    client = tma_client()
+
+    response = client.post(
+        "/api/generate-pet",
+        headers={"Idempotency-Key": "pet-request-conflict-0001"},
+        json={"description": "другой питомец"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "GENERATION_IDEMPOTENCY_CONFLICT"
+    app.dependency_overrides.clear()
+
+
+def test_generate_pet_rejects_another_active_job_for_same_owner(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    reservation = object()
+    refunds: list[object] = []
+
+    class ActiveService:
+        def find_by_request_key(self, *_args):
+            return None
+
+        def submit(self, *_args, **_kwargs):
+            raise tma_router.GenerationOwnerActiveError(
+                "job-already-running",
+                f"  {'я' * 350}  ",
+            )
+
+    monkeypatch.setattr(tma_router, "_generation_job_service", lambda: ActiveService())
+    monkeypatch.setattr(tma_router, "check_rate_limit", lambda *_args, **_kwargs: reservation)
+    monkeypatch.setattr(tma_router, "refund_rate_limit", refunds.append)
+    monkeypatch.setattr(
+        tma_router,
+        "get_settings",
+        lambda: SimpleNamespace(
+            generation_job_store_path=str(tmp_path / "generation-jobs.sqlite3"),
+            openai_api_key="test-openai-key",
+            enable_in_memory_rate_limit=False,
+        ),
+    )
+    client = tma_client()
+
+    response = client.post(
+        "/api/generate-pet",
+        headers={"Idempotency-Key": "pet-request-owner-active-0001"},
+        json={"description": "второй питомец"},
+    )
+
+    assert response.status_code == 409
+    assert response.headers["retry-after"] == "15"
+    assert response.json()["detail"]["code"] == "GENERATION_ALREADY_ACTIVE"
+    assert response.json()["detail"]["activeJobId"] == "job-already-running"
+    assert response.json()["detail"]["activeDescription"] == "я" * 300
+    assert refunds == [reservation]
+    app.dependency_overrides.clear()
+
+
+def test_generate_pet_adopts_durable_alias_after_owner_active_conflict(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    now = datetime.now(UTC)
+    existing = {
+        "jobId": "job-already-running",
+        "status": "running",
+        "phase": "generating_images",
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+    class AliasedActiveService:
+        alias_bound = False
+        lookup_calls = 0
+
+        def find_by_request_key(self, *_args):
+            self.lookup_calls += 1
+            return existing if self.alias_bound else None
+
+        def submit(self, *_args, **_kwargs):
+            self.alias_bound = True
+            raise tma_router.GenerationOwnerActiveError(
+                "job-already-running",
+                "первый питомец",
+            )
+
+    service = AliasedActiveService()
+    reservation = object()
+    refunds: list[object] = []
+    monkeypatch.setattr(tma_router, "_generation_job_service", lambda: service)
+    monkeypatch.setattr(tma_router, "check_rate_limit", lambda *_args, **_kwargs: reservation)
+    monkeypatch.setattr(tma_router, "refund_rate_limit", refunds.append)
+    monkeypatch.setattr(
+        tma_router,
+        "get_settings",
+        lambda: SimpleNamespace(
+            generation_job_store_path=str(tmp_path / "generation-jobs.sqlite3"),
+            openai_api_key="test-openai-key",
+        ),
+    )
+    client = tma_client()
+
+    response = client.post(
+        "/api/generate-pet",
+        headers={"Idempotency-Key": "pet-request-owner-alias-0001"},
+        json={"description": "первый питомец"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["jobId"] == "job-already-running"
+    assert service.lookup_calls == 2
+    assert refunds == [reservation]
+    app.dependency_overrides.clear()
+
+
+def test_idempotent_replay_failure_does_not_refund_original_quota_event(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    store_path = tmp_path / "rate-limits.sqlite3"
+    now = datetime.now(UTC)
+    calls = 0
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=True,
+            rate_limit_store_path=str(store_path),
+            generation_job_store_path=str(tmp_path / "generation-jobs.sqlite3"),
+            generation_rate_limit_per_day=1,
+            openai_api_key="test-openai-key",
+        ),
+    )
+
+    def fake_submit(_description, _user, request_key=None):
+        nonlocal calls
+        calls += 1
+        assert request_key == "pet-request-0002"
+        if calls == 2:
+            raise HTTPException(status_code=503, detail={"code": "SYNTHETIC_REJECTION"})
+        return {
+            "jobId": "job-idempotent",
+            "status": "queued",
+            "phase": "queued",
+            "createdAt": now,
+            "updatedAt": now,
+        }
+
+    monkeypatch.setattr("app.routers.tma.submit_generation_job", fake_submit)
+    monkeypatch.setattr("app.routers.tma.find_generation_job_by_request_key", lambda *_args: None)
+    client = tma_client()
+    headers = {"Idempotency-Key": "pet-request-0002"}
+
+    assert (
+        client.post(
+            "/api/generate-pet",
+            headers=headers,
+            json={"description": "мышонок"},
+        ).status_code
+        == 202
+    )
+    assert (
+        client.post(
+            "/api/generate-pet",
+            headers=headers,
+            json={"description": "мышонок"},
+        ).status_code
+        == 503
+    )
+
+    with sqlite3.connect(store_path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM rate_limit_events WHERE bucket = 'generation'"
+        ).fetchone()[0]
+    assert count == 1
+    app.dependency_overrides.clear()
+
+
+def test_idempotent_admission_serializes_refund_and_concurrent_submit(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    first_entered = Event()
+    release_first = Event()
+    second_entered = Event()
+    refunds = 0
+    now = datetime.now(UTC)
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            generation_job_store_path=str(tmp_path / "generation-jobs.sqlite3"),
+            openai_api_key="test-openai-key",
+        ),
+    )
+    monkeypatch.setattr("app.routers.tma.find_generation_job_by_request_key", lambda *_args: None)
+    monkeypatch.setattr("app.routers.tma.check_rate_limit", lambda *_args, **_kwargs: object())
+
+    def fake_refund(_reservation) -> None:
+        nonlocal refunds
+        refunds += 1
+
+    def fake_submit(description, _user, request_key=None):
+        assert request_key == "pet-request-race-0001"
+        if description == "первый":
+            first_entered.set()
+            assert release_first.wait(timeout=2)
+            raise HTTPException(status_code=503, detail={"code": "SYNTHETIC_REJECTION"})
+        second_entered.set()
+        return {
+            "jobId": "job-second",
+            "status": "queued",
+            "phase": "queued",
+            "createdAt": now,
+            "updatedAt": now,
+        }
+
+    monkeypatch.setattr("app.routers.tma.refund_rate_limit", fake_refund)
+    monkeypatch.setattr("app.routers.tma.submit_generation_job", fake_submit)
+    client = tma_client()
+    headers = {"Idempotency-Key": "pet-request-race-0001"}
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            client.post,
+            "/api/generate-pet",
+            headers=headers,
+            json={"description": "первый"},
+        )
+        assert first_entered.wait(timeout=2)
+        second = executor.submit(
+            client.post,
+            "/api/generate-pet",
+            headers=headers,
+            json={"description": "второй"},
+        )
+        assert not second_entered.wait(timeout=0.05)
+        release_first.set()
+        assert first.result(timeout=2).status_code == 503
+        assert second.result(timeout=2).status_code == 202
+
+    assert refunds == 1
+    app.dependency_overrides.clear()
+
+
+def test_chat_admission_rejects_per_user_and_global_before_sync_handler(monkeypatch) -> None:
+    entered = Event()
+    release = Event()
+    calls = 0
+    monkeypatch.setattr(
+        tma_router,
+        "get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=False,
+            http_llm_global_concurrency=1,
+            http_llm_per_user_concurrency=1,
+            http_admission_retry_after_seconds=7,
+        ),
+    )
+
+    async def user_from_header(request: Request) -> TelegramUserContext:
+        telegram_id = int(request.headers.get("x-test-user", "42"))
+        return TelegramUserContext(
+            telegram_id=telegram_id,
+            username=f"user-{telegram_id}",
+            first_name="Synthetic",
+            language_code="ru",
+            auth_date=datetime.now(UTC),
+        )
+
+    def blocking_chat(_payload) -> LocalChatResponse:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        assert release.wait(timeout=3)
+        return LocalChatResponse(reply="Я рядом.", moodHint="happy")
+
+    monkeypatch.setattr(tma_router, "chat_with_local_pet", blocking_chat)
+    app.dependency_overrides[get_telegram_user] = user_from_header
+    client = TestClient(app)
+    payload = {
+        "message": "Как ты?",
+        "pet": {
+            "description": "маленький космический котенок",
+            "stage": "baby",
+            "mood": "idle",
+            "stats": {"hunger": 80, "happiness": 70, "energy": 60},
+        },
+        "history": [],
+    }
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        first = executor.submit(
+            client.post,
+            "/api/chat",
+            headers={"x-test-user": "42"},
+            json=payload,
+        )
+        assert entered.wait(timeout=2)
+        try:
+            same_user = client.post(
+                "/api/chat",
+                headers={"x-test-user": "42"},
+                json=payload,
+            )
+            other_user = client.post(
+                "/api/chat",
+                headers={"x-test-user": "43"},
+                json=payload,
+            )
+        finally:
+            release.set()
+        first_response = first.result(timeout=2)
+
+    assert first_response.status_code == 200
+    assert same_user.status_code == 429
+    assert same_user.json()["detail"]["code"] == "REQUEST_ADMISSION_USER_LIMIT"
+    assert same_user.headers["Retry-After"] == "7"
+    assert other_user.status_code == 503
+    assert other_user.json()["detail"]["code"] == "REQUEST_ADMISSION_GLOBAL_LIMIT"
+    assert other_user.headers["Retry-After"] == "7"
+    assert calls == 1
+
+    after_release = client.post(
+        "/api/chat",
+        headers={"x-test-user": "42"},
+        json=payload,
+    )
+    assert after_release.status_code == 200
+    assert calls == 2
+
+
+def test_chat_admission_releases_after_handler_exception(monkeypatch) -> None:
+    calls = 0
+    monkeypatch.setattr(
+        tma_router,
+        "get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=False,
+            http_llm_global_concurrency=1,
+            http_llm_per_user_concurrency=1,
+            http_admission_retry_after_seconds=5,
+        ),
+    )
+
+    def fail_once(_payload) -> LocalChatResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise HTTPException(status_code=418, detail={"code": "SYNTHETIC_FAILURE"})
+        return LocalChatResponse(reply="Снова работаю.", moodHint="happy")
+
+    monkeypatch.setattr(tma_router, "chat_with_local_pet", fail_once)
+    client = tma_client()
+    payload = {
+        "message": "Как ты?",
+        "pet": {
+            "description": "маленький космический котенок",
+            "stage": "baby",
+            "mood": "idle",
+            "stats": {"hunger": 80, "happiness": 70, "energy": 60},
+        },
+        "history": [],
+    }
+
+    failed = client.post("/api/chat", json=payload)
+    recovered = client.post("/api/chat", json=payload)
+
+    assert failed.status_code == 418
+    assert recovered.status_code == 200
+    assert calls == 2
+
+
+def test_llm_admission_dependency_releases_on_async_generator_cancel(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tma_router,
+        "get_settings",
+        lambda: SimpleNamespace(
+            http_llm_global_concurrency=1,
+            http_llm_per_user_concurrency=1,
+            http_admission_retry_after_seconds=5,
+        ),
+    )
+    user = override_user()
+
+    async def cancel_dependency() -> None:
+        dependency = tma_router._llm_request_admission(user)
+        await anext(dependency)
+        with pytest.raises(HTTPException) as rejected:
+            tma_router._acquire_public_request_admission(
+                user,
+                bucket="llm",
+                global_setting="http_llm_global_concurrency",
+                per_user_setting="http_llm_per_user_concurrency",
+                default_global_limit=1,
+                default_per_user_limit=1,
+            )
+        assert rejected.value.status_code == 429
+        await dependency.aclose()
+
+        replacement = tma_router._acquire_public_request_admission(
+            user,
+            bucket="llm",
+            global_setting="http_llm_global_concurrency",
+            per_user_setting="http_llm_per_user_concurrency",
+            default_global_limit=1,
+            default_per_user_limit=1,
+        )
+        replacement.release()
+
+    asyncio.run(cancel_dependency())
+
+
+def test_async_health_bypasses_saturated_fastapi_sync_threadpool(monkeypatch) -> None:
+    entered = Event()
+    release = Event()
+    monkeypatch.setattr(
+        tma_router,
+        "get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=False,
+            http_llm_global_concurrency=1,
+            http_llm_per_user_concurrency=1,
+            http_admission_retry_after_seconds=5,
+        ),
+    )
+    monkeypatch.setattr(
+        tma_router,
+        "chat_with_local_pet",
+        lambda _payload: (
+            entered.set(),
+            release.wait(timeout=3),
+            LocalChatResponse(reply="Я рядом.", moodHint="happy"),
+        )[-1],
+    )
+    monkeypatch.setattr(main_module, "scheduler_runtime_status", lambda: {})
+    monkeypatch.setattr(main_module.tma, "generation_job_runtime_status", lambda: {"stuck": 0})
+    monkeypatch.setattr(main_module, "llm_runtime_status", lambda: {"status": "ok"})
+    monkeypatch.setattr(main_module, "media_runtime_status", lambda: {"status": "ok"})
+    monkeypatch.setattr(
+        main_module,
+        "storage_runtime_status",
+        lambda: {"status": "ok", "failedPaths": []},
+    )
+    monkeypatch.setattr(main_module, "notify_ops", lambda *_args, **_kwargs: None)
+
+    isolated_app = FastAPI()
+    isolated_app.include_router(tma_router.router)
+    isolated_app.add_api_route("/health", main_module.health, methods=["GET"])
+    isolated_app.dependency_overrides[get_telegram_user] = override_user
+    payload = {
+        "message": "Как ты?",
+        "pet": {
+            "description": "маленький космический котенок",
+            "stage": "baby",
+            "mood": "idle",
+            "stats": {"hunger": 80, "happiness": 70, "energy": 60},
+        },
+        "history": [],
+    }
+
+    async def set_thread_tokens(value: int) -> int:
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        previous = limiter.total_tokens
+        limiter.total_tokens = value
+        return previous
+
+    with TestClient(isolated_app) as client:
+        assert client.portal is not None
+        previous_tokens = client.portal.call(set_thread_tokens, 1)
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                chat_future = executor.submit(client.post, "/api/chat", json=payload)
+                assert entered.wait(timeout=2)
+                health_future = executor.submit(client.get, "/health")
+                try:
+                    health_response = health_future.result(timeout=1)
+                finally:
+                    release.set()
+                chat_response = chat_future.result(timeout=2)
+        finally:
+            client.portal.call(set_thread_tokens, previous_tokens)
+
+    assert health_response.status_code == 200
+    assert health_response.json() == {"status": "ok"}
+    assert chat_response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "idempotency_key",
+    ["short", "contains space", "contains/slash", "x" * 97],
+)
+def test_generate_pet_rejects_invalid_idempotency_key(
+    monkeypatch,
+    idempotency_key,
+) -> None:
+    called = False
+
+    def fake_submit(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("invalid header reached generation admission")
+
+    monkeypatch.setattr("app.routers.tma.submit_generation_job", fake_submit)
+    client = tma_client()
+
+    response = client.post(
+        "/api/generate-pet",
+        headers={"Idempotency-Key": idempotency_key},
+        json={"description": "мышонок"},
+    )
+
+    assert response.status_code == 422
+    assert called is False
+    app.dependency_overrides.clear()
+
+
+def test_chat_rate_limit(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "app.routers.tma.get_settings",
+        lambda: SimpleNamespace(
+            enable_in_memory_rate_limit=True,
+            rate_limit_store_path=str(tmp_path / "rate-limits.sqlite3"),
             chat_rate_limit_per_hour=30,
         ),
     )
@@ -990,8 +2014,6 @@ def test_chat_rate_limit(monkeypatch) -> None:
         "app.routers.tma.chat_with_local_pet",
         lambda payload: LocalChatResponse(reply="Я рядом.", moodHint="happy"),
     )
-    with rate_limiter._lock:
-        rate_limiter._events.clear()
     client = tma_client()
     payload = {
         "message": "Как ты?",
@@ -1017,3 +2039,32 @@ def test_chat_rate_limit(monkeypatch) -> None:
     assert response.json()["detail"]["code"] == "rate_limited"
 
     app.dependency_overrides.clear()
+
+
+def test_interactive_travel_debug_reset_clears_durable_quota(monkeypatch, tmp_path) -> None:
+    store_path = tmp_path / "rate-limits.sqlite3"
+    settings = SimpleNamespace(
+        enable_in_memory_rate_limit=True,
+        rate_limit_store_path=str(store_path),
+        interactive_travel_pilot_telegram_ids={42},
+        interactive_travel_owner_store_path=str(tmp_path / "travel-owners.sqlite3"),
+        diagnostic_telegram_ids={42},
+    )
+    monkeypatch.setattr(tma_router, "get_settings", lambda: settings)
+    monkeypatch.setattr(tma_router, "reset_interactive_travel_generation", lambda _travel_id: None)
+    limiter = get_rate_limiter(store_path)
+    limiter.check("interactive_travel", 42, limit=1, window=timedelta(days=1))
+    tma_router._interactive_travel_session_store().register_owner(
+        "interactive-travel-test",
+        override_user().telegram_id,
+    )
+
+    response = tma_router.interactive_travel_debug_reset("interactive-travel-test", override_user())
+
+    assert response == {"reset": True}
+    assert limiter.check(
+        "interactive_travel",
+        42,
+        limit=1,
+        window=timedelta(days=1),
+    )

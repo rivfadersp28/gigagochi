@@ -9,7 +9,7 @@ import {
   Rocket,
   Save,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +37,7 @@ type Drafts = Record<string, string>;
 type ValidationState = Record<string, string | null>;
 
 const PUBLISH_POLL_INTERVAL_MS = 1500;
+const PUBLISH_POLL_DEADLINE_MS = 20 * 60 * 1000;
 const SPEECH_RUNTIME_FILE_ID = "speech_runtime";
 const TONE_RUNTIME_FILE_ID = "tone_runtime";
 const CHARACTER_BIBLE_TEMPLATE_FILE_ID = "character_bible_template";
@@ -45,7 +46,6 @@ const AUXILIARY_FILE_IDS = [
   "story_library",
   "age_speech_examples",
   "story_constructor",
-  "travel_story_templates",
   "world_descriptions",
 ] as const;
 
@@ -112,9 +112,21 @@ function syncStatusLabel(status: string) {
   return status;
 }
 
-function wait(ms: number) {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
+function wait(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      signal.removeEventListener("abort", handleAbort);
+      resolve();
+    }, ms);
+    const handleAbort = () => {
+      window.clearTimeout(timeoutId);
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    if (signal.aborted) {
+      handleAbort();
+      return;
+    }
+    signal.addEventListener("abort", handleAbort, { once: true });
   });
 }
 
@@ -122,7 +134,7 @@ function PublishLog({ job }: { job: AdminSpeechPublishJob }) {
   return (
     <section className="rounded-lg border border-border/70 p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-base font-semibold">Deploy</h2>
+        <h2 className="text-balance text-base font-semibold">Deploy</h2>
         <Badge variant={job.status === "failed" ? "destructive" : "secondary"}>
           {publishStatusLabel(job.status)}
         </Badge>
@@ -156,6 +168,7 @@ export function SpeechAdmin() {
   const [publishJob, setPublishJob] = useState<AdminSpeechPublishJob | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const publishAbortRef = useRef<AbortController | null>(null);
 
   async function loadManifest(options: { clearNotice?: boolean } = {}) {
     setIsLoading(true);
@@ -220,6 +233,7 @@ export function SpeechAdmin() {
 
     return () => {
       ignore = true;
+      publishAbortRef.current?.abort(new DOMException("Unmounted", "AbortError"));
     };
   }, []);
 
@@ -313,17 +327,28 @@ export function SpeechAdmin() {
     setError(null);
     setNotice(null);
     setPublishJob(null);
+    publishAbortRef.current?.abort(new DOMException("Superseded", "AbortError"));
+    const controller = new AbortController();
+    publishAbortRef.current = controller;
+    const deadline = Date.now() + PUBLISH_POLL_DEADLINE_MS;
     try {
       let current = await startAdminSpeechPublish(
         targetFiles.map((file) => ({
           id: file.id,
           content: drafts[file.id] ?? file.content,
         })),
+        undefined,
+        controller.signal,
       );
       setPublishJob(current);
       while (!isPublishFinished(current.status)) {
-        await wait(PUBLISH_POLL_INTERVAL_MS);
-        current = await fetchAdminSpeechPublishJob(current.id);
+        if (Date.now() >= deadline) {
+          throw new Error(
+            "Deploy всё ещё выполняется. Обнови страницу позже — задача продолжает работать на сервере.",
+          );
+        }
+        await wait(PUBLISH_POLL_INTERVAL_MS, controller.signal);
+        current = await fetchAdminSpeechPublishJob(current.id, controller.signal);
         setPublishJob(current);
       }
       if (current.status === "succeeded") {
@@ -337,9 +362,16 @@ export function SpeechAdmin() {
         setError(current.error ?? "Deploy завершился ошибкой.");
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (!controller.signal.aborted) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+      }
     } finally {
-      setIsPublishing(false);
+      if (publishAbortRef.current === controller) {
+        publishAbortRef.current = null;
+        if (!controller.signal.aborted) {
+          setIsPublishing(false);
+        }
+      }
     }
   }
 
@@ -351,7 +383,7 @@ export function SpeechAdmin() {
     hasValidationError ||
     isBusy;
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="min-h-dvh bg-background text-foreground">
       <div className="mx-auto w-full max-w-[1320px] px-4 py-4 lg:px-6">
         <header className="mb-4 rounded-lg border border-border/70 bg-background p-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -360,7 +392,7 @@ export function SpeechAdmin() {
                 <Database className="size-4" />
                 Admin phrases
               </div>
-              <h1 className="mt-1 text-2xl font-semibold">Фразы персонажей</h1>
+              <h1 className="mt-1 text-balance text-2xl font-semibold">Фразы персонажей</h1>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">

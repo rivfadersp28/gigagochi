@@ -148,12 +148,12 @@ export function calculatePetMood(stats: PetStats): PetMood {
 export function applyStatsPatch(
   state: LocalPetState,
   patch: PetStatsPatch | undefined,
+  now = new Date(),
 ): LocalPetState {
   if (!patch || !isRecord(patch.stats)) {
     return state;
   }
 
-  const now = new Date();
   const nowIso = now.toISOString();
   const stats = { ...state.stats };
   const lastStatTickAt = normalizeStatTickMap(state.lastStatTickAt, state.lastStatsTickAt);
@@ -169,6 +169,12 @@ export function applyStatsPatch(
     const value = patch.stats[key];
     if (typeof value === "number" && Number.isFinite(value)) {
       const patchedTick = patch.lastStatTickAt?.[key];
+      if (
+        isIsoDate(patchedTick)
+        && Date.parse(patchedTick) < Date.parse(lastStatTickAt[key])
+      ) {
+        continue;
+      }
       stats[key] = clampStat(value);
       nextTicks[key] = isIsoDate(patchedTick) ? patchedTick : nowIso;
       if (stats[key] > MIN_STAT) {
@@ -255,12 +261,12 @@ export function applyOfflineProgress(state: LocalPetState, now = new Date()): Lo
 export function withPetInteraction(
   state: LocalPetState,
   updateStats: (stats: PetStats) => PetStats,
+  now = new Date(),
 ): LocalPetState {
   if (state.diedAt) {
     return state;
   }
 
-  const now = new Date();
   const nowIso = now.toISOString();
   const stats = normalizeStats(updateStats(state.stats));
   const lastStatTickAt = normalizeStatTickMap(state.lastStatTickAt, state.lastStatsTickAt);
@@ -294,7 +300,7 @@ export function withPetInteraction(
   };
 }
 
-export function applyPetTap(state: LocalPetState): {
+export function applyPetTap(state: LocalPetState, now = new Date()): {
   state: LocalPetState;
   rewarded: boolean;
 } {
@@ -308,7 +314,7 @@ export function applyPetTap(state: LocalPetState): {
     rewarded
       ? { ...stats, happiness: stats.happiness + PET_TAP_HAPPINESS_REWARD }
       : stats
-  ));
+  ), now);
 
   return {
     state: { ...interactedState, petTapProgress: nextProgress },

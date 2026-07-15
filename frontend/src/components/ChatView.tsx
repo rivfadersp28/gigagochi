@@ -10,29 +10,35 @@ import {
 } from "@/lib/api";
 import { presentError, type PresentedError } from "@/lib/errorPresentation";
 import {
+  CHAT_HISTORY_STORAGE_KEY,
   createLocalId,
   readLocalChatHistory,
+  readLocalPetState,
   readLocalPetSettings,
 } from "@/lib/localPetStorage";
+import { withLocalPetMutationLock } from "@/lib/localPetMutationLock";
 import {
   readLocalPetMemory,
   recordProactiveDelivery,
   writeLocalPetMemory,
 } from "@/lib/localPetMemoryStorage";
 import { buildDailyProactiveMemoryContext } from "@/lib/localPetMemoryRecall";
-import { runLocalPetChatTurn } from "@/lib/localPetChatTurn";
+import {
+  LocalPetTurnSupersededError,
+  runLocalPetChatTurn,
+} from "@/lib/localPetChatTurn";
 import {
   recordMemoryContextDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import {
-  canUseDebugMenu,
   hapticNotification,
   useTelegramBackButton,
 } from "@/lib/telegram";
 import type { LocalChatMessage } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
+import { useTelegramCapabilities } from "@/lib/useTelegramCapabilities";
 
 import { DebugPanel } from "./DebugPanel";
 import { ErrorNotice } from "./ErrorNotice";
@@ -50,10 +56,12 @@ export function ChatView({ petId }: ChatViewProps) {
   const [isSending, setIsSending] = useState(false);
   const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(false);
+  const isSendingRef = useRef(false);
   const proactiveAttemptedRef = useRef(false);
   const proactiveDialogueHookRef = useRef<LocalChatMessage | null>(null);
   const pet = localPet.pet;
-  const canShowDebugMenu = canUseDebugMenu();
+  const canShowDebugMenu = useTelegramCapabilities().debugMenu;
 
   const goBack = useCallback(() => {
     router.push(`/pet/${petId}`);
@@ -62,10 +70,26 @@ export function ChatView({ petId }: ChatViewProps) {
   useTelegramBackButton(goBack);
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       setMessages(readLocalChatHistory().messages);
     }, 0);
-    return () => window.clearTimeout(timeoutId);
+    const reconcileHistory = (event: StorageEvent) => {
+      if (event.key === null || event.key === CHAT_HISTORY_STORAGE_KEY) {
+        setMessages(readLocalChatHistory().messages);
+      }
+    };
+    window.addEventListener("storage", reconcileHistory);
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener("storage", reconcileHistory);
+    };
   }, []);
 
   useEffect(() => {
@@ -90,23 +114,37 @@ export function ChatView({ petId }: ChatViewProps) {
     }
     proactiveAttemptedRef.current = true;
 
-    const settings = readLocalPetSettings();
-    const memory = readLocalPetMemory(pet.petId);
-    const history = readLocalChatHistory().messages;
-    const memoryContext = buildDailyProactiveMemoryContext(pet, memory, history);
-    if (!memoryContext) {
-      return;
-    }
-    if (settings.includePromptDebug) {
-      console.log("[memory-debug] proactive candidate", memoryContext);
-    }
-    if (settings.includePromptDebug) {
-      recordMemoryContextDebug(memoryContext, "Память подставлена в proactive prompt");
-    }
-    void generateLocalProactiveMessage(pet, memoryContext, {
-      includeDebug: settings.includePromptDebug,
-    })
-      .then((response) => {
+    const requestedPetId = pet.petId;
+    void withLocalPetMutationLock(
+      requestedPetId,
+      "conversation",
+      async ({ assertOwned }) => {
+        const currentPet = readLocalPetState();
+        if (!mountedRef.current || currentPet?.petId !== requestedPetId) {
+          return;
+        }
+        const settings = readLocalPetSettings();
+        const memory = readLocalPetMemory(requestedPetId);
+        const history = readLocalChatHistory().messages;
+        const memoryContext = buildDailyProactiveMemoryContext(
+          currentPet,
+          memory,
+          history,
+        );
+        if (!memoryContext) {
+          return;
+        }
+        if (settings.includePromptDebug) {
+          console.log("[memory-debug] proactive candidate", memoryContext);
+          recordMemoryContextDebug(memoryContext, "Память подставлена в proactive prompt");
+        }
+        const response = await generateLocalProactiveMessage(currentPet, memoryContext, {
+          includeDebug: settings.includePromptDebug,
+        });
+        assertOwned();
+        if (!mountedRef.current || readLocalPetState()?.petId !== requestedPetId) {
+          return;
+        }
         if (settings.includePromptDebug) {
           logBrowserPromptDebug("proactive chat", response);
           recordReplyPromptDebug(response);
@@ -117,40 +155,61 @@ export function ChatView({ petId }: ChatViewProps) {
           text: response.reply,
           createdAt: new Date().toISOString(),
         };
+        await withLocalPetMutationLock(
+          requestedPetId,
+          "memory",
+          ({ assertOwned: assertMemoryOwned }) => {
+            const latestMemory = readLocalPetMemory(requestedPetId);
+            const delivered = recordProactiveDelivery(
+              latestMemory,
+              memoryContext.proactiveCandidate?.memoryIds ?? [],
+              response.reply,
+            );
+            assertMemoryOwned();
+            if (!writeLocalPetMemory(delivered, requestedPetId)) {
+              throw new LocalPetTurnSupersededError();
+            }
+          },
+          { acquireTimeoutMs: 10 * 60_000 },
+        );
+        assertOwned();
+        if (!mountedRef.current || readLocalPetState()?.petId !== requestedPetId) {
+          return;
+        }
         proactiveDialogueHookRef.current = proactiveMessage;
         setMessages([...readLocalChatHistory().messages, proactiveMessage]);
-        const latestMemory = readLocalPetMemory(pet.petId);
-        writeLocalPetMemory(
-          recordProactiveDelivery(
-            latestMemory,
-            memoryContext.proactiveCandidate?.memoryIds ?? [],
-            response.reply,
-          ),
-        );
         localPet.applyMoodHint(
           response.moodHint,
           response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
+          0,
+          requestedPetId,
         );
-      })
+      },
+    )
       .catch(() => undefined);
   }, [localPet, pet, petId]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSendingRef.current) {
+      return;
+    }
     const message = input.trim();
     if (!message) {
       return;
     }
 
-    if (!pet) {
+    if (!pet || pet.petId !== petId) {
       return;
     }
 
+    isSendingRef.current = true;
     setInput("");
     setError(null);
     setIsSending(true);
     const dialogueHookMessage = proactiveDialogueHookRef.current;
     proactiveDialogueHookRef.current = null;
+    const requestedPetId = pet.petId;
 
     try {
       const settings = readLocalPetSettings();
@@ -167,15 +226,29 @@ export function ChatView({ petId }: ChatViewProps) {
         response.moodHint,
         response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
         response.happinessDelta,
+        requestedPetId,
       );
       if (response.petPatch?.name) {
-        localPet.updateName(response.petPatch.name);
+        localPet.updateName(response.petPatch.name, requestedPetId);
       }
     } catch (caught) {
+      const currentPet = readLocalPetState();
+      if (
+        caught instanceof LocalPetTurnSupersededError
+        || currentPet?.petId !== requestedPetId
+      ) {
+        return;
+      }
+      if (mountedRef.current) {
+        setInput((currentDraft) => currentDraft || message);
+      }
       setError(presentError(caught, "Не получилось отправить сообщение. Попробуйте ещё раз."));
       hapticNotification("error");
     } finally {
-      setIsSending(false);
+      isSendingRef.current = false;
+      if (mountedRef.current) {
+        setIsSending(false);
+      }
     }
   }
 
@@ -221,7 +294,12 @@ export function ChatView({ petId }: ChatViewProps) {
           </div>
         </header>
 
-        <section className="min-h-0 overflow-y-auto rounded-[8px] border border-[var(--line)] bg-[var(--surface-raised)] p-4">
+        <section
+          aria-label="Диалог"
+          aria-live="polite"
+          aria-busy={isSending}
+          className="min-h-0 overflow-y-auto rounded-[8px] border border-[var(--line)] bg-[var(--surface-raised)] p-4"
+        >
           {messages.length === 0 ? (
             <div className="grid h-full place-items-center text-sm text-[var(--ink-muted)]">
               Напишите питомцу
@@ -233,8 +311,8 @@ export function ChatView({ petId }: ChatViewProps) {
                   key={message.id}
                   className={
                     message.role === "user"
-                      ? "ml-auto max-w-[72%] rounded-[8px] bg-[var(--ink)] px-4 py-3 text-sm leading-6 text-[var(--paper)]"
-                      : "mr-auto max-w-[72%] rounded-[8px] border border-[var(--line-soft)] bg-[var(--surface)] px-4 py-3 text-sm leading-6 text-[var(--ink)]"
+                      ? "ml-auto max-w-[72%] [overflow-wrap:anywhere] rounded-[8px] bg-[var(--ink)] px-4 py-3 text-sm leading-6 text-[var(--paper)]"
+                      : "mr-auto max-w-[72%] [overflow-wrap:anywhere] rounded-[8px] border border-[var(--line-soft)] bg-[var(--surface)] px-4 py-3 text-sm leading-6 text-[var(--ink)]"
                   }
                 >
                   {message.text}

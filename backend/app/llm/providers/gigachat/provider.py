@@ -163,8 +163,10 @@ def _null_schema(value: Any) -> bool:
     schema_type = value.get("type")
     if schema_type == "null":
         return True
-    return isinstance(schema_type, list) and bool(schema_type) and all(
-        item == "null" for item in schema_type
+    return (
+        isinstance(schema_type, list)
+        and bool(schema_type)
+        and all(item == "null" for item in schema_type)
     )
 
 
@@ -276,9 +278,11 @@ def _schema_allows_null(schema: Any) -> bool:
     if not isinstance(schema, Mapping):
         return False
     schema_type = schema.get("type")
-    return schema_type == "null" or (
-        isinstance(schema_type, list) and "null" in schema_type
-    ) or (isinstance(schema.get("enum"), list) and None in schema["enum"])
+    return (
+        schema_type == "null"
+        or (isinstance(schema_type, list) and "null" in schema_type)
+        or (isinstance(schema.get("enum"), list) and None in schema["enum"])
+    )
 
 
 def _structured_output_fallback_content(
@@ -366,9 +370,7 @@ def _api_urls(base_url: str) -> tuple[tuple[str, str], str]:
     else:
         root_url = normalized
         api_v1_url = f"{normalized}/v1"
-    return (f"{api_v1_url}/token", f"{root_url}/token"), (
-        f"{api_v1_url}/chat/completions"
-    )
+    return (f"{api_v1_url}/token", f"{root_url}/token"), (f"{api_v1_url}/chat/completions")
 
 
 class GigaChatProvider:
@@ -403,9 +405,7 @@ class GigaChatProvider:
             token_timeout_seconds = timeout_seconds
             chat_timeout_seconds = timeout_seconds
         if token_ttl_seconds is not None and default_token_ttl_seconds is not None:
-            raise ValueError(
-                "pass either token_ttl_seconds or default_token_ttl_seconds, not both"
-            )
+            raise ValueError("pass either token_ttl_seconds or default_token_ttl_seconds, not both")
         resolved_token_ttl = (
             token_ttl_seconds
             if token_ttl_seconds is not None
@@ -428,11 +428,7 @@ class GigaChatProvider:
         self.default_model = normalized_model
         self.base_url = _required_text(base_url, field_name="base_url").rstrip("/")
         self.verify_ssl = (
-            verify_ssl
-            if verify_ssl is not None
-            else verify
-            if verify is not None
-            else True
+            verify_ssl if verify_ssl is not None else verify if verify is not None else True
         )
         self._username = _required_credential(username, field_name="username")
         self._password = _required_credential(password, field_name="password")
@@ -496,7 +492,7 @@ class GigaChatProvider:
             body = response.json()
         except Exception as exc:
             raise GigaChatResponseError(
-                "GigaChat completion returned invalid JSON: " f"{_response_text(response)}"
+                f"GigaChat completion returned invalid JSON: {_response_text(response)}"
             ) from exc
         if not isinstance(body, Mapping):
             raise GigaChatResponseError("GigaChat completion response must be a JSON object")
@@ -653,9 +649,7 @@ class GigaChatProvider:
                     "GigaChat can emulate tool_choice='required' only with one function"
                 )
             return {"name": function_names[0]}
-        raise GigaChatUnsupportedFeatureError(
-            f"unsupported GigaChat tool_choice value: {choice!r}"
-        )
+        raise GigaChatUnsupportedFeatureError(f"unsupported GigaChat tool_choice value: {choice!r}")
 
     @classmethod
     def _messages(cls, messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -860,7 +854,7 @@ class GigaChatProvider:
             payload = response.json()
         except Exception as exc:
             raise GigaChatAuthenticationError(
-                "GigaChat token response contained invalid JSON: " f"{_response_text(response)}"
+                f"GigaChat token response contained invalid JSON: {_response_text(response)}"
             ) from exc
         if not isinstance(payload, Mapping):
             raise GigaChatAuthenticationError("GigaChat token response must be a JSON object")

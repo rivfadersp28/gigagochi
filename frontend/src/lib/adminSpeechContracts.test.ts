@@ -7,6 +7,23 @@ import {
 import { ApiContractError } from "./apiTransport";
 
 describe("admin API contracts", () => {
+  it("accepts a manifest without retired dialogue metadata", () => {
+    expect(
+      parseAdminSpeechManifest({
+        generatedAt: "2026-07-09T00:00:00Z",
+        mode: "local",
+        files: [],
+        sync: {
+          status: "disabled",
+          message: "off",
+          serverCommit: null,
+          updatedAt: "2026-07-09T00:00:00Z",
+        },
+        deploy: { enabled: false, message: "off" },
+      }),
+    ).toMatchObject({ mode: "local", files: [] });
+  });
+
   it("accepts a publish job with nullable lifecycle fields", () => {
     expect(
       parseAdminSpeechPublishJob({
@@ -30,7 +47,6 @@ describe("admin API contracts", () => {
         generatedAt: "2026-07-09T00:00:00Z",
         mode: "local",
         files: [{ id: "speech_runtime" }],
-        dialogue: { modifiers: [], collections: [] },
         sync: {
           status: "disabled",
           message: "off",

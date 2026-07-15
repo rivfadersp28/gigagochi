@@ -4,7 +4,11 @@ import json
 
 import pytest
 
-from app.services.character_dossier import build_character_capsule, effective_character_data
+from app.services.character_dossier import (
+    build_character_capsule,
+    build_visible_character_capsule,
+    effective_character_data,
+)
 from app.services.lore_runtime import (
     DATA_PATH,
     dialogue_vocabulary_block,
@@ -99,3 +103,36 @@ def test_effective_character_dossier_reads_legacy_lore_home() -> None:
         "home": "лесная поляна под кроной",
         "habitat": "старый лес у древней дороги",
     }
+
+
+def test_visible_character_capsule_contains_appearance_without_voice_or_persona() -> None:
+    capsule = build_visible_character_capsule(
+        {
+            "name": "Звон",
+            "description": "медный зверёк",
+            "stage": "teen",
+            "characterBible": {
+                "identity": {"species": "медный зверёк", "role": "слухач дождя"},
+                "visual": {
+                    "colors": ["медный"],
+                    "features": ["два коротких рога"],
+                    "materials": ["матовая чешуя"],
+                    "proportions": "крупная голова",
+                    "growth_forms": {"teen": "рога стали заметнее"},
+                    "anchors": ["светлая полоса на хвосте"],
+                },
+                "voice": {"rules": ["говорит медленно"], "catchphrases": ["динь"]},
+                "genesis": {"character_trait": "любопытный"},
+                "world": {"home": "ниша под дорогой"},
+            },
+        }
+    )
+
+    assert capsule is not None
+    assert "БАЗОВЫЕ ЗНАНИЯ О СЕБЕ:" in capsule
+    assert "два коротких рога" in capsule
+    assert "рога стали заметнее" in capsule
+    assert "говорит медленно" not in capsule
+    assert "динь" not in capsule
+    assert "любопытный" not in capsule
+    assert "ниша под дорогой" not in capsule

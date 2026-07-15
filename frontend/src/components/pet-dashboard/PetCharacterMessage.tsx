@@ -32,6 +32,8 @@ const PET_CONTINUATION_DOTS_DELAY_MS = -600;
 const PET_MESSAGE_MAX_FONT_SIZE_PX = 26;
 const PET_MESSAGE_MIN_FONT_SIZE_PX = 12;
 const PET_MESSAGE_LINE_HEIGHT = 1.15;
+const MAX_ANIMATED_MESSAGE_UNITS = 80;
+const MAX_HAPTIC_MESSAGE_UNITS = 40;
 
 type PetContinuationDotsStyle = CSSProperties & {
   "--pet-continuation-bounce-delay": string;
@@ -87,6 +89,13 @@ const petMessageWordStyle: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
+const emergencyPetMessageWordStyle: CSSProperties = {
+  display: "inline-block",
+  maxWidth: "100%",
+  overflowWrap: "anywhere",
+  whiteSpace: "normal",
+};
+
 const petMessageUnitStyle: CSSProperties = {
   display: "inline-block",
   backfaceVisibility: "hidden",
@@ -95,12 +104,47 @@ const petMessageUnitStyle: CSSProperties = {
   willChange: "transform, opacity",
 };
 
-function petMessageRevealDurationMs(text: string) {
-  const unitCount = Array.from(text).filter((character) => !/^\s$/u.test(character)).length;
+function messageGraphemes(text: string): string[] {
+  if (typeof Intl.Segmenter === "function") {
+    return Array.from(
+      new Intl.Segmenter("ru", { granularity: "grapheme" }).segment(text),
+      ({ segment }) => segment,
+    );
+  }
+  return Array.from(text);
+}
+
+function splitAnimatedMessage(text: string) {
+  const graphemes = messageGraphemes(text);
+  let animatedUnitCount = 0;
+  let splitIndex = graphemes.length;
+
+  for (const [index, grapheme] of graphemes.entries()) {
+    if (/^\s$/u.test(grapheme)) {
+      continue;
+    }
+    animatedUnitCount += 1;
+    if (animatedUnitCount === MAX_ANIMATED_MESSAGE_UNITS) {
+      splitIndex = index + 1;
+      break;
+    }
+  }
+
+  return {
+    animatedText: graphemes.slice(0, splitIndex).join(""),
+    deferredText: graphemes.slice(splitIndex).join(""),
+  };
+}
+
+function petMessageRevealDurationMs(text: string, hasDeferredText = false) {
+  const unitCount = Math.min(
+    MAX_ANIMATED_MESSAGE_UNITS,
+    messageGraphemes(text).filter((character) => !/^\s$/u.test(character)).length,
+  );
   return unitCount > 0
     ? PET_CHARACTER_RISE_DURATION_MS +
       (unitCount - 1) * PET_CHARACTER_RISE_STAGGER_MS +
-      PET_CONTINUATION_DOTS_DELAY_MS
+      (hasDeferredText ? 0 : PET_CONTINUATION_DOTS_DELAY_MS)
     : 0;
 }
 
@@ -163,12 +207,13 @@ function renderPetMessageUnits(
   translateY: number,
   showContinuationDots: boolean,
 ): ReactNode[] {
+  const { animatedText, deferredText } = splitAnimatedMessage(text);
   const nodes: ReactNode[] = [];
   let unitIndex = 0;
-  const lines = text.split("\n");
+  const lines = animatedText.split("\n");
   let finalWordKey: string | null = null;
 
-  if (showContinuationDots) {
+  if (showContinuationDots && !deferredText) {
     lines.forEach((line, lineIndex) => {
       line.split(/(\s+)/).forEach((part, partIndex) => {
         if (part && !/^\s+$/.test(part)) {
@@ -194,8 +239,15 @@ function renderPetMessageUnits(
       }
 
       nodes.push(
-        <span key={`${lineIndex}-${partIndex}-${part}`} style={petMessageWordStyle}>
-          {Array.from(part).map((character) => {
+        <span
+          key={`${lineIndex}-${partIndex}-${part}`}
+          style={
+            messageGraphemes(part).length > 20
+              ? emergencyPetMessageWordStyle
+              : petMessageWordStyle
+          }
+        >
+          {messageGraphemes(part).map((character) => {
             const key = unitIndex;
             unitIndex += 1;
             return (
@@ -227,6 +279,28 @@ function renderPetMessageUnits(
     }
   });
 
+  if (deferredText) {
+    nodes.push(
+      <span
+        key="deferred-tail"
+        data-pet-message-tail="true"
+        style={{ opacity: 0, whiteSpace: "pre-wrap" }}
+      >
+        {deferredText}
+      </span>,
+    );
+  }
+
+  if (showContinuationDots && deferredText) {
+    nodes.push(
+      <PetMessageContinuationDots
+        key="deferred-tail-dots"
+        revealDelayMs={petMessageRevealDurationMs(text, true)}
+        translateY={translateY}
+      />,
+    );
+  }
+
   return nodes;
 }
 
@@ -254,6 +328,9 @@ function PetMessageText({
     const units = Array.from(
       root.querySelectorAll<HTMLElement>("[data-pet-message-unit='true']"),
     );
+    const deferredTails = Array.from(
+      root.querySelectorAll<HTMLElement>("[data-pet-message-tail='true']"),
+    );
 
     if (shouldReduceMotion() || typeof root.animate !== "function") {
       units.forEach((unit) => {
@@ -262,6 +339,9 @@ function PetMessageText({
           transform: "translate3d(0, 0, 0)",
           willChange: "auto",
         });
+      });
+      deferredTails.forEach((tail) => {
+        finishAnimation(tail, { opacity: "1" });
       });
       return;
     }
@@ -274,12 +354,24 @@ function PetMessageText({
       playSpeechAudio && units.length > 0
         ? playPetSpeechAudioSequence(trimmedSpeechDurationMs)
         : null;
-    const hapticTimeoutIds = units.map((_, index) =>
-      window.setTimeout(
-        () => hapticImpact("light"),
-        index * PET_CHARACTER_RISE_STAGGER_MS,
-      ),
-    );
+    const hapticStep = Math.max(1, Math.ceil(units.length / MAX_HAPTIC_MESSAGE_UNITS));
+    const hapticTimeoutIds = units.flatMap((_, index) => (
+      index % hapticStep === 0
+        ? [window.setTimeout(
+            () => hapticImpact("light"),
+            index * PET_CHARACTER_RISE_STAGGER_MS,
+          )]
+        : []
+    ));
+    const tailRevealTimeoutId = deferredTails.length > 0
+      ? window.setTimeout(() => {
+          deferredTails.forEach((tail) => {
+            if (tail.isConnected) {
+              finishAnimation(tail, { opacity: "1" });
+            }
+          });
+        }, speechDurationMs)
+      : null;
 
     const animations = units.map((unit, index) => {
       finishAnimation(unit, {
@@ -325,6 +417,9 @@ function PetMessageText({
     return () => {
       stopSpeechAudio?.();
       hapticTimeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      if (tailRevealTimeoutId !== null) {
+        window.clearTimeout(tailRevealTimeoutId);
+      }
       animations.forEach((animation) => animation.cancel());
     };
   }, [playSpeechAudio, speechEndTrimMs, text, translateY]);
@@ -379,9 +474,16 @@ export function PetCharacterMessage({
     setCurrentMessage(message);
     setCurrentFontSize(PET_MESSAGE_MAX_FONT_SIZE_PX);
 
+  }, [currentFontSize, message]);
+
+  useEffect(() => {
+    if (!previousMessage) {
+      return;
+    }
+    const outgoingMessageId = previousMessage.id;
     const timeoutId = window.setTimeout(() => {
       setPreviousMessage((storedMessage) => {
-        if (storedMessage?.id !== outgoingMessage.id) {
+        if (storedMessage?.id !== outgoingMessageId) {
           return storedMessage;
         }
         setPreviousMessageSize(null);
@@ -389,9 +491,8 @@ export function PetCharacterMessage({
         return null;
       });
     }, PET_REPLY_EXIT_MS);
-
     return () => window.clearTimeout(timeoutId);
-  }, [currentFontSize, message]);
+  }, [previousMessage]);
 
   useEffect(() => {
     const currentLayer = currentLayerRef.current;

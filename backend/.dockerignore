@@ -10,5 +10,7 @@ __pycache__
 *.egg-info
 logs
 static/generated
+data/push
+data/.admin-backups
 npm-debug.log*
 .DS_Store

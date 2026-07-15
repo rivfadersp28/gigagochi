@@ -354,9 +354,7 @@ def extract_user_memory_operations(
     }
     prompt_debug = [log_chat_completion_prompt("pet_reply/memory_extraction", request_kwargs)]
     completion = complete_chat("memory_extraction", request_kwargs, client=client)
-    log_chat_completion_response(
-        "pet_reply/memory_extraction", response_log_value(completion)
-    )
+    log_chat_completion_response("pet_reply/memory_extraction", response_log_value(completion))
     operations = _parse_memory_extraction_payload(completion.content or "{}")
     debug = None
     if payload.includeDebug:
@@ -477,9 +475,7 @@ def consolidate_user_memory(
     }
     prompt_debug = [log_chat_completion_prompt("pet_reply/memory_consolidation", request_kwargs)]
     completion = complete_chat("memory_consolidation", request_kwargs, client=client)
-    log_chat_completion_response(
-        "pet_reply/memory_consolidation", response_log_value(completion)
-    )
+    log_chat_completion_response("pet_reply/memory_consolidation", response_log_value(completion))
     operations = _parse_consolidation_payload(completion.content or "{}")
     debug = None
     if payload.includeDebug:

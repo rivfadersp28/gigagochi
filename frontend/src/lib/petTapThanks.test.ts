@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { claimPetTapThanksForSession, petTapThanksReply } from "./petTapThanks";
+import {
+  claimPetTapThanksForSession,
+  clearPetTapThanksForSession,
+  petTapThanksReply,
+} from "./petTapThanks";
 
 describe("pet tap thanks", () => {
   beforeEach(() => window.sessionStorage.clear());
@@ -14,5 +18,11 @@ describe("pet tap thanks", () => {
   it("selects different predefined replies", () => {
     expect(petTapThanksReply(0)).toBe("Приятно!");
     expect(petTapThanksReply(0.99)).toBe("Мне нравится!");
+  });
+
+  it("clears the deleted pet session claim", () => {
+    expect(claimPetTapThanksForSession("pet-clear")).toBe(true);
+    clearPetTapThanksForSession("pet-clear");
+    expect(claimPetTapThanksForSession("pet-clear")).toBe(true);
   });
 });

@@ -1,5 +1,8 @@
 import { API_URL, ApiContractError, request } from "./apiTransport";
+import { parseInteractiveTravelResponse } from "./apiContracts";
 import type { InteractiveTravelState } from "./types";
+
+const MEDIA_REQUEST_TIMEOUT_MS = 20 * 60 * 1000;
 
 export type TravelFinaleSummary = {
   travelId: string;
@@ -36,10 +39,33 @@ function record(value: unknown, path: string): Record<string, unknown> {
 }
 
 function text(value: unknown, path: string): string {
-  if (typeof value !== "string" || !value.trim()) {
+  if (typeof value !== "string" || !value.trim() || value.length > 100_000) {
     throw new ApiContractError(`Invalid ${path}`);
   }
   return value;
+}
+
+function finiteNumber(value: unknown, path: string, options: { integer?: boolean } = {}) {
+  if (
+    typeof value !== "number"
+    || !Number.isFinite(value)
+    || value < 0
+    || options.integer && !Number.isSafeInteger(value)
+  ) {
+    throw new ApiContractError(`Invalid ${path}`);
+  }
+  return value;
+}
+
+function mediaUrl(value: unknown, path: string) {
+  const url = text(value, path).trim();
+  if (
+    url.length > 2_000
+    || !(/^https?:\/\//iu.test(url) || url.startsWith("/static/generated/"))
+  ) {
+    throw new ApiContractError(`Invalid ${path}`);
+  }
+  return url;
 }
 
 function attempt(value: unknown): TravelFinaleAttempt {
@@ -49,11 +75,16 @@ function attempt(value: unknown): TravelFinaleAttempt {
     createdAt: text(item.createdAt, "travelFinaleAttempt.createdAt"),
     prompt: text(item.prompt, "travelFinaleAttempt.prompt"),
     model: text(item.model, "travelFinaleAttempt.model"),
-    durationSeconds: Number(item.durationSeconds),
+    durationSeconds: finiteNumber(item.durationSeconds, "travelFinaleAttempt.durationSeconds"),
     referenceUrls: Array.isArray(item.referenceUrls)
-      ? item.referenceUrls.filter((url): url is string => typeof url === "string")
-      : [],
-    videoUrl: text(item.videoUrl, "travelFinaleAttempt.videoUrl"),
+      ? item.referenceUrls.map((url, index) => mediaUrl(
+          url,
+          `travelFinaleAttempt.referenceUrls.${index}`,
+        ))
+      : (() => {
+          throw new ApiContractError("Invalid travelFinaleAttempt.referenceUrls");
+        })(),
+    videoUrl: mediaUrl(item.videoUrl, "travelFinaleAttempt.videoUrl"),
   };
 }
 
@@ -76,12 +107,14 @@ export function fetchTravelFinales(): Promise<TravelFinaleSummary[]> {
         destination: text(item.destination, "travelFinale.destination"),
         savedAt: typeof item.savedAt === "string" ? item.savedAt : undefined,
         owner: {
-          telegramId: typeof owner.telegramId === "number" ? owner.telegramId : undefined,
+          telegramId: owner.telegramId === undefined
+            ? undefined
+            : finiteNumber(owner.telegramId, "travelFinale.owner.telegramId", { integer: true }),
           username: typeof owner.username === "string" ? owner.username : undefined,
           firstName: typeof owner.firstName === "string" ? owner.firstName : undefined,
         },
-        partCount: Number(item.partCount),
-        videoCount: Number(item.videoCount),
+        partCount: finiteNumber(item.partCount, "travelFinale.partCount", { integer: true }),
+        videoCount: finiteNumber(item.videoCount, "travelFinale.videoCount", { integer: true }),
       };
     });
   });
@@ -94,7 +127,9 @@ export function fetchTravelFinale(travelId: string): Promise<TravelFinaleDetail>
       throw new ApiContractError("Invalid travelFinaleDetail.attempts");
     }
     return {
-      travel: record(item.travel, "travelFinaleDetail.travel") as InteractiveTravelState,
+      travel: parseInteractiveTravelResponse({
+        travel: record(item.travel, "travelFinaleDetail.travel"),
+      }).travel,
       story: text(item.story, "travelFinaleDetail.story"),
       defaultDirection: text(item.defaultDirection, "travelFinaleDetail.defaultDirection"),
       attempts: item.attempts.map(attempt),
@@ -102,10 +137,11 @@ export function fetchTravelFinale(travelId: string): Promise<TravelFinaleDetail>
   });
 }
 
-export function importTravelFinale(travel: InteractiveTravelState): Promise<void> {
-  return request(
+export async function importTravelFinale(travel: InteractiveTravelState): Promise<void> {
+  const validatedTravel = parseInteractiveTravelResponse({ travel }).travel;
+  await request(
     "/api/admin/travel-finales/import",
-    { method: "POST", body: { travel } },
+    { method: "POST", body: { travel: validatedTravel } },
     () => undefined,
   );
 }
@@ -128,7 +164,11 @@ export function generateTravelFinaleVideo(
 ): Promise<TravelFinaleAttempt> {
   return request(
     `/api/admin/travel-finales/${encodeURIComponent(travelId)}/generate`,
-    { method: "POST", body: { prompt, referenceBaseUrl } },
+    {
+      method: "POST",
+      body: { prompt, referenceBaseUrl },
+      timeoutMs: MEDIA_REQUEST_TIMEOUT_MS,
+    },
     attempt,
   );
 }

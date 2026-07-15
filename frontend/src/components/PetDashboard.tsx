@@ -1,7 +1,6 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
-import { useGlimm } from "glimm/react";
 import { Bug, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { flushSync } from "react-dom";
@@ -22,6 +21,7 @@ import { presentError, type PresentedError } from "@/lib/errorPresentation";
 import {
   createLocalId,
   readLocalChatHistory,
+  readLocalPetState,
   readLocalPetSettings,
 } from "@/lib/localPetStorage";
 import {
@@ -40,7 +40,10 @@ import {
   recordMemoryContextDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
-import { runLocalPetChatTurn } from "@/lib/localPetChatTurn";
+import {
+  LocalPetTurnSupersededError,
+  runLocalPetChatTurn,
+} from "@/lib/localPetChatTurn";
 import { foodReactionPrompt, type FoodId } from "@/lib/localPetFood";
 import { playPetFeedSound, primePetFeedSound } from "@/lib/petFeedAudio";
 import { SmoothBackgroundVideo } from "@/components/SmoothBackgroundVideo";
@@ -48,9 +51,11 @@ import { applyPetVoice, type PetVoiceMode } from "@/lib/petVoice";
 import {
   appendRecentAmbientReply,
   hasShownAmbientReplyInSession,
+  isLocalPetAmbientStorageKey,
   markAmbientReplyShownInSession,
   readRecentAmbientReplies,
 } from "@/lib/localPetAmbientMemory";
+import { withLocalPetMutationLock } from "@/lib/localPetMutationLock";
 import { claimPetIntroduction } from "@/lib/localPetIntroduction";
 import {
   splitPetReplyPortions,
@@ -58,8 +63,6 @@ import {
 } from "@/lib/petReplySentences";
 import { logBrowserPromptDebug } from "@/lib/promptDebug";
 import {
-  canUseDebugMenu,
-  canUseInteractiveTravel,
   hapticImpact,
   hapticNotification,
   setTelegramBackgroundColor,
@@ -76,6 +79,7 @@ import {
 } from "@/lib/testPetFixture";
 import type { LocalPetState } from "@/lib/types";
 import { useLocalPetState } from "@/lib/useLocalPetState";
+import { useTelegramCapabilities } from "@/lib/useTelegramCapabilities";
 
 import { DebugPanel } from "./DebugPanel";
 import { ConfirmActionDialog } from "./ConfirmActionDialog";
@@ -103,8 +107,6 @@ import {
   hasGeneratedHappyAssets,
   hasGeneratedSadAssets,
   resolvedPetVisualMode,
-  stageLabels,
-  stateLabels,
   type PetVisualMode,
 } from "./pet-dashboard/petSprite";
 
@@ -184,6 +186,17 @@ const PET_TAP_REGION = {
   right: 600 / 720,
   bottom: 1040 / 1280,
 } as const;
+const accessibleStageLabels: Record<LocalPetState["stage"], string> = {
+  baby: "малыш",
+  teen: "подросток",
+  adult: "взрослый",
+};
+const accessibleMoodLabels: Record<LocalPetState["mood"], string> = {
+  idle: "спокойное",
+  happy: "радостное",
+  sad: "грустное",
+  hungry: "голодное",
+};
 const mainSceneBackgroundSrc = `/figma/main-screen-bg.png?v=${MAIN_SCENE_BACKGROUND_CACHE_VERSION}`;
 const emptySceneBackgroundSrc = "/figma/main-scene-underlay.webp";
 const videoFilterSrc = `/figma/video-filter-normal.webp?v=${VIDEO_FILTER_CACHE_VERSION}`;
@@ -204,16 +217,31 @@ function createMinimumThinkingDelay() {
 function preloadImage(src: string) {
   return new Promise<void>((resolve, reject) => {
     const image = new Image();
+    const timeoutId = window.setTimeout(() => {
+      image.onload = null;
+      image.onerror = null;
+      reject(new Error(`Timed out loading image: ${src}`));
+    }, 10_000);
+
+    const settle = (callback: () => void) => {
+      window.clearTimeout(timeoutId);
+      image.onload = null;
+      image.onerror = null;
+      callback();
+    };
 
     image.onload = () => {
       if (typeof image.decode !== "function") {
-        resolve();
+        settle(resolve);
         return;
       }
 
-      image.decode().then(resolve, reject);
+      void image.decode().then(
+        () => settle(resolve),
+        () => settle(() => reject(new Error(`Failed to decode image: ${src}`))),
+      );
     };
-    image.onerror = () => reject(new Error(`Failed to load image: ${src}`));
+    image.onerror = () => settle(() => reject(new Error(`Failed to load image: ${src}`)));
     image.src = src;
   });
 }
@@ -253,7 +281,6 @@ function isPointNearRect(clientX: number, clientY: number, rect: DOMRect, paddin
 
 export function PetDashboard({ petId }: PetDashboardProps) {
   const router = useRouter();
-  const { sweep } = useGlimm();
   const localPet = useLocalPetState();
   const {
     canvasRef: petTapBulgeCanvasRef,
@@ -303,12 +330,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const chatInputRef = useRef<HTMLInputElement>(null);
   const sceneRef = useRef<HTMLElement>(null);
   const sceneVideoRef = useRef<HTMLVideoElement>(null);
-  const sceneTransitionTargetRef = useRef<string | null>(null);
   const petTapParticleBurstIdRef = useRef(0);
   const feedDropTargetRef = useRef<HTMLDivElement>(null);
   const foodReactionRequestIdRef = useRef(0);
   const foodReactionAbortRef = useRef<AbortController | null>(null);
   const isSendingChatRef = useRef(false);
+  const mountedRef = useRef(false);
   const cancelReplyAutoAdvance = useCallback(() => {
     if (replyAutoAdvanceTimeoutRef.current !== null) {
       window.clearTimeout(replyAutoAdvanceTimeoutRef.current);
@@ -316,6 +343,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     }
     replyAutoAdvanceRef.current = null;
     petReplySentenceQueueRef.current = [];
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
   const cancelPetTapThanksProtection = useCallback(() => {
     const protection = petTapThanksProtectionRef.current;
@@ -344,8 +378,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     if (!refreshedAssetSet) {
       return;
     }
-    applyGeneratedAssets(refreshedAssetSet);
-  }, [applyGeneratedAssets, pet?.assetSet]);
+    applyGeneratedAssets(refreshedAssetSet, pet?.petId, pet?.assetSet);
+  }, [applyGeneratedAssets, pet?.assetSet, pet?.petId]);
   const kandinskyAssets = pet?.assetSet?.kandinskyAssets;
   const effectiveVisualProvider = visualProvider === "kandinsky" && kandinskyAssets
     ? "kandinsky"
@@ -368,8 +402,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     : pet;
   const isPetDead = Boolean(pet?.diedAt);
   const storyHistory = pet ? storyHistoryFromPet(pet) : [];
-  const canShowDebugMenu = canUseDebugMenu();
-  const canShowInteractiveTravel = canUseInteractiveTravel();
+  const capabilities = useTelegramCapabilities();
+  const canShowDebugMenu = capabilities.debugMenu;
+  const canShowInteractiveTravel = capabilities.interactiveTravel;
   const derivedAssetsEnabled = true;
   const hasSadAssets = derivedAssetsEnabled && visualPet
     ? hasGeneratedSadAssets(visualPet)
@@ -389,22 +424,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const requestedSceneVideoSrc = visualPet && !isPetDead
     ? generatedSceneVideoUrl(visualPet, visualMode)
     : null;
-  const [visibleSceneMedia, setVisibleSceneMedia] = useState<{
-    petId: string;
-    backgroundSrc: string;
-    videoSrc: string | null;
-  } | null>(null);
-  const visibleSceneMediaForPet = visibleSceneMedia?.petId === petId
-    ? visibleSceneMedia
-    : null;
-  const sceneBackgroundSrc = visibleSceneMediaForPet?.backgroundSrc
-    ?? requestedSceneBackgroundSrc;
+  const sceneBackgroundSrc = requestedSceneBackgroundSrc;
   const sceneVideoSrc = requestedSceneVideoSrc;
-  const revealSceneVideo = !visibleSceneMediaForPet
-    || visibleSceneMediaForPet.videoSrc === requestedSceneVideoSrc;
   const conversationInputOffsetY = useConversationKeyboardOffset(isChatMode, sceneRef);
   usePetBackgroundAssets({
     assetSet: pet?.assetSet,
+    petId: pet?.petId,
     applyGeneratedAssets: localPet.applyGeneratedAssets,
     derivedAssetsEnabled,
   });
@@ -421,6 +446,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   });
   useEffect(() => {
     ambientReplyHistoryRef.current = readRecentAmbientReplies(petId);
+    const reconcileAmbientReplies = (event: StorageEvent) => {
+      if (isLocalPetAmbientStorageKey(event.key, petId)) {
+        ambientReplyHistoryRef.current = readRecentAmbientReplies(petId);
+      }
+    };
+    window.addEventListener("storage", reconcileAmbientReplies);
+    return () => window.removeEventListener("storage", reconcileAmbientReplies);
   }, [petId]);
 
   useEffect(() => {
@@ -436,13 +468,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
     let cancelled = false;
 
-    const fontReady = document.fonts?.ready ?? Promise.resolve();
     const staticImageSources = isPetDead
       ? [speechBubbleSrc]
       : dashboardStaticImageSources;
-    const imageReady = [sceneBackgroundSrc, ...staticImageSources].map(preloadImage);
+    void Promise.allSettled(staticImageSources.map(preloadImage));
 
-    void Promise.all([fontReady, ...imageReady])
+    void preloadImage(sceneBackgroundSrc)
       .then(() => {
         if (!cancelled) {
           setAssetsReadyForPetId(petId);
@@ -592,11 +623,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
   const requestAmbientReply = useCallback(() => {
     if (
-      !pet ||
-      pet.diedAt ||
-      ambientSessionPetIdRef.current === pet.petId ||
-      hasShownAmbientReplyInSession(pet.petId) ||
-      ambientSessionPendingRef.current
+      !pet
+      || pet.diedAt
+      || ambientSessionPetIdRef.current === pet.petId
+      || hasShownAmbientReplyInSession(pet.petId)
+      || ambientSessionPendingRef.current
     ) {
       return;
     }
@@ -608,21 +639,44 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       minimumThinkingTime,
       requestId: idleThinkingRequestId,
     } = beginIdleThinking();
-    const history = readLocalChatHistory().messages;
-    const memoryContext = buildAmbientMemoryContext(readLocalPetMemory(pet.petId));
+    const requestedPetId = pet.petId;
+    const ambientBaseline = readRecentAmbientReplies(requestedPetId);
 
-    void generateLocalAmbientMessage(pet, {
-      includeDebug: includePromptDebug,
-      memoryContext,
-      history,
-      recentAmbientReplies: ambientReplyHistoryRef.current,
-      replyMaxChars: IDLE_REPLY_MAX_CHARS,
-    })
-      .then(async (response) => {
+    void withLocalPetMutationLock(
+      requestedPetId,
+      "conversation",
+      async ({ assertOwned }) => {
+        const currentPet = readLocalPetState();
+        if (!currentPet || currentPet.petId !== requestedPetId) {
+          return;
+        }
+        const latestAmbientReplies = readRecentAmbientReplies(requestedPetId);
+        if (
+          latestAmbientReplies.length !== ambientBaseline.length
+          || latestAmbientReplies.some(
+            (reply, index) => reply !== ambientBaseline[index],
+          )
+        ) {
+          ambientReplyHistoryRef.current = latestAmbientReplies;
+          return;
+        }
+        const history = readLocalChatHistory().messages;
+        const memoryContext = buildAmbientMemoryContext(
+          readLocalPetMemory(requestedPetId),
+        );
+        const response = await generateLocalAmbientMessage(currentPet, {
+          includeDebug: includePromptDebug,
+          memoryContext,
+          history,
+          recentAmbientReplies: readRecentAmbientReplies(requestedPetId),
+          replyMaxChars: IDLE_REPLY_MAX_CHARS,
+        });
         await minimumThinkingTime;
+        assertOwned();
         if (
           ambientRequestIdRef.current !== requestId ||
-          idleThinkingRequestIdRef.current !== idleThinkingRequestId
+          idleThinkingRequestIdRef.current !== idleThinkingRequestId ||
+          readLocalPetState()?.petId !== requestedPetId
         ) {
           return;
         }
@@ -636,19 +690,24 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           maxPortions: IDLE_REPLY_MAX_PORTIONS,
           autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
         });
-        ambientSessionPetIdRef.current = pet.petId;
-        markAmbientReplyShownInSession(pet.petId);
-        ambientReplyHistoryRef.current = appendRecentAmbientReply(pet.petId, response.reply);
+        ambientSessionPetIdRef.current = requestedPetId;
+        markAmbientReplyShownInSession(requestedPetId);
+        ambientReplyHistoryRef.current = appendRecentAmbientReply(requestedPetId, response.reply);
         localPet.applyMoodHint(
           response.moodHint,
           response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
+          0,
+          requestedPetId,
         );
-      })
+      },
+    )
       .catch(async () => {
+        ambientSessionPendingRef.current = false;
         await minimumThinkingTime;
         if (
           ambientRequestIdRef.current !== requestId ||
-          idleThinkingRequestIdRef.current !== idleThinkingRequestId
+          idleThinkingRequestIdRef.current !== idleThinkingRequestId ||
+          readLocalPetState()?.petId !== requestedPetId
         ) {
           return;
         }
@@ -670,7 +729,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     setIsChatMode(false);
     setChatError(null);
     setConversationReplyMessageId(null);
-    requestAmbientReply();
+    if (!isSendingChatRef.current) {
+      requestAmbientReply();
+    }
     chatInputRef.current?.blur();
   }, [cancelReplyAutoAdvance, requestAmbientReply]);
 
@@ -714,6 +775,52 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const removePetTapParticleBurst = useCallback((burstId: number) => {
     setPetTapParticleBursts((current) => current.filter((burst) => burst.id !== burstId));
   }, []);
+
+  const activatePetReaction = useCallback(({
+    clientX,
+    clientY,
+    mediaWidth,
+    mediaHeight,
+    normalizedX,
+    normalizedY,
+  }: {
+    clientX: number;
+    clientY: number;
+    mediaWidth: number;
+    mediaHeight: number;
+    normalizedX: number;
+    normalizedY: number;
+  }) => {
+    triggerPetTapBulge({
+      video: sceneVideoRef.current,
+      mediaWidth,
+      mediaHeight,
+      normalizedX,
+      normalizedY,
+    });
+    triggerPetTapParticles(clientX, clientY);
+    void playPetTapSound();
+    hapticImpact("light");
+
+    const tapResult = localPet.registerPetTap();
+    if (
+      tapResult?.rewarded
+      && claimPetTapThanksForSession(tapResult.pet.petId)
+    ) {
+      const messageId = showPetReplyMessage(petTapThanksReply(), true, {
+        dialogueHook: true,
+        voiceMode: "local",
+        maxPortions: 1,
+      });
+      protectPetTapThanksReply(messageId);
+    }
+  }, [
+    localPet,
+    protectPetTapThanksReply,
+    showPetReplyMessage,
+    triggerPetTapBulge,
+    triggerPetTapParticles,
+  ]);
 
   const handleMainScreenTap = useCallback((event: MouseEvent<HTMLElement>) => {
     if (
@@ -787,41 +894,59 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
 
-    triggerPetTapBulge({
-      video: sceneVideoRef.current,
+    activatePetReaction({
+      clientX: event.clientX,
+      clientY: event.clientY,
       mediaWidth,
       mediaHeight: sceneRect.height,
       normalizedX,
       normalizedY,
     });
-    triggerPetTapParticles(event.clientX, event.clientY);
-    void playPetTapSound();
-    hapticImpact("light");
-
-    const tapResult = localPet.registerPetTap();
-    if (
-      tapResult?.rewarded
-      && claimPetTapThanksForSession(tapResult.pet.petId)
-    ) {
-      const messageId = showPetReplyMessage(petTapThanksReply(), true, {
-        dialogueHook: true,
-        voiceMode: "local",
-        maxPortions: 1,
-      });
-      protectPetTapThanksReply(messageId);
-    }
   }, [
+    activatePetReaction,
     confirmationAction,
     isChatMode,
     isDebugPanelOpen,
     isFeedMode,
     isPetDead,
     isStoryHistoryOpen,
-    localPet,
-    protectPetTapThanksReply,
-    showPetReplyMessage,
-    triggerPetTapBulge,
-    triggerPetTapParticles,
+  ]);
+
+  const handleKeyboardPetReaction = useCallback(() => {
+    if (
+      isChatMode
+      || isFeedMode
+      || isDebugPanelOpen
+      || isStoryHistoryOpen
+      || confirmationAction
+      || isPetDead
+    ) {
+      return;
+    }
+    const sceneRect = sceneRef.current?.getBoundingClientRect();
+    if (!sceneRect) {
+      return;
+    }
+    const normalizedX = (PET_TAP_REGION.left + PET_TAP_REGION.right) / 2;
+    const normalizedY = (PET_TAP_REGION.top + PET_TAP_REGION.bottom) / 2;
+    const mediaWidth = sceneRect.height * PET_SCENE_ASPECT_RATIO;
+    const mediaLeft = sceneRect.left + (sceneRect.width - mediaWidth) / 2;
+    activatePetReaction({
+      clientX: mediaLeft + normalizedX * mediaWidth,
+      clientY: sceneRect.top + normalizedY * sceneRect.height,
+      mediaWidth,
+      mediaHeight: sceneRect.height,
+      normalizedX,
+      normalizedY,
+    });
+  }, [
+    activatePetReaction,
+    confirmationAction,
+    isChatMode,
+    isDebugPanelOpen,
+    isFeedMode,
+    isPetDead,
+    isStoryHistoryOpen,
   ]);
 
   const handleTelegramBack = useCallback(() => {
@@ -864,7 +989,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, [canShowInteractiveTravel]);
 
   useEffect(() => () => {
+    ambientRequestIdRef.current += 1;
+    idleThinkingRequestIdRef.current += 1;
+    foodReactionRequestIdRef.current += 1;
     foodReactionAbortRef.current?.abort();
+    foodReactionAbortRef.current = null;
+    stopPetSpeechAudio();
   }, []);
 
   useEffect(() => {
@@ -916,7 +1046,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         recordReplyPromptDebug(response);
       }
       await minimumThinkingTime;
-      if (foodReactionRequestIdRef.current !== requestId) {
+      if (
+        foodReactionRequestIdRef.current !== requestId
+        || readLocalPetState()?.petId !== nextPet.petId
+      ) {
         return;
       }
       showPetReplyMessage(response.reply, true, {
@@ -925,11 +1058,18 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         maxPortions: 1,
       });
     } catch (caught) {
-      if (foodReactionRequestIdRef.current !== requestId || signal.aborted) {
+      if (
+        foodReactionRequestIdRef.current !== requestId
+        || signal.aborted
+        || readLocalPetState()?.petId !== nextPet.petId
+      ) {
         return;
       }
       await minimumThinkingTime;
-      if (foodReactionRequestIdRef.current !== requestId) {
+      if (
+        foodReactionRequestIdRef.current !== requestId
+        || readLocalPetState()?.petId !== nextPet.petId
+      ) {
         return;
       }
       setFeedError(
@@ -1058,6 +1198,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           createdAt: new Date().toISOString(),
         }
       : null;
+    const requestedPetId = pet.petId;
 
     try {
       const { response } = await runLocalPetChatTurn({
@@ -1070,11 +1211,15 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
       });
       await minimumThinkingTime;
+      if (readLocalPetState()?.petId !== requestedPetId) {
+        return;
+      }
       flushSync(() => {
         localPet.applyMoodHint(
           response.moodHint,
           response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
           response.happinessDelta,
+          requestedPetId,
         );
       });
       showPetReplyMessage(response.reply, true, {
@@ -1082,18 +1227,30 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
       });
       if (response.petPatch?.name) {
-        localPet.updateName(response.petPatch.name);
+        localPet.updateName(response.petPatch.name, requestedPetId);
       }
     } catch (caught) {
       await minimumThinkingTime;
+      const currentPet = readLocalPetState();
+      if (
+        caught instanceof LocalPetTurnSupersededError
+        || currentPet?.petId !== requestedPetId
+      ) {
+        return;
+      }
+      if (mountedRef.current) {
+        setChatInput((currentDraft) => currentDraft || message);
+      }
       setChatError(
         presentError(caught, "Не получилось отправить сообщение. Попробуйте ещё раз."),
       );
       hapticNotification("error");
     } finally {
       isSendingChatRef.current = false;
-      setIsSendingChat(false);
-      if (!options.dismissKeyboard) {
+      if (mountedRef.current) {
+        setIsSendingChat(false);
+      }
+      if (mountedRef.current && !options.dismissKeyboard) {
         window.requestAnimationFrame(() => {
           focusChatInput();
         });
@@ -1137,15 +1294,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }
 
   function handleStartOver() {
-    localPet.reset();
-    router.replace("/");
+    if (localPet.reset()) {
+      router.replace("/");
+    }
   }
 
   function confirmDashboardAction() {
     if (confirmationAction === "resetPet") {
       setIsDebugPanelOpen(false);
-      localPet.reset();
-      router.push("/");
+      if (localPet.reset()) {
+        router.push("/");
+      }
     } else if (confirmationAction === "resetStats") {
       localPet.resetStats();
       hapticNotification("warning");
@@ -1194,66 +1353,105 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
 
-    const memory = readLocalPetMemory(pet.petId);
-    const history = readLocalChatHistory().messages;
-    const proactiveMemoryContext = buildDailyProactiveMemoryContext(pet, memory, history);
-    if (proactiveMemoryContext) {
-      window.queueMicrotask(() => {
-        const {
-          minimumThinkingTime,
-          requestId: idleThinkingRequestId,
-        } = beginIdleThinking();
-        if (includePromptDebug) {
-          console.log("[memory-debug] dashboard proactive candidate", proactiveMemoryContext);
-        }
-        if (includePromptDebug) {
-          recordMemoryContextDebug(
-            proactiveMemoryContext,
-            "Память подставлена в proactive prompt",
+    window.queueMicrotask(() => {
+      void withLocalPetMutationLock(
+        pet.petId,
+        "conversation",
+        async ({ assertOwned }) => {
+          const currentPet = readLocalPetState();
+          if (!currentPet || currentPet.petId !== pet.petId || !mountedRef.current) {
+            return false;
+          }
+          const memory = readLocalPetMemory(pet.petId);
+          const history = readLocalChatHistory().messages;
+          const proactiveMemoryContext = buildDailyProactiveMemoryContext(
+            currentPet,
+            memory,
+            history,
           );
-        }
-        void generateLocalProactiveMessage(pet, proactiveMemoryContext, {
-          includeDebug: includePromptDebug,
-        })
-          .then(async (response) => {
+          if (!proactiveMemoryContext) {
+            return false;
+          }
+          const {
+            minimumThinkingTime,
+            requestId: idleThinkingRequestId,
+          } = beginIdleThinking();
+          if (includePromptDebug) {
+            console.log("[memory-debug] dashboard proactive candidate", proactiveMemoryContext);
+          }
+          if (includePromptDebug) {
+            recordMemoryContextDebug(
+              proactiveMemoryContext,
+              "Память подставлена в proactive prompt",
+            );
+          }
+          try {
+            const response = await generateLocalProactiveMessage(
+              currentPet,
+              proactiveMemoryContext,
+              {
+                includeDebug: includePromptDebug,
+              },
+            );
             await minimumThinkingTime;
+            assertOwned();
             if (
               idleThinkingRequestIdRef.current !== idleThinkingRequestId ||
-              petReplyMessageRef.current
+              petReplyMessageRef.current ||
+              readLocalPetState()?.petId !== pet.petId
             ) {
-              return;
+              return true;
             }
             if (includePromptDebug) {
               logBrowserPromptDebug("dashboard proactive chat", response);
               recordReplyPromptDebug(response);
             }
-            const latestMemory = readLocalPetMemory(pet.petId);
-            writeLocalPetMemory(
-              recordProactiveDelivery(
-                latestMemory,
-                proactiveMemoryContext.proactiveCandidate?.memoryIds ?? [],
-                response.reply,
-              ),
+            await withLocalPetMutationLock(
+              pet.petId,
+              "memory",
+              ({ assertOwned: assertMemoryOwned }) => {
+                const latestMemory = readLocalPetMemory(pet.petId);
+                const delivered = recordProactiveDelivery(
+                  latestMemory,
+                  proactiveMemoryContext.proactiveCandidate?.memoryIds ?? [],
+                  response.reply,
+                );
+                assertMemoryOwned();
+                if (!writeLocalPetMemory(delivered, pet.petId)) {
+                  throw new LocalPetTurnSupersededError();
+                }
+              },
+              { acquireTimeoutMs: 10 * 60_000 },
             );
+            assertOwned();
+            if (!mountedRef.current || readLocalPetState()?.petId !== pet.petId) {
+              return true;
+            }
             showPetReplyMessage(response.reply, true, { dialogueHook: true });
             localPet.applyMoodHint(
               response.moodHint,
               response.storyLibraryPatch ?? response.debug?.storyLibraryPatch,
+              0,
+              pet.petId,
             );
-          })
-          .catch(async () => {
+            return true;
+          } catch {
             await minimumThinkingTime;
-          })
-          .finally(() => {
+            return true;
+          } finally {
             if (idleThinkingRequestIdRef.current === idleThinkingRequestId) {
               setIsGeneratingIdleReply(false);
             }
-          });
-      });
-      return;
-    }
-
-    window.queueMicrotask(requestAmbientReply);
+          }
+        },
+      )
+        .then((handled) => {
+          if (!handled && mountedRef.current) {
+            requestAmbientReply();
+          }
+        })
+        .catch(() => undefined);
+    });
   }, [
     assetsReadyForPetId,
     beginIdleThinking,
@@ -1343,7 +1541,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       onVisualProviderChange={setVisualProvider}
     />
   ) : null;
-  const debugTrigger = canShowDebugMenu ? (
+  const debugTrigger = canShowDebugMenu && !isChatMode && !isFeedMode ? (
     <button
       type="button"
       aria-controls="debug-panel"
@@ -1470,38 +1668,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             <SmoothBackgroundVideo
               src={sceneVideoSrc}
               className="main-scene-video"
-              revealWhenReady={revealSceneVideo}
               onActiveVideoChange={(video) => {
                 sceneVideoRef.current = video;
-              }}
-              onReady={(readySrc) => {
-                if (
-                  readySrc !== requestedSceneVideoSrc
-                  || !requestedSceneBackgroundSrc
-                ) {
-                  return;
-                }
-                const transitionKey = `${petId}:${requestedSceneBackgroundSrc}:${readySrc}`;
-                if (sceneTransitionTargetRef.current === transitionKey) {
-                  return;
-                }
-                sceneTransitionTargetRef.current = transitionKey;
-                const nextSceneMedia = {
-                  petId,
-                  backgroundSrc: requestedSceneBackgroundSrc,
-                  videoSrc: readySrc,
-                };
-                const reveal = () => {
-                  if (sceneTransitionTargetRef.current !== transitionKey) {
-                    return;
-                  }
-                  flushSync(() => setVisibleSceneMedia(nextSceneMedia));
-                };
-                if (!visibleSceneMediaForPet || document.visibilityState !== "visible") {
-                  reveal();
-                  return;
-                }
-                sweep(reveal);
               }}
             />
           ) : null}
@@ -1519,6 +1687,15 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             draggable={false}
           />
         </div>
+
+        {!isChatMode && !isFeedMode ? (
+          <button
+            type="button"
+            className="pet-reaction-button"
+            onClick={handleKeyboardPetReaction}
+            aria-label={`Погладить ${displayedPetName}`}
+          />
+        ) : null}
 
         {petTapParticleBursts.map((burst) => (
           <PetTapParticleBurst
@@ -1539,11 +1716,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
         {debugPanel}
 
-        <div className="sr-only" aria-live="polite">
-          Stage {stageLabels[pet.stage]}. State {stateLabels[pet.mood]}. Visual mode{" "}
-          {visualMode}. Hunger{" "}
-          {roundedHungerPercent}/100. Happiness {roundedMoodPercent}/100. Health{" "}
-          {roundedHealthPercent}/100.
+        <div className="sr-only">
+          Стадия: {accessibleStageLabels[pet.stage]}. Состояние: {accessibleMoodLabels[pet.mood]}.
+          Голод: {roundedHungerPercent} из 100. Настроение: {roundedMoodPercent} из 100.
+          Здоровье: {roundedHealthPercent} из 100.
         </div>
 
         <div className="pet-status-name">
@@ -1658,6 +1834,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         className={`main-actions-scroll conversation-fade-target absolute top-[762px] z-30 ${
           isChatMode || isFeedMode ? "conversation-fade-target--hidden" : ""
         }`}
+        aria-hidden={isChatMode || isFeedMode}
+        inert={isChatMode || isFeedMode ? true : undefined}
       >
         <div className="main-actions-row flex w-max gap-[19px] pr-[29px]">
           <button
@@ -1708,6 +1886,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
                 draggable={false}
               />
               <span>В путешествие</span>
+            </button>
+          ) : null}
+          {storyHistory.length ? (
+            <button
+              type="button"
+              onClick={() => setIsStoryHistoryOpen(true)}
+              className="main-action-button"
+              aria-controls="travel-story-overlay"
+              aria-expanded={isStoryHistoryOpen}
+            >
+              <span>Истории</span>
             </button>
           ) : null}
         </div>

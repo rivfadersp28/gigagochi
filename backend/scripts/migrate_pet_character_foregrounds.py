@@ -9,14 +9,17 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.services.image_service import make_character_foreground_image_bytes
+from app.services.image_service import make_character_foreground_image_bytes  # noqa: E402
 
 
 def migrate(root: Path, *, asset_id: str | None = None, force: bool = False) -> int:
     search_root = root / asset_id if asset_id else root
     processed = 0
-    for source_path in sorted(search_root.glob("*-character.png" if asset_id else "*/*-character.png")):
-        target_path = source_path.with_name(source_path.name.replace("-character.png", "-foreground.png"))
+    pattern = "*-character.png" if asset_id else "*/*-character.png"
+    for source_path in sorted(search_root.glob(pattern)):
+        target_path = source_path.with_name(
+            source_path.name.replace("-character.png", "-foreground.png")
+        )
         if target_path.exists() and not force:
             continue
         temporary_path = target_path.with_suffix(".tmp")

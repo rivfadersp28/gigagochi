@@ -211,6 +211,7 @@ export function PetSpeechBubble({
         isVisible ? "" : styles.hidden
       } ${scaleOrigin === "top" ? styles.originTop : styles.originBottom}`}
       style={style}
+      aria-hidden={!isVisible}
     >
       <img
         ref={shapeRef}

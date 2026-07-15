@@ -141,6 +141,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/capabilities": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Tma Capabilities */
+        readonly get: operations["tma_capabilities_api_capabilities_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/chat": {
         readonly parameters: {
             readonly query?: never;
@@ -311,7 +328,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/travel": {
+    readonly "/api/push/snapshot/{pet_id}": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -320,9 +337,9 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Travel */
-        readonly post: operations["travel_api_travel_post"];
-        readonly delete?: never;
+        readonly post?: never;
+        /** Delete Push Snapshot */
+        readonly delete: operations["delete_push_snapshot_api_push_snapshot__pet_id__delete"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -447,6 +464,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/travel/interactive/{travel_id}/cancel": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Interactive Travel Cancel */
+        readonly post: operations["interactive_travel_cancel_api_travel_interactive__travel_id__cancel_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/travel/interactive/{travel_id}/debug/reset": {
         readonly parameters: {
             readonly query?: never;
@@ -491,34 +525,6 @@ export interface components {
             readonly enabled: boolean;
             /** Message */
             readonly message: string;
-        };
-        /** AdminDialogueInfluenceItemResponse */
-        readonly AdminDialogueInfluenceItemResponse: {
-            /** Configpath */
-            readonly configPath: string | null;
-            /** Editable */
-            readonly editable: boolean;
-            /** Fileid */
-            readonly fileId: string | null;
-            /** Id */
-            readonly id: string;
-            /** Label */
-            readonly label: string;
-            /** Role */
-            readonly role?: string | null;
-            /** Source */
-            readonly source: string;
-            /** Summary */
-            readonly summary: string;
-            /** Surfaces */
-            readonly surfaces: readonly string[];
-        };
-        /** AdminDialogueResponse */
-        readonly AdminDialogueResponse: {
-            /** Collections */
-            readonly collections: readonly components["schemas"]["AdminDialogueInfluenceItemResponse"][];
-            /** Modifiers */
-            readonly modifiers: readonly components["schemas"]["AdminDialogueInfluenceItemResponse"][];
         };
         /** AdminFileUpdate */
         readonly AdminFileUpdate: {
@@ -608,9 +614,9 @@ export interface components {
             readonly exists: boolean;
             /**
              * Format
-             * @enum {string}
+             * @constant
              */
-            readonly format: "json" | "jsonl";
+            readonly format: "json";
             /** Id */
             readonly id: string;
             /** Label */
@@ -629,7 +635,6 @@ export interface components {
         /** AdminSpeechManifestResponse */
         readonly AdminSpeechManifestResponse: {
             readonly deploy: components["schemas"]["AdminDeployResponse"];
-            readonly dialogue: components["schemas"]["AdminDialogueResponse"];
             /** Files */
             readonly files: readonly components["schemas"]["AdminSpeechFileResponse"][];
             /** Generatedat */
@@ -747,15 +752,6 @@ export interface components {
         readonly GeneratePetRequest: {
             /** Description */
             readonly description: string;
-            /** Moods */
-            readonly moods?: readonly ("idle" | "happy" | "sad" | "hungry")[];
-            /** Stages */
-            readonly stages?: readonly ("baby" | "teen" | "adult")[];
-            /**
-             * Style
-             * @default cute mobile game pet
-             */
-            readonly style: string;
         };
         /** GeneratePetStaticAssetResponse */
         readonly GeneratePetStaticAssetResponse: {
@@ -769,29 +765,6 @@ export interface components {
             readonly images: components["schemas"]["GeneratedPetImages"];
             /** Videourl */
             readonly videoUrl?: string | null;
-        };
-        /** GenerateTravelRequest */
-        readonly GenerateTravelRequest: {
-            /**
-             * Includedebug
-             * @default false
-             */
-            readonly includeDebug: boolean;
-            readonly pet: components["schemas"]["LocalPetChatContext"];
-        };
-        /** GenerateTravelResponse */
-        readonly GenerateTravelResponse: {
-            readonly debug?: components["schemas"]["LocalChatDebug"] | null;
-            /**
-             * Generatedat
-             * Format: date-time
-             */
-            readonly generatedAt: string;
-            /** Images */
-            readonly images?: readonly components["schemas"]["TravelSceneImage"][];
-            readonly story: components["schemas"]["TravelStory"];
-            /** Travelid */
-            readonly travelId: string;
         };
         /** GeneratedPetImages */
         readonly GeneratedPetImages: {
@@ -1209,6 +1182,8 @@ export interface components {
             readonly mood: "idle" | "happy" | "sad" | "hungry";
             /** Name */
             readonly name?: string | null;
+            /** Petid */
+            readonly petId?: string | null;
             /**
              * Stage
              * @enum {string}
@@ -1268,6 +1243,13 @@ export interface components {
             /** Reason */
             readonly reason: string;
         };
+        /** LocalPetPushSnapshotDeleteResponse */
+        readonly LocalPetPushSnapshotDeleteResponse: {
+            /** Petid */
+            readonly petId: string;
+            /** Unregistered */
+            readonly unregistered: boolean;
+        };
         /** LocalPetPushSnapshotRequest */
         readonly LocalPetPushSnapshotRequest: {
             /** Createdat */
@@ -1288,6 +1270,10 @@ export interface components {
             readonly petId: string;
             /** Recentambientreplies */
             readonly recentAmbientReplies?: readonly string[];
+            /** Snapshotrevision */
+            readonly snapshotRevision?: number | null;
+            /** Snapshotwriterid */
+            readonly snapshotWriterId?: string | null;
             /** Timezone */
             readonly timezone?: string | null;
             /** Updatedat */
@@ -1453,6 +1439,15 @@ export interface components {
             readonly memoryContext?: components["schemas"]["LocalPetMemoryContext"] | null;
             readonly pet: components["schemas"]["LocalPetChatContext"];
         };
+        /** TmaCapabilitiesResponse */
+        readonly TmaCapabilitiesResponse: {
+            /** Debugmenu */
+            readonly debugMenu: boolean;
+            /** Interactivetravel */
+            readonly interactiveTravel: boolean;
+            /** Telegramuserid */
+            readonly telegramUserId: number;
+        };
         /** TravelFinaleGenerateRequest */
         readonly TravelFinaleGenerateRequest: {
             /** Prompt */
@@ -1477,38 +1472,6 @@ export interface components {
         readonly TravelFinalePromptRequest: {
             /** Direction */
             readonly direction: string;
-        };
-        /** TravelSceneImage */
-        readonly TravelSceneImage: {
-            /** Imageurl */
-            readonly imageUrl: string;
-            /** Sceneindex */
-            readonly sceneIndex: number;
-        };
-        /** TravelStory */
-        readonly TravelStory: {
-            /** Scenes */
-            readonly scenes: readonly components["schemas"]["TravelStoryScene"][];
-            /** Summary */
-            readonly summary: string;
-            /** Title */
-            readonly title: string;
-        };
-        /** TravelStoryScene */
-        readonly TravelStoryScene: {
-            /**
-             * Arc
-             * @enum {string}
-             */
-            readonly arc: "beginning" | "exploration" | "discovery" | "reward" | "final";
-            /** Index */
-            readonly index: number;
-            /** Text */
-            readonly text: string;
-            /** Title */
-            readonly title: string;
-            /** Visualbrief */
-            readonly visualBrief: string;
         };
         /** ValidationError */
         readonly ValidationError: {
@@ -1826,6 +1789,26 @@ export interface operations {
             };
         };
     };
+    readonly tma_capabilities_api_capabilities_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TmaCapabilitiesResponse"];
+                };
+            };
+        };
+    };
     readonly chat_api_chat_post: {
         readonly parameters: {
             readonly query?: never;
@@ -2027,7 +2010,10 @@ export interface operations {
     readonly generate_pet_api_generate_pet_post: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header: {
+                /** @description Required for paid generation. Reusing the same key for this Telegram user replays or resumes the original operation without restarting completed media. */
+                readonly "Idempotency-Key": string;
+            };
             readonly path?: never;
             readonly cookie?: never;
         };
@@ -2153,18 +2139,16 @@ export interface operations {
             };
         };
     };
-    readonly travel_api_travel_post: {
+    readonly delete_push_snapshot_api_push_snapshot__pet_id__delete: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
-            readonly path?: never;
+            readonly path: {
+                readonly pet_id: string;
+            };
             readonly cookie?: never;
         };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["GenerateTravelRequest"];
-            };
-        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description Successful Response */
             readonly 200: {
@@ -2172,7 +2156,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["GenerateTravelResponse"];
+                    readonly "application/json": components["schemas"]["LocalPetPushSnapshotDeleteResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2393,6 +2377,39 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["InteractiveTravelSuggestionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly interactive_travel_cancel_api_travel_interactive__travel_id__cancel_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly travel_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: boolean;
+                    };
                 };
             };
             /** @description Validation Error */

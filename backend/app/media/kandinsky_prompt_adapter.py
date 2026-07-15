@@ -111,9 +111,7 @@ def _fit_prioritized_blocks(blocks: tuple[tuple[int, str], ...]) -> str:
         if len(candidate) <= KANDINSKY_PROMPT_MAX_CHARS:
             selected.add(index)
 
-    return "\n\n".join(
-        block for index, (_, block) in enumerate(normalized) if index in selected
-    )
+    return "\n\n".join(block for index, (_, block) in enumerate(normalized) if index in selected)
 
 
 def _pet_creation_prompt(prompt: str) -> str:

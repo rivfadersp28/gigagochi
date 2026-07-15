@@ -275,30 +275,25 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert request["reasoning_effort"] == "high"
     assert system_message.startswith(
         "Ты Громм. Сейчас ты взрослый, сформировавшийся представитель такого существа. "
-        "Говори от первого лица связно, просто и конкретно. Если мысль требует, "
-        "используй несколько коротких предложений."
+        "Говори от первого лица просто и конкретно. Ответ — 1–2 коротких предложения."
     )
     assert "гигантский земляной великан" in system_message
-    assert "КАНОН ПЕРСОНАЖА:" in system_message
+    assert "БАЗОВЫЕ ЗНАНИЯ О СЕБЕ:" in system_message
     assert "ОБЩАЯ БИБЛИЯ МИРА:" not in system_message
-    assert "Слова мира, если подходят по смыслу:" in system_message
-    assert "руины" in system_message
-    assert "гоблин" in system_message
+    assert "Слова мира, если подходят по смыслу:" not in system_message
     assert "только слова, которые персонаж произносит вслух" in system_message
     assert "Не пиши авторскую ремарку" in system_message
     assert "ТЕКУЩЕЕ сообщение пользователя" in system_message
     assert "Прямая угроза убийством" in system_message
     assert "используй update_pet_name" in system_message
-    assert "Ответь на последнее сообщение как этот персонаж." in system_message
-    assert "задай один конкретный уточняющий вопрос" in system_message
-    assert "короткий симметричный вопрос" in system_message
-    assert "Не задавай больше одного вопроса за реплику" in system_message
-    assert "а не звучать как анкета" in system_message
+    assert "Коротко ответь на последнее сообщение от первого лица." in system_message
+    assert "При необходимости задай один естественный уточняющий вопрос" in system_message
+    assert "Не изображай особую манеру речи, характер или роль" in system_message
     assert "Верни только JSON" not in system_message
     assert request["response_format"]["json_schema"]["name"] == "visible_pet_reply"
     assert (
         request["response_format"]["json_schema"]["schema"]["properties"]["reply"]["maxLength"]
-        == 300
+        == 120
     )
     assert request["response_format"]["json_schema"]["schema"]["properties"]["happinessDelta"][
         "enum"
@@ -479,7 +474,7 @@ def test_chat_small_talk_does_not_copy_old_reply_style() -> None:
     assert "стеклянное семечко" not in messages[0]["content"]
 
 
-def test_chat_prompt_retrieves_only_matching_lite_overlay_facts() -> None:
+def test_chat_prompt_does_not_inject_character_overlay_facts() -> None:
     system_message = build_lite_chat_messages(
         lite_payload(
             message="Что за базальтовая каша?",
@@ -503,8 +498,8 @@ def test_chat_prompt_retrieves_only_matching_lite_overlay_facts() -> None:
         )
     )[0]["content"]
 
-    assert "Релевантные устойчивые факты персонажа" in system_message
-    assert "Громм любит базальтовую кашу." in system_message
+    assert "Релевантные устойчивые факты персонажа" not in system_message
+    assert "Громм любит базальтовую кашу." not in system_message
     assert "Громм боится глубоких озёр." not in system_message
 
 
@@ -574,8 +569,8 @@ def test_speech_runtime_rejects_state_params_auto() -> None:
 def test_visible_reply_limit_uses_runtime_cap_and_honors_lower_request() -> None:
     assert speech_runtime.visible_reply_model() == "gpt-5.4-mini"
     assert speech_runtime.visible_reply_reasoning_effort() == "high"
-    assert speech_runtime.visible_reply_limit() == 300
-    assert speech_runtime.visible_reply_limit(220) == 220
+    assert speech_runtime.visible_reply_limit() == 120
+    assert speech_runtime.visible_reply_limit(220) == 120
     assert speech_runtime.visible_reply_limit(40) == 40
 
 
@@ -599,7 +594,7 @@ def test_speech_runtime_rejects_invalid_visible_reply_reasoning() -> None:
         speech_runtime.validate_speech_runtime_config(runtime)
 
 
-def test_lite_prompt_includes_compact_character_voice_without_raw_controls() -> None:
+def test_lite_prompt_omits_character_voice_and_keeps_basic_appearance() -> None:
     payload = lite_payload(
         pet={
             "name": "Пончик",
@@ -612,6 +607,15 @@ def test_lite_prompt_includes_compact_character_voice_without_raw_controls() -> 
                 "energy": 80,
             },
             "characterBible": {
+                "identity": {"species": "кремовый котенок-компаньон"},
+                "visual": {
+                    "colors": ["кремовый"],
+                    "features": ["короткие уши"],
+                    "materials": ["мягкая шерсть"],
+                    "proportions": "крупная голова",
+                    "growth_forms": {"baby": "маленькие лапы"},
+                    "anchors": ["белое пятно на груди"],
+                },
                 "voice": {
                     "rules": ["говорит коротко и замечает запахи"],
                     "catchphrases": ["нюх-нюх"],
@@ -633,13 +637,15 @@ def test_lite_prompt_includes_compact_character_voice_without_raw_controls() -> 
     system_message = build_lite_chat_messages(payload)[0]["content"]
 
     assert (
-        "Ты маленький Пончик. Говори от первого лица связно, просто и конкретно. "
-        "Если мысль требует, используй несколько коротких предложений." in system_message
+        "Ты маленький Пончик. Говори от первого лица просто и конкретно. "
+        "Ответ — 1–2 коротких предложения." in system_message
     )
     assert "кремовый котенок-компаньон" in system_message
+    assert "короткие уши" in system_message
+    assert "белое пятно на груди" in system_message
     assert "VOICE_CONTROL" not in system_message
     assert "нижний регулятор всех видимых реплик питомца" not in system_message
-    assert "говорит коротко и замечает запахи" in system_message
+    assert "говорит коротко и замечает запахи" not in system_message
     assert "нюх-нюх" not in system_message
     assert "Нюх-нюх... я проверю носом." not in system_message
     assert "я ассистент" not in system_message
@@ -734,12 +740,12 @@ def test_lite_prompt_ignores_character_profile_even_if_router_enables_it() -> No
         ),
     )[0]["content"]
 
-    assert "КАНОН ПЕРСОНАЖА:" in system_message
+    assert "БАЗОВЫЕ ЗНАНИЯ О СЕБЕ:" in system_message
     assert "CHARACTER_PROFILE" not in system_message
-    assert "гурман-коллекционер" in system_message
-    assert "Густую похлебку" in system_message
-    assert "Характер" in system_message
-    assert "Обычно делаю" in system_message
+    assert "гурман-коллекционер" not in system_message
+    assert "Густую похлебку" not in system_message
+    assert "Характер" not in system_message
+    assert "Обычно делаю" not in system_message
     assert "Safe adaptation" not in system_message
     assert "Never add or say" not in system_message
     assert "Pet-safe adaptation" not in system_message
@@ -780,12 +786,12 @@ def test_chat_small_talk_keeps_core_character_but_suppresses_overlay_noise() -> 
     )[0]["content"]
 
     assert (
-        "Ты Пипс. Сейчас ты подросток такого существа. Говори от первого лица связно, "
-        "просто и конкретно. Если мысль требует, используй несколько коротких предложений."
-        in system_message
+        "Ты Пипс. Сейчас ты подросток такого существа. Говори от первого лица просто "
+        "и конкретно. Ответ — 1–2 коротких предложения." in system_message
     )
     assert "Кто я:" not in system_message
-    assert "Персонаж:" in system_message
+    assert "БАЗОВЫЕ ЗНАНИЯ О СЕБЕ:" in system_message
+    assert "Имя: Пипс" in system_message
     assert "CHARACTER_PROFILE" not in system_message
     assert "мокрыми ушами" in system_message
     assert "нюхать батарейки" in system_message
@@ -835,7 +841,7 @@ def test_lite_prompt_does_not_conflict_with_user_identity_recall() -> None:
     system_message = build_lite_chat_messages(payload)[0]["content"]
 
     assert "Кто я:" not in system_message
-    assert "Персонаж: Громм" in system_message
+    assert "Имя: Громм" in system_message
     assert "Пользователя зовут Серега." in system_message
     assert "Не отвечай в этот момент, кто ты сам как персонаж." in system_message
 
@@ -1136,7 +1142,7 @@ def test_lite_clamps_reply_to_runtime_limit() -> None:
 
     response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
 
-    assert len(response.reply) <= 300
+    assert len(response.reply) <= 120
     assert response.reply.endswith("…")
 
 
@@ -1322,7 +1328,7 @@ def test_lite_prompt_skips_preselected_world_context_when_story_library_disabled
     assert "search_story_library" not in system_message
 
 
-def test_proactive_prompt_includes_compact_character_voice_without_catchphrases() -> None:
+def test_proactive_prompt_omits_character_voice() -> None:
     payload = LocalProactiveRequest.model_validate(
         {
             "pet": {
@@ -1355,7 +1361,7 @@ def test_proactive_prompt_includes_compact_character_voice_without_catchphrases(
     system_message = build_proactive_messages(payload)[0]["content"]
 
     assert "VOICE_CONTROL" not in system_message
-    assert "говорит через маленькие бытовые детали" in system_message
+    assert "говорит через маленькие бытовые детали" not in system_message
     assert "нос подсказывает" not in system_message
     assert "Напиши первым. Повод: пользователь обещал вернуться вечером" in system_message
     assert "Ты сам решил написать пользователю первым" not in system_message
@@ -1448,33 +1454,29 @@ def test_ambient_prompt_receives_one_selected_dialogue_impulse(monkeypatch) -> N
 
     prompt = build_ambient_messages(payload)[0]["content"]
 
-    assert (
-        "Разговорный импульс этой реплики: поделись внезапной мыслью "
-        "и спроси мнение собеседника." in prompt
-    )
-    assert "1–3 законченных коротких предложений" in prompt
-    assert "Каждое предложение — не длиннее 40 символов." in prompt
+    assert "Разговорный импульс этой реплики: мягко продолжи тему из доступной памяти" in prompt
+    assert "опираясь только на доступную память" in prompt
+    assert "Не изображай особую манеру речи, характер или роль" in prompt
+    assert "1–2 законченных коротких предложений" in prompt
     assert "Не обрывай мысль многоточием." in prompt
-    assert "чаще всего закончи её одним естественным вопросом" in prompt
-    assert "Не задавай больше одного вопроса за реплику" in prompt
-    assert "Иногда оставляй реплику без вопроса" in prompt
+    assert "Можно задать один естественный вопрос" in prompt
     assert "поприветствуй и прояви интерес к собеседнику" not in prompt
 
 
 @pytest.mark.parametrize(
     ("stats", "expected_state"),
     [
-        ({"hunger": 69, "happiness": 80, "energy": 80}, "сытость 69/100: слегка хочется есть"),
-        ({"hunger": 39, "happiness": 80, "energy": 80}, "сытость 39/100: хочется есть"),
-        ({"hunger": 19, "happiness": 80, "energy": 80}, "сытость 19/100: очень хочется есть"),
-        ({"hunger": 80, "happiness": 69, "energy": 80}, "настроение 69/100: слегка грустно"),
-        ({"hunger": 80, "happiness": 39, "energy": 80}, "настроение 39/100: грустно"),
-        ({"hunger": 80, "happiness": 19, "energy": 80}, "настроение 19/100: очень грустно"),
-        ({"hunger": 80, "happiness": 80, "energy": 69}, "здоровье 69/100: слегка нездоровится"),
-        ({"hunger": 80, "happiness": 80, "energy": 39}, "здоровье 39/100: плохо себя чувствуешь"),
+        ({"hunger": 29, "happiness": 80, "energy": 80}, "сытость 29/100: слегка хочется есть"),
+        ({"hunger": 19, "happiness": 80, "energy": 80}, "сытость 19/100: хочется есть"),
+        ({"hunger": 9, "happiness": 80, "energy": 80}, "сытость 9/100: очень хочется есть"),
+        ({"hunger": 80, "happiness": 29, "energy": 80}, "настроение 29/100: слегка грустно"),
+        ({"hunger": 80, "happiness": 19, "energy": 80}, "настроение 19/100: грустно"),
+        ({"hunger": 80, "happiness": 9, "energy": 80}, "настроение 9/100: очень грустно"),
+        ({"hunger": 80, "happiness": 80, "energy": 29}, "здоровье 29/100: слегка нездоровится"),
+        ({"hunger": 80, "happiness": 80, "energy": 19}, "здоровье 19/100: плохо себя чувствуешь"),
         (
-            {"hunger": 80, "happiness": 80, "energy": 19},
-            "здоровье 19/100: очень плохо себя чувствуешь",
+            {"hunger": 80, "happiness": 80, "energy": 9},
+            "здоровье 9/100: очень плохо себя чувствуешь",
         ),
     ],
 )
@@ -1494,16 +1496,17 @@ def test_ambient_prompt_grades_low_stats(stats, expected_state) -> None:
     prompt = build_ambient_messages(payload)[0]["content"]
 
     assert expected_state in prompt
-    assert "Обязательно сделай idle-реплику естественной реакцией" in prompt
+    assert "Красная зона имеет абсолютный приоритет" in prompt
+    assert "Разговорный импульс этой реплики:" not in prompt
     assert "Параметры состояния — это опциональные кирпичики" not in prompt
 
 
 @pytest.mark.parametrize(
     ("stats", "expected_state"),
     [
-        ({"hunger": 70, "happiness": 80, "energy": 80}, None),
-        ({"hunger": 40, "happiness": 80, "energy": 80}, "сытость 40/100: слегка хочется есть"),
-        ({"hunger": 20, "happiness": 80, "energy": 80}, "сытость 20/100: хочется есть"),
+        ({"hunger": 30, "happiness": 80, "energy": 80}, None),
+        ({"hunger": 20, "happiness": 80, "energy": 80}, "сытость 20/100: слегка хочется есть"),
+        ({"hunger": 10, "happiness": 80, "energy": 80}, "сытость 10/100: хочется есть"),
     ],
 )
 def test_ambient_state_thresholds_are_strict(stats, expected_state) -> None:
@@ -1522,7 +1525,7 @@ def test_ambient_state_thresholds_are_strict(stats, expected_state) -> None:
     prompt = build_ambient_messages(payload)[0]["content"]
 
     if expected_state is None:
-        assert "Все параметры не ниже 70" in prompt
+        assert "Все параметры вне красной зоны" in prompt
         assert "Текущее состояние для idle:" not in prompt
     else:
         assert expected_state in prompt
@@ -1617,7 +1620,8 @@ def test_ambient_prompt_uses_idle_field_without_forced_world_context(
         speech_runtime.speech_runtime_config.cache_clear()
     system_message = messages[0]["content"]
 
-    assert len(messages) == 1
+    assert len(messages) == 2
+    assert "Скажи одну компактную реплику владельцу" in messages[1]["content"]
     assert "Скажи одну короткую самостоятельную idle-реплику." in system_message
     assert "IDLE_DIALOGUE_ENGINE" not in system_message
     assert "Спроси меня что-нибудь" not in system_message
@@ -1686,9 +1690,7 @@ def test_default_ambient_prompt_forbids_reintroducing_the_character() -> None:
     system_message = build_ambient_messages(payload)[0]["content"]
 
     assert "Вы уже знакомы: не представляйся" in system_message
-    assert "Привет, я [имя]" in system_message
-    assert "можешь естественно употребить его" in system_message
-    assert "но не обязан это делать" in system_message
+    assert "Имя: Листик" in system_message
 
 
 def test_ambient_anti_repeat_groups_russian_word_forms() -> None:
@@ -1713,6 +1715,17 @@ def test_ambient_anti_repeat_groups_russian_word_forms() -> None:
     prompt = build_ambient_messages(payload)[0]["content"]
 
     assert "Повторяющиеся смысловые маркеры: дорог" in prompt
+
+
+def test_ambient_question_repeat_detects_same_topic_with_a_new_opener() -> None:
+    assert lite_generator._ambient_repeats_recent_question(
+        "Слышал, почему молния нагревает воздух?",
+        ["А ты знал, что молния греет воздух? Так рождается гром"],
+    )
+    assert not lite_generator._ambient_repeats_recent_question(
+        "Хочешь узнать, почему лёд плавает?",
+        ["А ты знал, что молния греет воздух? Так рождается гром"],
+    )
 
 
 def test_ambient_prompt_skips_world_context_when_story_library_disabled() -> None:
@@ -1897,7 +1910,8 @@ def test_lite_character_profile_uses_core_but_not_unselected_durable_facts() -> 
     assert response.reply == "Я Громм, каменный и спокойный"
     system_message = completions.calls[0]["messages"][0]["content"]
     assert "CHARACTER_PROFILE" not in system_message
-    assert "каменный хранитель" in system_message
+    assert "гигантский земляной великан" in system_message
+    assert "каменный хранитель" not in system_message
     assert "Громм живет на теплом уступе." not in system_message
     assert "story_library_overlay" not in system_message
     assert "Тихий колокольный страж" not in system_message
@@ -2395,7 +2409,7 @@ def test_proactive_reply_is_clamped() -> None:
         timeout=10,
     )
 
-    assert len(response.reply) <= 300
+    assert len(response.reply) <= 120
     assert response.reply.endswith("…")
     assert response.debug is not None
     assert response.debug.memoryDebug["selectedMemoryIds"] == ["m1"]

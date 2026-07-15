@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import socket
+import subprocess
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -22,6 +25,7 @@ from app.prompts.pet_image_prompts import (
 )
 from app.services.image_service import (
     CHARACTER_BIBLE_SCHEMA,
+    IMAGE_RESULT_MAX_BYTES,
     KANDINSKY_PET_SCENE_VIDEO_PROMPT,
     PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT,
     PET_HAPPY_SCENE_IMAGE_PROMPT,
@@ -29,12 +33,22 @@ from app.services.image_service import (
     PET_SAD_SCENE_IMAGE_PROMPT,
     PET_SAD_SCENE_VIDEO_PROMPT,
     PET_SCENE_VIDEO_PROMPT,
+    REFERENCE_IMAGE_MAX_BYTES,
+    VIDEO_RESULT_MAX_BYTES,
+    MediaResultError,
     PetAssetImageSet,
     _character_reasoning_effort_kwargs,
     _compact_kandinsky_prompt,
+    _download_openrouter_video_bytes,
+    _image_result_bytes,
     _internal_reference_image_url,
+    _kandinsky_create_task,
+    _kandinsky_download_result,
     _kandinsky_reference_image_b64,
+    _probe_generated_video,
     _reference_image_bytes,
+    _submit_openrouter_video_job,
+    _trusted_openrouter_polling_url,
     align_sprite_to_reference_canvas,
     build_pet_asset_set_response,
     character_bible_quality_issues,
@@ -63,13 +77,28 @@ from app.services.image_service import (
     render_ping_pong_video_bytes,
     strip_generated_video_auxiliary_streams,
 )
+from app.services.storage_health_service import StorageCapacityError
 from app.services.tone_runtime import tone_context_payload
+
+
+def _reserved(fake):
+    @contextmanager
+    def reservation(*args, **kwargs):
+        yield fake(*args, **kwargs)
+
+    return reservation
 
 
 def image_contains_color(image: Image.Image, color: tuple[int, int, int, int]) -> bool:
     pixels = image.load()
     width, height = image.size
     return any(pixels[x, y] == color for y in range(height) for x in range(width))
+
+
+def test_generation_error_code_preserves_storage_capacity_failure() -> None:
+    error = StorageCapacityError(media_kind="image", reason="LOW_DISK_SPACE")
+
+    assert generation_error_code(error) == "STORAGE_CAPACITY_LOW"
 
 
 def test_kandinsky_idle_video_prompt_allows_subtle_body_motion() -> None:
@@ -87,13 +116,15 @@ def test_ping_pong_video_trims_seedance_preroll_before_reversing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ffmpeg_commands: list[list[str]] = []
+    subprocess_options: list[dict[str, Any]] = []
 
-    def fake_run(command: list[str], **_kwargs: Any) -> SimpleNamespace:
+    def fake_run(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        subprocess_options.append(kwargs)
         if command[0] == "ffprobe":
             return SimpleNamespace(
                 stdout=json.dumps(
                     {
-                        "streams": [{"avg_frame_rate": "24/1"}],
+                        "streams": [{"avg_frame_rate": "24/1", "width": 720, "height": 1280}],
                         "format": {"duration": "5.0"},
                     }
                 )
@@ -116,8 +147,15 @@ def test_ping_pong_video_trims_seedance_preroll_before_reversing(
     assert filter_graph.index("split=2") < filter_graph.index("reverse")
     assert filter_graph.endswith("concat=n=2:v=1:a=0,fps=24[out]")
     command = ffmpeg_commands[0]
+    assert command[command.index("-f") + 1] == "mov"
+    assert command[command.index("-protocol_whitelist") + 1] == "file"
+    assert command[command.index("-enable_drefs") + 1] == "0"
+    assert command[command.index("-use_absolute_path") + 1] == "0"
     assert command[command.index("-level:v") + 1] == "3.1"
     assert command[command.index("-video_track_timescale") + 1] == "12288"
+    assert command[command.index("-fs") + 1] == str(100 * 1024 * 1024)
+    assert subprocess_options[0]["timeout"] == 30
+    assert subprocess_options[1]["timeout"] == 180
 
 
 def test_strip_generated_video_auxiliary_streams_keeps_only_primary_video(
@@ -125,8 +163,19 @@ def test_strip_generated_video_auxiliary_streams_keeps_only_primary_video(
 ) -> None:
     captured: dict[str, Any] = {}
 
-    def fake_run(command: list[str], **_kwargs: Any) -> SimpleNamespace:
+    def fake_run(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        if command[0] == "ffprobe":
+            captured["probe_options"] = kwargs
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    {
+                        "streams": [{"avg_frame_rate": "30/1", "width": 1280, "height": 720}],
+                        "format": {"duration": "15.0"},
+                    }
+                )
+            )
         captured["command"] = command
+        captured["process_options"] = kwargs
         Path(command[-1]).write_bytes(b"main-video-only")
         return SimpleNamespace()
 
@@ -134,10 +183,134 @@ def test_strip_generated_video_auxiliary_streams_keeps_only_primary_video(
 
     assert strip_generated_video_auxiliary_streams(b"grok-video") == b"main-video-only"
     command = captured["command"]
+    assert command[command.index("-f") + 1] == "mov"
+    assert command[command.index("-protocol_whitelist") + 1] == "file"
+    assert command[command.index("-enable_drefs") + 1] == "0"
+    assert command[command.index("-use_absolute_path") + 1] == "0"
     assert command[command.index("-map") + 1] == "0:v:0"
     assert "-an" in command
     assert command[command.index("-c:v") + 1] == "copy"
     assert command[command.index("-movflags") + 1] == "+faststart"
+    assert command[command.index("-fs") + 1] == str(100 * 1024 * 1024)
+    assert captured["probe_options"]["timeout"] == 30
+    assert captured["process_options"]["timeout"] == 180
+
+
+def test_generated_video_probe_forces_local_mp4_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[str] = []
+
+    def fake_run(command: list[str], **_kwargs: Any) -> SimpleNamespace:
+        captured.extend(command)
+        return SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "streams": [{"avg_frame_rate": "30/1", "width": 1280, "height": 720}],
+                    "format": {"duration": "5.0"},
+                }
+            )
+        )
+
+    monkeypatch.setattr("app.services.image_service.subprocess.run", fake_run)
+
+    _probe_generated_video(Path("synthetic.mp4"))
+
+    assert captured[captured.index("-f") + 1] == "mov"
+    assert captured[captured.index("-protocol_whitelist") + 1] == "file"
+    assert captured[captured.index("-enable_drefs") + 1] == "0"
+    assert captured[captured.index("-use_absolute_path") + 1] == "0"
+    assert captured[captured.index("-i") + 1] == "synthetic.mp4"
+
+
+@pytest.mark.parametrize(
+    ("stream", "duration", "expected_code"),
+    [
+        (
+            {"avg_frame_rate": "24/1", "width": 4097, "height": 720},
+            "5.0",
+            "VIDEO_RESULT_DIMENSIONS_EXCEEDED",
+        ),
+        (
+            {"avg_frame_rate": "24/1", "width": 4096, "height": 2161},
+            "5.0",
+            "VIDEO_RESULT_DIMENSIONS_EXCEEDED",
+        ),
+        (
+            {"avg_frame_rate": "24/1", "width": 1280, "height": 720},
+            "61.0",
+            "VIDEO_RESULT_DURATION_EXCEEDED",
+        ),
+        (
+            {"avg_frame_rate": "0/0", "width": 1280, "height": 720},
+            "5.0",
+            "VIDEO_RESULT_INVALID",
+        ),
+    ],
+)
+def test_video_postprocessing_rejects_unsafe_metadata_before_ffmpeg(
+    monkeypatch: pytest.MonkeyPatch,
+    stream: dict[str, object],
+    duration: str,
+    expected_code: str,
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs: Any) -> SimpleNamespace:
+        commands.append(command)
+        return SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "streams": [stream],
+                    "format": {"duration": duration},
+                }
+            )
+        )
+
+    monkeypatch.setattr("app.services.image_service.subprocess.run", fake_run)
+
+    with pytest.raises(MediaResultError) as raised:
+        strip_generated_video_auxiliary_streams(b"synthetic-video")
+
+    assert raised.value.code == expected_code
+    assert [command[0] for command in commands] == ["ffprobe"]
+
+
+def test_video_postprocessing_converts_probe_timeout_to_stable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(command: list[str], **_kwargs: Any) -> SimpleNamespace:
+        raise subprocess.TimeoutExpired(command, timeout=30)
+
+    monkeypatch.setattr("app.services.image_service.subprocess.run", fake_run)
+
+    with pytest.raises(MediaResultError) as raised:
+        strip_generated_video_auxiliary_streams(b"synthetic-video")
+
+    assert raised.value.code == "VIDEO_PROCESS_TIMEOUT"
+
+
+def test_video_postprocessing_converts_ffmpeg_timeout_to_stable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(command: list[str], **_kwargs: Any) -> SimpleNamespace:
+        if command[0] == "ffprobe":
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    {
+                        "streams": [{"avg_frame_rate": "30/1", "width": 1280, "height": 720}],
+                        "format": {"duration": "15.0"},
+                    }
+                )
+            )
+        raise subprocess.TimeoutExpired(command, timeout=180)
+
+    monkeypatch.setattr("app.services.image_service.subprocess.run", fake_run)
+
+    with pytest.raises(MediaResultError) as raised:
+        strip_generated_video_auxiliary_streams(b"synthetic-video")
+
+    assert raised.value.code == "VIDEO_PROCESS_TIMEOUT"
 
 
 @pytest.mark.parametrize(
@@ -202,6 +375,20 @@ def png_bytes(image: Image.Image) -> bytes:
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def png_header_bytes(width: int, height: int) -> bytes:
+    """Build a tiny PNG header declaring dimensions without allocating its pixels."""
+
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        checksum = zlib.crc32(kind + payload) & 0xFFFFFFFF
+        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IEND", b"")
 
 
 def test_normalize_pet_scene_video_frame_bytes_crops_to_seedance_frame() -> None:
@@ -335,6 +522,7 @@ def test_extract_state_strip_cells_splits_horizontal_three_state_strip() -> None
 
 def test_generate_image_bytes_uses_openrouter_image_endpoint(monkeypatch) -> None:
     captured: dict[str, object] = {}
+    result_bytes = png_bytes(Image.new("RGB", (2, 2), (10, 20, 30)))
 
     class FakeResponse:
         def raise_for_status(self):
@@ -343,7 +531,7 @@ def test_generate_image_bytes_uses_openrouter_image_endpoint(monkeypatch) -> Non
         def json(self):
             return {
                 "data": [
-                    {"b64_json": base64.b64encode(b"openrouter-image").decode()},
+                    {"b64_json": base64.b64encode(result_bytes).decode()},
                 ]
             }
 
@@ -373,7 +561,7 @@ def test_generate_image_bytes_uses_openrouter_image_endpoint(monkeypatch) -> Non
 
     result = generate_openrouter_image_bytes("sprite prompt", label="pet_creation/image")
 
-    assert result == b"openrouter-image"
+    assert result == result_bytes
     assert captured["url"] == "https://openrouter.ai/api/v1/images"
     assert captured["timeout"] == 180
     assert captured["headers"] == {
@@ -395,6 +583,7 @@ def test_generate_image_bytes_uses_openrouter_image_endpoint(monkeypatch) -> Non
 
 def test_generate_image_bytes_passes_openrouter_input_references(monkeypatch) -> None:
     captured: dict[str, object] = {}
+    result_bytes = png_bytes(Image.new("RGB", (2, 2), (10, 20, 30)))
 
     class FakeResponse:
         def raise_for_status(self):
@@ -403,7 +592,7 @@ def test_generate_image_bytes_passes_openrouter_input_references(monkeypatch) ->
         def json(self):
             return {
                 "data": [
-                    {"b64_json": base64.b64encode(b"openrouter-image").decode()},
+                    {"b64_json": base64.b64encode(result_bytes).decode()},
                 ]
             }
 
@@ -444,19 +633,26 @@ def test_generate_image_bytes_passes_openrouter_input_references(monkeypatch) ->
         input_references=references,
     )
 
-    assert result == b"openrouter-image"
+    assert result == result_bytes
     assert captured["json"]["input_references"] == references
 
 
 def test_generate_image_bytes_uses_openai_edit_for_input_reference(monkeypatch) -> None:
     captured: dict[str, object] = {}
     reference_bytes = png_bytes(Image.new("RGBA", (32, 32), (20, 140, 70, 255)))
+    result_bytes = png_bytes(Image.new("RGB", (2, 2), (30, 20, 10)))
 
     class FakeDownloadResponse:
-        content = reference_bytes
+        headers = {
+            "content-length": str(len(reference_bytes)),
+            "content-type": "image/png",
+        }
 
         def raise_for_status(self):
             return None
+
+        def iter_bytes(self, **_kwargs):
+            yield reference_bytes
 
     class FakeImages:
         def generate(self, **_kwargs):
@@ -468,10 +664,15 @@ def test_generate_image_bytes_uses_openai_edit_for_input_reference(monkeypatch) 
             captured["reference_name"] = image.name
             captured["reference_bytes"] = image.read()
             return SimpleNamespace(
-                data=[
-                    SimpleNamespace(b64_json=base64.b64encode(b"openai-reference-image").decode())
-                ]
+                data=[SimpleNamespace(b64_json=base64.b64encode(result_bytes).decode())]
             )
+
+    class FakeClient:
+        images = FakeImages()
+
+        def with_options(self, **kwargs):
+            captured["client_options"] = kwargs
+            return self
 
     monkeypatch.setattr(
         "app.services.image_service.get_settings",
@@ -482,19 +683,25 @@ def test_generate_image_bytes_uses_openai_edit_for_input_reference(monkeypatch) 
             openai_image_quality="medium",
             openai_image_output_format="png",
             openai_image_timeout_seconds=180,
+            backend_public_url="https://cdn.example.test",
+            webapp_url=None,
+            backend_internal_url=None,
         ),
     )
     monkeypatch.setattr(
         "app.services.image_service.get_openai_platform_client",
-        lambda: SimpleNamespace(images=FakeImages()),
+        FakeClient,
     )
+
+    @contextmanager
+    def fake_stream(_method: str, url: str, **_kwargs):
+        if url != "https://cdn.example.test/static/generated/assets/baby-happy.png":
+            raise AssertionError(f"unexpected GET {url}")
+        yield FakeDownloadResponse()
+
     monkeypatch.setattr(
-        "app.services.image_service.httpx.get",
-        lambda url, **_kwargs: (
-            FakeDownloadResponse()
-            if url == "https://cdn.example.test/assets/baby-happy.png"
-            else (_ for _ in ()).throw(AssertionError(f"unexpected GET {url}"))
-        ),
+        "app.services.image_service.httpx.stream",
+        fake_stream,
     )
 
     result = generate_openai_image_bytes(
@@ -503,16 +710,19 @@ def test_generate_image_bytes_uses_openai_edit_for_input_reference(monkeypatch) 
         input_references=[
             {
                 "type": "image_url",
-                "image_url": {"url": "https://cdn.example.test/assets/baby-happy.png"},
+                "image_url": {
+                    "url": ("https://cdn.example.test/static/generated/assets/baby-happy.png")
+                },
             }
         ],
     )
 
-    assert result == b"openai-reference-image"
+    assert result == result_bytes
     assert captured["model"] == "gpt-image-2"
     assert captured["prompt"] == "story prompt"
     assert captured["reference_name"] == "reference-1.png"
     assert captured["reference_bytes"] == reference_bytes
+    assert captured["client_options"] == {"max_retries": 0}
 
 
 def test_internal_reference_url_rewrites_only_own_public_origin(monkeypatch) -> None:
@@ -551,18 +761,22 @@ def test_reference_download_falls_back_to_public_url(monkeypatch) -> None:
     )
 
     class PublicResponse:
-        content = b"public-image"
+        headers = {"content-type": "image/png"}
 
         def raise_for_status(self):
             return None
 
-    def fake_get(url: str, **_kwargs):
+        def iter_bytes(self, **_kwargs):
+            yield b"public-image"
+
+    @contextmanager
+    def fake_stream(_method: str, url: str, **_kwargs):
         calls.append(url)
         if url == "http://backend:8000/static/generated/pet/idle.png":
             raise httpx.ConnectError("internal backend unavailable")
-        return PublicResponse()
+        yield PublicResponse()
 
-    monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
 
     assert _reference_image_bytes(public_url) == b"public-image"
     assert calls == [
@@ -571,10 +785,380 @@ def test_reference_download_falls_back_to_public_url(monkeypatch) -> None:
     ]
 
 
+def test_reference_download_rejects_untrusted_url_without_network(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            backend_internal_url="http://backend:8000",
+            backend_public_url="https://gigagochi.example",
+            webapp_url=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.httpx.stream",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not fetch")),
+    )
+
+    with pytest.raises(RuntimeError, match="REFERENCE_IMAGE_URL_UNTRUSTED"):
+        _reference_image_bytes("http://169.254.169.254/latest/meta-data.png")
+
+
+def test_reference_download_rejects_oversized_stream(monkeypatch) -> None:
+    public_url = "https://gigagochi.example/static/generated/pet/idle.png"
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            backend_internal_url=None,
+            backend_public_url="https://gigagochi.example",
+            webapp_url=None,
+        ),
+    )
+
+    class OversizedResponse:
+        headers = {
+            "content-type": "image/png",
+            "content-length": str(REFERENCE_IMAGE_MAX_BYTES + 1),
+        }
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self, **_kwargs):
+            raise AssertionError("oversized response must be rejected before reading")
+
+    @contextmanager
+    def fake_stream(_method: str, _url: str, **_kwargs):
+        yield OversizedResponse()
+
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
+
+    with pytest.raises(RuntimeError, match="REFERENCE_IMAGE_TOO_LARGE"):
+        _reference_image_bytes(public_url)
+
+
+def test_image_result_base64_rejects_oversize_before_decode(monkeypatch) -> None:
+    encoded = base64.b64encode(b"four-bytes")
+    monkeypatch.setattr("app.services.image_service.IMAGE_RESULT_MAX_BYTES", 3)
+    monkeypatch.setattr(
+        "app.services.image_service.base64.b64decode",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not decode")),
+    )
+
+    with pytest.raises(MediaResultError, match="IMAGE_RESULT_TOO_LARGE") as error:
+        _image_result_bytes({"b64_json": encoded})
+
+    assert generation_error_code(error.value) == "IMAGE_RESULT_TOO_LARGE"
+
+
+def test_image_result_base64_validates_then_can_be_reopened() -> None:
+    expected = Image.new("RGB", (2, 3), (12, 34, 56))
+    payload = png_bytes(expected)
+
+    result = _image_result_bytes({"b64_json": base64.b64encode(payload).decode()})
+
+    with Image.open(BytesIO(result)) as reopened:
+        reopened.load()
+        assert reopened.size == (2, 3)
+        assert reopened.getpixel((1, 2)) == (12, 34, 56)
+
+
+def test_image_result_rejects_invalid_image_payload_with_stable_code() -> None:
+    encoded = base64.b64encode(b"not-an-image").decode()
+
+    with pytest.raises(MediaResultError, match="IMAGE_RESULT_INVALID") as error:
+        _image_result_bytes({"b64_json": encoded})
+
+    assert generation_error_code(error.value) == "IMAGE_RESULT_INVALID"
+
+
+@pytest.mark.parametrize(
+    ("width", "height"),
+    [
+        (8193, 1),
+        (5000, 4000),
+        (200_000, 200_000),
+    ],
+)
+def test_image_result_rejects_decompression_bomb_headers_without_pixel_allocation(
+    width: int,
+    height: int,
+) -> None:
+    payload = png_header_bytes(width, height)
+
+    with pytest.raises(MediaResultError, match="IMAGE_RESULT_DIMENSIONS_EXCEEDED") as error:
+        _image_result_bytes({"b64_json": base64.b64encode(payload).decode()})
+
+    assert generation_error_code(error.value) == "IMAGE_RESULT_DIMENSIONS_EXCEEDED"
+
+
+def test_image_result_url_rejects_declared_oversize_before_stream(monkeypatch) -> None:
+    class OversizedResponse:
+        headers = {
+            "content-type": "image/png",
+            "content-length": str(IMAGE_RESULT_MAX_BYTES + 1),
+        }
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self, **_kwargs):
+            raise AssertionError("oversized response must not be read")
+
+    @contextmanager
+    def fake_stream(_method: str, _url: str, **_kwargs):
+        yield OversizedResponse()
+
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
+    monkeypatch.setattr(
+        "app.services.image_service.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))
+        ],
+    )
+
+    with pytest.raises(MediaResultError, match="IMAGE_RESULT_TOO_LARGE"):
+        _image_result_bytes({"url": "https://provider.example/result.png"})
+
+
+def test_image_result_url_rejects_actual_stream_overflow_and_wrong_content_type(
+    monkeypatch,
+) -> None:
+    responses = iter(
+        [
+            SimpleNamespace(
+                headers={"content-type": "image/png"},
+                raise_for_status=lambda: None,
+                iter_bytes=lambda **_kwargs: iter((b"123", b"45")),
+            ),
+            SimpleNamespace(
+                headers={"content-type": "text/html"},
+                raise_for_status=lambda: None,
+                iter_bytes=lambda **_kwargs: (_ for _ in ()).throw(
+                    AssertionError("wrong content type must not be read")
+                ),
+            ),
+        ]
+    )
+
+    @contextmanager
+    def fake_stream(_method: str, _url: str, **_kwargs):
+        yield next(responses)
+
+    monkeypatch.setattr("app.services.image_service.IMAGE_RESULT_MAX_BYTES", 4)
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
+    monkeypatch.setattr(
+        "app.services.image_service.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))
+        ],
+    )
+
+    with pytest.raises(MediaResultError, match="IMAGE_RESULT_TOO_LARGE"):
+        _image_result_bytes({"url": "https://provider.example/streamed.png"})
+    with pytest.raises(MediaResultError, match="IMAGE_RESULT_CONTENT_TYPE_INVALID"):
+        _image_result_bytes({"url": "https://provider.example/not-an-image"})
+
+
+@pytest.mark.parametrize(
+    "image_url",
+    [
+        "http://cdn.example/result.png",
+        "https://user:secret@cdn.example/result.png",
+        "https://127.0.0.1/result.png",
+        "https://8.8.8.8/result.png",
+        "https://10.0.0.7/result.png",
+        "https://169.254.169.254/latest/meta-data",
+        "https://224.0.0.1/result.png",
+        "https://192.0.2.1/result.png",
+        "https://[::1]/result.png",
+        "https://cdn.example:0/result.png",
+    ],
+)
+def test_image_result_url_rejects_unsafe_scheme_credentials_and_ip_literals(
+    monkeypatch,
+    image_url: str,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.image_service.socket.getaddrinfo",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("IP literals and malformed URLs must not resolve DNS")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.httpx.stream",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("unsafe provider URL must not reach HTTP")
+        ),
+    )
+
+    with pytest.raises(MediaResultError, match="IMAGE_RESULT_URL_UNTRUSTED") as error:
+        _image_result_bytes({"url": image_url})
+
+    assert generation_error_code(error.value) == "IMAGE_RESULT_URL_UNTRUSTED"
+
+
+def test_image_result_url_rejects_dns_with_any_non_global_address(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.image_service.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443)),
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 443)),
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.httpx.stream",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("mixed public/private DNS must not reach HTTP")
+        ),
+    )
+
+    with pytest.raises(MediaResultError, match="IMAGE_RESULT_URL_UNTRUSTED"):
+        _image_result_bytes({"url": "https://cdn.example/result.png"})
+
+
+def test_image_result_url_allows_public_cdn_dns_and_keeps_redirects_disabled(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+    result_bytes = png_bytes(Image.new("RGB", (2, 2), (10, 20, 30)))
+
+    class ImageResponse:
+        headers = {"content-type": "image/png"}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self, **_kwargs):
+            yield result_bytes
+
+    def fake_getaddrinfo(hostname: str, port: int, **_kwargs):
+        captured["dns"] = (hostname, port)
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", port)),
+            (
+                socket.AF_INET6,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("2606:4700:4700::1111", port, 0, 0),
+            ),
+        ]
+
+    @contextmanager
+    def fake_stream(method: str, url: str, **kwargs):
+        captured.update(method=method, url=url, kwargs=kwargs)
+        yield ImageResponse()
+
+    monkeypatch.setattr("app.services.image_service.socket.getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
+
+    result = _image_result_bytes({"url": "https://cdn.example:8443/result.png?token=one"})
+
+    assert result == result_bytes
+    assert captured["dns"] == ("cdn.example", 8443)
+    assert captured["url"] == "https://cdn.example:8443/result.png?token=one"
+    assert captured["kwargs"]["follow_redirects"] is False
+
+
+def test_openrouter_video_content_rejects_actual_stream_overflow(monkeypatch) -> None:
+    class StreamResponse:
+        status_code = 200
+        headers = {"content-type": "video/mp4"}
+
+        def iter_bytes(self, **_kwargs):
+            yield b"123"
+            yield b"45"
+
+    @contextmanager
+    def fake_stream(_method: str, _url: str, **_kwargs):
+        yield StreamResponse()
+
+    monkeypatch.setattr("app.services.image_service.VIDEO_RESULT_MAX_BYTES", 4)
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
+    settings = SimpleNamespace(
+        openrouter_api_key="sk-or-test",
+        openrouter_base_url="https://openrouter.ai/api/v1",
+        openrouter_site_url=None,
+        openrouter_app_title=None,
+        backend_public_url=None,
+        webapp_url=None,
+    )
+
+    with pytest.raises(MediaResultError, match="VIDEO_RESULT_TOO_LARGE") as error:
+        _download_openrouter_video_bytes(settings, "video-job")
+
+    assert VIDEO_RESULT_MAX_BYTES == 100 * 1024 * 1024
+    assert generation_error_code(error.value) == "VIDEO_RESULT_TOO_LARGE"
+
+
+def test_kandinsky_result_rejects_declared_oversize_without_buffering(monkeypatch) -> None:
+    class OversizedResponse:
+        status_code = 200
+        headers = {
+            "content-type": "application/octet-stream",
+            "content-length": str(IMAGE_RESULT_MAX_BYTES + 1),
+        }
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self, **_kwargs):
+            raise AssertionError("oversized response must not be read")
+
+    @contextmanager
+    def fake_stream(_method: str, _url: str, **_kwargs):
+        yield OversizedResponse()
+
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
+    settings = SimpleNamespace(
+        kandinsky_api_key="kandinsky-token",
+        kandinsky_base_url="https://studio.kandinskylab.ai/api",
+        openai_image_timeout_seconds=180,
+    )
+
+    with pytest.raises(MediaResultError, match="IMAGE_RESULT_TOO_LARGE"):
+        _kandinsky_download_result(
+            settings,
+            task_id="task-oversized",
+            label="test/image",
+            result_kind="image",
+        )
+
+
+def test_kandinsky_empty_video_result_has_video_specific_error(monkeypatch) -> None:
+    class EmptyVideoResponse:
+        status_code = 200
+        headers = {"content-type": "video/mp4"}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self, **_kwargs):
+            return iter(())
+
+    @contextmanager
+    def fake_stream(_method: str, _url: str, **_kwargs):
+        yield EmptyVideoResponse()
+
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
+    settings = SimpleNamespace(
+        kandinsky_api_key="kandinsky-token",
+        kandinsky_base_url="https://studio.kandinskylab.ai/api",
+        openai_image_timeout_seconds=180,
+    )
+
+    with pytest.raises(RuntimeError, match="KANDINSKY_VIDEO_RESPONSE_EMPTY"):
+        _kandinsky_download_result(
+            settings,
+            task_id="task-empty-video",
+            label="test/video",
+            result_kind="video",
+        )
+
+
 def test_generate_openrouter_image_bytes_uses_openrouter_with_openai_provider(
     monkeypatch,
 ) -> None:
     captured: dict[str, object] = {}
+    result_bytes = png_bytes(Image.new("RGB", (2, 2), (10, 20, 30)))
 
     class FakeResponse:
         def raise_for_status(self):
@@ -583,7 +1167,7 @@ def test_generate_openrouter_image_bytes_uses_openrouter_with_openai_provider(
         def json(self):
             return {
                 "data": [
-                    {"b64_json": base64.b64encode(b"story-image").decode()},
+                    {"b64_json": base64.b64encode(result_bytes).decode()},
                 ]
             }
 
@@ -614,7 +1198,7 @@ def test_generate_openrouter_image_bytes_uses_openrouter_with_openai_provider(
 
     result = generate_openrouter_image_bytes("story prompt", label="background_story/image")
 
-    assert result == b"story-image"
+    assert result == result_bytes
     assert captured["url"] == "https://openrouter.ai/api/v1/images"
     assert captured["headers"]["Authorization"] == "Bearer sk-or-test"
     assert captured["json"] == {
@@ -630,11 +1214,13 @@ def test_generate_openrouter_image_bytes_uses_openrouter_with_openai_provider(
 
 def test_generate_kandinsky_image_bytes_uses_t2i_without_references(monkeypatch) -> None:
     captured: dict[str, object] = {}
+    result_bytes = png_bytes(Image.new("RGB", (2, 2), (10, 20, 30)))
 
     class FakeResponse:
         content = b"kandinsky-image"
         text = ""
         status_code = 200
+        headers = {"content-type": "image/png"}
 
         def __init__(self, payload=None, content: bytes | None = None) -> None:
             self.payload = payload or {}
@@ -647,6 +1233,9 @@ def test_generate_kandinsky_image_bytes_uses_t2i_without_references(monkeypatch)
         def json(self):
             return self.payload
 
+        def iter_bytes(self, **_kwargs):
+            yield self.content
+
     def fake_post(url, **kwargs):
         captured["post_url"] = url
         captured["post"] = kwargs
@@ -655,9 +1244,13 @@ def test_generate_kandinsky_image_bytes_uses_t2i_without_references(monkeypatch)
     def fake_get(url, **kwargs):
         if url.endswith("/tasks/task-1"):
             return FakeResponse({"status": "done"})
-        if url.endswith("/tasks/task-1/result"):
-            return FakeResponse(content=b"kandinsky-image")
         raise AssertionError(f"unexpected GET {url}")
+
+    @contextmanager
+    def fake_stream(_method: str, url: str, **_kwargs):
+        if not url.endswith("/tasks/task-1/result"):
+            raise AssertionError(f"unexpected stream GET {url}")
+        yield FakeResponse(content=result_bytes)
 
     monkeypatch.setattr(
         "app.services.image_service.get_settings",
@@ -673,10 +1266,11 @@ def test_generate_kandinsky_image_bytes_uses_t2i_without_references(monkeypatch)
     )
     monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
     monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
 
     result = generate_kandinsky_image_bytes("story prompt", label="smoke/image")
 
-    assert result == b"kandinsky-image"
+    assert result == result_bytes
     assert captured["post_url"] == "https://studio.kandinskylab.ai/api/tasks/k6-image-t2i"
     assert captured["post"]["headers"] == {
         "Authorization": "Bearer kandinsky-token",
@@ -696,6 +1290,7 @@ def test_generate_kandinsky_video_uses_k5_i2v_hd(monkeypatch) -> None:
     class FakeResponse:
         status_code = 200
         text = ""
+        headers = {"content-type": "video/mp4"}
 
         def __init__(self, payload=None, content: bytes = b"") -> None:
             self.payload = payload or {}
@@ -707,6 +1302,9 @@ def test_generate_kandinsky_video_uses_k5_i2v_hd(monkeypatch) -> None:
         def json(self):
             return self.payload
 
+        def iter_bytes(self, **_kwargs):
+            yield self.content
+
     def fake_post(url, **kwargs):
         captured.update(url=url, request=kwargs)
         return FakeResponse({"task_id": "video-task-1"})
@@ -714,9 +1312,13 @@ def test_generate_kandinsky_video_uses_k5_i2v_hd(monkeypatch) -> None:
     def fake_get(url, **_kwargs):
         if url.endswith("/tasks/video-task-1"):
             return FakeResponse({"status": "done"})
-        if url.endswith("/tasks/video-task-1/result"):
-            return FakeResponse(content=b"kandinsky-video")
         raise AssertionError(f"unexpected GET {url}")
+
+    @contextmanager
+    def fake_stream(_method: str, url: str, **_kwargs):
+        if not url.endswith("/tasks/video-task-1/result"):
+            raise AssertionError(f"unexpected stream GET {url}")
+        yield FakeResponse(content=b"kandinsky-video")
 
     monkeypatch.setattr(
         "app.services.image_service.get_settings",
@@ -731,6 +1333,7 @@ def test_generate_kandinsky_video_uses_k5_i2v_hd(monkeypatch) -> None:
     )
     monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
     monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
 
     result = generate_kandinsky_video_from_image_bytes(
         b"source-image",
@@ -787,10 +1390,12 @@ def test_compact_kandinsky_prompt_applies_collectible_style_frame() -> None:
 
 def test_generate_kandinsky_image_bytes_uses_i2i_with_reference(monkeypatch) -> None:
     captured: dict[str, object] = {}
+    result_bytes = png_bytes(Image.new("RGB", (2, 2), (10, 20, 30)))
 
     class FakeResponse:
         text = ""
         status_code = 200
+        headers = {"content-type": "image/png"}
 
         def __init__(self, payload=None, content: bytes = b"") -> None:
             self.payload = payload or {}
@@ -802,18 +1407,27 @@ def test_generate_kandinsky_image_bytes_uses_i2i_with_reference(monkeypatch) -> 
         def json(self):
             return self.payload
 
+        def iter_bytes(self, **_kwargs):
+            yield self.content
+
     def fake_post(url, **kwargs):
         captured["post_url"] = url
         captured["post"] = kwargs
         return FakeResponse({"task_id": "task-2"})
 
     def fake_get(url, **kwargs):
-        if url == "https://cdn.example.test/pet.png":
-            return FakeResponse(content=b"sprite-image")
         if url.endswith("/tasks/task-2"):
             return FakeResponse({"status": "done"})
+        raise AssertionError(f"unexpected GET {url}")
+
+    @contextmanager
+    def fake_stream(_method: str, url: str, **_kwargs):
+        if url == "https://cdn.example.test/static/generated/pet/idle.png":
+            yield FakeResponse(content=b"sprite-image")
+            return
         if url.endswith("/tasks/task-2/result"):
-            return FakeResponse(content=b"kandinsky-i2i-image")
+            yield FakeResponse(content=result_bytes)
+            return
         raise AssertionError(f"unexpected GET {url}")
 
     monkeypatch.setattr(
@@ -826,10 +1440,14 @@ def test_generate_kandinsky_image_bytes_uses_i2i_with_reference(monkeypatch) -> 
             kandinsky_image_resolution="1280x768",
             kandinsky_poll_interval_seconds=1,
             openai_image_timeout_seconds=180,
+            backend_public_url="https://cdn.example.test",
+            webapp_url=None,
+            backend_internal_url=None,
         ),
     )
     monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
     monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
 
     result = generate_kandinsky_image_bytes(
         "story prompt",
@@ -837,12 +1455,12 @@ def test_generate_kandinsky_image_bytes_uses_i2i_with_reference(monkeypatch) -> 
         input_references=[
             {
                 "type": "image_url",
-                "image_url": {"url": "https://cdn.example.test/pet.png"},
+                "image_url": {"url": "https://cdn.example.test/static/generated/pet/idle.png"},
             }
         ],
     )
 
-    assert result == b"kandinsky-i2i-image"
+    assert result == result_bytes
     assert captured["post_url"] == "https://studio.kandinskylab.ai/api/tasks/k6-i2i"
     assert captured["post"]["json"] == {
         "params": {
@@ -878,12 +1496,15 @@ def test_kandinsky_reference_is_resized_and_compressed_before_base64(monkeypatch
         assert max(image.size) == 1024
 
 
-def test_generate_kandinsky_image_bytes_retries_create_timeout(monkeypatch) -> None:
+def test_generate_kandinsky_image_bytes_does_not_retry_ambiguous_create_timeout(
+    monkeypatch,
+) -> None:
     post_calls: list[dict[str, object]] = []
 
     class FakeResponse:
         text = ""
         status_code = 200
+        headers = {"content-type": "image/png"}
 
         def __init__(self, payload=None, content: bytes = b"") -> None:
             self.payload = payload or {}
@@ -895,19 +1516,26 @@ def test_generate_kandinsky_image_bytes_retries_create_timeout(monkeypatch) -> N
         def json(self):
             return self.payload
 
+        def iter_bytes(self, **_kwargs):
+            yield self.content
+
     def fake_post(url, **kwargs):
         post_calls.append({"url": url, **kwargs})
-        if len(post_calls) == 1:
-            raise httpx.ReadTimeout("slow kandinsky create")
-        return FakeResponse({"task_id": "task-retry"})
+        raise httpx.ReadTimeout("slow kandinsky create")
 
     def fake_get(url, **kwargs):
-        if url == "https://cdn.example.test/pet.png":
-            return FakeResponse(content=b"sprite-image")
         if url.endswith("/tasks/task-retry"):
             return FakeResponse({"status": "done"})
+        raise AssertionError(f"unexpected GET {url}")
+
+    @contextmanager
+    def fake_stream(_method: str, url: str, **_kwargs):
+        if url == "https://cdn.example.test/static/generated/pet/idle.png":
+            yield FakeResponse(content=b"sprite-image")
+            return
         if url.endswith("/tasks/task-retry/result"):
-            return FakeResponse(content=b"kandinsky-retry-image")
+            yield FakeResponse(content=b"kandinsky-retry-image")
+            return
         raise AssertionError(f"unexpected GET {url}")
 
     monkeypatch.setattr(
@@ -920,36 +1548,81 @@ def test_generate_kandinsky_image_bytes_retries_create_timeout(monkeypatch) -> N
             kandinsky_image_resolution="1280x768",
             kandinsky_poll_interval_seconds=1,
             openai_image_timeout_seconds=180,
+            backend_public_url="https://cdn.example.test",
+            webapp_url=None,
+            backend_internal_url=None,
         ),
     )
     monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
     monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
     monkeypatch.setattr("app.services.image_service.time.sleep", lambda _seconds: None)
 
-    result = generate_kandinsky_image_bytes(
-        "story prompt",
-        label="background_story/image",
-        input_references=[
-            {
-                "type": "image_url",
-                "image_url": {"url": "https://cdn.example.test/pet.png"},
-            }
-        ],
+    with pytest.raises(httpx.ReadTimeout):
+        generate_kandinsky_image_bytes(
+            "story prompt",
+            label="background_story/image",
+            input_references=[
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://cdn.example.test/static/generated/pet/idle.png"},
+                }
+            ],
+        )
+
+    assert len(post_calls) == 1
+    assert post_calls[0]["timeout"] == 180
+
+
+def test_kandinsky_create_retries_pre_send_connect_failure(monkeypatch) -> None:
+    post_calls = 0
+    retry_delays: list[float] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"task_id": "task-after-connect-retry"}
+
+    def fake_post(*_args, **_kwargs):
+        nonlocal post_calls
+        post_calls += 1
+        if post_calls == 1:
+            raise httpx.ConnectError("connection was not established")
+        return FakeResponse()
+
+    settings = SimpleNamespace(
+        kandinsky_api_key="kandinsky-token",
+        kandinsky_base_url="https://studio.kandinskylab.ai/api",
+        openai_image_timeout_seconds=180,
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
+
+    task_id = _kandinsky_create_task(
+        settings,
+        task_type="k6-image-t2i",
+        params={"query": "synthetic prompt"},
+        label="test/image",
     )
 
-    assert result == b"kandinsky-retry-image"
-    assert len(post_calls) == 2
-    assert post_calls[0]["timeout"] == 180
-    assert post_calls[1]["timeout"] == 180
+    assert task_id == "task-after-connect-retry"
+    assert post_calls == 2
+    assert retry_delays == [3.0]
 
 
 def test_generate_kandinsky_image_bytes_retries_transient_censor_result(monkeypatch) -> None:
     result_calls = 0
     retry_delays: list[float] = []
+    result_bytes = png_bytes(Image.new("RGB", (2, 2), (10, 20, 30)))
 
     class FakeResponse:
         status_code = 200
         text = ""
+        headers = {"content-type": "image/png"}
 
         def __init__(self, payload=None, content: bytes = b"") -> None:
             self.payload = payload or {}
@@ -961,9 +1634,15 @@ def test_generate_kandinsky_image_bytes_retries_transient_censor_result(monkeypa
         def json(self):
             return self.payload
 
+        def iter_bytes(self, **_kwargs):
+            yield self.content
+
     class CensorUnavailableResponse(FakeResponse):
         status_code = 422
         text = '{"detail":"output censor service unavailable: GigaChat returned no response"}'
+
+        def __init__(self) -> None:
+            super().__init__(content=self.text.encode())
 
         def raise_for_status(self):
             request = httpx.Request("GET", "https://studio.test/tasks/task-3/result")
@@ -971,15 +1650,20 @@ def test_generate_kandinsky_image_bytes_retries_transient_censor_result(monkeypa
             raise httpx.HTTPStatusError("censor unavailable", request=request, response=response)
 
     def fake_get(url, **_kwargs):
-        nonlocal result_calls
         if url.endswith("/tasks/task-3"):
             return FakeResponse({"status": "done"})
-        if url.endswith("/tasks/task-3/result"):
-            result_calls += 1
-            if result_calls == 1:
-                return CensorUnavailableResponse()
-            return FakeResponse(content=b"kandinsky-image")
         raise AssertionError(f"unexpected GET {url}")
+
+    @contextmanager
+    def fake_stream(_method: str, url: str, **_kwargs):
+        nonlocal result_calls
+        if not url.endswith("/tasks/task-3/result"):
+            raise AssertionError(f"unexpected stream GET {url}")
+        result_calls += 1
+        if result_calls == 1:
+            yield CensorUnavailableResponse()
+            return
+        yield FakeResponse(content=result_bytes)
 
     monkeypatch.setattr(
         "app.services.image_service.get_settings",
@@ -998,11 +1682,12 @@ def test_generate_kandinsky_image_bytes_retries_transient_censor_result(monkeypa
         lambda _url, **_kwargs: FakeResponse({"task_id": "task-3"}),
     )
     monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
     monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
 
     result = generate_kandinsky_image_bytes("short prompt", label="smoke/image")
 
-    assert result == b"kandinsky-image"
+    assert result == result_bytes
     assert result_calls == 2
     assert retry_delays == [3.0]
 
@@ -1056,9 +1741,13 @@ def test_generate_openrouter_video_bytes_uses_fixed_aspect_ratio(monkeypatch, tm
     class FakeContentResponse:
         status_code = 200
         content = b"video-bytes"
+        headers = {"content-type": "video/mp4"}
 
         def json(self):
             return {}
+
+        def iter_bytes(self, **_kwargs):
+            yield self.content
 
     def fake_post(url, *, headers, json, timeout):
         captured["url"] = url
@@ -1069,9 +1758,14 @@ def test_generate_openrouter_video_bytes_uses_fixed_aspect_ratio(monkeypatch, tm
 
     def fake_get(url, *, headers, timeout):
         captured.setdefault("get_urls", []).append(url)
-        if url.endswith("/content"):
-            return FakeContentResponse()
         return FakePollResponse()
+
+    @contextmanager
+    def fake_stream(_method: str, url: str, **_kwargs):
+        captured.setdefault("get_urls", []).append(url)
+        if not url.endswith("/content"):
+            raise AssertionError(f"unexpected stream GET {url}")
+        yield FakeContentResponse()
 
     monkeypatch.setattr(
         "app.services.image_service.get_settings",
@@ -1089,6 +1783,7 @@ def test_generate_openrouter_video_bytes_uses_fixed_aspect_ratio(monkeypatch, tm
     )
     monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
     monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
 
     result = generate_openrouter_video_bytes(source_path, label="pet_creation/scene_video")
 
@@ -1104,7 +1799,9 @@ def test_generate_openrouter_video_bytes_uses_fixed_aspect_ratio(monkeypatch, tm
     )
 
 
-def test_generate_openrouter_video_bytes_retries_server_error(monkeypatch, tmp_path) -> None:
+def test_generate_openrouter_video_bytes_does_not_retry_ambiguous_server_error(
+    monkeypatch, tmp_path
+) -> None:
     source_path = tmp_path / "teen-idle.png"
     source_path.write_bytes(png_bytes(Image.new("RGB", (720, 1280), (20, 140, 70))))
     post_statuses = [500, 200]
@@ -1112,6 +1809,7 @@ def test_generate_openrouter_video_bytes_retries_server_error(monkeypatch, tmp_p
 
     class FakeResponse:
         content = b""
+        headers = {"content-type": "video/mp4"}
 
         def __init__(self, status_code: int, payload: dict[str, object]) -> None:
             self.status_code = status_code
@@ -1120,17 +1818,24 @@ def test_generate_openrouter_video_bytes_retries_server_error(monkeypatch, tmp_p
         def json(self):
             return self.payload
 
+        def iter_bytes(self, **_kwargs):
+            yield self.content
+
     def fake_post(*_args, **_kwargs):
         status_code = post_statuses.pop(0)
         payload = {"id": "video-job-1"} if status_code == 200 else {"error": "temporary"}
         return FakeResponse(status_code, payload)
 
     def fake_get(url, **_kwargs):
-        if url.endswith("/content"):
-            response = FakeResponse(200, {})
-            response.content = b"video-bytes"
-            return response
         return FakeResponse(200, {"status": "completed"})
+
+    @contextmanager
+    def fake_stream(_method: str, url: str, **_kwargs):
+        if not url.endswith("/content"):
+            raise AssertionError(f"unexpected stream GET {url}")
+        response = FakeResponse(200, {})
+        response.content = b"video-bytes"
+        yield response
 
     monkeypatch.setattr(
         "app.services.image_service.get_settings",
@@ -1148,12 +1853,72 @@ def test_generate_openrouter_video_bytes_retries_server_error(monkeypatch, tmp_p
     )
     monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
     monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
     monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
 
-    result = generate_openrouter_video_bytes(source_path, label="pet_creation/scene_video")
+    with pytest.raises(RuntimeError, match="status=500"):
+        generate_openrouter_video_bytes(source_path, label="pet_creation/scene_video")
 
-    assert result == b"video-bytes"
-    assert post_statuses == []
+    assert post_statuses == [200]
+    assert retry_delays == []
+
+
+def test_openrouter_video_submit_does_not_retry_ambiguous_read_timeout(monkeypatch) -> None:
+    post_calls = 0
+    retry_delays: list[float] = []
+
+    def fake_post(*_args, **_kwargs):
+        nonlocal post_calls
+        post_calls += 1
+        raise httpx.ReadTimeout("response timed out after request write")
+
+    settings = SimpleNamespace(
+        openrouter_api_key="sk-or-test",
+        openai_api_key=None,
+        openrouter_base_url="https://openrouter.ai/api/v1",
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
+
+    with pytest.raises(httpx.ReadTimeout):
+        _submit_openrouter_video_job(
+            settings,
+            {"model": "test/video", "prompt": "synthetic prompt"},
+            label="test/video",
+        )
+
+    assert post_calls == 1
+    assert retry_delays == []
+
+
+def test_openrouter_video_submit_retries_pre_send_connect_failure(monkeypatch) -> None:
+    post_calls = 0
+    retry_delays: list[float] = []
+    success = SimpleNamespace(status_code=200)
+
+    def fake_post(*_args, **_kwargs):
+        nonlocal post_calls
+        post_calls += 1
+        if post_calls == 1:
+            raise httpx.ConnectError("connection was not established")
+        return success
+
+    settings = SimpleNamespace(
+        openrouter_api_key="sk-or-test",
+        openai_api_key=None,
+        openrouter_base_url="https://openrouter.ai/api/v1",
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
+
+    response = _submit_openrouter_video_job(
+        settings,
+        {"model": "test/video", "prompt": "synthetic prompt"},
+        label="test/video",
+    )
+
+    assert response is success
+    assert post_calls == 2
     assert retry_delays == [1.0]
 
 
@@ -1166,6 +1931,7 @@ def test_generate_openrouter_video_bytes_retries_poll_errors(monkeypatch, tmp_pa
 
     class FakeResponse:
         content = b""
+        headers = {"content-type": "video/mp4"}
 
         def __init__(self, status_code: int, payload: dict[str, object]) -> None:
             self.status_code = status_code
@@ -1173,6 +1939,9 @@ def test_generate_openrouter_video_bytes_retries_poll_errors(monkeypatch, tmp_pa
 
         def json(self):
             return self.payload
+
+        def iter_bytes(self, **_kwargs):
+            yield self.content
 
     def fake_post(*_args, **_kwargs):
         return FakeResponse(
@@ -1186,13 +1955,18 @@ def test_generate_openrouter_video_bytes_retries_poll_errors(monkeypatch, tmp_pa
 
     def fake_get(url, **_kwargs):
         requested_urls.append(url)
-        if url.endswith("/content"):
-            response = FakeResponse(200, {})
-            response.content = b"video-bytes"
-            return response
         status_code = poll_statuses.pop(0)
         payload = {"status": "completed"} if status_code == 200 else {"error": "temporary"}
         return FakeResponse(status_code, payload)
+
+    @contextmanager
+    def fake_stream(_method: str, url: str, **_kwargs):
+        requested_urls.append(url)
+        if not url.endswith("/content"):
+            raise AssertionError(f"unexpected stream GET {url}")
+        response = FakeResponse(200, {})
+        response.content = b"video-bytes"
+        yield response
 
     monkeypatch.setattr(
         "app.services.image_service.get_settings",
@@ -1210,6 +1984,7 @@ def test_generate_openrouter_video_bytes_retries_poll_errors(monkeypatch, tmp_pa
     )
     monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
     monkeypatch.setattr("app.services.image_service.httpx.get", fake_get)
+    monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
     monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
 
     result = generate_openrouter_video_bytes(source_path, label="pet_creation/scene_video")
@@ -1218,6 +1993,22 @@ def test_generate_openrouter_video_bytes_retries_poll_errors(monkeypatch, tmp_pa
     assert poll_statuses == []
     assert retry_delays == [1.0, 2.0]
     assert requested_urls[:3] == ["https://openrouter.ai/api/v1/videos/video-job-1"] * 3
+
+
+def test_openrouter_polling_url_must_keep_provider_origin() -> None:
+    settings = SimpleNamespace(
+        openrouter_base_url="https://openrouter.ai/api/v1",
+    )
+
+    assert (
+        _trusted_openrouter_polling_url(
+            settings,
+            "/api/v1/videos/video-job-1",
+        )
+        == "https://openrouter.ai/api/v1/videos/video-job-1"
+    )
+    with pytest.raises(RuntimeError, match="OPENROUTER_VIDEO_POLL_URL_UNTRUSTED"):
+        _trusted_openrouter_polling_url(settings, "https://attacker.example/steal-token")
 
 
 def test_align_sprite_to_reference_canvas_matches_reference_bbox(tmp_path) -> None:
@@ -1326,16 +2117,16 @@ def test_generate_pet_asset_set_generates_idle_scene(monkeypatch, tmp_path) -> N
 
     monkeypatch.setattr("app.services.image_service.build_pet_single_sprite_prompt", fake_prompt)
     monkeypatch.setattr(
-        "app.services.image_service.generate_image_bytes",
-        fake_image_bytes,
+        "app.services.image_service.reserve_single_sprite_image_bytes",
+        _reserved(fake_image_bytes),
     )
     monkeypatch.setattr(
-        "app.services.image_service.generate_pet_scene_image_bytes",
-        fake_scene_bytes,
+        "app.services.image_service.reserve_pet_scene_image_bytes",
+        _reserved(fake_scene_bytes),
     )
     monkeypatch.setattr(
-        "app.services.image_service.generate_pet_scene_video_bytes",
-        lambda source_path: video_sources.append(source_path.name) or b"video-bytes",
+        "app.services.image_service.reserve_pet_scene_video_bytes",
+        _reserved(lambda source_path: video_sources.append(source_path.name) or b"video-bytes"),
     )
     result = generate_pet_asset_set("электрический дракон")
 
@@ -1344,6 +2135,7 @@ def test_generate_pet_asset_set_generates_idle_scene(monkeypatch, tmp_path) -> N
     assert video_sources == ["teen-idle.png"]
     assert sorted(path.name for path in next(tmp_path.iterdir()).iterdir()) == [
         "teen-idle-character.png",
+        "teen-idle-foreground.png",
         "teen-idle.mp4",
         "teen-idle.png",
     ]
@@ -1400,14 +2192,17 @@ def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, t
         refinement_calls.append((prompt, [path.name for path in source_paths], label, size))
         return png_bytes(Image.new("RGB", (1024, 1536), (70, 80, 90)))
 
-    monkeypatch.setattr("app.services.image_service.generate_image_edit_bytes", fake_image_edit)
     monkeypatch.setattr(
-        "app.services.image_service.generate_multi_image_edit_bytes",
-        fake_multi_image_edit,
+        "app.services.image_service.reserve_image_edit_bytes",
+        _reserved(fake_image_edit),
     )
     monkeypatch.setattr(
-        "app.services.image_service.generate_pet_scene_video_bytes",
-        fake_video_bytes,
+        "app.services.image_service.reserve_multi_image_edit_bytes",
+        _reserved(fake_multi_image_edit),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.reserve_pet_scene_video_bytes",
+        _reserved(fake_video_bytes),
     )
 
     sad_scene_path = generate_pet_sad_scene_path(image_set)
@@ -1468,14 +2263,17 @@ def test_generate_happy_assets_preserve_scene_and_reuse_normal_blink_prompt(
         refinement_calls.append((prompt, [path.name for path in source_paths], label, size))
         return png_bytes(Image.new("RGB", (1024, 1536), (70, 80, 90)))
 
-    monkeypatch.setattr("app.services.image_service.generate_image_edit_bytes", fake_image_edit)
     monkeypatch.setattr(
-        "app.services.image_service.generate_multi_image_edit_bytes",
-        fake_multi_image_edit,
+        "app.services.image_service.reserve_image_edit_bytes",
+        _reserved(fake_image_edit),
     )
     monkeypatch.setattr(
-        "app.services.image_service.generate_pet_scene_video_bytes",
-        fake_video_bytes,
+        "app.services.image_service.reserve_multi_image_edit_bytes",
+        _reserved(fake_multi_image_edit),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.reserve_pet_scene_video_bytes",
+        _reserved(fake_video_bytes),
     )
 
     happy_scene_path = generate_pet_happy_scene_path(image_set)
@@ -1632,16 +2430,21 @@ def test_generate_individual_sprite_paths_retries_safety_prompt_on_rejection(
         draw.rectangle((30, 30, 70, 70), fill=(20, 140, 70, 255))
         return png_bytes(image)
 
-    monkeypatch.setattr("app.services.image_service.generate_image_bytes", fake_image_bytes)
     monkeypatch.setattr(
-        "app.services.image_service.generate_pet_scene_image_bytes",
-        lambda _source_path, **_kwargs: png_bytes(
-            Image.new("RGBA", (100, 100), (255, 255, 255, 0))
+        "app.services.image_service.reserve_single_sprite_image_bytes",
+        _reserved(fake_image_bytes),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.reserve_pet_scene_image_bytes",
+        _reserved(
+            lambda _source_path, **_kwargs: png_bytes(
+                Image.new("RGBA", (100, 100), (255, 255, 255, 0))
+            )
         ),
     )
     monkeypatch.setattr(
-        "app.services.image_service.generate_pet_scene_video_bytes",
-        lambda _source_path: b"video-bytes",
+        "app.services.image_service.reserve_pet_scene_video_bytes",
+        _reserved(lambda _source_path: b"video-bytes"),
     )
     result, video_path = generate_individual_sprite_paths(
         uuid.uuid4(),
@@ -1670,21 +2473,26 @@ def test_generate_individual_sprite_paths_requires_video(monkeypatch, tmp_path) 
         lambda *_args, **_kwargs: "single:teen:idle",
     )
     monkeypatch.setattr(
-        "app.services.image_service.generate_image_bytes",
-        lambda _prompt, **_kwargs: png_bytes(Image.new("RGBA", (100, 100), (20, 140, 70, 255))),
-    )
-    monkeypatch.setattr(
-        "app.services.image_service.generate_pet_scene_image_bytes",
-        lambda _source_path, **_kwargs: png_bytes(
-            Image.new("RGBA", (100, 100), (40, 90, 190, 255))
+        "app.services.image_service.reserve_single_sprite_image_bytes",
+        _reserved(
+            lambda _prompt, **_kwargs: png_bytes(Image.new("RGBA", (100, 100), (20, 140, 70, 255)))
         ),
     )
+    monkeypatch.setattr(
+        "app.services.image_service.reserve_pet_scene_image_bytes",
+        _reserved(
+            lambda _source_path, **_kwargs: png_bytes(
+                Image.new("RGBA", (100, 100), (40, 90, 190, 255))
+            )
+        ),
+    )
+
     def fail_video(_source_path):
         raise RuntimeError("provider unavailable")
 
     monkeypatch.setattr(
-        "app.services.image_service.generate_pet_scene_video_bytes",
-        fail_video,
+        "app.services.image_service.reserve_pet_scene_video_bytes",
+        _reserved(fail_video),
     )
 
     with pytest.raises(RuntimeError, match="provider unavailable"):
@@ -1873,8 +2681,8 @@ def test_character_bible_prompt_requests_species_specific_lore() -> None:
     assert "Never use a fixed default name or a generic placeholder" in prompt
     assert "identity.name must always contain the creature's initial display name" in prompt
     assert "openings.first_message is the creature's first meeting with the user" in prompt
-    assert "it says its identity.name in its own established voice" in prompt
-    assert "invites the user to introduce themselves or tell something about themselves" in prompt
+    assert "it says its identity.name and invites the user to introduce themselves" in prompt
+    assert "Do not apply voice, personality mannerisms, catchphrases" in prompt
     assert "Do not default to the same" not in prompt
     assert "storybook logic" not in prompt
     assert "короткие просьбы" not in prompt

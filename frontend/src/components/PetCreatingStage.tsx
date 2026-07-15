@@ -1,22 +1,71 @@
 "use client";
 
-import { ImageGeneration, type ImageGenerationHandle } from "img-fx";
-import { useRef } from "react";
+import dynamic from "next/dynamic";
+import { useSyncExternalStore } from "react";
+
+const ImageGeneration = dynamic(
+  () => import("img-fx").then((module) => module.ImageGeneration),
+  {
+    ssr: false,
+    loading: () => <div style={{ width: 280, height: 280, borderRadius: 16 }} />,
+  },
+);
 
 type PetCreatingStageProps = {
   overlay?: boolean;
 };
 
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+function subscribeReducedMotion(onStoreChange: () => void) {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return () => undefined;
+  }
+  const query = window.matchMedia(REDUCED_MOTION_QUERY);
+  if (typeof query.addEventListener === "function") {
+    query.addEventListener("change", onStoreChange);
+    return () => query.removeEventListener("change", onStoreChange);
+  }
+  query.addListener(onStoreChange);
+  return () => query.removeListener(onStoreChange);
+}
+
+function reducedMotionSnapshot() {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia(REDUCED_MOTION_QUERY).matches;
+}
+
 function CreationLoaderCard() {
-  const ref = useRef<ImageGenerationHandle>(null);
+  const reducedMotion = useSyncExternalStore(
+    subscribeReducedMotion,
+    reducedMotionSnapshot,
+    () => false,
+  );
+
+  if (reducedMotion) {
+    return (
+      <div
+        className="creation-loader-card"
+        data-creation-loader-static="true"
+        style={{
+          width: 280,
+          height: 280,
+          borderRadius: 16,
+          background: "center / contain no-repeat url('/figma/main-pet.png')",
+        }}
+        aria-hidden="true"
+      />
+    );
+  }
 
   return (
     <ImageGeneration
-      ref={ref}
       preset="pixels-organic"
       strength={1.0}
       images={["/figma/main-pet.png", "/figma/pet.png"]}
       className="creation-loader-card"
+      paused={false}
       aria-hidden="true"
     >
       <div style={{ width: 280, height: 280, borderRadius: 16 }} />
@@ -47,7 +96,7 @@ export function PetCreatingStage({ overlay = false }: PetCreatingStageProps) {
         </p>
       </div>
 
-      <p className="creation-loader-notice absolute inset-x-[28px] bottom-[calc(var(--tma-safe-bottom)+32px)] z-[1] text-center text-[15px] leading-[20px] text-white/50">
+      <p className="creation-loader-notice absolute inset-x-[28px] bottom-[calc(var(--tma-safe-bottom)+32px)] z-10 text-center text-[15px] leading-[20px] text-pretty text-white/50">
         Мы пришлем уведомление, когда персонаж будет готов
       </p>
     </section>

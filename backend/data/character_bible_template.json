@@ -42,7 +42,7 @@
       "world.home must be a concrete physical place where the creature can live, never its body material or a fragment copied from its appearance.",
       "genesis.appetite must describe something the creature can physically consume or seek and must fit its body and habitat.",
       "roleplay_contract answers common identity questions in first person.",
-      "openings.first_message is the creature's first meeting with the user: in 1-2 short natural sentences, it says its identity.name in its own established voice and warmly invites the user to introduce themselves or tell something about themselves. Do not use assistant language, a generic template, or mention character creation.",
+      "openings.first_message is the creature's first meeting with the user: in 1-2 compact neutral sentences, it says its identity.name and invites the user to introduce themselves. Do not apply voice, personality mannerisms, catchphrases, assistant language, or mention character creation.",
       "voice.sample_replies: 5-8 short Russian replies that demonstrate its voice.",
       "lorebook_entries: 3-5 triggerable facts with keys/content only."
     ]

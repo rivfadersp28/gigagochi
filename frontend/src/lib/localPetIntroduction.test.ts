@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { claimPetIntroduction } from "./localPetIntroduction";
+import { claimPetIntroduction, clearPetIntroduction } from "./localPetIntroduction";
 import type { LocalPetState } from "./types";
 
 function pet(overrides: Partial<LocalPetState> = {}): LocalPetState {
@@ -40,36 +40,71 @@ describe("claimPetIntroduction", () => {
     window.localStorage.clear();
   });
 
-  it("returns the generated introduction exactly once per pet", () => {
-    expect(claimPetIntroduction(pet())).toBe("Привет, я Листик. Побудешь рядом?");
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns a neutral introduction exactly once per pet", () => {
+    expect(claimPetIntroduction(pet())).toBe("Я Листик. Как тебя зовут?");
     expect(claimPetIntroduction(pet())).toBeNull();
     expect(claimPetIntroduction(pet({ petId: "pet-2" }))).toBe(
-      "Привет, я Листик. Побудешь рядом?",
+      "Я Листик. Как тебя зовут?",
     );
   });
 
-  it("falls back to the immutable template opening", () => {
-    const state = pet();
+  it("falls back to the immutable template name", () => {
+    const state = pet({ name: undefined });
     if (!state.assetSet) throw new Error("assetSet is required by the fixture");
     state.assetSet.characterBible = {};
     state.assetSet.characterTemplate = {
+      identity: { name: "Листик" },
       openings: { first_message: "Я Листик. Кажется, я только что появился" },
     };
 
-    expect(claimPetIntroduction(state)).toBe("Я Листик. Кажется, я только что появился");
+    expect(claimPetIntroduction(state)).toBe("Я Листик. Как тебя зовут?");
   });
 
-  it("does not consume the marker when no generated opening exists", () => {
-    const state = pet();
+  it("uses a neutral nameless introduction when no name exists", () => {
+    const state = pet({ name: undefined });
     if (!state.assetSet) throw new Error("assetSet is required by the fixture");
     state.assetSet.characterBible = {};
 
+    expect(claimPetIntroduction(state)).toBe("Как тебя зовут?");
     expect(claimPetIntroduction(state)).toBeNull();
-    state.assetSet.characterBible = { openings: { first_message: "Я здесь" } };
-    expect(claimPetIntroduction(state)).toBe("Я здесь");
   });
 
   it("treats pets saved before the feature as already introduced", () => {
     expect(claimPetIntroduction(pet({ introductionPending: undefined }))).toBeNull();
+  });
+
+  it("falls back to a session one-shot when WebView storage is unavailable", () => {
+    const getItem = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("storage unavailable", "SecurityError");
+    });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("storage unavailable", "SecurityError");
+    });
+    const state = pet({ petId: "storage-blocked-pet" });
+
+    expect(claimPetIntroduction(state)).toBe("Я Листик. Как тебя зовут?");
+    expect(claimPetIntroduction(state)).toBeNull();
+
+    getItem.mockRestore();
+    setItem.mockRestore();
+    expect(claimPetIntroduction(state)).toBeNull();
+    expect(
+      window.localStorage.getItem("tamagochi:v1:introduction-shown:storage-blocked-pet"),
+    ).toBe("1");
+  });
+
+  it("removes a persisted introduction claim during pet cleanup", () => {
+    const state = pet({ petId: "pet-cleanup" });
+    expect(claimPetIntroduction(state)).not.toBeNull();
+
+    clearPetIntroduction(state.petId);
+
+    expect(
+      window.localStorage.getItem("tamagochi:v1:introduction-shown:pet-cleanup"),
+    ).toBeNull();
   });
 });

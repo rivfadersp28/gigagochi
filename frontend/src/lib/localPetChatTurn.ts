@@ -8,6 +8,8 @@ import {
   appendLocalChatMessages,
   createLocalId,
   readLocalChatHistory,
+  readLocalPetState,
+  removeLocalChatMessages,
 } from "./localPetStorage";
 import { extractDeterministicMemoryOperations } from "./localPetDeterministicMemory";
 import { readComplimentHistory, rememberCompliment } from "./localPetCompliments";
@@ -20,6 +22,10 @@ import {
   writeLocalPetMemory,
 } from "./localPetMemoryStorage";
 import { buildMemoryContextForMessage } from "./localPetMemoryRecall";
+import {
+  type LocalPetMutationGuard,
+  withLocalPetMutationLock,
+} from "./localPetMutationLock";
 import {
   recordLiteOverlayPatchDebug,
   recordMemoryConsolidationDebug,
@@ -49,12 +55,21 @@ type RunLocalPetChatTurnOptions = {
   history?: LocalChatMessage[];
   logLabel: string;
   onHistoryChange?: (messages: LocalChatMessage[]) => void;
-  onLiteOverlayPatch?: (patch: Record<string, unknown>) => void;
+  onLiteOverlayPatch?: (patch: Record<string, unknown>, expectedPetId: string) => void;
 };
 
-const pendingPostReplyMemory = new Map<string, Promise<void>>();
+export class LocalPetTurnSupersededError extends Error {
+  constructor() {
+    super("Local pet changed while the chat turn was in progress.");
+    this.name = "LocalPetTurnSupersededError";
+  }
+}
 
-async function waitForPendingPostReplyMemory(petId: string) {
+const pendingPostReplyMemory = new Map<string, Promise<void>>();
+const pendingPostReplyMemoryDepth = new Map<string, number>();
+const MAX_PENDING_POST_REPLY_MEMORY_PER_PET = 4;
+
+export async function waitForLocalPetPostReplyMemory(petId: string) {
   await pendingPostReplyMemory.get(petId);
 }
 
@@ -62,15 +77,29 @@ function enqueuePostReplyMemory(
   petId: string,
   task: () => Promise<void>,
   onError: (error: unknown) => void,
-) {
+): boolean {
+  const depth = pendingPostReplyMemoryDepth.get(petId) ?? 0;
+  if (depth >= MAX_PENDING_POST_REPLY_MEMORY_PER_PET) {
+    return false;
+  }
+  pendingPostReplyMemoryDepth.set(petId, depth + 1);
   const previous = pendingPostReplyMemory.get(petId) ?? Promise.resolve();
-  const pending = previous.then(task).catch(onError);
+  const pending = previous
+    .then(task)
+    .catch(onError)
+    .finally(() => {
+      const nextDepth = Math.max(0, (pendingPostReplyMemoryDepth.get(petId) ?? 1) - 1);
+      if (nextDepth === 0) {
+        pendingPostReplyMemoryDepth.delete(petId);
+      } else {
+        pendingPostReplyMemoryDepth.set(petId, nextDepth);
+      }
+      if (pendingPostReplyMemory.get(petId) === pending) {
+        pendingPostReplyMemory.delete(petId);
+      }
+    });
   pendingPostReplyMemory.set(petId, pending);
-  void pending.finally(() => {
-    if (pendingPostReplyMemory.get(petId) === pending) {
-      pendingPostReplyMemory.delete(petId);
-    }
-  });
+  return true;
 }
 
 function appendUniqueMessages(
@@ -82,6 +111,10 @@ function appendUniqueMessages(
     ...history,
     ...messages.filter((item) => !existingIds.has(item.id)),
   ];
+}
+
+function isCurrentPet(petId: string) {
+  return readLocalPetState()?.petId === petId;
 }
 
 async function persistPostReplyMemory({
@@ -101,67 +134,91 @@ async function persistPostReplyMemory({
   memoryContext: ReturnType<typeof buildMemoryContextForMessage>;
   sourceMessageIds: string[];
   includePromptDebug: boolean;
-  onLiteOverlayPatch?: (patch: Record<string, unknown>) => void;
+  onLiteOverlayPatch?: (patch: Record<string, unknown>, expectedPetId: string) => void;
 }) {
-  const memoryBeforeExtraction = readLocalPetMemory(pet.petId);
-  const [memoryResult, liteFactsResult] = await Promise.allSettled([
-    extractLocalUserMemory(message, reply, pet, history, memoryBeforeExtraction, {
-      includeDebug: includePromptDebug,
-      memoryContext,
-    }),
-    extractLocalLiteFacts(message, reply, pet, history, {
-      includeDebug: includePromptDebug,
-    }),
-  ]);
-
-  if (memoryResult.status === "fulfilled") {
-    if (memoryResult.value.operations.length) {
-      const latestMemory = readLocalPetMemory(pet.petId);
-      const updatedMemory = applyMemoryOperations(
-        latestMemory,
-        memoryResult.value.operations,
-        sourceMessageIds,
-      );
-      writeLocalPetMemory(updatedMemory);
-      if (includePromptDebug) {
-        recordMemoryOperationsDebug(memoryResult.value.operations);
-      }
+  return withLocalPetMutationLock(pet.petId, "memory", async ({ assertOwned }) => {
+    const currentPet = readLocalPetState();
+    if (!currentPet || currentPet.petId !== pet.petId) {
+      return;
+    }
+    const memoryBeforeExtraction = readLocalPetMemory(pet.petId);
+    const [memoryResult, liteFactsResult] = await Promise.allSettled([
+      extractLocalUserMemory(message, reply, currentPet, history, memoryBeforeExtraction, {
+        includeDebug: includePromptDebug,
+        memoryContext,
+      }),
+      extractLocalLiteFacts(message, reply, currentPet, history, {
+        includeDebug: includePromptDebug,
+      }),
+    ]);
+    assertOwned();
+    if (!isCurrentPet(pet.petId)) {
+      return;
     }
 
-    const memoryAfterExtraction = readLocalPetMemory(pet.petId);
-    if (shouldRunDailyConsolidation(memoryAfterExtraction)) {
-      try {
-        const consolidation = await consolidateLocalUserMemory(memoryAfterExtraction, {
-          includeDebug: includePromptDebug,
-        });
-        if (consolidation.operations.length) {
-          writeLocalPetMemory(
-            applyMemoryConsolidationOperations(
-              readLocalPetMemory(pet.petId),
+    if (memoryResult.status === "fulfilled") {
+      if (memoryResult.value.operations.length) {
+        const latestMemory = readLocalPetMemory(pet.petId);
+        const updatedMemory = applyMemoryOperations(
+          latestMemory,
+          memoryResult.value.operations,
+          sourceMessageIds,
+        );
+        assertOwned();
+        if (!writeLocalPetMemory(updatedMemory, pet.petId)) {
+          return;
+        }
+        if (includePromptDebug) {
+          recordMemoryOperationsDebug(memoryResult.value.operations);
+        }
+      }
+
+      const memoryAfterExtraction = readLocalPetMemory(pet.petId);
+      if (shouldRunDailyConsolidation(memoryAfterExtraction)) {
+        try {
+          const consolidation = await consolidateLocalUserMemory(memoryAfterExtraction, {
+            includeDebug: includePromptDebug,
+          });
+          assertOwned();
+          if (!isCurrentPet(pet.petId)) {
+            return;
+          }
+          if (consolidation.operations.length) {
+            const latestMemory = readLocalPetMemory(pet.petId);
+            const consolidated = applyMemoryConsolidationOperations(
+              latestMemory,
               consolidation.operations,
-            ),
-          );
+            );
+            if (!writeLocalPetMemory(consolidated, pet.petId)) {
+              return;
+            }
+            if (includePromptDebug) {
+              recordMemoryConsolidationDebug(consolidation.operations);
+            }
+          }
+        } catch (error) {
           if (includePromptDebug) {
-            recordMemoryConsolidationDebug(consolidation.operations);
+            console.warn("[memory-debug] memory consolidation failed", error);
           }
         }
-      } catch (error) {
-        if (includePromptDebug) {
-          console.warn("[memory-debug] memory consolidation failed", error);
-        }
       }
     }
-  }
 
-  if (liteFactsResult.status === "fulfilled" && liteFactsResult.value.liteOverlayPatch) {
-    onLiteOverlayPatch?.(liteFactsResult.value.liteOverlayPatch);
-    if (includePromptDebug) {
-      recordLiteOverlayPatchDebug(liteFactsResult.value.liteOverlayPatch);
+    if (
+      isCurrentPet(pet.petId)
+      && liteFactsResult.status === "fulfilled"
+      && liteFactsResult.value.liteOverlayPatch
+    ) {
+      assertOwned();
+      onLiteOverlayPatch?.(liteFactsResult.value.liteOverlayPatch, pet.petId);
+      if (includePromptDebug) {
+        recordLiteOverlayPatchDebug(liteFactsResult.value.liteOverlayPatch);
+      }
     }
-  }
+  }, { acquireTimeoutMs: 10 * 60_000 });
 }
 
-export async function runLocalPetChatTurn({
+async function runLocalPetChatTurnLocked({
   pet,
   message,
   includePromptDebug,
@@ -171,8 +228,12 @@ export async function runLocalPetChatTurn({
   logLabel,
   onHistoryChange,
   onLiteOverlayPatch,
-}: RunLocalPetChatTurnOptions): Promise<LocalPetChatTurnResult> {
-  await waitForPendingPostReplyMemory(pet.petId);
+}: RunLocalPetChatTurnOptions, guard: LocalPetMutationGuard): Promise<LocalPetChatTurnResult> {
+  const currentPet = readLocalPetState();
+  if (!currentPet || currentPet.petId !== pet.petId) {
+    throw new LocalPetTurnSupersededError();
+  }
+  const requestPet = currentPet;
   const now = new Date().toISOString();
   const userMessage: LocalChatMessage = {
     id: createLocalId("message"),
@@ -180,7 +241,10 @@ export async function runLocalPetChatTurn({
     text: message,
     createdAt: now,
   };
-  const fullHistoryBeforeMessage = history ?? readLocalChatHistory().messages;
+  const storedHistoryBeforeMessage = readLocalChatHistory().messages;
+  const fullHistoryBeforeMessage = history
+    ? appendUniqueMessages(storedHistoryBeforeMessage, history)
+    : storedHistoryBeforeMessage;
   const dialogueHookIsNew = Boolean(
     dialogueHookMessage
       && !fullHistoryBeforeMessage.some((item) => item.id === dialogueHookMessage.id),
@@ -189,7 +253,7 @@ export async function runLocalPetChatTurn({
     ? appendUniqueMessages(fullHistoryBeforeMessage, [dialogueHookMessage])
     : fullHistoryBeforeMessage;
   const historyBeforeMessage = historyWithDialogueHook.slice(-12);
-  const memoryBeforeMessage = readLocalPetMemory(pet.petId);
+  const memoryBeforeMessage = readLocalPetMemory(requestPet.petId);
   const memoryContext = buildMemoryContextForMessage(
     historyWithDialogueHook,
     message,
@@ -201,20 +265,36 @@ export async function runLocalPetChatTurn({
     console.log(`[memory-debug] ${logLabel} recall context`, memoryContext);
     recordMemoryContextDebug(memoryContext);
   }
+  guard.assertOwned();
   const optimisticHistory = appendLocalChatMessages([
     ...(dialogueHookMessage && dialogueHookIsNew ? [dialogueHookMessage] : []),
     userMessage,
   ]);
   onHistoryChange?.(optimisticHistory.messages);
 
-  const response = await sendLocalChatMessage(message, pet, historyBeforeMessage, {
-    includeDebug: includePromptDebug,
-    complimentHistory: readComplimentHistory(pet.petId),
-    memoryContext,
-    replyMaxChars,
-  });
+  let response: LocalChatResponse;
+  try {
+    response = await sendLocalChatMessage(message, requestPet, historyBeforeMessage, {
+      includeDebug: includePromptDebug,
+      complimentHistory: readComplimentHistory(requestPet.petId),
+      memoryContext,
+      replyMaxChars,
+    });
+  } catch (error) {
+    guard.assertOwned();
+    const rolledBackHistory = removeLocalChatMessages([userMessage.id]);
+    if (isCurrentPet(requestPet.petId)) {
+      onHistoryChange?.(rolledBackHistory.messages);
+    }
+    throw error;
+  }
+  guard.assertOwned();
+  if (!isCurrentPet(requestPet.petId)) {
+    removeLocalChatMessages([userMessage.id]);
+    throw new LocalPetTurnSupersededError();
+  }
   if (response.happinessDelta === 30 || response.happinessDelta === 100) {
-    rememberCompliment(pet.petId, response.complimentKey ?? message);
+    rememberCompliment(requestPet.petId, response.complimentKey ?? message);
   }
   if (includePromptDebug) {
     logBrowserPromptDebug(`${logLabel} reply`, response);
@@ -227,23 +307,37 @@ export async function runLocalPetChatTurn({
     text: response.reply,
     createdAt: new Date().toISOString(),
   };
+  guard.assertOwned();
   const nextHistory = appendLocalChatMessages([assistantMessage]);
   onHistoryChange?.(nextHistory.messages);
 
   const usedMemoryIds = memoryContext.relevantMemories.map((item) => item.id);
   const memoryOperations = extractDeterministicMemoryOperations(message);
   if (usedMemoryIds.length || memoryOperations.length) {
-    let nextMemory = markMemoryContextUsed(memoryBeforeMessage, usedMemoryIds);
-    if (memoryOperations.length) {
-      nextMemory = applyMemoryOperations(nextMemory, memoryOperations, [userMessage.id]);
-    }
-    writeLocalPetMemory(nextMemory);
+    await withLocalPetMutationLock(
+      requestPet.petId,
+      "memory",
+      ({ assertOwned }) => {
+        let nextMemory = markMemoryContextUsed(
+          readLocalPetMemory(requestPet.petId),
+          usedMemoryIds,
+        );
+        if (memoryOperations.length) {
+          nextMemory = applyMemoryOperations(nextMemory, memoryOperations, [userMessage.id]);
+        }
+        assertOwned();
+        if (!writeLocalPetMemory(nextMemory, requestPet.petId)) {
+          throw new LocalPetTurnSupersededError();
+        }
+      },
+      { acquireTimeoutMs: 10 * 60_000 },
+    );
   }
 
-  enqueuePostReplyMemory(
-    pet.petId,
+  const memoryTaskEnqueued = enqueuePostReplyMemory(
+    requestPet.petId,
     () => persistPostReplyMemory({
-      pet,
+      pet: requestPet,
       message,
       reply: response.reply,
       history: historyBeforeMessage,
@@ -258,10 +352,23 @@ export async function runLocalPetChatTurn({
       }
     },
   );
+  if (!memoryTaskEnqueued && includePromptDebug) {
+    console.warn(`[memory-debug] ${logLabel} post-reply memory queue is full`);
+  }
 
   return {
     response,
     userMessage,
     assistantMessage,
   };
+}
+
+export async function runLocalPetChatTurn(
+  options: RunLocalPetChatTurnOptions,
+): Promise<LocalPetChatTurnResult> {
+  return withLocalPetMutationLock(
+    options.pet.petId,
+    "conversation",
+    (guard) => runLocalPetChatTurnLocked(options, guard),
+  );
 }

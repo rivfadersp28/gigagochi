@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import stat
+import threading
+import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,12 +27,12 @@ from app.services.story_constructor import story_constructor_catalog
 from app.services.story_library import _catalog as story_library_catalog
 from app.services.story_library import global_story_bricks
 from app.services.tone_runtime import tone_runtime_config, validate_tone_runtime_config
-from app.services.travel_service import _travel_template_catalog
 
 DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
 BACKUP_ROOT_NAME = ".admin-backups"
+_WRITE_LOCK_NAME = ".write.lock"
+_ADMIN_STORE_THREAD_LOCK = threading.RLock()
 
-FileFormat = Literal["json", "jsonl"]
 AdminDataSource = Literal["local", "production"]
 
 
@@ -36,7 +41,6 @@ class ManagedFile:
     file_id: str
     label: str
     relative_path: str
-    file_format: FileFormat
     description: str
 
     @property
@@ -49,63 +53,48 @@ MANAGED_FILES: tuple[ManagedFile, ...] = (
         "speech_runtime",
         "Рантайм характера",
         "speech_runtime.json",
-        "json",
         "Главные правила persona contract, ambient self-prompt и world context для реплик.",
     ),
     ManagedFile(
         "tone_runtime",
         "Generation profile",
         "tone_runtime.json",
-        "json",
         "Одна ручка setting / tone of voice / visual style для реплик, мира, историй и картинок.",
     ),
     ManagedFile(
         "lore_runtime",
         "Библия мира",
         "lore_runtime.json",
-        "json",
         "Единые правила мира для создания персонажей, диалогового лора и историй.",
     ),
     ManagedFile(
         "story_library",
         "Лор в диалоге",
         "story_library.json",
-        "json",
         "Глобальные stories, которые подтягиваются в chat/proactive/ambient по сигналам.",
     ),
     ManagedFile(
         "story_constructor",
         "Сюжетные кирпичики",
         "story_constructor.json",
-        "json",
         "Seed-пулы для путешествий и compact story context.",
-    ),
-    ManagedFile(
-        "travel_story_templates",
-        "Шаблоны приключений",
-        "travel_story_templates.json",
-        "json",
-        "Структурные шаблоны приключений; не финальная проза.",
     ),
     ManagedFile(
         "age_speech_examples",
         "Фразы по возрастам",
         "age_speech_examples/creature_phrases_dataset.json",
-        "json",
         "Архивные примеры манеры baby/teen/adult; сейчас не подмешиваются в prompt.",
     ),
     ManagedFile(
         "world_descriptions",
         "Якоря мира",
         "world_descriptions/world_descriptions_dataset.json",
-        "json",
         "Якоря среды, из которых при создании собирается template character bible.",
     ),
     ManagedFile(
         "character_bible_template",
         "Шаблон библии персонажа",
         "character_bible_template.json",
-        "json",
         "JSON schema и prompt-правила для новых characterBible, включая voice.catchphrases.",
     ),
 )
@@ -128,14 +117,15 @@ def managed_admin_git_paths() -> tuple[str, ...]:
 
 def validate_admin_files_on_disk() -> dict[str, str]:
     errors: dict[str, str] = {}
-    for spec in MANAGED_FILES:
-        try:
-            content = spec.path.read_text(encoding="utf-8")
-            _validate_content(spec, content)
-        except FileNotFoundError:
-            errors[spec.file_id] = "file is missing"
-        except (json.JSONDecodeError, ValueError) as exc:
-            errors[spec.file_id] = str(exc)
+    with _admin_store_lock(exclusive=False):
+        for spec in MANAGED_FILES:
+            try:
+                content = spec.path.read_text(encoding="utf-8")
+                _validate_content(spec, content)
+            except FileNotFoundError:
+                errors[spec.file_id] = "file is missing"
+            except (json.JSONDecodeError, ValueError) as exc:
+                errors[spec.file_id] = str(exc)
     return errors
 
 
@@ -144,39 +134,22 @@ def _validate_json(content: str) -> str:
     return json.dumps(parsed, ensure_ascii=False, indent=2) + "\n"
 
 
-def _validate_jsonl(content: str) -> str:
-    lines: list[str] = []
-    for index, line in enumerate(content.splitlines(), start=1):
-        if not line.strip():
-            continue
-        try:
-            parsed = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"line {index}: {exc.msg}") from exc
-        lines.append(json.dumps(parsed, ensure_ascii=False, separators=(",", ":")))
-    return "\n".join(lines) + ("\n" if lines else "")
-
-
 def _validate_content(spec: ManagedFile, content: str) -> str:
-    if spec.file_format == "json":
-        normalized = _validate_json(content)
-        if spec.file_id == "speech_runtime":
-            validate_speech_runtime_config(json.loads(normalized))
-        if spec.file_id == "tone_runtime":
-            validate_tone_runtime_config(json.loads(normalized))
-        if spec.file_id == "lore_runtime":
-            validate_lore_runtime_config(json.loads(normalized))
-        if spec.file_id == "character_bible_template":
-            validate_character_bible_template_config(json.loads(normalized))
-        return normalized
-    return _validate_jsonl(content)
+    normalized = _validate_json(content)
+    if spec.file_id == "speech_runtime":
+        validate_speech_runtime_config(json.loads(normalized))
+    if spec.file_id == "tone_runtime":
+        validate_tone_runtime_config(json.loads(normalized))
+    if spec.file_id == "lore_runtime":
+        validate_lore_runtime_config(json.loads(normalized))
+    if spec.file_id == "character_bible_template":
+        validate_character_bible_template_config(json.loads(normalized))
+    return normalized
 
 
 def _summary(spec: ManagedFile, content: str) -> dict[str, Any]:
     if not content.strip():
         return {"status": "missing"}
-    if spec.file_format == "jsonl":
-        return {"lines": len([line for line in content.splitlines() if line.strip()])}
     parsed = json.loads(content)
     if isinstance(parsed, dict):
         return {
@@ -200,7 +173,7 @@ def file_entry_from_content(
         "id": spec.file_id,
         "label": spec.label,
         "path": spec.relative_path,
-        "format": spec.file_format,
+        "format": "json",
         "description": spec.description,
         "exists": exists,
         "sizeBytes": size_bytes,
@@ -228,334 +201,6 @@ def _file_entry(spec: ManagedFile) -> dict[str, Any]:
     )
 
 
-def dialogue_influence_manifest() -> dict[str, Any]:
-    surfaces = ["chat", "proactive", "ambient", "push"]
-    return {
-        "modifiers": [
-            {
-                "id": "lore_runtime",
-                "label": "Библия мира",
-                "surfaces": [*surfaces, "background_story", "creation"],
-                "source": "lore_runtime",
-                "editable": True,
-                "fileId": "lore_runtime",
-                "configPath": "world / surfaces",
-                "summary": (
-                    "Одна рамка пространства, материалов, технологий, необычного и "
-                    "непрерывности для создания персонажа и всех новых фактов лора."
-                ),
-            },
-            {
-                "id": "tone_profile",
-                "label": "Generation profile",
-                "surfaces": [*surfaces, "background_story", "travel", "creation"],
-                "source": "tone_runtime",
-                "editable": True,
-                "fileId": "tone_runtime",
-                "configPath": "activePreset / presets / setting / toneOfVoice",
-                "summary": (
-                    "Единый active preset для сеттинга и тона. Возрастная baby-речь "
-                    "остается отдельным слоем."
-                ),
-            },
-            {
-                "id": "identity_line",
-                "label": "Identity line",
-                "surfaces": surfaces,
-                "source": "pet",
-                "editable": False,
-                "fileId": None,
-                "configPath": None,
-                "summary": (
-                    "Имя, текущая стадия и параметры формируют короткую базовую "
-                    "identity-строку. Description и characterBible подключаются "
-                    "отдельно через characterProfile/liteOverlay."
-                ),
-            },
-            {
-                "id": "pet_profile",
-                "label": "Pet profile and overlays",
-                "surfaces": surfaces,
-                "source": "localStorage",
-                "editable": False,
-                "fileId": None,
-                "configPath": "assetSet.characterBible / extensions.lite_overlay",
-                "summary": (
-                    "Текущий characterBible, lite_overlay, имя, описание, стадия, "
-                    "настроение и параметры конкретного питомца."
-                ),
-            },
-            {
-                "id": "conversation_context",
-                "label": "Conversation context",
-                "surfaces": ["chat", "ambient"],
-                "source": "request + localStorage",
-                "editable": False,
-                "fileId": None,
-                "configPath": "message / history / recentAmbientReplies",
-                "summary": (
-                    "Текущая реплика пользователя и последние сообщения чата; idle "
-                    "использует только recentAmbientReplies через {recent_replies}."
-                ),
-            },
-            {
-                "id": "proactive_reason",
-                "label": "Proactive reason",
-                "surfaces": ["proactive", "push"],
-                "source": "localStorage memory recall / push scheduler",
-                "editable": False,
-                "fileId": None,
-                "configPath": "memoryContext.proactiveCandidate.reason / push.reason",
-                "summary": (
-                    "Повод для самостоятельной proactive-реплики или Telegram push "
-                    "передается как контекст, без отдельного набора hidden rules."
-                ),
-            },
-            {
-                "id": "state_layer",
-                "label": "Возраст, настроение, голод, здоровье",
-                "surfaces": surfaces,
-                "source": "speech_runtime",
-                "editable": True,
-                "fileId": "speech_runtime",
-                "configPath": "stateLayer",
-                "summary": (
-                    "Age hints, пороги и словесные подписи голода/настроения/здоровья, "
-                    "а также короткие state-модификаторы."
-                ),
-            },
-            {
-                "id": "surface_prompts",
-                "label": "Surface prompts",
-                "surfaces": surfaces,
-                "source": "speech_runtime",
-                "editable": True,
-                "fileId": "speech_runtime",
-                "configPath": "surfacePrompts / ambientDialogueImpulses",
-                "summary": (
-                    "Единые prompt-поля для chat, proactive, idle и Telegram push; "
-                    "для idle один разговорный импульс выбирается из редактируемого набора."
-                ),
-            },
-            {
-                "id": "identity_template",
-                "label": "Identity template",
-                "surfaces": surfaces,
-                "source": "speech_runtime",
-                "editable": True,
-                "fileId": "speech_runtime",
-                "configPath": "identityTemplate",
-                "summary": ("Один шаблон identity/age/state строки для всех видимых реплик."),
-            },
-            {
-                "id": "visible_reply_runtime",
-                "label": "Visible reply runtime",
-                "surfaces": surfaces,
-                "source": "speech_runtime",
-                "editable": True,
-                "fileId": "speech_runtime",
-                "configPath": "visibleReply.model / reasoningEffort / maxChars",
-                "summary": (
-                    "Отдельные модель, reasoning и механический максимум длины для "
-                    "chat, idle, proactive и push; фоновые генераторы их не используют."
-                ),
-            },
-            {
-                "id": "user_memory_prompt",
-                "label": "User memory block",
-                "surfaces": surfaces,
-                "source": "localStorage + speech_runtime",
-                "editable": True,
-                "fileId": "speech_runtime",
-                "configPath": "memoryUsageRule",
-                "summary": (
-                    "Профиль, summary и relevantMemories владельца; для idle "
-                    "фильтруются deadline/event."
-                ),
-            },
-            {
-                "id": "world_context_prompt",
-                "label": "WORLD_CONTEXT framing",
-                "surfaces": surfaces,
-                "source": "speech_runtime",
-                "editable": True,
-                "fileId": "speech_runtime",
-                "configPath": "worldContext",
-                "summary": "Обертка для уже выбранных stories перед финальной генерацией.",
-            },
-            {
-                "id": "context_routing",
-                "label": "Context routing",
-                "surfaces": surfaces,
-                "source": "speech_runtime",
-                "editable": True,
-                "fileId": "speech_runtime",
-                "configPath": "contextRouting",
-                "summary": (
-                    "Единый LLM-router решает, подключать ли world context, "
-                    "character profile, user memory, chat history и recent replies."
-                ),
-            },
-            {
-                "id": "context_sources",
-                "label": "Копилки контекста",
-                "surfaces": [*surfaces, "background_story"],
-                "source": "speech_runtime",
-                "editable": True,
-                "fileId": "speech_runtime",
-                "configPath": "contextSources",
-                "summary": "Единая матрица disabled/auto/always для подключаемых копилок.",
-            },
-            {
-                "id": "chat_tools",
-                "label": "Chat tool definitions",
-                "surfaces": ["chat"],
-                "source": "backend runtime",
-                "editable": False,
-                "fileId": None,
-                "configPath": "update_pet_name / read_character_json",
-                "summary": (
-                    "Модель может переименовать питомца; чтение character JSON доступно, "
-                    "когда contextSources и router разрешили characterProfile."
-                ),
-            },
-            {
-                "id": "reply_limits",
-                "label": "Reply length limits",
-                "surfaces": surfaces,
-                "source": "request + backend runtime",
-                "editable": False,
-                "fileId": None,
-                "configPath": "replyMaxChars / MAX_REPLY_CHARS",
-                "summary": (
-                    "Лимит символов попадает в identity line и влияет на форму всех видимых реплик."
-                ),
-            },
-            {
-                "id": "memory_extractors",
-                "label": "Фоновые extractors",
-                "surfaces": ["chat"],
-                "source": "speech_runtime",
-                "editable": True,
-                "fileId": "speech_runtime",
-                "configPath": "characterMemory / userMemory",
-                "summary": (
-                    "После ответа сохраняют новые факты персонажа и память "
-                    "владельца; /story дополнительно раскладывает устойчивые "
-                    "последствия в lite_overlay."
-                ),
-            },
-            {
-                "id": "background_story_prompt",
-                "label": "Фоновые истории",
-                "surfaces": ["background_story"],
-                "source": "speech_runtime",
-                "editable": True,
-                "fileId": "speech_runtime",
-                "configPath": "backgroundStory",
-                "summary": (
-                    "Prompt генерации фонового события и лимиты текста; источники "
-                    "берутся из contextSources."
-                ),
-            },
-        ],
-        "collections": [
-            {
-                "id": "story_library",
-                "label": "Global story library",
-                "role": "rag",
-                "surfaces": surfaces,
-                "source": "backend/data",
-                "editable": True,
-                "fileId": "story_library",
-                "configPath": "pools",
-                "summary": (
-                    "Основная RAG-коллекция для WORLD_CONTEXT; подключается только "
-                    "решением contextRouting.worldContext."
-                ),
-            },
-            {
-                "id": "user_memory",
-                "label": "User memory",
-                "role": "memory",
-                "surfaces": surfaces,
-                "source": "localStorage",
-                "editable": False,
-                "fileId": None,
-                "configPath": "LocalPetMemoryStateV1",
-                "summary": (
-                    "Память владельца: recall для chat/proactive/push и мягко "
-                    "отфильтрованный контекст для idle."
-                ),
-            },
-            {
-                "id": "age_speech_examples",
-                "label": "Age speech examples",
-                "role": "examples",
-                "surfaces": ["chat"],
-                "source": "backend/data",
-                "editable": True,
-                "fileId": "age_speech_examples",
-                "configPath": "creature_phrases_dataset",
-                "summary": (
-                    "Архивные примеры детской манеры; текущий baby prompt использует "
-                    "только identity-строку без dataset examples."
-                ),
-            },
-            {
-                "id": "story_constructor",
-                "label": "Story constructor",
-                "role": "travel",
-                "surfaces": [],
-                "source": "backend/data",
-                "editable": True,
-                "fileId": "story_constructor",
-                "configPath": "pools",
-                "summary": "Не влияет на обычный диалог; используется travel/adventure pipeline.",
-            },
-            {
-                "id": "travel_story_templates",
-                "label": "Travel templates",
-                "role": "travel",
-                "surfaces": [],
-                "source": "backend/data",
-                "editable": True,
-                "fileId": "travel_story_templates",
-                "configPath": "templates",
-                "summary": "Не влияет на chat/idle/proactive; задает структуру приключений.",
-            },
-            {
-                "id": "world_descriptions",
-                "label": "World description anchors",
-                "role": "creation",
-                "surfaces": [],
-                "source": "backend/data",
-                "editable": True,
-                "fileId": "world_descriptions",
-                "configPath": "dataset",
-                "summary": (
-                    "Влияет на создание template character bible, но не подтягивается "
-                    "в текущий диалог напрямую."
-                ),
-            },
-            {
-                "id": "character_bible_template",
-                "label": "Character bible template",
-                "role": "creation",
-                "surfaces": [],
-                "source": "backend/data",
-                "editable": True,
-                "fileId": "character_bible_template",
-                "configPath": "schema / prompt / runtimeMappings",
-                "summary": (
-                    "Шаблон новых characterBible: JSON schema, prompt-правила и mapping "
-                    "voice.catchphrases -> lore.voice.favorite_phrases."
-                ),
-            },
-        ],
-    }
-
-
 def read_admin_manifest(
     *,
     mode: AdminDataSource = "local",
@@ -564,15 +209,13 @@ def read_admin_manifest(
     deploy_message: str | None = None,
     sync_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if file_entries is None:
+        with _admin_store_lock(exclusive=False):
+            file_entries = [_file_entry(spec) for spec in MANAGED_FILES]
     return {
         "generatedAt": _now_iso(),
         "mode": mode,
-        "files": (
-            file_entries
-            if file_entries is not None
-            else [_file_entry(spec) for spec in MANAGED_FILES]
-        ),
-        "dialogue": dialogue_influence_manifest(),
+        "files": file_entries,
         "sync": sync_result
         or {
             "status": "disabled",
@@ -591,22 +234,121 @@ def read_admin_manifest(
 
 def _backup_path(path: Path) -> Path:
     relative = path.relative_to(DATA_ROOT)
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return DATA_ROOT / BACKUP_ROOT_NAME / relative.parent / f"{relative.name}.{timestamp}.bak"
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+    filename = f"{relative.name}.{timestamp}.{os.getpid()}.{uuid.uuid4().hex}.bak"
+    return DATA_ROOT / BACKUP_ROOT_NAME / relative.parent / filename
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _ensure_directory(path: Path) -> None:
+    if path.is_dir():
+        return
+    path.mkdir(parents=True, exist_ok=True)
+    _fsync_directory(path.parent)
+
+
+@contextmanager
+def _admin_store_lock(*, exclusive: bool):
+    with _ADMIN_STORE_THREAD_LOCK:
+        _ensure_directory(DATA_ROOT)
+        backup_root = DATA_ROOT / BACKUP_ROOT_NAME
+        _ensure_directory(backup_root)
+        lock_path = backup_root / _WRITE_LOCK_NAME
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(
+                descriptor,
+                fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH,
+            )
+            try:
+                yield
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def _write_new_file(path: Path, content: bytes, *, mode: int) -> None:
+    descriptor = -1
+    created = False
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            mode,
+        )
+        created = True
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "wb") as output:
+            descriptor = -1
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+    except Exception:
+        if created:
+            path.unlink(missing_ok=True)
+        raise
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _create_backup(path: Path, content: bytes) -> Path:
+    backup_parent = DATA_ROOT / BACKUP_ROOT_NAME / path.relative_to(DATA_ROOT).parent
+    _ensure_directory(backup_parent)
+    for _attempt in range(8):
+        backup = _backup_path(path)
+        try:
+            _write_new_file(backup, content, mode=0o600)
+        except FileExistsError:
+            continue
+        _fsync_directory(backup.parent)
+        return backup
+    raise RuntimeError(f"could not allocate a unique admin backup for {path.name}")
+
+
+def _atomic_write_bytes(path: Path, content: bytes) -> None:
+    _ensure_directory(path.parent)
+    target_mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    temporary_created = False
+    try:
+        _write_new_file(temporary, content, mode=target_mode)
+        temporary_created = True
+        os.replace(temporary, path)
+        temporary_created = False
+        _fsync_directory(path.parent)
+    finally:
+        if temporary_created:
+            temporary.unlink(missing_ok=True)
 
 
 def _atomic_write(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.tmp")
-    tmp_path.write_text(content, encoding="utf-8")
-    os.replace(tmp_path, path)
+    _atomic_write_bytes(path, content.encode("utf-8"))
+
+
+def _restore_original(path: Path, content: bytes | None) -> None:
+    if content is not None:
+        _atomic_write_bytes(path, content)
+        return
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    _fsync_directory(path.parent)
 
 
 def _clear_runtime_caches() -> None:
     story_constructor_catalog.cache_clear()
     story_library_catalog.cache_clear()
     global_story_bricks.cache_clear()
-    _travel_template_catalog.cache_clear()
     load_world_description_dataset.cache_clear()
     age_speech_dataset.cache_clear()
     tone_runtime_config.cache_clear()
@@ -622,6 +364,7 @@ def clear_admin_runtime_caches() -> None:
 def save_admin_files(files: list[dict[str, str]]) -> dict[str, Any]:
     normalized: list[tuple[ManagedFile, str]] = []
     errors: dict[str, str] = {}
+    seen_file_ids: set[str] = set()
 
     for item in files:
         file_id = item.get("id", "")
@@ -631,6 +374,10 @@ def save_admin_files(files: list[dict[str, str]]) -> dict[str, Any]:
         except KeyError:
             errors[file_id or "<empty>"] = "unknown file id"
             continue
+        if spec.file_id in seen_file_ids:
+            errors[spec.file_id] = "duplicate file id"
+            continue
+        seen_file_ids.add(spec.file_id)
         try:
             normalized.append((spec, _validate_content(spec, content)))
         except (json.JSONDecodeError, ValueError) as exc:
@@ -645,25 +392,44 @@ def save_admin_files(files: list[dict[str, str]]) -> dict[str, Any]:
         }
 
     saved_files: list[dict[str, Any]] = []
-    for spec, content in normalized:
-        path = spec.path
-        backup = None
-        if path.exists():
-            backup = _backup_path(path)
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-        _atomic_write(path, content)
-        saved_files.append(
-            {
-                "id": spec.file_id,
-                "path": spec.relative_path,
-                "backupPath": str(backup.relative_to(DATA_ROOT)) if backup else None,
-                "sizeBytes": path.stat().st_size,
+    if normalized:
+        with _admin_store_lock(exclusive=True):
+            originals = {
+                spec.path: spec.path.read_bytes() if spec.path.exists() else None
+                for spec, _content in normalized
             }
-        )
-
-    if saved_files:
-        _clear_runtime_caches()
+            backups = {
+                path: _create_backup(path, original) if original is not None else None
+                for path, original in originals.items()
+            }
+            attempted_paths: list[Path] = []
+            try:
+                for spec, content in normalized:
+                    path = spec.path
+                    attempted_paths.append(path)
+                    _atomic_write(path, content)
+                    backup = backups[path]
+                    saved_files.append(
+                        {
+                            "id": spec.file_id,
+                            "path": spec.relative_path,
+                            "backupPath": (str(backup.relative_to(DATA_ROOT)) if backup else None),
+                            "sizeBytes": len(content.encode("utf-8")),
+                        }
+                    )
+            except Exception as write_error:
+                rollback_errors: list[OSError] = []
+                for path in reversed(attempted_paths):
+                    try:
+                        _restore_original(path, originals[path])
+                    except OSError as rollback_error:
+                        rollback_errors.append(rollback_error)
+                if rollback_errors:
+                    raise RuntimeError(
+                        "admin save failed and one or more files could not be restored"
+                    ) from write_error
+                raise
+            _clear_runtime_caches()
 
     return {
         "saved": True,

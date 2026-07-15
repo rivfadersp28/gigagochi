@@ -343,7 +343,7 @@ def test_background_story_image_extracts_scene_and_uses_openai_image_path(monkey
             openai_chat_model="gpt-5.5",
             openai_chat_timeout_seconds=90,
             openai_chat_reasoning_effort=None,
-            backend_public_url=None,
+            backend_public_url="https://example.com",
             webapp_url=None,
         ),
     )

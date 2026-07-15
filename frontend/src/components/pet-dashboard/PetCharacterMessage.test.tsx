@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PetCharacterMessage } from "./PetCharacterMessage";
@@ -78,6 +78,66 @@ describe("PetCharacterMessage", () => {
     }
   });
 
+  it("bounds animation work for a long generated reply", () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: false }),
+    });
+    const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "animate");
+    const animate = vi.fn().mockImplementation(
+      () => ({
+        cancel: vi.fn(),
+        finished: new Promise<Animation>(() => undefined),
+      }) as unknown as Animation,
+    );
+    Object.defineProperty(HTMLElement.prototype, "animate", {
+      configurable: true,
+      value: animate,
+    });
+    const message = "я".repeat(300);
+
+    try {
+      const { container } = render(
+        <PetCharacterMessage
+          message={{ id: 2, text: message, playSpeechAudio: false, hasNextPortion: false }}
+          textTranslateY={4}
+          speechEndTrimMs={0}
+        />,
+      );
+
+      expect(container.querySelectorAll("[data-pet-message-unit='true']")).toHaveLength(80);
+      const tail = container.querySelector("[data-pet-message-tail='true']");
+      expect(tail).toHaveStyle({ opacity: "0" });
+      expect(screen.getByLabelText(message)).toHaveTextContent(message);
+
+      vi.advanceTimersByTime(2_595);
+      expect(tail).toHaveStyle({ opacity: "0" });
+      vi.advanceTimersByTime(1);
+      expect(tail).toHaveStyle({ opacity: "1" });
+    } finally {
+      if (originalAnimate) {
+        Object.defineProperty(HTMLElement.prototype, "animate", originalAnimate);
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+      }
+    }
+  });
+
+  it("animates user-perceived graphemes instead of splitting emoji and combining marks", () => {
+    const message = "👨‍👩‍👧‍👦е\u0301";
+    const { container } = render(
+      <PetCharacterMessage
+        message={{ id: 3, text: message, playSpeechAudio: false, hasNextPortion: false }}
+        textTranslateY={0}
+        speechEndTrimMs={0}
+      />,
+    );
+
+    expect(container.querySelectorAll("[data-pet-message-unit='true']")).toHaveLength(2);
+    expect(screen.getByLabelText(message)).toHaveTextContent(message);
+  });
+
   it("reduces the font in one-pixel steps until the sentence fits two lines", () => {
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
       this: HTMLElement,
@@ -97,6 +157,38 @@ describe("PetCharacterMessage", () => {
     );
 
     expect(screen.getByLabelText(longMessage)).toHaveStyle({ fontSize: "18px" });
+  });
+
+  it("removes a fitted outgoing message after its exit transition", () => {
+    vi.useFakeTimers();
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const fontSize = Number.parseFloat(this.style.fontSize || "26");
+      return fontSize * 1.15 * (fontSize > 18 ? 3 : 2);
+    });
+    const { rerender } = render(
+      <PetCharacterMessage
+        message={{ id: 1, text: longMessage, playSpeechAudio: false, hasNextPortion: false }}
+        textTranslateY={0}
+        speechEndTrimMs={0}
+        maxCurrentMessageLines={2}
+      />,
+    );
+
+    rerender(
+      <PetCharacterMessage
+        message={{ id: 2, text: "Новая реплика.", playSpeechAudio: false, hasNextPortion: false }}
+        textTranslateY={0}
+        speechEndTrimMs={0}
+        maxCurrentMessageLines={2}
+      />,
+    );
+    expect(screen.getByText(longMessage)).toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(320));
+
+    expect(screen.queryByText(longMessage)).not.toBeInTheDocument();
   });
 
   it("keeps the default font size when the sentence already fits", () => {

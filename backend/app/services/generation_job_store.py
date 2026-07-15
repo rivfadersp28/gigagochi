@@ -3,11 +3,15 @@ from __future__ import annotations
 import math
 import sqlite3
 import statistics
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 from app.schemas import GeneratePetJobResponse
+
+SQLITE_BUSY_TIMEOUT_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -20,6 +24,13 @@ class StoredGenerationJob:
     image_provider: str = "openai"
 
 
+@dataclass(frozen=True)
+class GenerationJobCreateResult:
+    created: bool
+    job: StoredGenerationJob
+    conflict: Literal["request_key", "owner_active", "capacity", "job_id"] | None = None
+
+
 class GenerationJobStore:
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
@@ -27,13 +38,16 @@ class GenerationJobStore:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._path, timeout=30)
-        connection.execute("PRAGMA busy_timeout=30000")
+        connection = sqlite3.connect(self._path, timeout=SQLITE_BUSY_TIMEOUT_SECONDS)
+        connection.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_SECONDS * 1_000}")
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("PRAGMA synchronous=FULL")
         return connection
 
     def _initialize(self) -> None:
         with self._connect() as connection:
-            connection.execute("PRAGMA journal_mode=WAL")
+            self._enable_wal_with_retry(connection)
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS generation_jobs (
@@ -43,15 +57,17 @@ class GenerationJobStore:
                     first_name TEXT,
                     description TEXT NOT NULL,
                     image_provider TEXT NOT NULL DEFAULT 'openai',
+                    request_key TEXT,
                     status TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    response_json TEXT NOT NULL
+                    response_json TEXT NOT NULL,
+                    lease_owner TEXT,
+                    lease_until TEXT
                 )
                 """
             )
             columns = {
-                str(row[1])
-                for row in connection.execute("PRAGMA table_info(generation_jobs)")
+                str(row[1]) for row in connection.execute("PRAGMA table_info(generation_jobs)")
             }
             if "image_provider" not in columns:
                 connection.execute(
@@ -61,6 +77,22 @@ class GenerationJobStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS generation_jobs_status_idx "
                 "ON generation_jobs(status, updated_at)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS generation_job_request_keys (
+                    owner_id INTEGER NOT NULL,
+                    request_key TEXT NOT NULL,
+                    job_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (owner_id, request_key),
+                    FOREIGN KEY (job_id) REFERENCES generation_jobs(job_id) ON DELETE CASCADE
+                ) WITHOUT ROWID
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS generation_job_request_keys_job_idx "
+                "ON generation_job_request_keys(job_id)"
             )
             connection.execute(
                 """
@@ -84,6 +116,27 @@ class GenerationJobStore:
                 "CREATE INDEX IF NOT EXISTS generation_metrics_owner_time_idx "
                 "ON generation_job_metrics(owner_id, queued_at)"
             )
+
+    @staticmethod
+    def _enable_wal_with_retry(connection: sqlite3.Connection) -> None:
+        deadline = time.monotonic() + SQLITE_BUSY_TIMEOUT_SECONDS
+        delay = 0.01
+        while True:
+            try:
+                connection.execute("PRAGMA journal_mode=WAL")
+                return
+            except sqlite3.OperationalError as exc:
+                error_code = exc.sqlite_errorcode
+                if error_code is None or error_code & 0xFF not in {
+                    sqlite3.SQLITE_BUSY,
+                    sqlite3.SQLITE_LOCKED,
+                }:
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                time.sleep(min(delay, remaining))
+                delay = min(delay * 2, 0.1)
 
     def record_queued(self, job: StoredGenerationJob) -> None:
         with self._connect() as connection:
@@ -152,9 +205,7 @@ class GenerationJobStore:
             "windowDays": days,
             "totalJobs": len(rows),
             "activeJobs": sum(str(row[6]) in {"queued", "running"} for row in rows),
-            "failedJobs": sum(
-                str(row[6]) in {"failed", "completed_with_errors"} for row in rows
-            ),
+            "failedJobs": sum(str(row[6]) in {"failed", "completed_with_errors"} for row in rows),
             "normal": self._duration_summary(normal_values),
             "full": self._duration_summary(full_values),
             "recent": [
@@ -168,18 +219,6 @@ class GenerationJobStore:
                 }
                 for row in rows[:10]
             ],
-        }
-
-    @classmethod
-    def empty_metrics_summary(cls, *, days: int) -> dict[str, object]:
-        return {
-            "windowDays": days,
-            "totalJobs": 0,
-            "activeJobs": 0,
-            "failedJobs": 0,
-            "normal": cls._duration_summary([]),
-            "full": cls._duration_summary([]),
-            "recent": [],
         }
 
     @classmethod
@@ -258,24 +297,183 @@ class GenerationJobStore:
                 ),
             )
 
+    def create_or_get(
+        self,
+        job: StoredGenerationJob,
+        *,
+        request_key: str | None,
+        max_active_jobs: int,
+    ) -> GenerationJobCreateResult:
+        if max_active_jobs < 1:
+            raise ValueError("max_active_jobs must be positive")
+        response = job.response
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if request_key is not None:
+                keyed = self._request_key_row(
+                    connection,
+                    owner_id=job.owner_id,
+                    request_key=request_key,
+                )
+                if keyed is not None:
+                    return GenerationJobCreateResult(
+                        created=False,
+                        job=self._row(keyed),
+                        conflict="request_key",
+                    )
+
+            active_owner_row = connection.execute(
+                """
+                SELECT job_id, owner_id, username, first_name, description,
+                       image_provider, response_json
+                FROM generation_jobs
+                WHERE owner_id = ? AND status IN ('queued', 'running')
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (job.owner_id,),
+            ).fetchone()
+            if active_owner_row is not None:
+                active_job = self._row(active_owner_row[1:])
+                if (
+                    request_key is not None
+                    and job.description == active_job.description
+                    and job.image_provider == active_job.image_provider
+                ):
+                    self._bind_request_key(
+                        connection,
+                        owner_id=job.owner_id,
+                        request_key=request_key,
+                        job_id=str(active_owner_row[0]),
+                        created_at=response.createdAt,
+                    )
+                return GenerationJobCreateResult(
+                    created=False,
+                    job=active_job,
+                    conflict="owner_active",
+                )
+
+            active_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM generation_jobs WHERE status IN ('queued', 'running')"
+                ).fetchone()[0]
+            )
+            if active_count >= max_active_jobs:
+                return GenerationJobCreateResult(
+                    created=False,
+                    job=job,
+                    conflict="capacity",
+                )
+
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO generation_jobs (
+                    job_id, owner_id, username, first_name, description,
+                    image_provider, status, updated_at, response_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    response.jobId,
+                    job.owner_id,
+                    job.username,
+                    job.first_name,
+                    job.description,
+                    job.image_provider,
+                    response.status,
+                    response.updatedAt.isoformat(),
+                    response.model_dump_json(),
+                ),
+            )
+            if cursor.rowcount == 1:
+                if request_key is not None:
+                    self._bind_request_key(
+                        connection,
+                        owner_id=job.owner_id,
+                        request_key=request_key,
+                        job_id=response.jobId,
+                        created_at=response.createdAt,
+                    )
+                return GenerationJobCreateResult(created=True, job=job)
+            existing = connection.execute(
+                """
+                SELECT owner_id, username, first_name, description,
+                       image_provider, response_json
+                FROM generation_jobs WHERE job_id = ?
+                """,
+                (response.jobId,),
+            ).fetchone()
+            if existing is None:
+                raise RuntimeError("generation job insert was ignored without a matching job")
+            return GenerationJobCreateResult(
+                created=False,
+                job=self._row(existing),
+                conflict="job_id",
+            )
+
+    @staticmethod
+    def _bind_request_key(
+        connection: sqlite3.Connection,
+        *,
+        owner_id: int,
+        request_key: str,
+        job_id: str,
+        created_at: datetime,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO generation_job_request_keys (
+                owner_id, request_key, job_id, created_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (owner_id, request_key, job_id, created_at.isoformat()),
+        )
+
     def get(self, job_id: str) -> StoredGenerationJob | None:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT owner_id, username, first_name, description, image_provider,
-                       response_json
+                SELECT owner_id, username, first_name, description,
+                       image_provider, response_json
                 FROM generation_jobs WHERE job_id = ?
                 """,
                 (job_id,),
             ).fetchone()
         return self._row(row) if row is not None else None
 
+    def get_by_request_key(self, owner_id: int, request_key: str) -> StoredGenerationJob | None:
+        with self._connect() as connection:
+            row = self._request_key_row(
+                connection,
+                owner_id=owner_id,
+                request_key=request_key,
+            )
+        return self._row(row) if row is not None else None
+
+    @staticmethod
+    def _request_key_row(
+        connection: sqlite3.Connection,
+        *,
+        owner_id: int,
+        request_key: str,
+    ) -> tuple[object, ...] | None:
+        return connection.execute(
+            """
+            SELECT jobs.owner_id, jobs.username, jobs.first_name,
+                   jobs.description, jobs.image_provider, jobs.response_json
+            FROM generation_job_request_keys AS keys
+            JOIN generation_jobs AS jobs
+              ON jobs.job_id = keys.job_id AND jobs.owner_id = keys.owner_id
+            WHERE keys.owner_id = ? AND keys.request_key = ?
+            """,
+            (owner_id, request_key),
+        ).fetchone()
+
     def active(self) -> list[StoredGenerationJob]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT owner_id, username, first_name, description, image_provider,
-                       response_json
+                SELECT owner_id, username, first_name, description,
+                       image_provider, response_json
                 FROM generation_jobs
                 WHERE status IN ('queued', 'running')
                 ORDER BY updated_at ASC
@@ -283,10 +481,54 @@ class GenerationJobStore:
             ).fetchall()
         return [self._row(row) for row in rows]
 
-    def delete_older_than(self, cutoff: datetime) -> None:
+    def delete_terminal_older_than(
+        self,
+        cutoff: datetime,
+        *,
+        request_key_cutoff: datetime | None = None,
+    ) -> list[StoredGenerationJob]:
+        keyed_cutoff = request_key_cutoff or cutoff
+        predicate = """
+            status IN ('succeeded', 'failed')
+            AND (
+                (
+                    NOT EXISTS (
+                        SELECT 1 FROM generation_job_request_keys AS keys
+                        WHERE keys.job_id = generation_jobs.job_id
+                    )
+                    AND updated_at < ?
+                )
+                OR (
+                    EXISTS (
+                        SELECT 1 FROM generation_job_request_keys AS keys
+                        WHERE keys.job_id = generation_jobs.job_id
+                    )
+                    AND updated_at < ?
+                )
+            )
+        """
+        values = (cutoff.isoformat(), keyed_cutoff.isoformat())
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                f"""
+                SELECT owner_id, username, first_name, description,
+                       image_provider, response_json
+                FROM generation_jobs
+                WHERE {predicate}
+                """,
+                values,
+            ).fetchall()
+            connection.execute(
+                f"DELETE FROM generation_jobs WHERE {predicate}",
+                values,
+            )
+        return [self._row(row) for row in rows]
+
+    def delete_metrics_older_than(self, cutoff: datetime) -> None:
         with self._connect() as connection:
             connection.execute(
-                "DELETE FROM generation_jobs WHERE updated_at < ?",
+                "DELETE FROM generation_job_metrics WHERE queued_at < ?",
                 (cutoff.isoformat(),),
             )
 

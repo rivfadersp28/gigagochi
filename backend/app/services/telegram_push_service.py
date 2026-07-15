@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import errno
+import fcntl
+import hashlib
+import json
 import logging
+import os
 import re
+import sqlite3
+import uuid
 from collections.abc import Callable
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from threading import Lock
+from typing import Any, BinaryIO
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -23,17 +32,30 @@ from app.schemas import (
     LocalPushRequest,
 )
 from app.services.background_story_service import (
+    BackgroundStoryResult,
     generate_background_story,
-    generate_background_story_image_bytes,
-    generate_background_story_video_bytes,
+    reserve_background_story_image_bytes,
+    reserve_background_story_video_bytes,
 )
 from app.services.full_story_service import (
+    FullStoryPart,
+    FullStoryResult,
     generate_full_story,
-    generate_full_story_part_image_bytes,
+    reserve_full_story_part_image_bytes,
+)
+from app.services.generated_media_cleanup import (
+    cleanup_stale_generated_processing_temp_directories,
+    cleanup_unreferenced_background_story_media,
+    generated_media_cleanup_is_enabled,
 )
 from app.services.image_service import generated_dir_for
-from app.services.lite_overlay import merge_lite_overlay_patch
+from app.services.lite_overlay import merge_lite_overlay_patch, normalize_lite_overlay_patch
 from app.services.pet_reply_engine.lite_generator import generate_push_pet_message
+from app.services.rate_limit_service import (
+    DEFAULT_RATE_LIMIT_STORE_PATH,
+    RateLimitExceeded,
+    get_rate_limiter,
+)
 from app.services.story_delivery_format import (
     format_full_story_part_message,
 )
@@ -41,10 +63,19 @@ from app.services.telegram_auth_service import TelegramUserContext
 from app.services.telegram_client import (
     TelegramAPIError,
     mini_app_keyboard,
+    redact_telegram_token,
     send_message,
+    send_photo,
     send_video,
 )
-from app.services.telegram_push_store import JsonTelegramPushStore
+from app.services.telegram_push_store import (
+    DEFAULT_PUSH_RECORD_MAX_BYTES,
+    DEFAULT_PUSH_STORE_MAX_BYTES,
+    DEFAULT_PUSH_STORE_MAX_RECORDS,
+    DEFAULT_PUSH_UNREACHABLE_RETENTION_SECONDS,
+    TelegramPushStore,
+    create_telegram_push_store,
+)
 
 STORE_VERSION = 1
 STAT_KEYS = ("hunger", "happiness", "energy")
@@ -57,6 +88,9 @@ MAX_RECENT_STORY_EVENTS = 10
 PUSH_STORY_MAX_AGE = timedelta(hours=12)
 MAX_STORY_NOVELTY_HISTORY = 400
 MAX_FULL_STORY_HISTORY = 8
+MAX_BOT_GENERATION_RECEIPTS = 16
+MAX_PERSISTED_ERROR_CHARS = 2_000
+SNAPSHOT_EPOCH_REVISION_FLOOR = 1_000_000_000_000
 STORY_STAT_MAX_ITEMS = 2
 STORY_STAT_MAX_SINGLE_DAMAGE = 25
 STORY_STAT_MAX_TOTAL_DAMAGE = 35
@@ -70,6 +104,20 @@ DEFAULT_BACKGROUND_STORY_HOURS = (9, 13, 17, 21)
 DEFAULT_BACKGROUND_STORY_WINDOW_MINUTES = 120
 DAILY_FULL_STORY_RETRY_DELAY = timedelta(minutes=15)
 DAILY_FULL_STORY_MAX_ATTEMPTS = 2
+BACKGROUND_STORY_PAID_MEDIA_BUDGET_BUCKET = "background-story-paid-media"
+BACKGROUND_STORY_PAID_MEDIA_BUDGET_USER_ID = 0
+BACKGROUND_STORY_PAID_MEDIA_BUDGET_WINDOW = timedelta(days=1)
+BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED = "BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED"
+BACKGROUND_STORY_PAID_MEDIA_BUDGET_EXHAUSTED = "BACKGROUND_STORY_PAID_MEDIA_BUDGET_EXHAUSTED"
+BACKGROUND_STORY_MEDIA_GC_MIN_AGE = timedelta(days=8)
+GENERATED_MEDIA_CLEANUP_LOOP_INTERVAL_SECONDS = 6 * 60 * 60
+SCHEDULER_LEADERSHIP_RETRY_SECONDS = 5.0
+SCHEDULER_LOCK_NAMES = {
+    "dailyPush": "daily-push",
+    "backgroundStory": "background-story",
+    "generatedMediaCleanup": "generated-media-cleanup",
+}
+_background_story_media_gc_lock = Lock()
 
 
 class TelegramPushError(RuntimeError):
@@ -77,6 +125,44 @@ class TelegramPushError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+def _safe_error_message(value: object) -> str:
+    settings = get_settings()
+    redacted = redact_telegram_token(value, getattr(settings, "bot_token", None))
+    compact = " ".join(redacted.split())
+    return compact[:MAX_PERSISTED_ERROR_CHARS]
+
+
+class _BackgroundStoryPaidMediaBudgetError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        stage: str,
+        status: str,
+        code: str,
+        message: str,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.status = status
+        self.code = code
+        self.message = message
+        self.retry_after_seconds = retry_after_seconds
+
+
+@dataclass(frozen=True, slots=True)
+class _SchedulerBatchResult:
+    results: list[dict[str, Any]]
+    attempted: int
+    failed: int
+    health_failed: int
+    last_error: str | None
+
+    @property
+    def succeeded(self) -> int:
+        return len(self.results)
 
 
 def _now() -> datetime:
@@ -227,8 +313,45 @@ def _store_path() -> Path:
     return path
 
 
-def _push_store() -> JsonTelegramPushStore:
-    return JsonTelegramPushStore(_store_path(), version=STORE_VERSION)
+def _push_store() -> TelegramPushStore:
+    settings = get_settings()
+    legacy_json_path_value = getattr(settings, "telegram_push_legacy_json_path", None)
+    legacy_json_path = None
+    if isinstance(legacy_json_path_value, str) and legacy_json_path_value.strip():
+        legacy_json_path = Path(legacy_json_path_value).expanduser()
+        if not legacy_json_path.is_absolute():
+            legacy_json_path = Path.cwd() / legacy_json_path
+    return create_telegram_push_store(
+        _store_path(),
+        version=STORE_VERSION,
+        backend=getattr(settings, "telegram_push_store_backend", "auto"),
+        record_max_bytes=getattr(
+            settings,
+            "telegram_push_record_max_bytes",
+            DEFAULT_PUSH_RECORD_MAX_BYTES,
+        ),
+        store_max_bytes=getattr(
+            settings,
+            "telegram_push_store_max_bytes",
+            DEFAULT_PUSH_STORE_MAX_BYTES,
+        ),
+        store_max_records=getattr(
+            settings,
+            "telegram_push_store_max_records",
+            DEFAULT_PUSH_STORE_MAX_RECORDS,
+        ),
+        unreachable_retention_seconds=getattr(
+            settings,
+            "telegram_push_unreachable_retention_seconds",
+            DEFAULT_PUSH_UNREACHABLE_RETENTION_SECONDS,
+        ),
+        legacy_json_path=legacy_json_path,
+        legacy_json_required=getattr(
+            settings,
+            "telegram_push_legacy_json_required",
+            legacy_json_path is not None,
+        ),
+    )
 
 
 def _read_store() -> dict[str, Any]:
@@ -272,7 +395,102 @@ def request_pet_reset(telegram_id: int) -> dict[str, Any]:
         record["petResetRequest"] = {"petId": pet_id, "requestedAt": now_iso}
         return record
 
-    return _update_record(telegram_id, reset_record)
+    result = _update_record(telegram_id, reset_record)
+    reset_request = result.get("petResetRequest")
+    reset_pet_id = reset_request.get("petId") if isinstance(reset_request, dict) else None
+    if isinstance(reset_pet_id, str):
+        _cleanup_background_story_media_for_records(
+            [{"telegramId": telegram_id, "petId": reset_pet_id}]
+        )
+    return result
+
+
+def _pet_reset_tombstones(record: dict[str, Any] | None) -> list[dict[str, str]]:
+    if not isinstance(record, dict):
+        return []
+    raw_tombstones = record.get("petResetTombstones")
+    if not isinstance(raw_tombstones, list):
+        return []
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw_tombstones:
+        if not isinstance(item, dict):
+            continue
+        raw_pet_id = item.get("petId")
+        pet_id = raw_pet_id.strip() if isinstance(raw_pet_id, str) else raw_pet_id
+        requested_at = item.get("requestedAt")
+        if (
+            not isinstance(pet_id, str)
+            or not 0 < len(pet_id) <= 120
+            or pet_id in seen
+            or not isinstance(requested_at, str)
+            or not requested_at
+        ):
+            continue
+        seen.add(pet_id)
+        result.append({"petId": pet_id, "requestedAt": requested_at[:80]})
+    return result
+
+
+def unregister_push_snapshot(telegram_id: int, pet_id: str) -> bool:
+    """Remove one pet snapshot and fence late in-flight writes for that pet."""
+
+    normalized_pet_id = pet_id.strip()
+    if not 0 < len(normalized_pet_id) <= 120:
+        raise ValueError("pet_id must contain between 1 and 120 characters")
+    unregistered = False
+    now_iso = _iso()
+
+    def unregister(existing: dict[str, Any] | None) -> dict[str, Any]:
+        nonlocal unregistered
+        tombstones = _pet_reset_tombstones(existing)
+        if any(item["petId"] == normalized_pet_id for item in tombstones):
+            unregistered = True
+            return (
+                deepcopy(existing)
+                if isinstance(existing, dict)
+                else {
+                    "telegramId": telegram_id,
+                    "petResetTombstones": tombstones,
+                }
+            )
+
+        tombstones.append({"petId": normalized_pet_id, "requestedAt": now_iso})
+        existing_pet_id = existing.get("petId") if isinstance(existing, dict) else None
+        existing_pet_id = (
+            existing_pet_id.strip() if isinstance(existing_pet_id, str) else existing_pet_id
+        )
+        if isinstance(existing, dict) and existing_pet_id != normalized_pet_id:
+            record = deepcopy(existing)
+            record["petResetTombstones"] = tombstones
+            unregistered = True
+            return record
+
+        retained_keys = (
+            "telegramId",
+            "chatId",
+            "username",
+            "firstName",
+            "languageCode",
+            "chatStartedAt",
+            "lastChatSeenAt",
+            "chatReachable",
+        )
+        record = {
+            key: deepcopy(existing.get(key))
+            for key in retained_keys
+            if isinstance(existing, dict) and key in existing
+        }
+        record["telegramId"] = telegram_id
+        record["petResetTombstones"] = tombstones
+        unregistered = True
+        return record
+
+    _update_record(telegram_id, unregister)
+    _cleanup_background_story_media_for_records(
+        [{"telegramId": telegram_id, "petId": normalized_pet_id}]
+    )
+    return unregistered
 
 
 def _merge_character_bible(
@@ -284,17 +502,44 @@ def _merge_character_bible(
     if not existing_record and not incoming_record:
         return None
 
-    def merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-        result = deepcopy(base)
-        for key, value in overlay.items():
-            current = result.get(key)
-            if isinstance(current, dict) and isinstance(value, dict):
-                result[key] = merge(current, value)
-            else:
-                result[key] = deepcopy(value)
-        return result
+    # Old clients sent only `extensions.lite_overlay`. Keep their generated base
+    # bible, but never recursively union arbitrary client extension keys. Modern
+    # full bibles are authoritative and replace the previous client-owned shape.
+    is_legacy_overlay_only = not incoming_record or set(incoming_record) <= {"extensions"}
+    result = deepcopy(existing_record if is_legacy_overlay_only else incoming_record)
 
-    return merge(existing_record, incoming_record)
+    incoming_extensions = (
+        incoming_record.get("extensions")
+        if isinstance(incoming_record.get("extensions"), dict)
+        else {}
+    )
+    existing_extensions = (
+        existing_record.get("extensions")
+        if isinstance(existing_record.get("extensions"), dict)
+        else {}
+    )
+    incoming_overlay = normalize_lite_overlay_patch(incoming_extensions.get("lite_overlay"))
+    existing_overlay = normalize_lite_overlay_patch(existing_extensions.get("lite_overlay"))
+    merged_overlay: dict[str, Any] = {}
+    merge_lite_overlay_patch(merged_overlay, incoming_overlay)
+    # The persisted copy contains server-authored background-story facts. Merge it
+    # last so a stale/local snapshot cannot erase that server-owned state.
+    merge_lite_overlay_patch(merged_overlay, existing_overlay)
+
+    result_extensions = result.get("extensions")
+    if not isinstance(result_extensions, dict):
+        result_extensions = {}
+    else:
+        result_extensions = deepcopy(result_extensions)
+    if merged_overlay:
+        result_extensions["lite_overlay"] = merged_overlay
+    else:
+        result_extensions.pop("lite_overlay", None)
+    if result_extensions:
+        result["extensions"] = result_extensions
+    else:
+        result.pop("extensions", None)
+    return result or None
 
 
 def _preserve_pet_character_bible(
@@ -330,16 +575,7 @@ def _record_lite_overlay_patch(record: dict[str, Any] | None) -> dict[str, Any] 
     )
     if not isinstance(overlay, dict):
         return None
-    patch: dict[str, Any] = {}
-    facts = overlay.get("facts")
-    if isinstance(facts, list) and facts:
-        patch["facts"] = facts
-    spheres = overlay.get("spheres")
-    if isinstance(spheres, dict) and spheres:
-        patch["spheres"] = spheres
-    world_seed = overlay.get("worldSeed")
-    if isinstance(world_seed, dict):
-        patch["worldSeed"] = world_seed
+    patch = normalize_lite_overlay_patch(overlay)
     return patch or None
 
 
@@ -361,11 +597,12 @@ def _merge_record_lite_overlay_patch(
     if not isinstance(extensions, dict):
         extensions = {}
         bible["extensions"] = extensions
-    overlay = extensions.setdefault("lite_overlay", {})
-    if not isinstance(overlay, dict):
-        overlay = {}
-        extensions["lite_overlay"] = overlay
+    overlay = normalize_lite_overlay_patch(extensions.get("lite_overlay"))
     merge_lite_overlay_patch(overlay, patch)
+    if overlay:
+        extensions["lite_overlay"] = overlay
+    else:
+        extensions.pop("lite_overlay", None)
 
 
 def _compact_event_text(value: Any, *, limit: int = 500) -> str:
@@ -717,9 +954,252 @@ def _append_full_story_history(
     return history[-MAX_FULL_STORY_HISTORY:]
 
 
+def _record_bot_generation_receipts(record: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_receipts = record.get("botGenerationReceipts")
+    if not isinstance(raw_receipts, list):
+        return []
+    return [
+        deepcopy(item)
+        for item in raw_receipts[-MAX_BOT_GENERATION_RECEIPTS:]
+        if isinstance(item, dict)
+        and isinstance(item.get("requestKey"), str)
+        and item.get("kind") in {"full_story", "story"}
+        and isinstance(item.get("story"), dict)
+    ]
+
+
+def _bot_generation_receipt(
+    record: dict[str, Any],
+    *,
+    request_key: str | None,
+    kind: str,
+) -> dict[str, Any] | None:
+    if not request_key:
+        return None
+    return next(
+        (
+            receipt
+            for receipt in reversed(_record_bot_generation_receipts(record))
+            if receipt.get("requestKey") == request_key and receipt.get("kind") == kind
+        ),
+        None,
+    )
+
+
+def _append_bot_generation_receipt(
+    record: dict[str, Any],
+    receipt: dict[str, Any],
+) -> list[dict[str, Any]]:
+    request_key = receipt.get("requestKey")
+    kind = receipt.get("kind")
+    receipts = [
+        item
+        for item in _record_bot_generation_receipts(record)
+        if item.get("requestKey") != request_key or item.get("kind") != kind
+    ]
+    receipts.append(deepcopy(receipt))
+    return receipts[-MAX_BOT_GENERATION_RECEIPTS:]
+
+
 def _recent_story_events_patch(record: dict[str, Any] | None) -> dict[str, Any] | None:
     events = _record_recent_story_events(record)
     return {"events": events} if events else None
+
+
+def _legacy_background_story_output(record: dict[str, Any]) -> tuple[str, Path]:
+    """Return the pre-owner-bound path for reading and garbage-collecting old media."""
+
+    raw_pet_id = str(record.get("petId") or record.get("telegramId") or "story")
+    safe_pet_id = (
+        "".join(
+            character if character.isalnum() or character in {"-", "_"} else "-"
+            for character in raw_pet_id
+        ).strip("-")[:120]
+        or "story"
+    )
+    return safe_pet_id, generated_dir_for(safe_pet_id)
+
+
+def _background_story_output(record: dict[str, Any]) -> tuple[str, Path]:
+    """Return a collision-resistant media directory bound to one Telegram owner."""
+
+    telegram_id = record.get("telegramId")
+    if type(telegram_id) is not int:
+        raise ValueError("background-story media requires an integer Telegram owner")
+    raw_pet_id = record.get("petId")
+    canonical_pet_id = raw_pet_id.strip() if isinstance(raw_pet_id, str) else ""
+    if not canonical_pet_id:
+        canonical_pet_id = str(telegram_id)
+    owner_digest = hashlib.sha256(f"{telegram_id}\0{canonical_pet_id}".encode()).hexdigest()[:32]
+    owner_name = f"story-{owner_digest}"
+    return owner_name, generated_dir_for(owner_name)
+
+
+def _background_story_output_candidates(
+    record: dict[str, Any],
+) -> tuple[tuple[str, Path], ...]:
+    """Return the active namespace plus the legacy namespace for read/GC compatibility."""
+
+    current = _background_story_output(record)
+    legacy = _legacy_background_story_output(record)
+    return (current,) if current == legacy else (current, legacy)
+
+
+def _configured_generated_assets_root() -> Path:
+    configured = Path(
+        getattr(get_settings(), "storage_health_generated_assets_path", "static/generated")
+    ).expanduser()
+    if not configured.is_absolute():
+        configured = Path.cwd() / configured
+    configured = configured.resolve(strict=False)
+    runtime_root = generated_dir_for(uuid.UUID(int=0)).parent.resolve(strict=False)
+    if configured != runtime_root:
+        raise RuntimeError("configured generated-assets path differs from media writer root")
+    return configured
+
+
+def _durable_background_story_media_values() -> list[Any]:
+    values: list[Any] = [_read_store()]
+    inbox_path = Path(
+        getattr(get_settings(), "bot_command_inbox_path", "data/push/bot_command_inbox.sqlite3")
+    ).expanduser()
+    if not inbox_path.is_absolute():
+        inbox_path = Path.cwd() / inbox_path
+    inbox_path = inbox_path.resolve(strict=False)
+    if not inbox_path.exists():
+        return values
+
+    with sqlite3.connect(
+        f"{inbox_path.as_uri()}?mode=ro",
+        uri=True,
+        timeout=1,
+    ) as connection:
+        rows = connection.execute(
+            "SELECT prepared_json FROM bot_command_inbox WHERE prepared_json IS NOT NULL"
+        ).fetchall()
+    for row in rows:
+        serialized = row[0]
+        if not isinstance(serialized, str):
+            raise ValueError("durable bot media checkpoint is not text")
+        decoded = json.loads(serialized)
+        if not isinstance(decoded, dict):
+            raise ValueError("durable bot media checkpoint is not an object")
+        values.append(decoded)
+    return values
+
+
+def _run_background_story_media_cleanup(
+    *,
+    records: list[dict[str, Any]] | None,
+    now: datetime,
+) -> None:
+    generated_root = _configured_generated_assets_root()
+    owner_directories: dict[str, Path] | None = None
+    if records is not None:
+        owner_directories = {}
+        for record in records:
+            for owner_name, directory in _background_story_output_candidates(record):
+                owner_directories[owner_name] = directory
+        if not owner_directories:
+            return
+    result = cleanup_unreferenced_background_story_media(
+        generated_root=generated_root,
+        owner_directories=owner_directories,
+        saved_values=_durable_background_story_media_values(),
+        now=now,
+        minimum_age=BACKGROUND_STORY_MEDIA_GC_MIN_AGE,
+    )
+    if result.removed:
+        logger.info(
+            "background_story_media_gc removed=%s referenced=%s tooYoung=%s",
+            len(result.removed),
+            result.referenced,
+            result.too_young,
+        )
+    if result.failed or result.unsafe:
+        logger.warning(
+            "background_story_media_gc incomplete failed=%s unsafe=%s",
+            len(result.failed),
+            result.unsafe,
+        )
+
+
+def _cleanup_background_story_media_for_records(
+    records: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+) -> None:
+    if not generated_media_cleanup_is_enabled(
+        getattr(get_settings(), "generated_media_cleanup_enabled", None)
+    ):
+        return
+    try:
+        with _background_story_media_gc_lock:
+            _run_background_story_media_cleanup(records=records, now=now or _now())
+    except Exception as exc:
+        # Missing/corrupt durable ownership state must disable deletion, not risk
+        # removing media that a replay still owns.
+        logger.warning(
+            "background_story_media_gc skipped errorType=%s",
+            type(exc).__name__,
+        )
+
+
+def _background_story_media_target(
+    record: dict[str, Any],
+    *,
+    generated_at: datetime,
+    suffix: str,
+) -> tuple[Path, str]:
+    if suffix not in {".mp4", ".png"}:
+        raise ValueError("unsupported background-story media suffix")
+    safe_pet_id, output_dir = _background_story_output(record)
+    filename = f"background-story-{generated_at.strftime('%Y%m%dT%H%M%S%fZ')}{suffix}"
+    version = int(generated_at.timestamp())
+    return output_dir / filename, f"/static/generated/{safe_pet_id}/{filename}?v={version}"
+
+
+def _atomic_write_background_story_media(path: Path, content: bytes) -> None:
+    if not content:
+        raise ValueError("background-story media must not be empty")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary_path.open("xb") as output:
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary_path, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _existing_background_story_media(
+    record: dict[str, Any],
+    *,
+    generated_at: datetime,
+    suffix: str,
+) -> tuple[str, bytes] | None:
+    path, media_url = _background_story_media_target(
+        record,
+        generated_at=generated_at,
+        suffix=suffix,
+    )
+    try:
+        if path.is_symlink():
+            return None
+        # A durable retry can recover an old file immediately before checkpointing
+        # its URL. Refresh mtime first so the GC grace period fences that race.
+        os.utime(path, None, follow_symlinks=False)
+        content = path.read_bytes()
+    except OSError:
+        return None
+    return (media_url, content) if content else None
 
 
 def _persist_background_story_image(
@@ -728,20 +1208,13 @@ def _persist_background_story_image(
     *,
     generated_at: datetime,
 ) -> str:
-    raw_pet_id = str(record.get("petId") or record.get("telegramId") or "story")
-    safe_pet_id = (
-        "".join(
-            character if character.isalnum() or character in {"-", "_"} else "-"
-            for character in raw_pet_id
-        ).strip("-")[:120]
-        or "story"
+    path, media_url = _background_story_media_target(
+        record,
+        generated_at=generated_at,
+        suffix=".png",
     )
-    output_dir = generated_dir_for(safe_pet_id)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"background-story-{generated_at.strftime('%Y%m%dT%H%M%S%fZ')}.png"
-    (output_dir / filename).write_bytes(image_bytes)
-    version = int(generated_at.timestamp())
-    return f"/static/generated/{safe_pet_id}/{filename}?v={version}"
+    _atomic_write_background_story_media(path, image_bytes)
+    return media_url
 
 
 def _persist_background_story_video(
@@ -750,20 +1223,60 @@ def _persist_background_story_video(
     *,
     generated_at: datetime,
 ) -> str:
-    raw_pet_id = str(record.get("petId") or record.get("telegramId") or "story")
-    safe_pet_id = (
-        "".join(
-            character if character.isalnum() or character in {"-", "_"} else "-"
-            for character in raw_pet_id
-        ).strip("-")[:120]
-        or "story"
+    path, media_url = _background_story_media_target(
+        record,
+        generated_at=generated_at,
+        suffix=".mp4",
     )
-    output_dir = generated_dir_for(safe_pet_id)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"background-story-{generated_at.strftime('%Y%m%dT%H%M%S%fZ')}.mp4"
-    (output_dir / filename).write_bytes(video_bytes)
-    version = int(generated_at.timestamp())
-    return f"/static/generated/{safe_pet_id}/{filename}?v={version}"
+    _atomic_write_background_story_media(path, video_bytes)
+    return media_url
+
+
+def _persisted_background_story_media_bytes(
+    record: dict[str, Any],
+    media_url: Any,
+    *,
+    suffix: str,
+) -> bytes | None:
+    if not isinstance(media_url, str):
+        return None
+    clean_path = media_url.split("?", maxsplit=1)[0]
+    target: Path | None = None
+    for owner_name, output_dir in _background_story_output_candidates(record):
+        expected_prefix = f"/static/generated/{owner_name}/"
+        if not clean_path.startswith(expected_prefix):
+            continue
+        filename = clean_path.removeprefix(expected_prefix)
+        if Path(filename).name != filename or Path(filename).suffix.lower() != suffix:
+            return None
+        target = output_dir / filename
+        break
+    if target is None:
+        return None
+    try:
+        if target.is_symlink():
+            return None
+        # Refresh before a durable inbox entry transitions into the push store.
+        # Push JSON and SQLite cannot share one transaction; the grace-period
+        # fence prevents a GC snapshot from falling into that ownership gap.
+        os.utime(target, None, follow_symlinks=False)
+        content = target.read_bytes()
+        return content or None
+    except OSError:
+        return None
+
+
+def load_persisted_story_video_bytes(
+    *,
+    pet_id: Any,
+    telegram_id: int,
+    media_url: Any,
+) -> bytes | None:
+    """Read only a video created for this pet from the generated-media directory."""
+    record = {"telegramId": telegram_id}
+    if isinstance(pet_id, (str, int)) and not isinstance(pet_id, bool):
+        record["petId"] = pet_id
+    return _persisted_background_story_media_bytes(record, media_url, suffix=".mp4")
 
 
 def _clamp_stat(value: Any) -> int:
@@ -991,25 +1504,122 @@ def register_push_snapshot(
         "timezone": payload.timezone,
         "registeredAt": now_iso,
     }
+    if payload.snapshotWriterId is not None and payload.snapshotRevision is not None:
+        incoming_record["snapshotWriterId"] = payload.snapshotWriterId
+        incoming_record["snapshotRevision"] = payload.snapshotRevision
     stats_patch: LocalPetStatsPatch | None = None
     reset_pet = False
 
     def merge_snapshot(existing: dict[str, Any] | None) -> dict[str, Any]:
         nonlocal reset_pet, stats_patch
         reset_request = existing.get("petResetRequest") if isinstance(existing, dict) else None
-        if isinstance(reset_request, dict) and reset_request.get("petId") == payload.petId:
+        reset_tombstones = _pet_reset_tombstones(existing)
+        if (isinstance(reset_request, dict) and reset_request.get("petId") == payload.petId) or any(
+            item["petId"] == payload.petId for item in reset_tombstones
+        ):
             reset_pet = True
             return deepcopy(existing)
 
         record = deepcopy(incoming_record)
         same_pet = isinstance(existing, dict) and existing.get("petId") == payload.petId
-        if same_pet:
-            record["pet"] = _preserve_pet_character_bible(
-                record["pet"],
-                existing.get("pet"),
+        existing_revision = existing.get("snapshotRevision") if isinstance(existing, dict) else None
+        existing_revision = (
+            existing_revision
+            if isinstance(existing_revision, int) and not isinstance(existing_revision, bool)
+            else None
+        )
+        existing_writer_id = (
+            existing.get("snapshotWriterId") if isinstance(existing, dict) else None
+        )
+        existing_writer_id = existing_writer_id if isinstance(existing_writer_id, str) else None
+        incoming_writer_id = payload.snapshotWriterId
+        incoming_revision = payload.snapshotRevision
+        stale_snapshot = False
+        if isinstance(existing, dict):
+            same_writer = (
+                incoming_writer_id is not None
+                and incoming_writer_id == existing_writer_id
+                and incoming_revision is not None
+                and existing_revision is not None
             )
+            comparable_modern_orders = (
+                incoming_writer_id is not None
+                and existing_writer_id is not None
+                and incoming_revision is not None
+                and existing_revision is not None
+            )
+
+            def modern_order_is_stale() -> bool | None:
+                if not comparable_modern_orders:
+                    return None
+                incoming_epoch_order = incoming_revision >= SNAPSHOT_EPOCH_REVISION_FLOOR
+                existing_epoch_order = existing_revision >= SNAPSHOT_EPOCH_REVISION_FLOOR
+                if incoming_epoch_order != existing_epoch_order:
+                    return not incoming_epoch_order
+                if incoming_epoch_order:
+                    return (incoming_revision, incoming_writer_id) <= (
+                        existing_revision,
+                        existing_writer_id,
+                    )
+                if same_writer:
+                    return incoming_revision <= existing_revision
+                return None
+
+            if not same_pet:
+                # Pet replacement is ordered by the pet creation time even when
+                # two tabs briefly use different writers (or race on the shared
+                # revision counter). Otherwise a late snapshot for the deleted
+                # pet can replace the new pet before its reset tombstone arrives.
+                incoming_created_at = _parse_iso(payload.createdAt)
+                existing_created_at = _parse_iso(existing.get("createdAt"))
+                stale_snapshot = bool(
+                    incoming_created_at is None
+                    or (
+                        existing_created_at is not None
+                        and incoming_created_at < existing_created_at
+                    )
+                    or (
+                        incoming_created_at is not None
+                        and incoming_created_at == existing_created_at
+                        and modern_order_is_stale() is True
+                    )
+                )
+            elif (modern_order_stale := modern_order_is_stale()) is not None:
+                stale_snapshot = modern_order_stale
+            else:
+                # Legacy clients do not provide a request-order fence. Keep their
+                # timestamp behavior for legacy counters and mixed writers. Equal
+                # timestamps remain accepted because history/memory may change
+                # without mutating the pet itself.
+                incoming_order_at = _parse_iso(payload.updatedAt if same_pet else payload.createdAt)
+                existing_order_at = _parse_iso(
+                    existing.get("updatedAt") if same_pet else existing.get("createdAt")
+                )
+                stale_snapshot = bool(
+                    incoming_order_at is None
+                    or (existing_order_at is not None and incoming_order_at < existing_order_at)
+                )
+
+        if stale_snapshot:
+            # Requests are processed by a thread pool and can finish out of order. A
+            # late snapshot must not roll the active pet, history, memory or ambient
+            # context back. Same-pet callers still receive authoritative stat ticks.
+            if same_pet:
+                stats_probe = deepcopy(incoming_record)
+                stats_patch = _merge_snapshot_stats(stats_probe, existing, now=now)
+            return deepcopy(existing)
+        record["pet"] = _preserve_pet_character_bible(
+            record["pet"],
+            existing.get("pet") if same_pet else None,
+        )
+        if same_pet:
+            if payload.snapshotWriterId is None and existing_writer_id is not None:
+                record["snapshotWriterId"] = existing_writer_id
+                record["snapshotRevision"] = existing_revision
         stats_patch = _merge_snapshot_stats(record, existing, now=now) if same_pet else None
         if isinstance(existing, dict):
+            if reset_tombstones:
+                record["petResetTombstones"] = reset_tombstones
             for key in (
                 "lastPushAt",
                 "lastPushAttemptAt",
@@ -1034,6 +1644,7 @@ def register_push_snapshot(
                     "lastFullStoryAt",
                     "lastFullStory",
                     "fullStoryHistory",
+                    "botGenerationReceipts",
                     "dailyFullStory",
                     "dailyFullStoryAttemptKey",
                     "dailyFullStoryAttemptCount",
@@ -1252,6 +1863,7 @@ def _send_push_record(
     reason: str,
     manual: bool,
     include_debug: bool = False,
+    assert_active: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     settings = get_settings()
     if not settings.bot_token:
@@ -1267,6 +1879,8 @@ def _send_push_record(
         raise TelegramPushError("PUSH_CHAT_ID_MISSING", "chat_id для Telegram push не найден.")
 
     with httpx.Client() as client:
+        if assert_active is not None:
+            assert_active()
         try:
             send_message(
                 client,
@@ -1276,6 +1890,8 @@ def _send_push_record(
             )
         except TelegramAPIError as exc:
             push_error = _telegram_push_error(exc)
+            if assert_active is not None:
+                assert_active()
             _save_push_failure(record, push_error)
             raise push_error from exc
         except httpx.HTTPError as exc:
@@ -1283,6 +1899,8 @@ def _send_push_record(
                 "TELEGRAM_SEND_FAILED",
                 f"Telegram sendMessage failed: {exc.__class__.__name__}",
             )
+            if assert_active is not None:
+                assert_active()
             _save_push_failure(record, push_error)
             raise push_error from exc
 
@@ -1320,6 +1938,8 @@ def _send_push_record(
             )
         return next_record
 
+    if assert_active is not None:
+        assert_active()
     _update_record(_telegram_id_from_record(record), save_delivery)
     return {
         "sent": True,
@@ -1334,12 +1954,22 @@ def _send_push_record(
 
 def _telegram_push_error(exc: TelegramAPIError) -> TelegramPushError:
     description = exc.description.strip()
-    if "chat not found" in description.lower():
+    normalized_description = description.lower()
+    chat_unreachable = exc.status_code == 403 or any(
+        marker in normalized_description
+        for marker in (
+            "chat not found",
+            "bot was blocked by the user",
+            "user is deactivated",
+            "bot can't initiate conversation",
+        )
+    )
+    if chat_unreachable:
         return TelegramPushError(
             "TELEGRAM_CHAT_NOT_FOUND",
             (
-                "Telegram не нашел чат с этим пользователем. Пользователь должен "
-                "открыть диалог с ботом и нажать /start, затем повтори отправку."
+                "Telegram-чат недоступен. Пользователь должен открыть диалог с ботом, "
+                "нажать /start и затем повторить отправку."
             ),
         )
     return TelegramPushError(
@@ -1352,10 +1982,10 @@ def _save_push_failure(record: dict[str, Any], exc: Exception) -> None:
     now_iso = _iso()
     if isinstance(exc, TelegramPushError):
         error_code = exc.code
-        message = exc.message
+        message = _safe_error_message(exc.message)
     else:
         error_code = "PUSH_SEND_FAILED"
-        message = str(exc)
+        message = _safe_error_message(exc)
     failure_patch = {
         "lastPushError": message,
         "lastPushErrorCode": error_code,
@@ -1378,10 +2008,10 @@ def _save_story_failure(record: dict[str, Any], exc: Exception) -> None:
     now_iso = _iso()
     if isinstance(exc, TelegramPushError):
         error_code = exc.code
-        message = exc.message
+        message = _safe_error_message(exc.message)
     else:
         error_code = "STORY_GENERATION_FAILED"
-        message = str(exc)
+        message = _safe_error_message(exc)
     failure_patch = {
         "lastStoryError": message,
         "lastStoryErrorCode": error_code,
@@ -1405,6 +2035,7 @@ def send_manual_push(
     telegram_id: int | None = None,
     reason: str | None = None,
     include_debug: bool = True,
+    assert_active: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     record = _record_by_telegram_id(telegram_id)
     return _send_push_record(
@@ -1412,6 +2043,7 @@ def send_manual_push(
         reason=reason or _push_reason_for_record(record, _now()),
         manual=True,
         include_debug=include_debug,
+        assert_active=assert_active,
     )
 
 
@@ -1466,10 +2098,131 @@ def _apply_story_stat_impact(
     )
 
 
+def _checkpoint_durable_progress(
+    progress: dict[str, Any],
+    key: str,
+    value: Any,
+    checkpoint: Callable[[dict[str, Any]], None] | None,
+) -> dict[str, Any]:
+    if key in progress:
+        if progress[key] != value:
+            raise TelegramPushError(
+                "DURABLE_PROGRESS_CONFLICT",
+                f"Сохранённая стадия {key} не совпадает с текущим результатом.",
+            )
+        return progress
+    next_progress = {**progress, key: deepcopy(value)}
+    if checkpoint is not None:
+        checkpoint(next_progress)
+    return next_progress
+
+
+def _background_story_result_from_payload(payload: Any) -> BackgroundStoryResult:
+    if not isinstance(payload, dict):
+        raise TelegramPushError("DURABLE_STORY_INVALID", "Сохранённый текст истории повреждён.")
+
+    def text_value(key: str) -> str:
+        value = payload.get(key)
+        if not isinstance(value, str):
+            raise TelegramPushError(
+                "DURABLE_STORY_INVALID",
+                f"Сохранённое поле истории {key} повреждено.",
+            )
+        return value
+
+    raw_tags = payload.get("tags")
+    raw_prompt_debug = payload.get("promptDebug")
+    raw_stat_impacts = payload.get("statImpacts")
+    if not isinstance(raw_tags, list) or not isinstance(raw_prompt_debug, list):
+        raise TelegramPushError("DURABLE_STORY_INVALID", "Сохранённый текст истории повреждён.")
+    if not isinstance(raw_stat_impacts, list):
+        raw_stat_impacts = []
+    return BackgroundStoryResult(
+        title=text_value("title"),
+        summary=text_value("summary"),
+        story_text=text_value("storyText"),
+        event_type=text_value("eventType"),
+        valence=text_value("valence"),
+        tags=tuple(str(item) for item in raw_tags),
+        rag_text=text_value("ragText"),
+        story_library_patch=(
+            payload.get("storyLibraryPatch")
+            if isinstance(payload.get("storyLibraryPatch"), dict)
+            else None
+        ),
+        lite_overlay_patch=(
+            payload.get("liteOverlayPatch")
+            if isinstance(payload.get("liteOverlayPatch"), dict)
+            else None
+        ),
+        recent_story_event=(
+            payload.get("recentStoryEvent")
+            if isinstance(payload.get("recentStoryEvent"), dict)
+            else None
+        ),
+        prompt_debug=[item for item in raw_prompt_debug if isinstance(item, dict)],
+        stat_impacts=tuple(item for item in raw_stat_impacts if isinstance(item, dict)),
+        stat_impact=(
+            payload.get("statImpact") if isinstance(payload.get("statImpact"), dict) else None
+        ),
+        stat_validation=(
+            payload.get("statValidation")
+            if isinstance(payload.get("statValidation"), dict)
+            else None
+        ),
+        plot_mode=str(payload.get("plotMode") or ""),
+        incident_class=str(payload.get("incidentClass") or ""),
+        causal_origin=str(payload.get("causalOrigin") or ""),
+        event_scale=str(payload.get("eventScale") or ""),
+        setting_class=str(payload.get("settingClass") or ""),
+        opposition_class=str(payload.get("oppositionClass") or ""),
+        resolution_mode=str(payload.get("resolutionMode") or ""),
+        resolution_family=str(payload.get("resolutionFamily") or ""),
+        valence_target=str(payload.get("valenceTarget") or ""),
+    )
+
+
+def _background_story_result_payload(result: Any) -> dict[str, Any]:
+    stat_impacts = list(getattr(result, "stat_impacts", ()) or [])
+    stat_impact = getattr(result, "stat_impact", None) or (
+        stat_impacts[0] if stat_impacts else None
+    )
+    return {
+        "title": str(result.title),
+        "summary": str(result.summary),
+        "storyText": str(result.story_text),
+        "eventType": str(result.event_type),
+        "valence": str(result.valence),
+        "tags": list(result.tags),
+        "ragText": str(result.rag_text),
+        "storyLibraryPatch": getattr(result, "story_library_patch", None),
+        "liteOverlayPatch": getattr(result, "lite_overlay_patch", None),
+        "recentStoryEvent": getattr(result, "recent_story_event", None),
+        # Debug prompts are not required to resume paid media and can be large.
+        "promptDebug": [],
+        "statImpacts": stat_impacts,
+        "statImpact": stat_impact,
+        "statValidation": getattr(result, "stat_validation", None),
+        "plotMode": getattr(result, "plot_mode", ""),
+        "incidentClass": getattr(result, "incident_class", ""),
+        "causalOrigin": getattr(result, "causal_origin", ""),
+        "eventScale": getattr(result, "event_scale", ""),
+        "settingClass": getattr(result, "setting_class", ""),
+        "oppositionClass": getattr(result, "opposition_class", ""),
+        "resolutionMode": getattr(result, "resolution_mode", ""),
+        "resolutionFamily": getattr(result, "resolution_family", ""),
+        "valenceTarget": getattr(result, "valence_target", ""),
+    }
+
+
 def generate_story_for_telegram_user(
     *,
     telegram_id: int,
     include_debug: bool = True,
+    idempotency_key: str | None = None,
+    durable_progress: dict[str, Any] | None = None,
+    checkpoint: Callable[[dict[str, Any]], None] | None = None,
+    assert_active: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     record = _record_by_telegram_id(telegram_id)
     payload = _build_push_payload(
@@ -1478,45 +2231,73 @@ def generate_story_for_telegram_user(
         include_debug=include_debug,
     )
     novelty_history = _record_story_novelty_history(record)
-    result = generate_background_story(
-        pet=payload.pet,
-        memory_context=payload.memoryContext,
-        history=_record_history(record),
-        recent_replies=_record_recent_replies(record),
-        recent_story_events=novelty_history,
-        now_iso=payload.nowIso,
-        timezone=payload.timezone,
-    )
-    if _story_is_lexical_duplicate(result, novelty_history):
-        rejected_candidate = {
-            "title": result.title,
-            "tags": list(result.tags),
-            "plotMode": getattr(result, "plot_mode", ""),
-            "incidentClass": getattr(result, "incident_class", ""),
-            "causalOrigin": getattr(result, "causal_origin", ""),
-            "eventScale": getattr(result, "event_scale", ""),
-            "settingClass": getattr(result, "setting_class", ""),
-            "oppositionClass": getattr(result, "opposition_class", ""),
-            "resolutionMode": getattr(result, "resolution_mode", ""),
-            "resolutionFamily": getattr(result, "resolution_family", ""),
-            "valenceTarget": getattr(result, "valence_target", ""),
-            "createdAt": payload.nowIso or _iso(),
-        }
+    progress = deepcopy(durable_progress) if isinstance(durable_progress, dict) else {}
+    text_stage = progress.get("text")
+    if "text" in progress and not isinstance(text_stage, dict):
+        raise TelegramPushError("DURABLE_STORY_INVALID", "Сохранённый текст истории повреждён.")
+    if isinstance(text_stage, dict):
+        if text_stage.get("petId") != record.get("petId"):
+            raise TelegramPushError(
+                "PUSH_PET_CHANGED",
+                "Питомец изменился во время генерации истории. Повтори запрос.",
+            )
+        now = _parse_iso(text_stage.get("generatedAt"))
+        if now is None:
+            raise TelegramPushError(
+                "DURABLE_STORY_INVALID",
+                "В сохранённой истории отсутствует время генерации.",
+            )
+        result = _background_story_result_from_payload(text_stage.get("result"))
+    else:
         result = generate_background_story(
             pet=payload.pet,
             memory_context=payload.memoryContext,
             history=_record_history(record),
             recent_replies=_record_recent_replies(record),
-            recent_story_events=[*novelty_history, rejected_candidate],
+            recent_story_events=novelty_history,
             now_iso=payload.nowIso,
             timezone=payload.timezone,
         )
         if _story_is_lexical_duplicate(result, novelty_history):
-            raise TelegramPushError(
-                "STORY_NOVELTY_EXHAUSTED",
-                "Не удалось придумать достаточно новое событие. Повтори позже.",
+            rejected_candidate = {
+                "title": result.title,
+                "tags": list(result.tags),
+                "plotMode": getattr(result, "plot_mode", ""),
+                "incidentClass": getattr(result, "incident_class", ""),
+                "causalOrigin": getattr(result, "causal_origin", ""),
+                "eventScale": getattr(result, "event_scale", ""),
+                "settingClass": getattr(result, "setting_class", ""),
+                "oppositionClass": getattr(result, "opposition_class", ""),
+                "resolutionMode": getattr(result, "resolution_mode", ""),
+                "resolutionFamily": getattr(result, "resolution_family", ""),
+                "valenceTarget": getattr(result, "valence_target", ""),
+                "createdAt": payload.nowIso or _iso(),
+            }
+            result = generate_background_story(
+                pet=payload.pet,
+                memory_context=payload.memoryContext,
+                history=_record_history(record),
+                recent_replies=_record_recent_replies(record),
+                recent_story_events=[*novelty_history, rejected_candidate],
+                now_iso=payload.nowIso,
+                timezone=payload.timezone,
             )
-    now = _now()
+            if _story_is_lexical_duplicate(result, novelty_history):
+                raise TelegramPushError(
+                    "STORY_NOVELTY_EXHAUSTED",
+                    "Не удалось придумать достаточно новое событие. Повтори позже.",
+                )
+        now = _now()
+        progress = _checkpoint_durable_progress(
+            progress,
+            "text",
+            {
+                "petId": record.get("petId"),
+                "generatedAt": _iso(now),
+                "result": _background_story_result_payload(result),
+            },
+            checkpoint,
+        )
     now_iso = _iso(now)
     recent_story_event = getattr(result, "recent_story_event", None)
     history_event = {
@@ -1569,17 +2350,40 @@ def generate_story_for_telegram_user(
         "statImpact": stat_impact,
         "statValidation": getattr(result, "stat_validation", None),
     }
+    if idempotency_key:
+        last_story["requestKey"] = idempotency_key
     stats_patch: LocalPetStatsPatch | None = None
     stats_delta: dict[str, int] | None = None
+    committed_story: dict[str, Any] | None = None
 
     def save_story(current: dict[str, Any] | None) -> dict[str, Any]:
-        nonlocal stats_delta, stats_patch
+        nonlocal committed_story, stats_delta, stats_patch
         source_record = current.copy() if isinstance(current, dict) else record.copy()
         if source_record.get("petId") != record.get("petId"):
             raise TelegramPushError(
                 "PUSH_PET_CHANGED",
                 "Питомец изменился во время генерации истории. Повтори запрос.",
             )
+        existing_receipt = _bot_generation_receipt(
+            source_record,
+            request_key=idempotency_key,
+            kind="story",
+        )
+        if existing_receipt is not None:
+            committed_story = deepcopy(existing_receipt["story"])
+            existing_delta = committed_story.get("statsDelta")
+            stats_delta = existing_delta if isinstance(existing_delta, dict) else None
+            return source_record
+        existing_story = source_record.get("lastStory")
+        if (
+            idempotency_key
+            and isinstance(existing_story, dict)
+            and existing_story.get("requestKey") == idempotency_key
+        ):
+            committed_story = deepcopy(existing_story)
+            existing_delta = existing_story.get("statsDelta")
+            stats_delta = existing_delta if isinstance(existing_delta, dict) else None
+            return source_record
         next_pet, stats_patch, stat_ticks, stats_delta = _apply_story_stat_impact(
             source_record,
             stat_impacts,
@@ -1588,6 +2392,7 @@ def generate_story_for_telegram_user(
         persisted_story = deepcopy(last_story)
         if stats_delta is not None:
             persisted_story["statsDelta"] = stats_delta
+        committed_story = deepcopy(persisted_story)
         next_record = {
             **source_record,
             "pet": next_pet,
@@ -1607,13 +2412,39 @@ def generate_story_for_telegram_user(
                 history_event,
             ),
         }
+        if idempotency_key:
+            next_record["botGenerationReceipts"] = _append_bot_generation_receipt(
+                source_record,
+                {
+                    "requestKey": idempotency_key,
+                    "kind": "story",
+                    "generatedAt": now_iso,
+                    "story": persisted_story,
+                },
+            )
         _merge_record_lite_overlay_patch(next_record, result.lite_overlay_patch)
         if stat_ticks is not None:
             next_record["lastStatsTickAt"] = _legacy_stats_tick(stat_ticks)
             next_record["lastStatTickAt"] = _stat_tick_iso_map(stat_ticks)
         return next_record
 
+    if assert_active is not None:
+        assert_active()
     next_record = _update_record(_telegram_id_from_record(record), save_story)
+    if "storyCommitted" not in progress:
+        progress = _checkpoint_durable_progress(
+            progress,
+            "storyCommitted",
+            {
+                "generatedAt": now_iso,
+                "story": (
+                    deepcopy(committed_story)
+                    if isinstance(committed_story, dict)
+                    else deepcopy(last_story)
+                ),
+            },
+            checkpoint,
+        )
     story_image: dict[str, Any] | None = None
     story_image_error: str | None = None
     story_image_url: str | None = None
@@ -1621,40 +2452,121 @@ def generate_story_for_telegram_user(
     story_video_error: str | None = None
     story_video_url: str | None = None
     story_image_direction: dict[str, str] = {}
-    try:
-        image_bytes = generate_background_story_image_bytes(
-            pet=payload.pet,
-            story=result,
-            recent_story_events=_record_recent_story_events(record),
-            direction_output=story_image_direction,
+    image_bytes: bytes | None = None
+    image_stage = progress.get("image")
+    if "image" in progress and not isinstance(image_stage, dict):
+        raise TelegramPushError("DURABLE_STORY_INVALID", "Сохранённое изображение повреждено.")
+    if isinstance(image_stage, dict):
+        story_image_url = (
+            image_stage.get("url") if isinstance(image_stage.get("url"), str) else None
         )
-        story_image_url = _persist_background_story_image(
+        stored_direction = image_stage.get("direction")
+        if isinstance(stored_direction, dict):
+            story_image_direction.update(
+                {str(key): str(value) for key, value in stored_direction.items()}
+            )
+        image_bytes = _persisted_background_story_media_bytes(
             record,
-            image_bytes,
-            generated_at=now,
+            story_image_url,
+            suffix=".png",
         )
+        if image_bytes is None:
+            story_image_error = "PERSISTED_STORY_IMAGE_MISSING"
+    else:
+        recovered_image = _existing_background_story_media(
+            record,
+            generated_at=now,
+            suffix=".png",
+        )
+        if recovered_image is not None:
+            story_image_url, image_bytes = recovered_image
+        else:
+            if assert_active is not None:
+                assert_active()
+            try:
+                with reserve_background_story_image_bytes(
+                    pet=payload.pet,
+                    story=result,
+                    recent_story_events=_record_recent_story_events(record),
+                    direction_output=story_image_direction,
+                ) as image_bytes:
+                    story_image_url = _persist_background_story_image(
+                        record,
+                        image_bytes,
+                        generated_at=now,
+                    )
+            except Exception as exc:
+                logger.exception("background_story_image_generation failed")
+                story_image_error = exc.__class__.__name__
+                image_bytes = None
+
+        if image_bytes is not None and story_image_url is not None:
+            progress = _checkpoint_durable_progress(
+                progress,
+                "image",
+                {"url": story_image_url, "direction": story_image_direction},
+                checkpoint,
+            )
+
+    if image_bytes is not None:
         story_image = {
             "bytes": image_bytes,
             "mimeType": "image/png",
         }
-        video_bytes = generate_background_story_video_bytes(image_bytes)
-        if not video_bytes:
-            raise RuntimeError("BACKGROUND_STORY_VIDEO_EMPTY")
-        story_video_url = _persist_background_story_video(
-            record,
-            video_bytes,
-            generated_at=now,
+
+    video_bytes: bytes | None = None
+    video_stage = progress.get("video")
+    if "video" in progress and not isinstance(video_stage, dict):
+        raise TelegramPushError("DURABLE_STORY_INVALID", "Сохранённое видео повреждено.")
+    if image_bytes is not None and isinstance(video_stage, dict):
+        story_video_url = (
+            video_stage.get("url") if isinstance(video_stage.get("url"), str) else None
         )
+        video_bytes = _persisted_background_story_media_bytes(
+            record,
+            story_video_url,
+            suffix=".mp4",
+        )
+        if video_bytes is None:
+            story_video_error = "PERSISTED_STORY_VIDEO_MISSING"
+    elif image_bytes is not None:
+        recovered_video = _existing_background_story_media(
+            record,
+            generated_at=now,
+            suffix=".mp4",
+        )
+        if recovered_video is not None:
+            story_video_url, video_bytes = recovered_video
+        else:
+            if assert_active is not None:
+                assert_active()
+            try:
+                with reserve_background_story_video_bytes(image_bytes) as video_bytes:
+                    if not video_bytes:
+                        raise RuntimeError("BACKGROUND_STORY_VIDEO_EMPTY")
+                    story_video_url = _persist_background_story_video(
+                        record,
+                        video_bytes,
+                        generated_at=now,
+                    )
+            except Exception as exc:
+                logger.exception("background_story_video_generation failed")
+                story_video_error = exc.__class__.__name__
+                video_bytes = None
+
+        if video_bytes is not None and story_video_url is not None:
+            progress = _checkpoint_durable_progress(
+                progress,
+                "video",
+                {"url": story_video_url},
+                checkpoint,
+            )
+
+    if video_bytes is not None:
         story_video = {
             "bytes": video_bytes,
             "mimeType": "video/mp4",
         }
-    except Exception as exc:
-        logger.exception("background_story_media_generation failed")
-        if story_image is None:
-            story_image_error = exc.__class__.__name__
-        else:
-            story_video_error = exc.__class__.__name__
 
     image_status_at = _iso()
 
@@ -1705,6 +2617,8 @@ def generate_story_for_telegram_user(
             "lastStoryVideoErrorAt": image_status_at if story_video is None else None,
         }
 
+    if assert_active is not None:
+        assert_active()
     next_record = _update_record(
         _telegram_id_from_record(record),
         save_story_image_status,
@@ -1714,12 +2628,49 @@ def generate_story_for_telegram_user(
         (item for item in reversed(stored_recent_events) if item.get("generatedAt") == now_iso),
         history_event,
     )
+    current_story = next_record.get("lastStory")
+    committed_stage = progress.get("storyCommitted")
+    committed_stage_story = (
+        committed_stage.get("story") if isinstance(committed_stage, dict) else None
+    )
+    if isinstance(current_story, dict) and (
+        not idempotency_key or current_story.get("requestKey") == idempotency_key
+    ):
+        delivery_story = deepcopy(current_story)
+    elif isinstance(committed_stage_story, dict):
+        delivery_story = deepcopy(committed_stage_story)
+        if story_image_url:
+            delivery_story.update(
+                {
+                    "imageUrl": story_image_url,
+                    "videoUrl": story_video_url,
+                    "imagePoseFamily": story_image_direction.get("poseFamily"),
+                    "imageHeroPose": story_image_direction.get("heroPose"),
+                    "imageCamera": story_image_direction.get("camera"),
+                    "imageColorPalette": story_image_direction.get("colorPalette"),
+                    "imageAccentColor": story_image_direction.get("accentColor"),
+                    "imagePaletteFamily": story_image_direction.get("paletteFamily"),
+                }
+            )
+    else:
+        delivery_story = deepcopy(last_story)
+    prepared_result = {
+        "petId": record.get("petId"),
+        "story": delivery_story,
+    }
+    progress = _checkpoint_durable_progress(
+        progress,
+        "preparedResult",
+        prepared_result,
+        checkpoint,
+    )
+    _cleanup_background_story_media_for_records([next_record], now=now)
     return {
         "generated": True,
         "telegramId": record.get("telegramId"),
         "petId": record.get("petId"),
         "generatedAt": now_iso,
-        "story": next_record["lastStory"],
+        "story": delivery_story,
         "storyImage": story_image,
         "storyImageError": story_image_error,
         "storyVideo": story_video,
@@ -1734,11 +2685,9 @@ def generate_story_for_telegram_user(
     }
 
 
-def generate_full_story_for_telegram_user(
-    *,
+def _prepare_full_story_for_telegram_user(
     telegram_id: int,
-    include_debug: bool = False,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], datetime, LocalPetChatContext, Any, str]:
     record = _record_by_telegram_id(telegram_id)
     now = _now()
     if _record_is_dead(record, now):
@@ -1746,66 +2695,198 @@ def generate_full_story_for_telegram_user(
     pet = LocalPetChatContext.model_validate(_current_pet_record(record, now))
     full_story_history = _record_full_story_history(record)
     result = generate_full_story(pet=pet, recent_full_stories=full_story_history)
-    working_record = deepcopy(record)
-    applied_parts: list[dict[str, Any]] = []
-    aggregate_delta = {key: 0 for key in STAT_KEYS}
+    return record, now, pet, result, _iso(now)
 
-    for part in result.parts:
-        next_pet, _stats_patch_value, ticks, stats_delta = _apply_story_stat_impact(
-            working_record,
-            list(part.stat_impacts),
-            now=now,
+
+def _full_story_result_payload(result: Any) -> dict[str, Any]:
+    return {
+        "overallTitle": str(result.overall_title),
+        "arcPlan": deepcopy(result.arc_plan),
+        "storyDirection": deepcopy(result.story_direction),
+        "parts": [part.model_dump() for part in result.parts],
+        # Debug prompts are not required to resume paid media and can be large.
+        "promptDebug": [],
+    }
+
+
+def _full_story_result_from_payload(payload: Any) -> FullStoryResult:
+    if not isinstance(payload, dict):
+        raise TelegramPushError(
+            "DURABLE_FULL_STORY_INVALID",
+            "Сохранённый текст большой истории повреждён.",
         )
-        working_record["pet"] = next_pet
-        if ticks is not None:
-            working_record["lastStatsTickAt"] = _legacy_stats_tick(ticks)
-            working_record["lastStatTickAt"] = _stat_tick_iso_map(ticks)
-        actual_delta = stats_delta or {key: 0 for key in STAT_KEYS}
-        for key in STAT_KEYS:
-            aggregate_delta[key] += actual_delta.get(key, 0)
-        part_payload = part.model_dump()
-        part_payload["statsDelta"] = actual_delta
-        applied_parts.append(part_payload)
+    overall_title = payload.get("overallTitle")
+    arc_plan = payload.get("arcPlan")
+    story_direction = payload.get("storyDirection")
+    raw_parts = payload.get("parts")
+    if (
+        not isinstance(overall_title, str)
+        or not isinstance(arc_plan, dict)
+        or not isinstance(story_direction, dict)
+        or not isinstance(raw_parts, list)
+        or not raw_parts
+    ):
+        raise TelegramPushError(
+            "DURABLE_FULL_STORY_INVALID",
+            "Сохранённый текст большой истории повреждён.",
+        )
+    parts: list[FullStoryPart] = []
+    for raw_part in raw_parts:
+        if not isinstance(raw_part, dict):
+            raise TelegramPushError(
+                "DURABLE_FULL_STORY_INVALID",
+                "Сохранённая часть большой истории повреждена.",
+            )
+        part_number = raw_part.get("partNumber")
+        if type(part_number) is not int:
+            raise TelegramPushError(
+                "DURABLE_FULL_STORY_INVALID",
+                "Номер сохранённой части большой истории повреждён.",
+            )
+        raw_impacts = raw_part.get("statImpacts")
+        parts.append(
+            FullStoryPart(
+                part_number=part_number,
+                title=str(raw_part.get("title") or ""),
+                summary=str(raw_part.get("summary") or ""),
+                story_text=str(raw_part.get("storyText") or ""),
+                valence=str(raw_part.get("valence") or "mixed"),
+                stat_impacts=tuple(
+                    item
+                    for item in (raw_impacts if isinstance(raw_impacts, list) else [])
+                    if isinstance(item, dict)
+                ),
+            )
+        )
+    return FullStoryResult(
+        overall_title=overall_title,
+        arc_plan={str(key): str(value) for key, value in arc_plan.items()},
+        story_direction={str(key): str(value) for key, value in story_direction.items()},
+        parts=tuple(parts),
+        prompt_debug=[],
+    )
 
-    generated_at = _iso(now)
-    story_payload = {
+
+def _full_story_draft(result: Any, generated_at: str) -> dict[str, Any]:
+    return {
         "overallTitle": result.overall_title,
         "arcPlan": result.arc_plan,
         "storyDirection": result.story_direction,
-        "parts": applied_parts,
+        "parts": [part.model_dump() for part in result.parts],
         "generatedAt": generated_at,
-        "statsDelta": aggregate_delta,
         "source": "full_story_command",
     }
 
+
+def _commit_full_story(
+    *,
+    telegram_id: int,
+    initial_record: dict[str, Any],
+    result: Any,
+    generated_at: str,
+    now: datetime,
+    media_by_part: dict[int, dict[str, Any]] | None = None,
+    include_debug: bool = False,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    committed_story: dict[str, Any] = {}
+
     def save_full_story(current: dict[str, Any] | None) -> dict[str, Any]:
-        source = current.copy() if isinstance(current, dict) else record.copy()
-        if source.get("petId") != record.get("petId"):
+        nonlocal committed_story
+        source = current.copy() if isinstance(current, dict) else initial_record.copy()
+        if source.get("petId") != initial_record.get("petId"):
             raise TelegramPushError(
                 "PUSH_PET_CHANGED",
                 "Питомец изменился во время генерации истории. Повтори запрос.",
             )
-        return {
+        existing_receipt = _bot_generation_receipt(
+            source,
+            request_key=idempotency_key,
+            kind="full_story",
+        )
+        if existing_receipt is not None:
+            committed_story = deepcopy(existing_receipt["story"])
+            return source
+        existing_story = source.get("lastFullStory")
+        if (
+            idempotency_key
+            and isinstance(existing_story, dict)
+            and existing_story.get("requestKey") == idempotency_key
+        ):
+            committed_story = deepcopy(existing_story)
+            return source
+        if _record_is_dead(source, now):
+            raise TelegramPushError("PET_DEAD", "Питомец умер и больше не может путешествовать.")
+
+        working_record = deepcopy(source)
+        applied_parts: list[dict[str, Any]] = []
+        aggregate_delta = {key: 0 for key in STAT_KEYS}
+
+        for index, part in enumerate(result.parts, start=1):
+            next_pet, _stats_patch_value, ticks, stats_delta = _apply_story_stat_impact(
+                working_record,
+                list(part.stat_impacts),
+                now=now,
+            )
+            working_record["pet"] = next_pet
+            if ticks is not None:
+                working_record["lastStatsTickAt"] = _legacy_stats_tick(ticks)
+                working_record["lastStatTickAt"] = _stat_tick_iso_map(ticks)
+            actual_delta = stats_delta or {key: 0 for key in STAT_KEYS}
+            for key in STAT_KEYS:
+                aggregate_delta[key] += actual_delta.get(key, 0)
+            part_payload = part.model_dump()
+            part_number = part_payload.get("partNumber")
+            if not isinstance(part_number, int):
+                part_number = index
+            part_payload.update((media_by_part or {}).get(part_number, {}))
+            part_payload["statsDelta"] = actual_delta
+            applied_parts.append(part_payload)
+
+        committed_story = {
+            "overallTitle": result.overall_title,
+            "arcPlan": result.arc_plan,
+            "storyDirection": result.story_direction,
+            "parts": applied_parts,
+            "generatedAt": generated_at,
+            "statsDelta": aggregate_delta,
+            "source": "full_story_command",
+        }
+        if idempotency_key:
+            committed_story["requestKey"] = idempotency_key
+        next_record = {
             **source,
             "pet": working_record["pet"],
             "lastStatsTickAt": working_record.get("lastStatsTickAt"),
             "lastStatTickAt": working_record.get("lastStatTickAt"),
             "lastFullStoryAt": generated_at,
-            "lastFullStory": story_payload,
+            "lastFullStory": committed_story,
             "fullStoryHistory": _append_full_story_history(
                 source,
-                story_payload,
+                committed_story,
             ),
         }
+        if idempotency_key:
+            next_record["botGenerationReceipts"] = _append_bot_generation_receipt(
+                source,
+                {
+                    "requestKey": idempotency_key,
+                    "kind": "full_story",
+                    "generatedAt": generated_at,
+                    "story": committed_story,
+                },
+            )
+        return next_record
 
     saved_record = _update_record(telegram_id, save_full_story)
+    _cleanup_background_story_media_for_records([saved_record], now=now)
     final_stats = _record_current_stats(saved_record, now)
     return {
         "generated": True,
         "telegramId": telegram_id,
-        "petId": record.get("petId"),
+        "petId": initial_record.get("petId"),
         "generatedAt": generated_at,
-        "story": story_payload,
+        "story": committed_story,
         "statsPatch": {
             "stats": final_stats,
             "lastStatsTickAt": saved_record.get("lastStatsTickAt"),
@@ -1815,93 +2896,311 @@ def generate_full_story_for_telegram_user(
     }
 
 
+def generate_full_story_for_telegram_user(
+    *,
+    telegram_id: int,
+    include_debug: bool = False,
+) -> dict[str, Any]:
+    record, now, _pet, result, generated_at = _prepare_full_story_for_telegram_user(telegram_id)
+    return _commit_full_story(
+        telegram_id=telegram_id,
+        initial_record=record,
+        result=result,
+        generated_at=generated_at,
+        now=now,
+        include_debug=include_debug,
+    )
+
+
+def prepare_full_story_for_telegram_delivery(
+    *,
+    telegram_id: int,
+    idempotency_key: str | None = None,
+    durable_progress: dict[str, Any] | None = None,
+    checkpoint: Callable[[dict[str, Any]], None] | None = None,
+    assert_active: Callable[[], None] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    progress = deepcopy(durable_progress) if isinstance(durable_progress, dict) else {}
+    text_stage = progress.get("text")
+    if "text" in progress and not isinstance(text_stage, dict):
+        raise TelegramPushError(
+            "DURABLE_FULL_STORY_INVALID",
+            "Сохранённый текст большой истории повреждён.",
+        )
+    if isinstance(text_stage, dict):
+        record = _record_by_telegram_id(telegram_id)
+        if text_stage.get("petId") != record.get("petId"):
+            raise TelegramPushError(
+                "PUSH_PET_CHANGED",
+                "Питомец изменился во время генерации истории. Повтори запрос.",
+            )
+        generated_at_time = _parse_iso(text_stage.get("generatedAt"))
+        if generated_at_time is None:
+            raise TelegramPushError(
+                "DURABLE_FULL_STORY_INVALID",
+                "В сохранённой большой истории отсутствует время генерации.",
+            )
+        if _record_is_dead(record, generated_at_time):
+            raise TelegramPushError("PET_DEAD", "Питомец умер и больше не может путешествовать.")
+        pet = LocalPetChatContext.model_validate(_current_pet_record(record, generated_at_time))
+        generated_result = _full_story_result_from_payload(text_stage.get("result"))
+        generated_at = _iso(generated_at_time)
+    else:
+        record, generated_at_time, pet, generated_result, generated_at = (
+            _prepare_full_story_for_telegram_user(telegram_id)
+        )
+        progress = _checkpoint_durable_progress(
+            progress,
+            "text",
+            {
+                "petId": record.get("petId"),
+                "generatedAt": generated_at,
+                "result": _full_story_result_payload(generated_result),
+            },
+            checkpoint,
+        )
+
+    story = _full_story_draft(generated_result, generated_at)
+    parts = story.get("parts") if isinstance(story.get("parts"), list) else []
+    generated_parts: list[dict[str, Any]] = []
+    pose_history = [*_record_recent_story_events(record)]
+
+    for index, raw_part in enumerate(parts):
+        if not isinstance(raw_part, dict):
+            continue
+        part = raw_part.copy()
+        part_number = part.get("partNumber")
+        if type(part_number) is not int:
+            part_number = index + 1
+        media_time = generated_at_time + timedelta(microseconds=index)
+        image_key = f"part:{part_number}:image"
+        image_stage = progress.get(image_key)
+        if image_key in progress and not isinstance(image_stage, dict):
+            raise TelegramPushError(
+                "DURABLE_FULL_STORY_INVALID",
+                f"Сохранённое изображение части {part_number} повреждено.",
+            )
+        direction: dict[str, str] = {}
+        image_url: str | None = None
+        image_bytes: bytes | None = None
+        if isinstance(image_stage, dict):
+            image_url = image_stage.get("url") if isinstance(image_stage.get("url"), str) else None
+            stored_direction = image_stage.get("direction")
+            if isinstance(stored_direction, dict):
+                direction.update({str(key): str(value) for key, value in stored_direction.items()})
+            image_bytes = _persisted_background_story_media_bytes(
+                record,
+                image_url,
+                suffix=".png",
+            )
+            if image_bytes is None:
+                raise TelegramPushError(
+                    "FULL_STORY_MEDIA_MISSING",
+                    f"Сохранённое изображение части {part_number} недоступно.",
+                )
+        else:
+            recovered_image = _existing_background_story_media(
+                record,
+                generated_at=media_time,
+                suffix=".png",
+            )
+            if recovered_image is not None:
+                image_url, image_bytes = recovered_image
+            else:
+                if assert_active is not None:
+                    assert_active()
+                try:
+                    with reserve_full_story_part_image_bytes(
+                        pet=pet,
+                        overall_title=str(story.get("overallTitle") or "История одного дня"),
+                        part=part,
+                        recent_story_events=pose_history,
+                        direction_output=direction,
+                    ) as image_bytes:
+                        if not image_bytes:
+                            raise RuntimeError("FULL_STORY_IMAGE_EMPTY")
+                        image_url = _persist_background_story_image(
+                            record,
+                            image_bytes,
+                            generated_at=media_time,
+                        )
+                except Exception as exc:
+                    logger.exception("full_story_image_generation failed")
+                    raise TelegramPushError(
+                        "FULL_STORY_MEDIA_FAILED",
+                        f"Не удалось создать изображение части: {exc.__class__.__name__}",
+                    ) from exc
+            progress = _checkpoint_durable_progress(
+                progress,
+                image_key,
+                {"url": image_url, "direction": direction},
+                checkpoint,
+            )
+
+        video_key = f"part:{part_number}:video"
+        video_stage = progress.get(video_key)
+        if video_key in progress and not isinstance(video_stage, dict):
+            raise TelegramPushError(
+                "DURABLE_FULL_STORY_INVALID",
+                f"Сохранённое видео части {part_number} повреждено.",
+            )
+        video_url: str | None = None
+        video_bytes: bytes | None = None
+        if isinstance(video_stage, dict):
+            video_url = video_stage.get("url") if isinstance(video_stage.get("url"), str) else None
+            video_bytes = _persisted_background_story_media_bytes(
+                record,
+                video_url,
+                suffix=".mp4",
+            )
+            if video_bytes is None:
+                raise TelegramPushError(
+                    "FULL_STORY_MEDIA_MISSING",
+                    f"Сохранённое видео части {part_number} недоступно.",
+                )
+        else:
+            recovered_video = _existing_background_story_media(
+                record,
+                generated_at=media_time,
+                suffix=".mp4",
+            )
+            if recovered_video is not None:
+                video_url, video_bytes = recovered_video
+            else:
+                if assert_active is not None:
+                    assert_active()
+                try:
+                    with reserve_background_story_video_bytes(image_bytes) as video_bytes:
+                        if not video_bytes:
+                            raise RuntimeError("FULL_STORY_VIDEO_EMPTY")
+                        video_url = _persist_background_story_video(
+                            record,
+                            video_bytes,
+                            generated_at=media_time,
+                        )
+                except Exception as exc:
+                    logger.exception("full_story_video_generation failed")
+                    raise TelegramPushError(
+                        "FULL_STORY_MEDIA_FAILED",
+                        f"Не удалось создать видео части: {exc.__class__.__name__}",
+                    ) from exc
+            progress = _checkpoint_durable_progress(
+                progress,
+                video_key,
+                {"url": video_url},
+                checkpoint,
+            )
+
+        enriched_part = {
+            **part,
+            "imageUrl": image_url,
+            "videoUrl": video_url,
+            "imagePoseFamily": direction.get("poseFamily"),
+            "imageHeroPose": direction.get("heroPose"),
+            "imageCamera": direction.get("camera"),
+            "imageColorPalette": direction.get("colorPalette"),
+            "imageAccentColor": direction.get("accentColor"),
+            "imagePaletteFamily": direction.get("paletteFamily"),
+        }
+        generated_parts.append(
+            {
+                "partNumber": part_number,
+                "media": {key: value for key, value in enriched_part.items() if key not in part},
+                "video": video_bytes,
+            }
+        )
+        pose_history.append(enriched_part)
+
+    if assert_active is not None:
+        assert_active()
+    result = _commit_full_story(
+        telegram_id=telegram_id,
+        initial_record=record,
+        result=generated_result,
+        generated_at=generated_at,
+        now=generated_at_time,
+        media_by_part={
+            int(item["partNumber"]): item["media"]
+            for item in generated_parts
+            if isinstance(item.get("partNumber"), int) and isinstance(item.get("media"), dict)
+        },
+        idempotency_key=idempotency_key,
+    )
+    progress = _checkpoint_durable_progress(
+        progress,
+        "preparedResult",
+        {"petId": result.get("petId"), "story": result.get("story")},
+        checkpoint,
+    )
+    return result, generated_parts
+
+
+def deliver_prepared_full_story_for_telegram_user(
+    client: httpx.Client,
+    *,
+    telegram_id: int,
+    keyboard: dict[str, Any],
+    prepared_result: dict[str, Any],
+    generated_parts: list[dict[str, Any]] | None = None,
+    assert_active: Callable[[], None] | None = None,
+) -> None:
+    story = prepared_result.get("story")
+    if not isinstance(story, dict):
+        raise TelegramPushError("FULL_STORY_DELIVERY_INVALID", "Не найдена сохранённая история.")
+    parts = story.get("parts")
+    if not isinstance(parts, list) or not parts:
+        raise TelegramPushError("FULL_STORY_DELIVERY_INVALID", "Не найдены части истории.")
+
+    in_memory_videos = {
+        item.get("partNumber"): item.get("video")
+        for item in generated_parts or []
+        if isinstance(item, dict)
+        and isinstance(item.get("partNumber"), int)
+        and isinstance(item.get("video"), bytes)
+        and item.get("video")
+    }
+    pet_id = prepared_result.get("petId")
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        part_number = part.get("partNumber")
+        video_bytes = in_memory_videos.get(part_number)
+        if not isinstance(video_bytes, bytes) or not video_bytes:
+            video_bytes = load_persisted_story_video_bytes(
+                pet_id=pet_id,
+                telegram_id=telegram_id,
+                media_url=part.get("videoUrl"),
+            )
+        caption = format_full_story_part_message(story, part)
+        if assert_active is not None:
+            assert_active()
+        if video_bytes:
+            send_video(client, telegram_id, video_bytes, caption, keyboard)
+        else:
+            logger.error(
+                "Persisted full-story video is unavailable telegramId=%s partNumber=%s",
+                telegram_id,
+                part_number,
+            )
+            send_message(client, telegram_id, caption, keyboard)
+
+
 def send_full_story_for_telegram_user(
     client: httpx.Client,
     *,
     telegram_id: int,
     keyboard: dict[str, Any],
 ) -> dict[str, Any]:
-    result = generate_full_story_for_telegram_user(
+    result, generated_parts = prepare_full_story_for_telegram_delivery(
         telegram_id=telegram_id,
-        include_debug=False,
     )
-    story = result.get("story") if isinstance(result.get("story"), dict) else {}
-    record = _record_by_telegram_id(telegram_id)
-    pet = LocalPetChatContext.model_validate(_current_pet_record(record, _now()))
-    parts = story.get("parts") if isinstance(story.get("parts"), list) else []
-    generated_parts: list[dict[str, Any]] = []
-    pose_history = [*_record_recent_story_events(record)]
-
-    try:
-        for index, raw_part in enumerate(parts):
-            if not isinstance(raw_part, dict):
-                continue
-            part = raw_part.copy()
-            direction: dict[str, str] = {}
-            image_bytes = generate_full_story_part_image_bytes(
-                pet=pet,
-                overall_title=str(story.get("overallTitle") or "История одного дня"),
-                part=part,
-                recent_story_events=pose_history,
-                direction_output=direction,
-            )
-            if not image_bytes:
-                raise RuntimeError("FULL_STORY_IMAGE_EMPTY")
-            media_time = _now() + timedelta(microseconds=index)
-            image_url = _persist_background_story_image(
-                record,
-                image_bytes,
-                generated_at=media_time,
-            )
-            video_bytes = generate_background_story_video_bytes(image_bytes)
-            if not video_bytes:
-                raise RuntimeError("FULL_STORY_VIDEO_EMPTY")
-            video_url = _persist_background_story_video(
-                record,
-                video_bytes,
-                generated_at=media_time,
-            )
-            enriched_part = {
-                **part,
-                "imageUrl": image_url,
-                "videoUrl": video_url,
-                "imagePoseFamily": direction.get("poseFamily"),
-                "imageHeroPose": direction.get("heroPose"),
-                "imageCamera": direction.get("camera"),
-                "imageColorPalette": direction.get("colorPalette"),
-                "imageAccentColor": direction.get("accentColor"),
-                "imagePaletteFamily": direction.get("paletteFamily"),
-            }
-            generated_parts.append({"part": enriched_part, "video": video_bytes})
-            pose_history.append(enriched_part)
-    except Exception as exc:
-        logger.exception("full_story_media_generation failed")
-        raise TelegramPushError(
-            "FULL_STORY_MEDIA_FAILED",
-            f"Не удалось создать видео частей: {exc.__class__.__name__}",
-        ) from exc
-
-    next_story = {**story, "parts": [item["part"] for item in generated_parts]}
-
-    def save_media(current: dict[str, Any] | None) -> dict[str, Any]:
-        source = current.copy() if isinstance(current, dict) else record.copy()
-        last_story = source.get("lastFullStory")
-        if not isinstance(last_story, dict) or last_story.get("generatedAt") != story.get(
-            "generatedAt"
-        ):
-            return source
-        return {**source, "lastFullStory": next_story}
-
-    _update_record(telegram_id, save_media)
-    for item in generated_parts:
-        send_video(
-            client,
-            telegram_id,
-            item["video"],
-            format_full_story_part_message(next_story, item["part"]),
-            keyboard,
-        )
-    result["story"] = next_story
+    deliver_prepared_full_story_for_telegram_user(
+        client,
+        telegram_id=telegram_id,
+        keyboard=keyboard,
+        prepared_result=result,
+        generated_parts=generated_parts,
+    )
     return result
 
 
@@ -2079,6 +3378,86 @@ def _apply_daily_full_story_part_stats(
     return _update_record(_telegram_id_from_record(record), apply_part)
 
 
+def _checkpoint_daily_full_story_media(
+    record: dict[str, Any],
+    *,
+    local_date: str,
+    part_index: int,
+    story_generated_at: Any,
+    image_url: str | None,
+    video_url: str | None,
+    image_direction: dict[str, str],
+    now: datetime,
+) -> dict[str, Any]:
+    def save_media(current: dict[str, Any] | None) -> dict[str, Any]:
+        source = current.copy() if isinstance(current, dict) else record.copy()
+        current_part_value = _daily_full_story_part(
+            source,
+            local_date=local_date,
+            part_index=part_index,
+        )
+        if current_part_value is None:
+            raise TelegramPushError("DAILY_FULL_STORY_MISSING", "История дня не найдена.")
+        current_story, _current_part = current_part_value
+        if current_story.get("generatedAt") != story_generated_at:
+            raise TelegramPushError(
+                "DAILY_FULL_STORY_REPLACED",
+                "История дня изменилась во время генерации медиа.",
+            )
+        next_story = deepcopy(current_story)
+        next_part = next_story["parts"][part_index]
+        if image_url is not None:
+            next_part["imageUrl"] = image_url
+            next_part["imagePreparedAt"] = _iso(now)
+        if video_url is not None:
+            next_part["videoUrl"] = video_url
+            next_part["mediaPreparedAt"] = _iso(now)
+        next_part["imagePoseFamily"] = image_direction.get("poseFamily")
+        next_part["imageHeroPose"] = image_direction.get("heroPose")
+        next_part["imageCamera"] = image_direction.get("camera")
+        next_part["imageColorPalette"] = image_direction.get("colorPalette")
+        next_part["imageAccentColor"] = image_direction.get("accentColor")
+        next_part["imagePaletteFamily"] = image_direction.get("paletteFamily")
+        result = {**source, "dailyFullStory": next_story}
+        last_full_story = source.get("lastFullStory")
+        if isinstance(last_full_story, dict) and last_full_story.get(
+            "generatedAt"
+        ) == current_story.get("generatedAt"):
+            result["lastFullStory"] = next_story
+        return result
+
+    return _update_record(_telegram_id_from_record(record), save_media)
+
+
+def _consume_background_story_paid_media_budget(*, stage: str) -> None:
+    settings = get_settings()
+    limit = int(getattr(settings, "scheduled_background_story_paid_media_daily_cap", 0) or 0)
+    if limit <= 0:
+        raise _BackgroundStoryPaidMediaBudgetError(
+            stage=stage,
+            status="disabled",
+            code=BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED,
+            message="Платные медиа фоновых историй отключены суточным лимитом.",
+        )
+
+    store_path = getattr(settings, "rate_limit_store_path", DEFAULT_RATE_LIMIT_STORE_PATH)
+    try:
+        get_rate_limiter(store_path).check_fixed_window(
+            BACKGROUND_STORY_PAID_MEDIA_BUDGET_BUCKET,
+            BACKGROUND_STORY_PAID_MEDIA_BUDGET_USER_ID,
+            limit,
+            BACKGROUND_STORY_PAID_MEDIA_BUDGET_WINDOW,
+        )
+    except RateLimitExceeded as exc:
+        raise _BackgroundStoryPaidMediaBudgetError(
+            stage=stage,
+            status="exhausted",
+            code=BACKGROUND_STORY_PAID_MEDIA_BUDGET_EXHAUSTED,
+            message="Суточный лимит платных медиа фоновых историй исчерпан.",
+            retry_after_seconds=exc.retry_after_seconds,
+        ) from exc
+
+
 def _send_daily_full_story_part(
     record: dict[str, Any],
     *,
@@ -2123,41 +3502,141 @@ def _send_daily_full_story_part(
     story, part = current_part
     if part.get("deliveredAt"):
         raise TelegramPushError("DAILY_FULL_STORY_ALREADY_SENT", "Эта часть уже отправлена.")
+    story_generated_at = story.get("generatedAt")
+    story_generated_time = _parse_iso(story_generated_at)
+    if story_generated_time is None:
+        raise TelegramPushError(
+            "DAILY_FULL_STORY_INVALID",
+            "В сохранённой истории дня отсутствует время генерации.",
+        )
+    media_time = story_generated_time + timedelta(microseconds=part_index)
 
     pet = LocalPetChatContext.model_validate(_current_pet_record(record, now))
-    image_bytes: bytes | None = None
-    image_url: str | None = None
-    video_bytes: bytes | None = None
-    video_url: str | None = None
+    image_url = part.get("imageUrl") if isinstance(part.get("imageUrl"), str) else None
+    video_url = part.get("videoUrl") if isinstance(part.get("videoUrl"), str) else None
+    image_bytes = _persisted_background_story_media_bytes(record, image_url, suffix=".png")
+    video_bytes = _persisted_background_story_media_bytes(record, video_url, suffix=".mp4")
     image_error: str | None = None
-    image_direction: dict[str, str] = {}
-    try:
-        pose_history = [*_record_recent_story_events(record)]
-        pose_history.extend(
-            item
-            for item in story.get("parts", [])
-            if isinstance(item, dict) and item.get("imagePoseFamily")
+    media_budget_error: _BackgroundStoryPaidMediaBudgetError | None = None
+    image_direction = {
+        key: value
+        for key, field in (
+            ("poseFamily", "imagePoseFamily"),
+            ("heroPose", "imageHeroPose"),
+            ("camera", "imageCamera"),
+            ("colorPalette", "imageColorPalette"),
+            ("accentColor", "imageAccentColor"),
+            ("paletteFamily", "imagePaletteFamily"),
         )
-        image_bytes = generate_full_story_part_image_bytes(
-            pet=pet,
-            overall_title=str(story.get("overallTitle") or "История одного дня"),
-            part=part,
-            recent_story_events=pose_history,
-            direction_output=image_direction,
+        if isinstance((value := part.get(field)), str)
+    }
+    if image_bytes is None:
+        recovered_image = _existing_background_story_media(
+            record,
+            generated_at=media_time,
+            suffix=".png",
         )
-        if not image_bytes:
-            raise RuntimeError("DAILY_FULL_STORY_IMAGE_EMPTY")
-        image_url = _persist_background_story_image(record, image_bytes, generated_at=now)
-        video_bytes = generate_background_story_video_bytes(image_bytes)
-        if not video_bytes:
-            raise RuntimeError("DAILY_FULL_STORY_VIDEO_EMPTY")
-        video_url = _persist_background_story_video(record, video_bytes, generated_at=now)
-    except Exception as exc:
-        logger.exception("daily_full_story_media_generation failed")
-        raise TelegramPushError(
-            "DAILY_FULL_STORY_MEDIA_FAILED",
-            f"Не удалось создать видео части: {exc.__class__.__name__}",
-        ) from exc
+        if recovered_image is not None:
+            image_url, image_bytes = recovered_image
+            record = _checkpoint_daily_full_story_media(
+                record,
+                local_date=local_date,
+                part_index=part_index,
+                story_generated_at=story_generated_at,
+                image_url=image_url,
+                video_url=None,
+                image_direction=image_direction,
+                now=now,
+            )
+    if video_bytes is None:
+        recovered_video = _existing_background_story_media(
+            record,
+            generated_at=media_time,
+            suffix=".mp4",
+        )
+        if recovered_video is not None:
+            video_url, video_bytes = recovered_video
+            record = _checkpoint_daily_full_story_media(
+                record,
+                local_date=local_date,
+                part_index=part_index,
+                story_generated_at=story_generated_at,
+                image_url=image_url,
+                video_url=video_url,
+                image_direction=image_direction,
+                now=now,
+            )
+    if video_bytes is None:
+        try:
+            if image_bytes is None:
+                pose_history = [*_record_recent_story_events(record)]
+                pose_history.extend(
+                    item
+                    for item in story.get("parts", [])
+                    if isinstance(item, dict) and item.get("imagePoseFamily")
+                )
+                _consume_background_story_paid_media_budget(stage="image")
+                with reserve_full_story_part_image_bytes(
+                    pet=pet,
+                    overall_title=str(story.get("overallTitle") or "История одного дня"),
+                    part=part,
+                    recent_story_events=pose_history,
+                    direction_output=image_direction,
+                ) as image_bytes:
+                    if not image_bytes:
+                        raise RuntimeError("DAILY_FULL_STORY_IMAGE_EMPTY")
+                    image_url = _persist_background_story_image(
+                        record,
+                        image_bytes,
+                        generated_at=media_time,
+                    )
+                record = _checkpoint_daily_full_story_media(
+                    record,
+                    local_date=local_date,
+                    part_index=part_index,
+                    story_generated_at=story_generated_at,
+                    image_url=image_url,
+                    video_url=None,
+                    image_direction=image_direction,
+                    now=now,
+                )
+            _consume_background_story_paid_media_budget(stage="video")
+            with reserve_background_story_video_bytes(image_bytes) as video_bytes:
+                if not video_bytes:
+                    raise RuntimeError("DAILY_FULL_STORY_VIDEO_EMPTY")
+                video_url = _persist_background_story_video(
+                    record,
+                    video_bytes,
+                    generated_at=media_time,
+                )
+            record = _checkpoint_daily_full_story_media(
+                record,
+                local_date=local_date,
+                part_index=part_index,
+                story_generated_at=story_generated_at,
+                image_url=image_url,
+                video_url=video_url,
+                image_direction=image_direction,
+                now=now,
+            )
+        except _BackgroundStoryPaidMediaBudgetError as exc:
+            media_budget_error = exc
+            log_budget_state = logger.warning if exc.status == "exhausted" else logger.info
+            log_budget_state(
+                "scheduled_background_story_paid_media_budget "
+                "status=%s code=%s stage=%s telegram_id=%s retry_after_seconds=%s",
+                exc.status,
+                exc.code,
+                exc.stage,
+                record.get("telegramId"),
+                exc.retry_after_seconds,
+            )
+        except Exception as exc:
+            logger.exception("daily_full_story_media_generation failed")
+            raise TelegramPushError(
+                "DAILY_FULL_STORY_MEDIA_FAILED",
+                f"Не удалось создать видео части: {exc.__class__.__name__}",
+            ) from exc
 
     record = _apply_daily_full_story_part_stats(
         record,
@@ -2179,6 +3658,8 @@ def _send_daily_full_story_part(
         try:
             if video_bytes:
                 send_video(client, chat_id, video_bytes, caption, keyboard)
+            elif image_bytes:
+                send_photo(client, chat_id, image_bytes, caption, keyboard)
             else:
                 send_message(client, chat_id, caption, keyboard)
         except TelegramAPIError as exc:
@@ -2190,6 +3671,14 @@ def _send_daily_full_story_part(
             ) from exc
 
     delivered_at = _iso(now)
+    media_status = (
+        f"budget_{media_budget_error.status}" if media_budget_error is not None else "ready"
+    )
+    story_status = (
+        f"delivered_media_budget_{media_budget_error.status}"
+        if media_budget_error is not None
+        else "delivered"
+    )
 
     def save_delivery(current: dict[str, Any] | None) -> dict[str, Any]:
         source = current.copy() if isinstance(current, dict) else record.copy()
@@ -2207,6 +3696,16 @@ def _send_daily_full_story_part(
         next_part["imageUrl"] = image_url
         next_part["videoUrl"] = video_url
         next_part["imageError"] = image_error
+        next_part["mediaStatus"] = media_status
+        next_part["mediaErrorCode"] = (
+            media_budget_error.code if media_budget_error is not None else None
+        )
+        next_part["mediaBudgetStage"] = (
+            media_budget_error.stage if media_budget_error is not None else None
+        )
+        next_part["mediaBudgetRetryAfterSeconds"] = (
+            media_budget_error.retry_after_seconds if media_budget_error is not None else None
+        )
         next_part["imagePoseFamily"] = image_direction.get("poseFamily")
         next_part["imageHeroPose"] = image_direction.get("heroPose")
         next_part["imageCamera"] = image_direction.get("camera")
@@ -2218,9 +3717,15 @@ def _send_daily_full_story_part(
             "dailyFullStory": next_story,
             "lastStoryAt": delivered_at,
             "lastStoryAttemptAt": delivered_at,
-            "lastStoryError": None,
-            "lastStoryErrorCode": None,
-            "lastStoryErrorAt": None,
+            "lastStoryStatus": story_status,
+            "lastStoryMediaStatus": media_status,
+            "lastStoryError": (
+                media_budget_error.message if media_budget_error is not None else None
+            ),
+            "lastStoryErrorCode": (
+                media_budget_error.code if media_budget_error is not None else None
+            ),
+            "lastStoryErrorAt": delivered_at if media_budget_error is not None else None,
         }
         last_full_story = source.get("lastFullStory")
         if isinstance(last_full_story, dict) and last_full_story.get(
@@ -2237,6 +3742,10 @@ def _send_daily_full_story_part(
         "partNumber": part_index + 1,
         "story": saved.get("dailyFullStory"),
         "storyImageError": image_error,
+        "storyMediaStatus": media_status,
+        "storyMediaErrorCode": (
+            media_budget_error.code if media_budget_error is not None else None
+        ),
     }
 
 
@@ -2259,10 +3768,10 @@ def _snapshot_records() -> list[dict[str, Any]]:
 def _bulk_error(record: dict[str, Any], exc: Exception) -> dict[str, Any]:
     if isinstance(exc, TelegramPushError):
         code = exc.code
-        message = exc.message
+        message = _safe_error_message(exc.message)
     else:
         code = "PUSH_SEND_FAILED"
-        message = str(exc)
+        message = _safe_error_message(exc)
     return {
         "telegramId": record.get("telegramId"),
         "petId": record.get("petId"),
@@ -2326,13 +3835,26 @@ def _due_records(now: datetime) -> list[dict[str, Any]]:
     return due
 
 
-def send_due_pushes() -> list[dict[str, Any]]:
+def _scheduler_delivery_error(exc: Exception) -> str:
+    return exc.code if isinstance(exc, TelegramPushError) else type(exc).__name__
+
+
+def _scheduler_delivery_affects_health(exc: Exception) -> bool:
+    return not (isinstance(exc, TelegramPushError) and exc.code == "TELEGRAM_CHAT_NOT_FOUND")
+
+
+def _run_due_pushes() -> _SchedulerBatchResult:
     settings = get_settings()
     if not settings.telegram_daily_push_enabled:
-        return []
+        return _SchedulerBatchResult(
+            results=[], attempted=0, failed=0, health_failed=0, last_error=None
+        )
     now = _now()
+    records = _due_records(now)
     results: list[dict[str, Any]] = []
-    for record in _due_records(now):
+    errors: list[str] = []
+    health_failures = 0
+    for record in records:
         try:
             results.append(
                 _send_push_record(
@@ -2344,7 +3866,35 @@ def send_due_pushes() -> list[dict[str, Any]]:
             )
         except Exception as exc:
             _save_push_failure(record, exc)
-    return results
+            errors.append(_scheduler_delivery_error(exc))
+            health_failures += int(_scheduler_delivery_affects_health(exc))
+    return _SchedulerBatchResult(
+        results=results,
+        attempted=len(records),
+        failed=len(errors),
+        health_failed=health_failures,
+        last_error=errors[-1] if errors else None,
+    )
+
+
+def send_due_pushes() -> list[dict[str, Any]]:
+    return _run_due_pushes().results
+
+
+def _scheduled_background_story_order_key(
+    record: dict[str, Any],
+    *,
+    now: datetime,
+) -> tuple[bytes, int]:
+    telegram_id = _telegram_id_from_record(record)
+    utc_now = now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)
+    budget_window_date = utc_now.date().isoformat()
+    digest = hashlib.sha256(
+        (
+            f"{BACKGROUND_STORY_PAID_MEDIA_BUDGET_BUCKET}\0{budget_window_date}\0{telegram_id}"
+        ).encode()
+    ).digest()
+    return digest, telegram_id
 
 
 def _due_story_records(now: datetime) -> list[dict[str, Any]]:
@@ -2381,68 +3931,312 @@ def _due_story_records(now: datetime) -> list[dict[str, Any]]:
         attempt_key = f"{local_date}:{part_index + 1}"
         if _daily_full_story_attempt_due(record, attempt_key=attempt_key, now=now):
             due.append(record)
+    due.sort(key=lambda record: _scheduled_background_story_order_key(record, now=now))
     return due
 
 
-def send_due_background_stories() -> list[dict[str, Any]]:
+def _run_due_background_stories() -> _SchedulerBatchResult:
     settings = get_settings()
     if not settings.background_story_enabled:
-        return []
+        return _SchedulerBatchResult(
+            results=[], attempted=0, failed=0, health_failed=0, last_error=None
+        )
     now = _now()
+    records = _due_story_records(now)
     results: list[dict[str, Any]] = []
-    for record in _due_story_records(now):
+    errors: list[str] = []
+    health_failures = 0
+    for record in records:
         try:
             results.append(_send_daily_full_story_part(record, now=now))
         except Exception as exc:
             _save_story_failure(_fresh_record(record), exc)
-    return results
+            errors.append(_scheduler_delivery_error(exc))
+            health_failures += int(_scheduler_delivery_affects_health(exc))
+    if records:
+        _cleanup_background_story_media_for_records(records, now=now)
+    return _SchedulerBatchResult(
+        results=results,
+        attempted=len(records),
+        failed=len(errors),
+        health_failed=health_failures,
+        last_error=errors[-1] if errors else None,
+    )
+
+
+def _run_generated_media_cleanup() -> _SchedulerBatchResult:
+    now = _now()
+    temp_result = cleanup_stale_generated_processing_temp_directories(
+        generated_root=_configured_generated_assets_root(),
+        now=now,
+    )
+    if temp_result.removed:
+        logger.info("generated_processing_temp_gc removed=%s", len(temp_result.removed))
+    if temp_result.failed or temp_result.unsafe:
+        raise RuntimeError("generated processing temp cleanup was incomplete")
+    with _background_story_media_gc_lock:
+        _run_background_story_media_cleanup(records=None, now=now)
+    return _SchedulerBatchResult(
+        results=[],
+        attempted=0,
+        failed=0,
+        health_failed=0,
+        last_error=None,
+    )
+
+
+def send_due_background_stories() -> list[dict[str, Any]]:
+    return _run_due_background_stories().results
 
 
 async def _daily_push_loop() -> None:
     settings = get_settings()
     interval = max(60, int(settings.telegram_daily_push_interval_seconds))
-    await _scheduler_loop("dailyPush", send_due_pushes, interval)
+    await _scheduler_leadership_loop("dailyPush", _run_due_pushes, interval)
 
 
 async def _background_story_loop() -> None:
     settings = get_settings()
     interval = max(60, int(settings.background_story_interval_seconds))
-    await _scheduler_loop("backgroundStory", send_due_background_stories, interval)
+    await _scheduler_leadership_loop(
+        "backgroundStory",
+        _run_due_background_stories,
+        interval,
+    )
+
+
+async def _generated_media_cleanup_loop() -> None:
+    await _scheduler_leadership_loop(
+        "generatedMediaCleanup",
+        _run_generated_media_cleanup,
+        GENERATED_MEDIA_CLEANUP_LOOP_INTERVAL_SECONDS,
+    )
 
 
 _scheduler_runtime: dict[str, dict[str, Any]] = {
-    "dailyPush": {"running": False, "consecutiveFailures": 0, "lastError": None},
-    "backgroundStory": {"running": False, "consecutiveFailures": 0, "lastError": None},
+    "dailyPush": {
+        "running": False,
+        "role": "stopped",
+        "leaderSince": None,
+        "lastLeadershipAttemptAt": None,
+        "consecutiveFailures": 0,
+        "lastRunAt": None,
+        "lastAttempted": 0,
+        "lastSucceeded": 0,
+        "lastFailed": 0,
+        "lastError": None,
+        "degradedUntil": None,
+    },
+    "backgroundStory": {
+        "running": False,
+        "role": "stopped",
+        "leaderSince": None,
+        "lastLeadershipAttemptAt": None,
+        "consecutiveFailures": 0,
+        "lastRunAt": None,
+        "lastAttempted": 0,
+        "lastSucceeded": 0,
+        "lastFailed": 0,
+        "lastError": None,
+        "degradedUntil": None,
+    },
+    "generatedMediaCleanup": {
+        "running": False,
+        "role": "stopped",
+        "leaderSince": None,
+        "lastLeadershipAttemptAt": None,
+        "consecutiveFailures": 0,
+        "lastRunAt": None,
+        "lastAttempted": 0,
+        "lastSucceeded": 0,
+        "lastFailed": 0,
+        "lastError": None,
+        "degradedUntil": None,
+    },
 }
+# Runtime telemetry and task guards are process-local. The lifetime ``flock`` below
+# is stored beside the push state on the shared volume and elects one worker per
+# scheduler for all paid generation and Telegram delivery.
+_scheduler_runtime_lock = Lock()
+_scheduler_tasks: dict[str, asyncio.Task[None]] = {}
+_scheduler_tasks_lock = Lock()
+
+
+def _scheduler_lock_path(name: str) -> Path:
+    try:
+        lock_name = SCHEDULER_LOCK_NAMES[name]
+    except KeyError as exc:
+        raise ValueError(f"unknown scheduler: {name}") from exc
+    store_path = _store_path()
+    return store_path.parent / f".{store_path.name}.{lock_name}.scheduler.lock"
+
+
+def _try_acquire_scheduler_leadership(name: str) -> BinaryIO | None:
+    lock_path = _scheduler_lock_path(name)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_handle = lock_path.open("a+b")
+    try:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        lock_handle.close()
+        if exc.errno in {errno.EACCES, errno.EAGAIN}:
+            return None
+        raise
+    return lock_handle
+
+
+def _release_scheduler_leadership(lock_handle: BinaryIO) -> None:
+    try:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        lock_handle.close()
+
+
+async def _scheduler_leadership_loop(
+    name: str,
+    operation: Callable[[], Any],
+    interval: float,
+    *,
+    retry_interval: float | None = None,
+) -> None:
+    state = _scheduler_runtime[name]
+    retry_seconds = max(
+        0.01,
+        SCHEDULER_LEADERSHIP_RETRY_SECONDS if retry_interval is None else float(retry_interval),
+    )
+    with _scheduler_runtime_lock:
+        state["running"] = True
+        state["role"] = "standby"
+        state["leaderSince"] = None
+    try:
+        while True:
+            with _scheduler_runtime_lock:
+                state["lastLeadershipAttemptAt"] = _iso()
+            lock_handle = _try_acquire_scheduler_leadership(name)
+            if lock_handle is None:
+                with _scheduler_runtime_lock:
+                    state["running"] = True
+                    state["role"] = "standby"
+                    state["leaderSince"] = None
+                await asyncio.sleep(retry_seconds)
+                continue
+
+            try:
+                with _scheduler_runtime_lock:
+                    state["running"] = True
+                    state["role"] = "leader"
+                    state["leaderSince"] = _iso()
+                # ``_scheduler_loop`` drains an already-started thread iteration on
+                # cancellation. Keep the file descriptor locked until that drain is
+                # complete, otherwise a standby could duplicate the same paid work.
+                await _scheduler_loop(name, operation, interval)
+            finally:
+                _release_scheduler_leadership(lock_handle)
+
+            with _scheduler_runtime_lock:
+                state["running"] = True
+                state["role"] = "standby"
+                state["leaderSince"] = None
+    finally:
+        with _scheduler_runtime_lock:
+            state["running"] = False
+            state["role"] = "stopped"
+            state["leaderSince"] = None
 
 
 async def _scheduler_loop(
     name: str,
     operation: Callable[[], Any],
-    interval: int,
+    interval: float,
 ) -> None:
     state = _scheduler_runtime[name]
-    state["running"] = True
+    with _scheduler_runtime_lock:
+        state["running"] = True
+        if state.get("role") != "leader":
+            state["leaderSince"] = _iso()
+        state["role"] = "leader"
     try:
         while True:
+            operation_task = asyncio.create_task(asyncio.to_thread(operation))
             try:
-                await asyncio.to_thread(operation)
+                result = await asyncio.shield(operation_task)
             except asyncio.CancelledError:
+                # Cancelling ``to_thread`` does not stop the underlying call. Keep the
+                # scheduler task alive until the accepted iteration has drained so a
+                # replacement process cannot overlap the same delivery/generation.
+                try:
+                    await operation_task
+                except Exception:
+                    logger.exception(
+                        "scheduler_iteration_failed_during_shutdown scheduler=%s",
+                        name,
+                    )
                 raise
             except Exception as exc:
-                state["consecutiveFailures"] = int(state["consecutiveFailures"]) + 1
-                state["lastError"] = type(exc).__name__
+                with _scheduler_runtime_lock:
+                    state["lastRunAt"] = _iso()
+                    state["consecutiveFailures"] = int(state["consecutiveFailures"]) + 1
+                    state["lastError"] = type(exc).__name__
                 logger.exception("scheduler_iteration_failed scheduler=%s", name)
             else:
-                state["consecutiveFailures"] = 0
-                state["lastError"] = None
+                with _scheduler_runtime_lock:
+                    state["lastRunAt"] = _iso()
+                    state["consecutiveFailures"] = 0
+                    if isinstance(result, _SchedulerBatchResult):
+                        if result.attempted > 0:
+                            state["lastAttempted"] = result.attempted
+                            state["lastSucceeded"] = result.succeeded
+                            state["lastFailed"] = result.failed
+                            state["lastError"] = result.last_error
+                            state["degradedUntil"] = (
+                                _iso(_now() + timedelta(seconds=max(600, int(interval * 2))))
+                                if result.health_failed > 0
+                                else None
+                            )
+                        elif int(state["lastAttempted"]) == 0:
+                            state["lastError"] = None
+                    else:
+                        state["lastAttempted"] = 0
+                        state["lastSucceeded"] = 0
+                        state["lastFailed"] = 0
+                        state["lastError"] = None
+                        state["degradedUntil"] = None
             await asyncio.sleep(interval)
     finally:
-        state["running"] = False
+        with _scheduler_runtime_lock:
+            state["running"] = False
+            state["role"] = "stopped"
+            state["leaderSince"] = None
 
 
 def scheduler_runtime_status() -> dict[str, dict[str, Any]]:
-    return {name: dict(state) for name, state in _scheduler_runtime.items()}
+    with _scheduler_runtime_lock:
+        result = {name: dict(state) for name, state in _scheduler_runtime.items()}
+    now = _now()
+    for state in result.values():
+        degraded_until = _parse_iso(state.get("degradedUntil"))
+        state["deliveryDegraded"] = degraded_until is not None and degraded_until > now
+    return result
+
+
+def _start_scheduler_task(
+    name: str,
+    coroutine_factory: Callable[[], Any],
+) -> asyncio.Task[None] | None:
+    with _scheduler_tasks_lock:
+        existing = _scheduler_tasks.get(name)
+        if existing is not None and not existing.done():
+            return None
+        task = asyncio.create_task(coroutine_factory())
+        _scheduler_tasks[name] = task
+
+    def forget(completed: asyncio.Task[None]) -> None:
+        with _scheduler_tasks_lock:
+            if _scheduler_tasks.get(name) is completed:
+                _scheduler_tasks.pop(name, None)
+
+    task.add_done_callback(forget)
+    return task
 
 
 def start_daily_push_scheduler() -> asyncio.Task[None] | None:
@@ -2453,11 +4247,23 @@ def start_daily_push_scheduler() -> asyncio.Task[None] | None:
         or not settings.webapp_url
     ):
         return None
-    return asyncio.create_task(_daily_push_loop())
+    return _start_scheduler_task("dailyPush", _daily_push_loop)
 
 
 def start_background_story_scheduler() -> asyncio.Task[None] | None:
     settings = get_settings()
     if not settings.background_story_enabled or not settings.bot_token or not settings.webapp_url:
         return None
-    return asyncio.create_task(_background_story_loop())
+    return _start_scheduler_task("backgroundStory", _background_story_loop)
+
+
+def start_generated_media_cleanup_scheduler() -> asyncio.Task[None] | None:
+    settings = get_settings()
+    if not generated_media_cleanup_is_enabled(
+        getattr(settings, "generated_media_cleanup_enabled", None)
+    ):
+        return None
+    return _start_scheduler_task(
+        "generatedMediaCleanup",
+        _generated_media_cleanup_loop,
+    )

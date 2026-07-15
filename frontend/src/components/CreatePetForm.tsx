@@ -7,9 +7,20 @@ import type { CSSProperties } from "react";
 
 import { ApiError, generatePetAssets, resumePetGeneration } from "@/lib/api";
 import { presentError, type PresentedError } from "@/lib/errorPresentation";
-import { canUseDebugMenu, hapticNotification } from "@/lib/telegram";
+import { readLocalPetState } from "@/lib/localPetStorage";
+import {
+  adoptPendingPetGenerationJob,
+  clearPendingPetGeneration,
+  pendingPetGenerationForDescription,
+  readPendingPetGeneration,
+  setPendingPetGenerationJobId,
+  type PendingPetGeneration,
+  writePendingPetGeneration,
+} from "@/lib/pendingPetGeneration";
+import { hapticNotification } from "@/lib/telegram";
 import { TEST_PET_ASSET_SET, TEST_PET_DESCRIPTION } from "@/lib/testPetFixture";
 import { useLocalPetState } from "@/lib/useLocalPetState";
+import { useTelegramCapabilities } from "@/lib/useTelegramCapabilities";
 import { cn } from "@/lib/utils";
 
 import { PetCreatingStage } from "./PetCreatingStage";
@@ -17,34 +28,89 @@ import { ErrorNotice } from "./ErrorNotice";
 
 const MAX_PROMPT_LENGTH = 300;
 const PROMPT_PLACEHOLDER = "Грозовой дракон с добрым характером";
-const PENDING_GENERATION_KEY = "gigagochi.pending-generation.v1";
-type PendingGeneration = { jobId: string; description: string };
+const PENDING_STORAGE_ERROR: PresentedError = {
+  message: (
+    "Не удалось сохранить прогресс. Освободите место на устройстве или разрешите "
+    + "приложению хранить данные, затем попробуйте снова."
+  ),
+};
 
-function readPendingGeneration(): PendingGeneration | null {
-  try {
-    const value = JSON.parse(window.localStorage.getItem(PENDING_GENERATION_KEY) ?? "null");
-    return value
-      && typeof value.jobId === "string"
-      && typeof value.description === "string"
-      ? value
-      : null;
-  } catch {
-    return null;
+class PendingGenerationPersistenceError extends Error {
+  constructor() {
+    super(PENDING_STORAGE_ERROR.message);
+    this.name = "PendingGenerationPersistenceError";
   }
 }
 
-function clearPendingGeneration() {
+function requestIsStillCurrent(requestKey: string): boolean {
+  return Boolean(readPendingPetGeneration(requestKey));
+}
+
+type PendingGenerationResult = {
+  assetSet: Awaited<ReturnType<typeof generatePetAssets>>;
+  effectiveDescription: string;
+};
+
+function validatedActiveDescription(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const description = value.trim();
+  return description && description.length <= MAX_PROMPT_LENGTH ? description : undefined;
+}
+
+async function runPendingGeneration(
+  pending: PendingPetGeneration,
+  signal: AbortSignal,
+): Promise<PendingGenerationResult> {
   try {
-    window.localStorage.removeItem(PENDING_GENERATION_KEY);
-  } catch {
-    // WebView storage can be unavailable in restricted browser modes.
+    const assetSet = pending.jobId
+      ? await resumePetGeneration(pending.jobId, { signal })
+      : await generatePetAssets(pending.description, {
+          requestKey: pending.requestKey,
+          signal,
+          onJobQueued: (jobId) => {
+            setPendingPetGenerationJobId(pending.requestKey, jobId);
+          },
+        });
+    return { assetSet, effectiveDescription: pending.description };
+  } catch (caught) {
+    const activeJobId = caught instanceof ApiError
+      && caught.code === "GENERATION_ALREADY_ACTIVE"
+      ? caught.activeJobId
+      : undefined;
+    const effectiveDescription = caught instanceof ApiError
+      ? validatedActiveDescription(caught.activeDescription)
+      : undefined;
+    if (!activeJobId || !effectiveDescription) {
+      throw caught;
+    }
+    const adoptionPersisted = adoptPendingPetGenerationJob(
+      pending.requestKey,
+      activeJobId,
+      effectiveDescription,
+    );
+    if (!adoptionPersisted) {
+      throw new PendingGenerationPersistenceError();
+    }
+    const adopted = readPendingPetGeneration(pending.requestKey);
+    if (
+      adopted?.jobId !== activeJobId
+      || adopted.description !== effectiveDescription
+    ) {
+      throw caught;
+    }
+    // One bounded recovery hop: never repeat the paid POST. A failure from this
+    // GET/poll propagates to the caller and is retried only after reload/action.
+    const assetSet = await resumePetGeneration(activeJobId, { signal });
+    return { assetSet, effectiveDescription };
   }
 }
 
 export function CreatePetForm() {
   const router = useRouter();
   const localPet = useLocalPetState();
-  const createLocalPet = localPet.create;
+  const createLocalPetDurably = localPet.createDurably;
   const currentPet = localPet.pet;
   const localPetStatus = localPet.status;
   const [description, setDescription] = useState("");
@@ -54,12 +120,14 @@ export function CreatePetForm() {
   const formRef = useRef<HTMLFormElement>(null);
   const isSubmittingRef = useRef(false);
   const resumeAttemptedRef = useRef(false);
+  const activeGenerationAbortRef = useRef<AbortController | null>(null);
   const hasDescription = description.trim().length > 0;
   const isKeyboardRaised = keyboardInset > 120;
-  const canShowDebugMenu = canUseDebugMenu();
+  const canShowDebugMenu = useTelegramCapabilities().debugMenu;
 
   useEffect(() => {
     if (localPet.status === "ready" && localPet.pet) {
+      clearPendingPetGeneration();
       router.replace(`/pet/${localPet.pet.petId}`);
       return;
     }
@@ -70,48 +138,101 @@ export function CreatePetForm() {
       return;
     }
     resumeAttemptedRef.current = true;
-    const pending = readPendingGeneration();
+    const pending = readPendingPetGeneration();
     if (!pending) {
       return;
     }
+    const existingPet = readLocalPetState();
+    if (existingPet) {
+      clearPendingPetGeneration();
+      router.replace(`/pet/${existingPet.petId}`);
+      return;
+    }
     let cancelled = false;
+    const controller = new AbortController();
+    activeGenerationAbortRef.current = controller;
     const timeoutId = window.setTimeout(() => {
       if (cancelled) {
         return;
       }
+      setDescription(pending.description);
       isSubmittingRef.current = true;
       setIsSubmitting(true);
-      void resumePetGeneration(pending.jobId)
-        .then((assetSet) => {
+      const generation = runPendingGeneration(pending, controller.signal);
+      void generation
+        .then(({ assetSet, effectiveDescription }) => {
           if (cancelled) {
             return;
           }
-          clearPendingGeneration();
-          const pet = createLocalPet(pending.description, assetSet);
+          if (!requestIsStillCurrent(pending.requestKey)) {
+            isSubmittingRef.current = false;
+            setIsSubmitting(false);
+            return;
+          }
+          const existingPet = readLocalPetState();
+          if (existingPet) {
+            clearPendingPetGeneration();
+            router.replace(`/pet/${existingPet.petId}`);
+            return;
+          }
+          const pet = createLocalPetDurably(effectiveDescription, assetSet);
+          if (!pet) {
+            setError(PENDING_STORAGE_ERROR);
+            isSubmittingRef.current = false;
+            setIsSubmitting(false);
+            return;
+          }
+          clearPendingPetGeneration(pending.requestKey);
           router.push(`/pet/${pet.petId}`);
         })
         .catch((caught) => {
           if (cancelled) {
             return;
           }
-          if (caught instanceof ApiError && caught.code === "GENERATION_JOB_NOT_FOUND") {
-            clearPendingGeneration();
+          const latestPending = readPendingPetGeneration(pending.requestKey);
+          if (latestPending) {
+            setDescription(latestPending.description);
+          }
+          if (
+            caught instanceof ApiError
+            && (
+              caught.code === "GENERATION_JOB_NOT_FOUND"
+              || caught.generationTerminal
+            )
+          ) {
+            clearPendingPetGeneration(pending.requestKey);
           }
           setError(
-            presentError(
-              caught,
-              "Не получилось продолжить создание питомца. Попробуйте ещё раз.",
-            ),
+            caught instanceof PendingGenerationPersistenceError
+              ? PENDING_STORAGE_ERROR
+              : presentError(
+                  caught,
+                  "Не получилось продолжить создание питомца. Попробуйте ещё раз.",
+                ),
           );
           isSubmittingRef.current = false;
           setIsSubmitting(false);
+        })
+        .finally(() => {
+          if (activeGenerationAbortRef.current === controller) {
+            activeGenerationAbortRef.current = null;
+          }
         });
     }, 0);
     return () => {
       cancelled = true;
+      controller.abort();
+      if (activeGenerationAbortRef.current === controller) {
+        activeGenerationAbortRef.current = null;
+      }
       window.clearTimeout(timeoutId);
     };
-  }, [createLocalPet, currentPet, localPetStatus, router]);
+  }, [createLocalPetDurably, currentPet, localPetStatus, router]);
+
+  useEffect(() => () => {
+    activeGenerationAbortRef.current?.abort();
+    activeGenerationAbortRef.current = null;
+  }, []);
 
   useEffect(() => {
     let animationFrameId: number | null = null;
@@ -157,6 +278,7 @@ export function CreatePetForm() {
     }
 
     setError(null);
+    clearPendingPetGeneration();
     const pet = localPet.create(TEST_PET_DESCRIPTION, TEST_PET_ASSET_SET);
     hapticNotification("success");
     router.push(`/pet/${pet.petId}`);
@@ -178,29 +300,75 @@ export function CreatePetForm() {
     setError(null);
     isSubmittingRef.current = true;
     setIsSubmitting(true);
-
-    try {
-      const assetSet = await generatePetAssets(trimmedDescription, {
-        onJobQueued: (jobId) => {
-          try {
-            window.localStorage.setItem(
-              PENDING_GENERATION_KEY,
-              JSON.stringify({ jobId, description: trimmedDescription }),
-            );
-          } catch {
-            // Generation can continue even when WebView storage is unavailable.
-          }
-        },
-      });
-      clearPendingGeneration();
-      const pet = localPet.create(trimmedDescription, assetSet);
-      hapticNotification("success");
-      router.push(`/pet/${pet.petId}`);
-    } catch (caught) {
-      setError(presentError(caught, "Не получилось создать питомца. Попробуйте ещё раз."));
+    const pending = pendingPetGenerationForDescription(trimmedDescription);
+    const markerPersisted = writePendingPetGeneration(pending);
+    if (!markerPersisted) {
+      setError(PENDING_STORAGE_ERROR);
       hapticNotification("error");
       isSubmittingRef.current = false;
       setIsSubmitting(false);
+      return;
+    }
+    const controller = new AbortController();
+    activeGenerationAbortRef.current?.abort();
+    activeGenerationAbortRef.current = controller;
+
+    try {
+      const { assetSet, effectiveDescription } = await runPendingGeneration(
+        pending,
+        controller.signal,
+      );
+      if (!requestIsStillCurrent(pending.requestKey)) {
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
+        return;
+      }
+      const existingPet = readLocalPetState();
+      if (existingPet) {
+        clearPendingPetGeneration();
+        router.replace(`/pet/${existingPet.petId}`);
+        return;
+      }
+      const pet = createLocalPetDurably(effectiveDescription, assetSet);
+      if (!pet) {
+        setError(PENDING_STORAGE_ERROR);
+        hapticNotification("error");
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
+        return;
+      }
+      clearPendingPetGeneration(pending.requestKey);
+      hapticNotification("success");
+      router.push(`/pet/${pet.petId}`);
+    } catch (caught) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      const latestPending = readPendingPetGeneration(pending.requestKey);
+      if (latestPending) {
+        setDescription(latestPending.description);
+      }
+      if (
+        caught instanceof ApiError
+        && (
+          caught.code === "GENERATION_JOB_NOT_FOUND"
+          || caught.generationTerminal
+        )
+      ) {
+        clearPendingPetGeneration(pending.requestKey);
+      }
+      setError(
+        caught instanceof PendingGenerationPersistenceError
+          ? PENDING_STORAGE_ERROR
+          : presentError(caught, "Не получилось создать питомца. Попробуйте ещё раз."),
+      );
+      hapticNotification("error");
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+    } finally {
+      if (activeGenerationAbortRef.current === controller) {
+        activeGenerationAbortRef.current = null;
+      }
     }
   }
 

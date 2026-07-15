@@ -11,12 +11,39 @@ import {
   createEmptyLocalPetMemory,
   localPetMemoryStorageKey,
   readLocalPetMemory,
+  resetLocalPetMemory,
   writeLocalPetMemory,
 } from "./localPetMemoryStorage";
+import { resetLocalPetState, writeLocalPetState } from "./localPetStorage";
+import type { LocalPetState } from "./types";
+
+function activatePet(petId: string): LocalPetState {
+  const now = "2026-07-15T12:00:00.000Z";
+  return writeLocalPetState({
+    version: 2,
+    petId,
+    description: petId,
+    createdAt: now,
+    updatedAt: now,
+    lastInteractionAt: now,
+    lastStatsTickAt: now,
+    lastStatTickAt: { hunger: now, happiness: now, energy: now },
+    stage: "baby",
+    mood: "idle",
+    stats: { hunger: 100, happiness: 100, energy: 100 },
+  });
+}
 
 describe("local pet memory", () => {
-  beforeEach(() => window.localStorage.clear());
-  afterEach(() => vi.useRealTimers());
+  beforeEach(() => {
+    resetLocalPetMemory();
+    resetLocalPetState();
+    window.localStorage.clear();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it("recalls preferences for an explicit preference question", () => {
     const memory = applyMemoryOperations(
@@ -310,5 +337,90 @@ describe("local pet memory", () => {
       memoryClass: "episode",
       occurredAt: "2026-07-08T10:00:00.000Z",
     });
+  });
+
+  it("does not throw when memory persistence exceeds the WebView quota", () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("quota exceeded", "QuotaExceededError");
+    });
+
+    expect(() => writeLocalPetMemory(createEmptyLocalPetMemory("pet-quota"))).not.toThrow();
+    setItem.mockRestore();
+  });
+
+  it("keeps the latest memory across reads while localStorage is unavailable", () => {
+    const petId = "pet-session";
+    activatePet(petId);
+    const getItem = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("storage unavailable", "SecurityError");
+    });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("quota exceeded", "QuotaExceededError");
+    });
+    const memory = applyMemoryOperations(createEmptyLocalPetMemory(petId), [{
+      type: "remember_user_fact",
+      kind: "user_fact",
+      text: "Пользователя зовут Сергей.",
+      normalizedKey: "user-name",
+      confidence: 1,
+      importance: 1,
+    }]);
+
+    expect(writeLocalPetMemory(memory, petId)).toBe(true);
+    expect(readLocalPetMemory(petId).memories[0]?.normalizedKey).toBe("user-name");
+    expect(readLocalPetMemory(petId).memories[0]?.text).toBe("Пользователя зовут Сергей.");
+
+    getItem.mockRestore();
+    setItem.mockRestore();
+    expect(readLocalPetMemory(petId).memories[0]?.normalizedKey).toBe("user-name");
+    expect(window.localStorage.getItem(localPetMemoryStorageKey(petId))).toContain("Сергей");
+  });
+
+  it("keeps a failed reset authoritative and rejects a late write for the old pet", () => {
+    const oldPetId = "pet-old";
+    activatePet(oldPetId);
+    const lateOldMemory = applyMemoryOperations(createEmptyLocalPetMemory(oldPetId), [{
+      type: "remember_user_fact",
+      kind: "user_fact",
+      text: "Старая память.",
+      normalizedKey: "old-memory",
+      confidence: 1,
+      importance: 1,
+    }]);
+    expect(writeLocalPetMemory(lateOldMemory, oldPetId)).toBe(true);
+
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    const removeItem = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (
+      this: Storage,
+      key: string,
+    ) {
+      if (key === localPetMemoryStorageKey(oldPetId)) {
+        throw new DOMException("storage unavailable", "SecurityError");
+      }
+      return nativeRemoveItem.call(this, key);
+    });
+    resetLocalPetMemory(oldPetId);
+    expect(readLocalPetMemory(oldPetId).memories).toEqual([]);
+    expect(window.localStorage.getItem(localPetMemoryStorageKey(oldPetId))).toContain("Старая");
+
+    const newPetId = "pet-new";
+    activatePet(newPetId);
+    expect(writeLocalPetMemory(lateOldMemory, oldPetId)).toBe(false);
+    const newMemory = applyMemoryOperations(createEmptyLocalPetMemory(newPetId), [{
+      type: "remember_user_fact",
+      kind: "preference",
+      text: "Новый питомец помнит чай.",
+      normalizedKey: "drink",
+      confidence: 1,
+      importance: 1,
+    }]);
+    expect(writeLocalPetMemory(newMemory, newPetId)).toBe(true);
+    expect(readLocalPetMemory(newPetId).memories[0]?.text).toBe("Новый питомец помнит чай.");
+    expect(readLocalPetMemory(oldPetId).memories).toEqual([]);
+
+    removeItem.mockRestore();
+    expect(readLocalPetMemory(oldPetId).memories).toEqual([]);
+    expect(window.localStorage.getItem(localPetMemoryStorageKey(oldPetId))).toBeNull();
+    expect(readLocalPetMemory(newPetId).memories[0]?.text).toBe("Новый питомец помнит чай.");
   });
 });

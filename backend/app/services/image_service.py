@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import ipaddress
 import json
 import logging
 import math
+import os
 import re
+import socket
 import subprocess
 import time
 import uuid
+import warnings
 from collections import deque
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from fractions import Fraction
@@ -49,6 +56,7 @@ from app.services.character_bible_template import (
 )
 from app.services.character_cards import upgrade_character_bible_v2
 from app.services.openai_service import (
+    MissingOpenAIAPIKey,
     chat_reasoning_effort_kwargs,
     get_character_model,
     get_image_model,
@@ -65,7 +73,20 @@ from app.services.prompt_debug import (
     log_chat_completion_response,
     log_image_generation_prompt,
     log_image_generation_response,
+    log_video_generation_prompt,
 )
+from app.services.provider_task_checkpoint import (
+    find_current_provider_task,
+    has_current_provider_task_scope,
+    implicit_provider_task_scope,
+    mark_current_provider_task_failed,
+    mark_current_provider_task_media_saved,
+    provider_task_payload_fingerprint,
+    release_current_provider_task_admission,
+    save_current_provider_task,
+)
+from app.services.reference_assets import trusted_generated_asset_url
+from app.services.storage_health_service import StorageCapacityError
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +99,24 @@ class KandinskyTaskError(RuntimeError):
     pass
 
 
+class OpenRouterVideoTaskError(RuntimeError):
+    pass
+
+
+class OpenRouterVideoHTTPError(RuntimeError):
+    def __init__(self, status_code: int, payload: object) -> None:
+        self.status_code = status_code
+        super().__init__(
+            f"OpenRouter video generation failed: status={status_code} response={payload}"
+        )
+
+
+class MediaResultError(RuntimeError):
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
 KANDINSKY_HTTP_MAX_ATTEMPTS = 2
 KANDINSKY_HTTP_RETRY_SECONDS = (3.0,)
 KANDINSKY_RESULT_RETRY_WINDOW_SECONDS = 50.0
@@ -85,6 +124,19 @@ KANDINSKY_RESULT_RETRY_INTERVAL_SECONDS = 3.0
 OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS = 3
 OPENROUTER_VIDEO_HTTP_RETRY_SECONDS = (1.0, 3.0)
 OPENROUTER_VIDEO_POLL_RETRY_SECONDS = (1.0, 2.0, 4.0, 8.0, 15.0)
+IMAGE_RESULT_MAX_BYTES = 25 * 1024 * 1024
+IMAGE_RESULT_MAX_DIMENSION = 8192
+IMAGE_RESULT_MAX_PIXELS = 16_000_000
+VIDEO_RESULT_MAX_BYTES = 100 * 1024 * 1024
+VIDEO_RESULT_MAX_DIMENSION = 4096
+VIDEO_RESULT_MAX_PIXELS = 4096 * 2160
+VIDEO_RESULT_MAX_DURATION_SECONDS = 60.0
+PING_PONG_VIDEO_MAX_DURATION_SECONDS = 15.0
+VIDEO_RESULT_MAX_FPS = 120.0
+VIDEO_PROBE_TIMEOUT_SECONDS = 30
+VIDEO_PROCESS_TIMEOUT_SECONDS = 180
+MEDIA_RESULT_STREAM_CHUNK_BYTES = 64 * 1024
+MEDIA_RESULT_ERROR_PREVIEW_MAX_BYTES = 64 * 1024
 PET_SCENE_VIDEO_START_OFFSET_SECONDS = 0.1
 SEEDANCE_PET_SCENE_VIDEO_START_OFFSET_SECONDS = 0.2
 PLANT_DESCRIPTION_PATTERN = re.compile(
@@ -354,6 +406,125 @@ class PetAssetImageSet:
     character_bible: dict[str, Any]
     version: int
     generated_at: datetime
+
+
+PET_GENERATION_METADATA_FILENAME = ".generation.json"
+PET_GENERATION_METADATA_SCHEMA_VERSION = 1
+
+
+def generation_job_asset_set_id(job_id: str) -> uuid.UUID:
+    """Return an asset id based only on the durable generation job identity."""
+    try:
+        return uuid.UUID(job_id)
+    except ValueError:
+        return uuid.uuid5(uuid.NAMESPACE_URL, f"tamagochi:generation-job:{job_id}")
+
+
+def comparison_asset_set_id(primary_asset_set_id: uuid.UUID | str) -> uuid.UUID:
+    try:
+        namespace = uuid.UUID(str(primary_asset_set_id))
+    except ValueError:
+        namespace = uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"tamagochi:primary-asset-set:{primary_asset_set_id}",
+        )
+    return uuid.uuid5(namespace, "kandinsky-comparison")
+
+
+def _is_nonempty_file(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _is_valid_image_file(path: Path) -> bool:
+    if not _is_nonempty_file(path):
+        return False
+    try:
+        with Image.open(path) as image:
+            image.verify()
+    except (OSError, UnidentifiedImageError):
+        return False
+    return True
+
+
+def _atomic_write_nonempty(path: Path, payload: bytes) -> None:
+    if not payload:
+        raise OSError(f"Refusing to persist empty generated media: {path.name}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary_path.open("wb") as output:
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary_path, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _pet_generation_metadata_path(asset_set_id: uuid.UUID) -> Path:
+    return generated_dir_for(asset_set_id) / PET_GENERATION_METADATA_FILENAME
+
+
+def _load_or_create_pet_generation_metadata(
+    asset_set_id: uuid.UUID,
+    description: str,
+    image_provider: str | None,
+    character_bible: str | dict[str, Any] | None,
+) -> tuple[dict[str, Any], datetime, int]:
+    metadata_path = _pet_generation_metadata_path(asset_set_id)
+    provider = image_provider or "default"
+    if metadata_path.exists():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            stored_bible = metadata["characterBible"]
+            generated_at = datetime.fromisoformat(str(metadata["generatedAt"]))
+            if generated_at.tzinfo is None:
+                generated_at = generated_at.replace(tzinfo=UTC)
+            if (
+                metadata.get("schemaVersion") != PET_GENERATION_METADATA_SCHEMA_VERSION
+                or metadata.get("assetSetId") != str(asset_set_id)
+                or metadata.get("description") != description
+                or metadata.get("imageProvider") != provider
+                or not isinstance(stored_bible, dict)
+            ):
+                raise ValueError("pet generation metadata does not match this job")
+            if character_bible is not None and character_bible != stored_bible:
+                raise ValueError("pet generation character bible changed during resume")
+            version = int(metadata["version"])
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid persisted pet generation metadata") from exc
+        return stored_bible, generated_at, version
+
+    resolved_bible = character_bible or create_character_bible(description)
+    if not isinstance(resolved_bible, dict):
+        raise ValueError("pet character bible must be an object")
+    generated_at = datetime.now(UTC)
+    version = int(generated_at.timestamp())
+    metadata = {
+        "schemaVersion": PET_GENERATION_METADATA_SCHEMA_VERSION,
+        "assetSetId": str(asset_set_id),
+        "description": description,
+        "imageProvider": provider,
+        "characterBible": resolved_bible,
+        "generatedAt": generated_at.isoformat(),
+        "version": version,
+    }
+    _atomic_write_nonempty(
+        metadata_path,
+        json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+    )
+    return resolved_bible, generated_at, version
 
 
 def is_sprite_foreground(pixel: tuple[int, int, int, int]) -> bool:
@@ -1021,18 +1192,219 @@ def build_image_edit_kwargs(
     }
 
 
+def _decode_bounded_base64_result(payload: Any) -> bytes:
+    max_encoded_bytes = 4 * ((IMAGE_RESULT_MAX_BYTES + 2) // 3)
+    if isinstance(payload, str):
+        if len(payload) > max_encoded_bytes:
+            raise MediaResultError("IMAGE_RESULT_TOO_LARGE")
+        try:
+            encoded = payload.encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise MediaResultError("IMAGE_RESULT_BASE64_INVALID") from exc
+    elif isinstance(payload, bytes):
+        if len(payload) > max_encoded_bytes:
+            raise MediaResultError("IMAGE_RESULT_TOO_LARGE")
+        encoded = payload
+    else:
+        raise MediaResultError("IMAGE_RESULT_BASE64_INVALID")
+
+    encoded = b"".join(encoded.split())
+    try:
+        result = base64.b64decode(encoded, validate=True)
+    except (ValueError, base64.binascii.Error) as exc:
+        raise MediaResultError("IMAGE_RESULT_BASE64_INVALID") from exc
+    if len(result) > IMAGE_RESULT_MAX_BYTES:
+        raise MediaResultError("IMAGE_RESULT_TOO_LARGE")
+    return result
+
+
+def _validate_provider_image_result(image_bytes: bytes) -> bytes:
+    """Validate untrusted provider bytes without decoding the full pixel buffer."""
+
+    if not image_bytes:
+        raise MediaResultError("IMAGE_RESULT_INVALID")
+    if len(image_bytes) > IMAGE_RESULT_MAX_BYTES:
+        raise MediaResultError("IMAGE_RESULT_TOO_LARGE")
+    try:
+        # Pillow's default bomb threshold is deliberately permissive and initially
+        # emits only a warning. Treat that warning as an error, then enforce the
+        # considerably smaller limit required by this service before any convert/load.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(image_bytes)) as image:
+                width, height = image.size
+                if (
+                    width <= 0
+                    or height <= 0
+                    or width > IMAGE_RESULT_MAX_DIMENSION
+                    or height > IMAGE_RESULT_MAX_DIMENSION
+                    or width * height > IMAGE_RESULT_MAX_PIXELS
+                ):
+                    raise MediaResultError("IMAGE_RESULT_DIMENSIONS_EXCEEDED")
+                image.verify()
+    except MediaResultError:
+        raise
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise MediaResultError("IMAGE_RESULT_DIMENSIONS_EXCEEDED") from exc
+    except (OSError, SyntaxError, UnidentifiedImageError, ValueError) as exc:
+        raise MediaResultError("IMAGE_RESULT_INVALID") from exc
+    return image_bytes
+
+
+def _response_content_type(response: Any) -> str:
+    headers = getattr(response, "headers", {})
+    return str(headers.get("content-type", "")).partition(";")[0].strip().lower()
+
+
+def _validate_streamed_result_headers(
+    response: Any,
+    *,
+    max_bytes: int,
+    too_large_code: str,
+    invalid_content_type_code: str,
+    content_type_prefix: str,
+) -> None:
+    content_type = _response_content_type(response)
+    binary_content_types = {"application/octet-stream", "binary/octet-stream"}
+    if content_type and not (
+        content_type.startswith(content_type_prefix) or content_type in binary_content_types
+    ):
+        raise MediaResultError(invalid_content_type_code)
+
+    headers = getattr(response, "headers", {})
+    content_length = headers.get("content-length")
+    if content_length is None:
+        return
+    try:
+        declared_bytes = int(content_length)
+    except (TypeError, ValueError):
+        return
+    if declared_bytes > max_bytes:
+        raise MediaResultError(too_large_code)
+
+
+def _read_streamed_result_bytes(
+    response: Any,
+    *,
+    max_bytes: int,
+    too_large_code: str,
+    invalid_content_type_code: str,
+    content_type_prefix: str,
+) -> bytes:
+    _validate_streamed_result_headers(
+        response,
+        max_bytes=max_bytes,
+        too_large_code=too_large_code,
+        invalid_content_type_code=invalid_content_type_code,
+        content_type_prefix=content_type_prefix,
+    )
+    result = bytearray()
+    for chunk in response.iter_bytes(chunk_size=MEDIA_RESULT_STREAM_CHUNK_BYTES):
+        if len(result) + len(chunk) > max_bytes:
+            raise MediaResultError(too_large_code)
+        result.extend(chunk)
+    return bytes(result)
+
+
+def _read_streamed_error_preview(response: Any) -> str:
+    result = bytearray()
+    for chunk in response.iter_bytes(chunk_size=MEDIA_RESULT_STREAM_CHUNK_BYTES):
+        remaining = MEDIA_RESULT_ERROR_PREVIEW_MAX_BYTES - len(result)
+        if remaining <= 0:
+            break
+        result.extend(chunk[:remaining])
+        if len(chunk) > remaining:
+            break
+    return result.decode("utf-8", errors="replace")
+
+
+def _is_global_unicast_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return bool(
+        address.is_global
+        and not address.is_multicast
+        and not address.is_reserved
+        and not address.is_unspecified
+    )
+
+
+def _validated_provider_image_result_url(image_url: Any) -> str:
+    if not isinstance(image_url, str):
+        raise MediaResultError("IMAGE_RESULT_URL_UNTRUSTED")
+    result_url = image_url.strip()
+    try:
+        parsed = urlsplit(result_url)
+        port = parsed.port
+    except ValueError as exc:
+        raise MediaResultError("IMAGE_RESULT_URL_UNTRUSTED") from exc
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or port == 0
+    ):
+        raise MediaResultError("IMAGE_RESULT_URL_UNTRUSTED")
+
+    hostname = parsed.hostname.rstrip(".")
+    if not hostname:
+        raise MediaResultError("IMAGE_RESULT_URL_UNTRUSTED")
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        try:
+            address_info = socket.getaddrinfo(
+                hostname,
+                port or 443,
+                type=socket.SOCK_STREAM,
+            )
+        except OSError as exc:
+            raise MediaResultError("IMAGE_RESULT_URL_UNTRUSTED") from exc
+        addresses: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
+        for family, _socket_type, _protocol, _canonical_name, socket_address in address_info:
+            if family not in {socket.AF_INET, socket.AF_INET6}:
+                continue
+            try:
+                addresses.add(ipaddress.ip_address(socket_address[0]))
+            except ValueError as exc:
+                raise MediaResultError("IMAGE_RESULT_URL_UNTRUSTED") from exc
+        if not addresses or any(not _is_global_unicast_address(address) for address in addresses):
+            raise MediaResultError("IMAGE_RESULT_URL_UNTRUSTED") from None
+    else:
+        raise MediaResultError("IMAGE_RESULT_URL_UNTRUSTED")
+    return result_url
+
+
+def _download_image_result_bytes(image_url: str) -> bytes:
+    validated_url = _validated_provider_image_result_url(image_url)
+    with httpx.stream(
+        "GET",
+        validated_url,
+        timeout=60,
+        follow_redirects=False,
+    ) as response:
+        response.raise_for_status()
+        result = _read_streamed_result_bytes(
+            response,
+            max_bytes=IMAGE_RESULT_MAX_BYTES,
+            too_large_code="IMAGE_RESULT_TOO_LARGE",
+            invalid_content_type_code="IMAGE_RESULT_CONTENT_TYPE_INVALID",
+            content_type_prefix="image/",
+        )
+    if not result:
+        raise RuntimeError("IMAGE_RESPONSE_EMPTY")
+    return result
+
+
 def _image_result_bytes(first: Any) -> bytes:
     b64_json = (
         first.get("b64_json") if isinstance(first, dict) else getattr(first, "b64_json", None)
     )
     if b64_json:
-        return base64.b64decode(b64_json)
+        return _validate_provider_image_result(_decode_bounded_base64_result(b64_json))
 
     image_url = first.get("url") if isinstance(first, dict) else getattr(first, "url", None)
     if image_url:
-        download = httpx.get(image_url, timeout=60)
-        download.raise_for_status()
-        return download.content
+        return _validate_provider_image_result(_download_image_result_bytes(image_url))
 
     raise RuntimeError("IMAGE_RESPONSE_EMPTY")
 
@@ -1041,6 +1413,52 @@ def _clean_setting_string(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _provider_task_operation(kind: str, label: str) -> str:
+    return f"{kind}:{label}"
+
+
+def _provider_account_namespace(settings: Any, provider: str) -> str:
+    if provider == "openrouter":
+        credential = get_openrouter_api_key(settings)
+        configured = _clean_setting_string(getattr(settings, "openrouter_account_namespace", None))
+    elif provider == "kandinsky":
+        credential = _kandinsky_api_key(settings)
+        configured = _clean_setting_string(getattr(settings, "kandinsky_account_namespace", None))
+    else:
+        raise ValueError(f"unsupported provider account namespace: {provider}")
+    if configured:
+        return f"configured:{configured}"
+    digest = hashlib.sha256(credential.encode("utf-8")).hexdigest()
+    return f"credential-sha256:{digest}"
+
+
+def _is_definitely_not_accepted_submit_error(exc: Exception) -> bool:
+    return isinstance(
+        exc,
+        MissingKandinskyAPIKey
+        | MissingOpenAIAPIKey
+        | httpx.ConnectError
+        | httpx.ConnectTimeout
+        | httpx.PoolTimeout
+        | httpx.HTTPStatusError,
+    )
+
+
+def _implicit_provider_task_store_path(settings: Any) -> str | None:
+    if has_current_provider_task_scope():
+        return None
+    configured = _clean_setting_string(
+        getattr(settings, "provider_task_receipt_store_path", None)
+    ) or _clean_setting_string(os.environ.get("PROVIDER_TASK_RECEIPT_STORE_PATH"))
+    if not configured:
+        raise RuntimeError("PROVIDER_TASK_RECEIPT_STORE_PATH_REQUIRED")
+    return configured
+
+
+def _implicit_provider_task_store_max_records(settings: Any) -> int:
+    return int(getattr(settings, "provider_task_receipt_store_max_records", 100_000))
 
 
 def _kandinsky_api_key(settings: Any) -> str:
@@ -1077,11 +1495,26 @@ def _is_retryable_kandinsky_error(exc: Exception) -> bool:
     return False
 
 
+def _is_safe_paid_submit_retry_error(exc: Exception) -> bool:
+    """Return true only when the paid request was not sent, or was explicitly rejected."""
+    if isinstance(exc, httpx.ConnectError | httpx.ConnectTimeout | httpx.PoolTimeout):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 429
+    return False
+
+
 def _kandinsky_retry_delay(attempt_index: int) -> float:
     return KANDINSKY_HTTP_RETRY_SECONDS[min(attempt_index, len(KANDINSKY_HTTP_RETRY_SECONDS) - 1)]
 
 
-def _kandinsky_with_retry(label: str, operation: str, call: Any) -> Any:
+def _kandinsky_with_retry(
+    label: str,
+    operation: str,
+    call: Callable[[], Any],
+    *,
+    is_retryable: Callable[[Exception], bool] = _is_retryable_kandinsky_error,
+) -> Any:
     for attempt_index in range(KANDINSKY_HTTP_MAX_ATTEMPTS):
         try:
             response = call()
@@ -1089,7 +1522,7 @@ def _kandinsky_with_retry(label: str, operation: str, call: Any) -> Any:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 is_last_attempt = attempt_index == KANDINSKY_HTTP_MAX_ATTEMPTS - 1
-                if is_last_attempt or not _is_retryable_kandinsky_error(exc):
+                if is_last_attempt or not is_retryable(exc):
                     return response
                 retry_delay = _kandinsky_retry_delay(attempt_index)
                 logger.warning(
@@ -1109,7 +1542,7 @@ def _kandinsky_with_retry(label: str, operation: str, call: Any) -> Any:
             return response
         except Exception as exc:
             is_last_attempt = attempt_index == KANDINSKY_HTTP_MAX_ATTEMPTS - 1
-            if is_last_attempt or not _is_retryable_kandinsky_error(exc):
+            if is_last_attempt or not is_retryable(exc):
                 raise
             retry_delay = _kandinsky_retry_delay(attempt_index)
             logger.warning(
@@ -1136,27 +1569,69 @@ def _reference_url_from_entry(reference: dict[str, Any]) -> str:
     return _clean_setting_string(reference.get("url"))
 
 
+REFERENCE_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+
+
+def _bounded_data_image_bytes(image_url: str) -> bytes:
+    header, separator, payload = image_url.partition(",")
+    if not separator or not payload:
+        return b""
+    cleaned = payload.replace("\n", "").replace("\r", "").strip()
+    if ";base64" in header:
+        if len(cleaned) > ((REFERENCE_IMAGE_MAX_BYTES + 2) // 3) * 4:
+            raise RuntimeError("REFERENCE_IMAGE_TOO_LARGE")
+        result = base64.b64decode(cleaned, validate=True)
+    else:
+        result = cleaned.encode("utf-8")
+    if len(result) > REFERENCE_IMAGE_MAX_BYTES:
+        raise RuntimeError("REFERENCE_IMAGE_TOO_LARGE")
+    return result
+
+
+def _download_reference_image_bytes(image_url: str) -> bytes:
+    with httpx.stream(
+        "GET",
+        image_url,
+        timeout=30,
+        follow_redirects=False,
+    ) as response:
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "").lower()
+        if content_type and not content_type.startswith("image/"):
+            raise RuntimeError("REFERENCE_IMAGE_CONTENT_TYPE_INVALID")
+        content_length = response.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > REFERENCE_IMAGE_MAX_BYTES:
+                    raise RuntimeError("REFERENCE_IMAGE_TOO_LARGE")
+            except ValueError:
+                pass
+
+        result = bytearray()
+        for chunk in response.iter_bytes(chunk_size=64 * 1024):
+            result.extend(chunk)
+            if len(result) > REFERENCE_IMAGE_MAX_BYTES:
+                raise RuntimeError("REFERENCE_IMAGE_TOO_LARGE")
+        return bytes(result)
+
+
 def _reference_image_bytes(image_url: str) -> bytes:
     if image_url.startswith("data:image/"):
-        header, separator, payload = image_url.partition(",")
-        if not separator or not payload:
-            return b""
-        if ";base64" in header:
-            return base64.b64decode(payload.replace("\n", "").replace("\r", "").strip())
-        return payload.encode("utf-8")
+        return _bounded_data_image_bytes(image_url)
 
-    fetch_url = _internal_reference_image_url(image_url)
+    settings = get_settings()
+    trusted_url = trusted_generated_asset_url(image_url, settings)
+    if not trusted_url:
+        raise RuntimeError("REFERENCE_IMAGE_URL_UNTRUSTED")
+
+    fetch_url = _internal_reference_image_url(trusted_url)
     try:
-        response = httpx.get(fetch_url, timeout=30)
-        response.raise_for_status()
-        return response.content
+        return _download_reference_image_bytes(fetch_url)
     except httpx.HTTPError:
-        if fetch_url == image_url:
+        if fetch_url == trusted_url:
             raise
 
-    response = httpx.get(image_url, timeout=30)
-    response.raise_for_status()
-    return response.content
+    return _download_reference_image_bytes(trusted_url)
 
 
 def _internal_reference_image_url(image_url: str) -> str:
@@ -1283,6 +1758,7 @@ def _kandinsky_create_task(
             json={"params": params},
             timeout=_kandinsky_http_timeout(settings),
         ),
+        is_retryable=_is_safe_paid_submit_retry_error,
     )
     try:
         response.raise_for_status()
@@ -1356,52 +1832,112 @@ def _kandinsky_wait_done(
         time.sleep(min(poll_seconds, remaining_seconds))
 
 
-def _kandinsky_download_result(settings: Any, *, task_id: str, label: str) -> bytes:
+def _kandinsky_download_result(
+    settings: Any,
+    *,
+    task_id: str,
+    label: str,
+    result_kind: str = "image",
+) -> bytes:
+    if result_kind == "image":
+        max_bytes = IMAGE_RESULT_MAX_BYTES
+        too_large_code = "IMAGE_RESULT_TOO_LARGE"
+        invalid_content_type_code = "IMAGE_RESULT_CONTENT_TYPE_INVALID"
+        content_type_prefix = "image/"
+        empty_response_code = "KANDINSKY_IMAGE_RESPONSE_EMPTY"
+    elif result_kind == "video":
+        max_bytes = VIDEO_RESULT_MAX_BYTES
+        too_large_code = "VIDEO_RESULT_TOO_LARGE"
+        invalid_content_type_code = "VIDEO_RESULT_CONTENT_TYPE_INVALID"
+        content_type_prefix = "video/"
+        empty_response_code = "KANDINSKY_VIDEO_RESPONSE_EMPTY"
+    else:
+        raise ValueError(f"Unsupported Kandinsky result kind: {result_kind}")
+
     url = f"{_kandinsky_base_url(settings)}/tasks/{task_id}/result"
     timeout_seconds = max(1.0, float(getattr(settings, "openai_image_timeout_seconds", 180)))
     retry_window = min(KANDINSKY_RESULT_RETRY_WINDOW_SECONDS, timeout_seconds)
     deadline = time.monotonic() + retry_window
     while True:
-        response = _kandinsky_with_retry(
-            label,
-            "result",
-            lambda: httpx.get(
-                url,
-                headers=_kandinsky_headers(settings),
-                timeout=_kandinsky_http_timeout(settings),
-            ),
-        )
-        response_text = response.text.lower()
-        retryable_censor_error = response.status_code == 422 and (
-            "output censor service unavailable" in response_text
-            or "gigachat returned no response" in response_text
-        )
-        remaining_seconds = deadline - time.monotonic()
-        if not retryable_censor_error or remaining_seconds <= 0:
-            break
-        retry_delay = min(KANDINSKY_RESULT_RETRY_INTERVAL_SECONDS, remaining_seconds)
-        logger.warning(
-            "kandinsky_image_result retry label=%s task_id=%s retryDelaySeconds=%s response=%s",
-            label,
-            task_id,
-            retry_delay,
-            response.text[:1000],
-        )
-        time.sleep(retry_delay)
-    try:
-        response.raise_for_status()
-    except httpx.HTTPStatusError:
-        logger.error(
-            "kandinsky_image_result failed label=%s task_id=%s status=%s response=%s",
-            label,
-            task_id,
-            response.status_code,
-            response.text[:2000],
-        )
-        raise
-    if not response.content:
-        raise RuntimeError("KANDINSKY_IMAGE_RESPONSE_EMPTY")
-    return response.content
+        retry_censor_delay: float | None = None
+        for attempt_index in range(KANDINSKY_HTTP_MAX_ATTEMPTS):
+            status_code: int | None = None
+            response_preview = ""
+            try:
+                with httpx.stream(
+                    "GET",
+                    url,
+                    headers=_kandinsky_headers(settings),
+                    timeout=_kandinsky_http_timeout(settings),
+                    follow_redirects=False,
+                ) as response:
+                    status_code = response.status_code
+                    if status_code >= 400:
+                        response_preview = _read_streamed_error_preview(response)
+                    normalized_preview = response_preview.lower()
+                    remaining_seconds = deadline - time.monotonic()
+                    retryable_censor_error = status_code == 422 and (
+                        "output censor service unavailable" in normalized_preview
+                        or "gigachat returned no response" in normalized_preview
+                    )
+                    if retryable_censor_error and remaining_seconds > 0:
+                        retry_censor_delay = min(
+                            KANDINSKY_RESULT_RETRY_INTERVAL_SECONDS,
+                            remaining_seconds,
+                        )
+                        logger.warning(
+                            "kandinsky_image_result retry label=%s task_id=%s "
+                            "retryDelaySeconds=%s response=%s",
+                            label,
+                            task_id,
+                            retry_censor_delay,
+                            response_preview[:1000],
+                        )
+                        break
+
+                    response.raise_for_status()
+                    result = _read_streamed_result_bytes(
+                        response,
+                        max_bytes=max_bytes,
+                        too_large_code=too_large_code,
+                        invalid_content_type_code=invalid_content_type_code,
+                        content_type_prefix=content_type_prefix,
+                    )
+                    if not result:
+                        raise RuntimeError(empty_response_code)
+                    if result_kind == "image":
+                        return _validate_provider_image_result(result)
+                    return result
+            except Exception as exc:
+                is_last_attempt = attempt_index == KANDINSKY_HTTP_MAX_ATTEMPTS - 1
+                if not is_last_attempt and _is_retryable_kandinsky_error(exc):
+                    retry_delay = _kandinsky_retry_delay(attempt_index)
+                    logger.warning(
+                        "kandinsky_image_result retry label=%s attempt=%s maxAttempts=%s "
+                        "retryDelaySeconds=%s errorType=%s status=%s response=%s",
+                        label,
+                        attempt_index + 1,
+                        KANDINSKY_HTTP_MAX_ATTEMPTS,
+                        retry_delay,
+                        type(exc).__name__,
+                        status_code,
+                        response_preview[:1000],
+                    )
+                    time.sleep(retry_delay)
+                    continue
+                if isinstance(exc, httpx.HTTPStatusError):
+                    logger.error(
+                        "kandinsky_image_result failed label=%s task_id=%s status=%s response=%s",
+                        label,
+                        task_id,
+                        status_code,
+                        response_preview[:2000],
+                    )
+                raise
+
+        if retry_censor_delay is None:
+            raise RuntimeError("unreachable kandinsky result retry state")
+        time.sleep(retry_censor_delay)
 
 
 def _generate_openrouter_image_bytes(
@@ -1501,24 +2037,85 @@ def generate_kandinsky_image_bytes(
         "timeout": getattr(settings, "openai_image_timeout_seconds", 180),
     }
     log_image_generation_prompt(label, request_kwargs)
-    task_id = _kandinsky_create_task(
-        settings,
-        task_type=task_type,
-        params=params,
-        label=label,
-    )
-    status_payload = _kandinsky_wait_done(settings, task_id=task_id, label=label)
-    image_bytes = _kandinsky_download_result(settings, task_id=task_id, label=label)
-    log_image_generation_response(
-        label,
-        request_kwargs,
+    operation = _provider_task_operation("image", label)
+    provider_origin = _kandinsky_base_url(settings)
+    account_namespace = _provider_account_namespace(settings, "kandinsky")
+    payload_fingerprint = provider_task_payload_fingerprint(
         {
-            "id": task_id,
-            "status": status_payload.get("status"),
-            "resultBytes": len(image_bytes),
-        },
+            "task_type": task_type,
+            "params": params,
+        }
     )
-    return image_bytes
+    with implicit_provider_task_scope(
+        _implicit_provider_task_store_path(settings),
+        max_records=_implicit_provider_task_store_max_records(settings),
+        operation=operation,
+        provider="kandinsky",
+        provider_origin=provider_origin,
+        account_namespace=account_namespace,
+        payload_fingerprint=payload_fingerprint,
+    ):
+        receipt = find_current_provider_task(
+            operation=operation,
+            provider="kandinsky",
+            provider_origin=provider_origin,
+            account_namespace=account_namespace,
+            payload_fingerprint=payload_fingerprint,
+        )
+        if receipt is None:
+            try:
+                task_id = _kandinsky_create_task(
+                    settings,
+                    task_type=task_type,
+                    params=params,
+                    label=label,
+                )
+            except Exception as exc:
+                if _is_definitely_not_accepted_submit_error(exc):
+                    release_current_provider_task_admission(operation)
+                raise
+            save_current_provider_task(
+                operation=operation,
+                provider="kandinsky",
+                provider_origin=provider_origin,
+                account_namespace=account_namespace,
+                task_id=task_id,
+                polling_url=f"{provider_origin}/tasks/{task_id}",
+                payload_fingerprint=payload_fingerprint,
+            )
+        else:
+            task_id = receipt.task_id
+            logger.info(
+                "Kandinsky image task resumed label=%s taskId=%s state=%s",
+                label,
+                task_id,
+                receipt.state,
+            )
+        try:
+            status_payload = _kandinsky_wait_done(settings, task_id=task_id, label=label)
+            image_bytes = _kandinsky_download_result(
+                settings,
+                task_id=task_id,
+                label=label,
+                result_kind="image",
+            )
+        except KandinskyTaskError:
+            mark_current_provider_task_failed(operation)
+            raise
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in {404, 410}:
+                mark_current_provider_task_failed(operation)
+            raise
+        log_image_generation_response(
+            label,
+            request_kwargs,
+            {
+                "id": task_id,
+                "status": status_payload.get("status"),
+                "resultBytes": len(image_bytes),
+            },
+        )
+        return image_bytes
 
 
 def _kandinsky_source_image_b64(image_bytes: bytes) -> str:
@@ -1566,32 +2163,117 @@ def generate_kandinsky_video_from_image_bytes(
         1.0,
         float(getattr(settings, "kandinsky_video_timeout_seconds", 900)),
     )
+    log_video_generation_prompt(
+        label,
+        {
+            "model": f"kandinsky/{task_type}",
+            "prompt": prompt,
+            "has_source_image": True,
+        },
+    )
     logger.info(
-        "Kandinsky video generation prompt label=%s taskType=%s prompt=%s",
+        "Kandinsky video generation requested label=%s taskType=%s",
         label,
         task_type,
-        prompt,
     )
-    task_id = _kandinsky_create_task(
-        settings,
-        task_type=task_type,
-        params=params,
-        label=label,
+    operation = _provider_task_operation("video", label)
+    provider_origin = _kandinsky_base_url(settings)
+    account_namespace = _provider_account_namespace(settings, "kandinsky")
+    payload_fingerprint = provider_task_payload_fingerprint(
+        {
+            "task_type": task_type,
+            "params": params,
+        }
     )
-    _kandinsky_wait_done(
-        settings,
-        task_id=task_id,
-        label=label,
-        timeout_seconds=timeout_seconds,
+    with implicit_provider_task_scope(
+        _implicit_provider_task_store_path(settings),
+        max_records=_implicit_provider_task_store_max_records(settings),
+        operation=operation,
+        provider="kandinsky",
+        provider_origin=provider_origin,
+        account_namespace=account_namespace,
+        payload_fingerprint=payload_fingerprint,
+    ):
+        receipt = find_current_provider_task(
+            operation=operation,
+            provider="kandinsky",
+            provider_origin=provider_origin,
+            account_namespace=account_namespace,
+            payload_fingerprint=payload_fingerprint,
+        )
+        if receipt is None:
+            try:
+                task_id = _kandinsky_create_task(
+                    settings,
+                    task_type=task_type,
+                    params=params,
+                    label=label,
+                )
+            except Exception as exc:
+                if _is_definitely_not_accepted_submit_error(exc):
+                    release_current_provider_task_admission(operation)
+                raise
+            save_current_provider_task(
+                operation=operation,
+                provider="kandinsky",
+                provider_origin=provider_origin,
+                account_namespace=account_namespace,
+                task_id=task_id,
+                polling_url=f"{provider_origin}/tasks/{task_id}",
+                payload_fingerprint=payload_fingerprint,
+            )
+        else:
+            task_id = receipt.task_id
+            logger.info(
+                "Kandinsky video task resumed label=%s taskId=%s state=%s",
+                label,
+                task_id,
+                receipt.state,
+            )
+        try:
+            _kandinsky_wait_done(
+                settings,
+                task_id=task_id,
+                label=label,
+                timeout_seconds=timeout_seconds,
+            )
+            video_bytes = _kandinsky_download_result(
+                settings,
+                task_id=task_id,
+                label=label,
+                result_kind="video",
+            )
+        except KandinskyTaskError:
+            mark_current_provider_task_failed(operation)
+            raise
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in {404, 410}:
+                mark_current_provider_task_failed(operation)
+            raise
+        logger.info(
+            "Kandinsky video generation completed label=%s taskId=%s resultBytes=%s",
+            label,
+            task_id,
+            len(video_bytes),
+        )
+        return video_bytes
+
+
+def _image_request(
+    prompt: str,
+    *,
+    label: str = "pet_creation/image",
+    size: str | None = None,
+    input_references: list[dict[str, Any]] | None = None,
+    provider: str | None,
+) -> ImageRequest:
+    return ImageRequest(
+        prompt=prompt,
+        task=label,
+        size=size,
+        input_references=tuple(input_references or ()),
+        provider=provider,
     )
-    video_bytes = _kandinsky_download_result(settings, task_id=task_id, label=label)
-    logger.info(
-        "Kandinsky video generation completed label=%s taskId=%s resultBytes=%s",
-        label,
-        task_id,
-        len(video_bytes),
-    )
-    return video_bytes
 
 
 def generate_image_bytes(
@@ -1603,14 +2285,35 @@ def generate_image_bytes(
     provider: str | None = None,
 ) -> bytes:
     return get_media_gateway().generate_image(
-        ImageRequest(
-            prompt=prompt,
-            task=label,
+        _image_request(
+            prompt,
+            label=label,
             size=size,
-            input_references=tuple(input_references or ()),
+            input_references=input_references,
             provider=provider,
         )
     )
+
+
+@contextmanager
+def reserve_image_bytes(
+    prompt: str,
+    *,
+    label: str = "pet_creation/image",
+    size: str | None = None,
+    input_references: list[dict[str, Any]] | None = None,
+    provider: str | None = None,
+) -> Iterator[bytes]:
+    with get_media_gateway().generate_image_reserved(
+        _image_request(
+            prompt,
+            label=label,
+            size=size,
+            input_references=input_references,
+            provider=provider,
+        )
+    ) as payload:
+        yield payload
 
 
 def generate_openai_image_bytes(
@@ -1621,7 +2324,10 @@ def generate_openai_image_bytes(
     input_references: list[dict[str, Any]] | None = None,
 ) -> bytes:
     settings = get_settings()
-    client = get_openai_platform_client()
+    # This synchronous endpoint exposes neither a durable task id nor a polling API.
+    # A local receipt therefore cannot close the accepted-request/response-lost window.
+    # Disable SDK retries so an ambiguous response is not automatically charged twice.
+    client = get_openai_platform_client().with_options(max_retries=0)
     reference_files = _openai_reference_image_files(input_references)
     if reference_files:
         kwargs = build_image_edit_kwargs(settings, prompt, size=size)
@@ -1673,6 +2379,30 @@ def generate_image_edit_bytes(
     )
 
 
+@contextmanager
+def reserve_image_edit_bytes(
+    prompt: str,
+    source_path: Path,
+    *,
+    label: str,
+    provider: str | None = None,
+) -> Iterator[bytes]:
+    input_references = [
+        {
+            "type": "image_url",
+            "image_url": {"url": _image_path_data_url(source_path)},
+        }
+    ]
+    with reserve_image_bytes(
+        prompt,
+        label=label,
+        input_references=input_references,
+        provider=provider,
+    ) as payload:
+        yield payload
+        mark_current_provider_task_media_saved(_provider_task_operation("image", label))
+
+
 def generate_multi_image_edit_bytes(
     prompt: str,
     source_paths: list[Path],
@@ -1697,6 +2427,33 @@ def generate_multi_image_edit_bytes(
     )
 
 
+@contextmanager
+def reserve_multi_image_edit_bytes(
+    prompt: str,
+    source_paths: list[Path],
+    *,
+    label: str,
+    size: str | None = None,
+    provider: str | None = None,
+) -> Iterator[bytes]:
+    input_references = [
+        {
+            "type": "image_url",
+            "image_url": {"url": _image_path_data_url(source_path)},
+        }
+        for source_path in source_paths
+    ]
+    with reserve_image_bytes(
+        prompt,
+        label=label,
+        size=size,
+        input_references=input_references,
+        provider=provider,
+    ) as payload:
+        yield payload
+        mark_current_provider_task_media_saved(_provider_task_operation("image", label))
+
+
 def _openrouter_video_headers(settings: Any) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {get_openrouter_api_key(settings)}",
@@ -1712,14 +2469,27 @@ def _openrouter_video_content_headers(settings: Any) -> dict[str, str]:
     }
 
 
-def _openrouter_video_error(response: httpx.Response) -> RuntimeError:
+def _trusted_openrouter_polling_url(settings: Any, polling_url: str) -> str:
+    base_url = get_openrouter_video_url(settings)
+    resolved_url = urljoin(f"{base_url.rstrip('/')}/", polling_url.strip())
+    base = urlsplit(base_url)
+    resolved = urlsplit(resolved_url)
+    if (
+        resolved.scheme.lower() != base.scheme.lower()
+        or resolved.netloc.lower() != base.netloc.lower()
+        or resolved.username is not None
+        or resolved.password is not None
+    ):
+        raise RuntimeError("OPENROUTER_VIDEO_POLL_URL_UNTRUSTED")
+    return resolved_url
+
+
+def _openrouter_video_error(response: httpx.Response) -> OpenRouterVideoHTTPError:
     try:
         payload = response.json()
     except ValueError:
         payload = response.text
-    return RuntimeError(
-        f"OpenRouter video generation failed: status={response.status_code} response={payload}"
-    )
+    return OpenRouterVideoHTTPError(response.status_code, payload)
 
 
 def _submit_openrouter_video_job(
@@ -1738,7 +2508,7 @@ def _submit_openrouter_video_job(
             )
         except httpx.TransportError as exc:
             is_last_attempt = attempt_index == OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS - 1
-            if is_last_attempt:
+            if is_last_attempt or not _is_safe_paid_submit_retry_error(exc):
                 raise
             retry_delay = OPENROUTER_VIDEO_HTTP_RETRY_SECONDS[attempt_index]
             logger.warning(
@@ -1755,7 +2525,7 @@ def _submit_openrouter_video_job(
             continue
 
         is_last_attempt = attempt_index == OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS - 1
-        is_retryable = response.status_code == 429 or response.status_code >= 500
+        is_retryable = response.status_code == 429
         if response.status_code < 400 or is_last_attempt or not is_retryable:
             return response
 
@@ -1829,7 +2599,7 @@ def _poll_openrouter_video_job(
         if status_value == "completed":
             return payload
         if status_value in {"failed", "cancelled", "canceled", "expired", "error"}:
-            raise RuntimeError(f"OpenRouter video job failed: {payload}")
+            raise OpenRouterVideoTaskError(f"OpenRouter video job failed: {payload}")
         time.sleep(poll_interval)
 
     raise RuntimeError(f"OpenRouter video generation timed out for job {job_id}")
@@ -1837,16 +2607,26 @@ def _poll_openrouter_video_job(
 
 def _download_openrouter_video_bytes(settings: Any, job_id: str) -> bytes:
     content_url = f"{get_openrouter_video_url(settings)}/{job_id}/content"
-    response = httpx.get(
+    with httpx.stream(
+        "GET",
         content_url,
         headers=_openrouter_video_content_headers(settings),
         timeout=180,
-    )
-    if response.status_code >= 400:
-        raise _openrouter_video_error(response)
-    if not response.content:
+        follow_redirects=False,
+    ) as response:
+        if response.status_code >= 400:
+            response_preview = _read_streamed_error_preview(response)
+            raise OpenRouterVideoHTTPError(response.status_code, response_preview)
+        result = _read_streamed_result_bytes(
+            response,
+            max_bytes=VIDEO_RESULT_MAX_BYTES,
+            too_large_code="VIDEO_RESULT_TOO_LARGE",
+            invalid_content_type_code="VIDEO_RESULT_CONTENT_TYPE_INVALID",
+            content_type_prefix="video/",
+        )
+    if not result:
         raise RuntimeError("OpenRouter video content response was empty")
-    return response.content
+    return result
 
 
 def _parse_pixel_size(size: str) -> tuple[int, int]:
@@ -1885,6 +2665,119 @@ def normalize_pet_scene_video_frame_bytes(image_bytes: bytes) -> bytes:
         return buffer.getvalue()
 
 
+@dataclass(frozen=True, slots=True)
+class _GeneratedVideoMetadata:
+    duration_seconds: float
+    frame_rate: float
+    width: int
+    height: int
+
+
+def _probe_generated_video(path: Path) -> _GeneratedVideoMetadata:
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-f",
+                "mov",
+                "-protocol_whitelist",
+                "file",
+                "-enable_drefs",
+                "0",
+                "-use_absolute_path",
+                "0",
+                "-i",
+                str(path),
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=avg_frame_rate,width,height:format=duration",
+                "-of",
+                "json",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=VIDEO_PROBE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise MediaResultError("VIDEO_PROCESS_TIMEOUT") from exc
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise MediaResultError("VIDEO_RESULT_INVALID") from exc
+
+    try:
+        metadata = json.loads(probe.stdout)
+        if not isinstance(metadata, dict):
+            raise ValueError("video metadata is not an object")
+        streams = metadata.get("streams")
+        stream = streams[0] if isinstance(streams, list) and streams else None
+        if not isinstance(stream, dict):
+            raise ValueError("video stream is missing")
+        format_metadata = metadata.get("format")
+        if not isinstance(format_metadata, dict):
+            raise ValueError("video format metadata is missing")
+        duration = float(format_metadata.get("duration"))
+        width = int(stream.get("width"))
+        height = int(stream.get("height"))
+        frame_rate = float(Fraction(str(stream.get("avg_frame_rate"))))
+    except (KeyError, TypeError, ValueError, ZeroDivisionError, json.JSONDecodeError) as exc:
+        raise MediaResultError("VIDEO_RESULT_INVALID") from exc
+
+    if not math.isfinite(duration) or duration <= 0:
+        raise MediaResultError("VIDEO_RESULT_INVALID")
+    if duration > VIDEO_RESULT_MAX_DURATION_SECONDS:
+        raise MediaResultError("VIDEO_RESULT_DURATION_EXCEEDED")
+    if (
+        width <= 0
+        or height <= 0
+        or width > VIDEO_RESULT_MAX_DIMENSION
+        or height > VIDEO_RESULT_MAX_DIMENSION
+        or width * height > VIDEO_RESULT_MAX_PIXELS
+    ):
+        raise MediaResultError("VIDEO_RESULT_DIMENSIONS_EXCEEDED")
+    if not math.isfinite(frame_rate) or frame_rate <= 0 or frame_rate > VIDEO_RESULT_MAX_FPS:
+        raise MediaResultError("VIDEO_RESULT_INVALID")
+    return _GeneratedVideoMetadata(
+        duration_seconds=duration,
+        frame_rate=frame_rate,
+        width=width,
+        height=height,
+    )
+
+
+def _run_generated_video_process(command: list[str]) -> None:
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=VIDEO_PROCESS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise MediaResultError("VIDEO_PROCESS_TIMEOUT") from exc
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise MediaResultError("VIDEO_POSTPROCESS_FAILED") from exc
+
+
+def _read_generated_video_result(path: Path) -> bytes:
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise MediaResultError("VIDEO_POSTPROCESS_FAILED") from exc
+    if size <= 0:
+        raise MediaResultError("VIDEO_POSTPROCESS_FAILED")
+    if size > VIDEO_RESULT_MAX_BYTES:
+        raise MediaResultError("VIDEO_RESULT_TOO_LARGE")
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise MediaResultError("VIDEO_POSTPROCESS_FAILED") from exc
+
+
 def render_ping_pong_video_bytes(
     video_bytes: bytes,
     *,
@@ -1893,6 +2786,15 @@ def render_ping_pong_video_bytes(
 ) -> bytes:
     if not video_bytes:
         raise ValueError("video_bytes must not be empty")
+    if len(video_bytes) > VIDEO_RESULT_MAX_BYTES:
+        raise MediaResultError("VIDEO_RESULT_TOO_LARGE")
+    if (
+        not math.isfinite(start_offset_seconds)
+        or not math.isfinite(end_offset_seconds)
+        or start_offset_seconds < 0
+        or end_offset_seconds < 0
+    ):
+        raise ValueError("video trim offsets must be finite and non-negative")
 
     with TemporaryDirectory(prefix="pet-ping-pong-") as temp_dir_value:
         temp_dir = Path(temp_dir_value)
@@ -1900,28 +2802,11 @@ def render_ping_pong_video_bytes(
         output_path = temp_dir / "ping-pong.mp4"
         source_path.write_bytes(video_bytes)
 
-        probe = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "stream=avg_frame_rate:format=duration",
-                "-of",
-                "json",
-                str(source_path),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        metadata = json.loads(probe.stdout)
-        streams = metadata.get("streams") or []
-        duration = float((metadata.get("format") or {}).get("duration") or 0)
-        frame_rate_value = str((streams[0] if streams else {}).get("avg_frame_rate") or "24/1")
-        frame_rate = float(Fraction(frame_rate_value))
+        metadata = _probe_generated_video(source_path)
+        duration = metadata.duration_seconds
+        if duration > PING_PONG_VIDEO_MAX_DURATION_SECONDS:
+            raise MediaResultError("VIDEO_RESULT_DURATION_EXCEEDED")
+        frame_rate = metadata.frame_rate
         frame_seconds = 1 / max(1.0, frame_rate)
         trimmed_duration = duration - start_offset_seconds - end_offset_seconds
         reverse_end = trimmed_duration - frame_seconds
@@ -1936,12 +2821,20 @@ def render_ping_pong_video_bytes(
             "setpts=PTS-STARTPTS[rev];"
             "[f][rev]concat=n=2:v=1:a=0,fps=24[out]"
         )
-        subprocess.run(
+        _run_generated_video_process(
             [
                 "ffmpeg",
                 "-v",
                 "error",
                 "-y",
+                "-f",
+                "mov",
+                "-protocol_whitelist",
+                "file",
+                "-enable_drefs",
+                "0",
+                "-use_absolute_path",
+                "0",
                 "-i",
                 str(source_path),
                 "-filter_complex",
@@ -1963,33 +2856,41 @@ def render_ping_pong_video_bytes(
                 "12288",
                 "-movflags",
                 "+faststart",
+                "-fs",
+                str(VIDEO_RESULT_MAX_BYTES),
                 str(output_path),
-            ],
-            check=True,
-            capture_output=True,
+            ]
         )
-        output_bytes = output_path.read_bytes()
-        if not output_bytes:
-            raise RuntimeError("FFmpeg produced an empty ping-pong video")
-        return output_bytes
+        return _read_generated_video_result(output_path)
 
 
 def strip_generated_video_auxiliary_streams(video_bytes: bytes) -> bytes:
     """Keep only the primary video stream for Telegram-safe generated MP4 output."""
     if not video_bytes:
         raise ValueError("video_bytes must not be empty")
+    if len(video_bytes) > VIDEO_RESULT_MAX_BYTES:
+        raise MediaResultError("VIDEO_RESULT_TOO_LARGE")
 
     with TemporaryDirectory(prefix="generated-video-main-stream-") as temp_dir_value:
         temp_dir = Path(temp_dir_value)
         source_path = temp_dir / "source.mp4"
         output_path = temp_dir / "main-stream.mp4"
         source_path.write_bytes(video_bytes)
-        subprocess.run(
+        _probe_generated_video(source_path)
+        _run_generated_video_process(
             [
                 "ffmpeg",
                 "-v",
                 "error",
                 "-y",
+                "-f",
+                "mov",
+                "-protocol_whitelist",
+                "file",
+                "-enable_drefs",
+                "0",
+                "-use_absolute_path",
+                "0",
                 "-i",
                 str(source_path),
                 "-map",
@@ -1999,15 +2900,12 @@ def strip_generated_video_auxiliary_streams(video_bytes: bytes) -> bytes:
                 "copy",
                 "-movflags",
                 "+faststart",
+                "-fs",
+                str(VIDEO_RESULT_MAX_BYTES),
                 str(output_path),
-            ],
-            check=True,
-            capture_output=True,
+            ]
         )
-        output_bytes = output_path.read_bytes()
-        if not output_bytes:
-            raise RuntimeError("FFmpeg produced an empty primary-stream video")
-        return output_bytes
+        return _read_generated_video_result(output_path)
 
 
 def pet_character_region_box(scene_size: tuple[int, int]) -> tuple[int, int, int, int]:
@@ -2100,13 +2998,10 @@ def generate_openrouter_video_bytes(
 ) -> bytes:
     if source_bytes is not None:
         source_data_url = f"data:image/png;base64,{base64.b64encode(source_bytes).decode('utf-8')}"
-        source_label = "<image-bytes>"
     elif source_path is not None:
         source_data_url = _image_path_data_url(source_path)
-        source_label = source_path.name
     elif input_references:
         source_data_url = None
-        source_label = "<references>"
     else:
         raise ValueError("source_path, source_bytes or input_references is required")
 
@@ -2128,46 +3023,111 @@ def generate_openrouter_video_bytes(
                 "frame_type": "first_frame",
             }
         ]
-        log_payload = {
-            **payload,
-            "frame_images": [
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,<{source_label}>"},
-                    "frame_type": "first_frame",
-                }
-            ],
-        }
     else:
         payload["input_references"] = input_references or []
-        log_payload = payload
-    logger.info("OpenRouter video generation prompt label=%s payload=%s", label, log_payload)
-
-    response = _submit_openrouter_video_job(settings, payload, label=label)
-    if response.status_code >= 400:
-        raise _openrouter_video_error(response)
-    submit_payload = response.json()
-    job_id = str(submit_payload.get("id") or "").strip()
-    if not job_id:
-        raise RuntimeError(f"OpenRouter video response missing job id: {submit_payload}")
-
-    polling_url_value = submit_payload.get("polling_url")
-    polling_url = (
-        urljoin(
-            f"{get_openrouter_video_url(settings)}/",
-            str(polling_url_value).strip(),
-        )
-        if polling_url_value
-        else None
+    log_video_generation_prompt(
+        label,
+        {
+            "model": model,
+            "prompt": prompt,
+            "duration": duration,
+            "resolution": resolution,
+            "aspect_ratio": aspect_ratio,
+            "has_source_image": source_data_url is not None,
+            "input_references": input_references or [],
+        },
     )
     logger.info(
-        "OpenRouter video job submitted label=%s jobId=%s initialStatus=%s",
+        "OpenRouter video generation requested label=%s model=%s duration=%s "
+        "resolution=%s aspectRatio=%s hasSourceImage=%s inputReferenceCount=%s",
         label,
-        job_id,
-        submit_payload.get("status"),
+        model,
+        duration,
+        resolution,
+        aspect_ratio,
+        source_data_url is not None,
+        len(input_references or []),
     )
-    _poll_openrouter_video_job(settings, job_id, polling_url=polling_url)
-    return _download_openrouter_video_bytes(settings, job_id)
+
+    operation = _provider_task_operation("video", label)
+    provider_origin = get_openrouter_video_url(settings).rstrip("/")
+    account_namespace = _provider_account_namespace(settings, "openrouter")
+    payload_fingerprint = provider_task_payload_fingerprint(payload)
+    with implicit_provider_task_scope(
+        _implicit_provider_task_store_path(settings),
+        max_records=_implicit_provider_task_store_max_records(settings),
+        operation=operation,
+        provider="openrouter",
+        provider_origin=provider_origin,
+        account_namespace=account_namespace,
+        payload_fingerprint=payload_fingerprint,
+    ):
+        receipt = find_current_provider_task(
+            operation=operation,
+            provider="openrouter",
+            provider_origin=provider_origin,
+            account_namespace=account_namespace,
+            payload_fingerprint=payload_fingerprint,
+        )
+        if receipt is None:
+            try:
+                response = _submit_openrouter_video_job(settings, payload, label=label)
+            except Exception as exc:
+                if _is_definitely_not_accepted_submit_error(exc):
+                    release_current_provider_task_admission(operation)
+                raise
+            if response.status_code >= 400:
+                release_current_provider_task_admission(operation)
+                raise _openrouter_video_error(response)
+            submit_payload = response.json()
+            job_id = str(submit_payload.get("id") or "").strip()
+            if not job_id:
+                raise RuntimeError(f"OpenRouter video response missing job id: {submit_payload}")
+
+            polling_url_value = submit_payload.get("polling_url")
+            polling_url = (
+                _trusted_openrouter_polling_url(settings, str(polling_url_value))
+                if polling_url_value
+                else None
+            )
+            save_current_provider_task(
+                operation=operation,
+                provider="openrouter",
+                provider_origin=provider_origin,
+                account_namespace=account_namespace,
+                task_id=job_id,
+                polling_url=polling_url,
+                payload_fingerprint=payload_fingerprint,
+            )
+            logger.info(
+                "OpenRouter video job submitted label=%s jobId=%s initialStatus=%s",
+                label,
+                job_id,
+                submit_payload.get("status"),
+            )
+        else:
+            job_id = receipt.task_id
+            polling_url = (
+                _trusted_openrouter_polling_url(settings, receipt.polling_url)
+                if receipt.polling_url
+                else None
+            )
+            logger.info(
+                "OpenRouter video job resumed label=%s jobId=%s state=%s",
+                label,
+                job_id,
+                receipt.state,
+            )
+        try:
+            _poll_openrouter_video_job(settings, job_id, polling_url=polling_url)
+            return _download_openrouter_video_bytes(settings, job_id)
+        except OpenRouterVideoTaskError:
+            mark_current_provider_task_failed(operation)
+            raise
+        except OpenRouterVideoHTTPError as exc:
+            if exc.status_code in {404, 410}:
+                mark_current_provider_task_failed(operation)
+            raise
 
 
 def generate_openrouter_video_from_image_bytes(
@@ -2194,6 +3154,31 @@ def generate_openrouter_video_from_image_bytes(
     )
 
 
+def _video_request(
+    image_bytes: bytes | None,
+    *,
+    label: str,
+    prompt: str,
+    resolution: str,
+    aspect_ratio: str,
+    duration: int,
+    provider: str | None = None,
+    input_references: list[dict[str, Any]] | None = None,
+    model: str | None,
+) -> VideoRequest:
+    return VideoRequest(
+        prompt=prompt,
+        source_image=image_bytes,
+        task=label,
+        resolution=resolution,
+        aspect_ratio=aspect_ratio,
+        duration_seconds=duration,
+        provider=provider,
+        input_references=tuple(input_references or ()),
+        model=model,
+    )
+
+
 def generate_video_from_image_bytes(
     image_bytes: bytes | None,
     *,
@@ -2207,18 +3192,47 @@ def generate_video_from_image_bytes(
     model: str | None = None,
 ) -> bytes:
     return get_media_gateway().generate_video(
-        VideoRequest(
+        _video_request(
+            image_bytes,
+            label=label,
             prompt=prompt,
-            source_image=image_bytes,
-            task=label,
             resolution=resolution,
             aspect_ratio=aspect_ratio,
-            duration_seconds=duration,
+            duration=duration,
             provider=provider,
-            input_references=tuple(input_references or ()),
+            input_references=input_references,
             model=model,
         )
     )
+
+
+@contextmanager
+def reserve_video_from_image_bytes(
+    image_bytes: bytes | None,
+    *,
+    label: str,
+    prompt: str,
+    resolution: str,
+    aspect_ratio: str,
+    duration: int,
+    provider: str | None = None,
+    input_references: list[dict[str, Any]] | None = None,
+    model: str | None = None,
+) -> Iterator[bytes]:
+    with get_media_gateway().generate_video_reserved(
+        _video_request(
+            image_bytes,
+            label=label,
+            prompt=prompt,
+            resolution=resolution,
+            aspect_ratio=aspect_ratio,
+            duration=duration,
+            provider=provider,
+            input_references=input_references,
+            model=model,
+        )
+    ) as payload:
+        yield payload
 
 
 def generate_openrouter_image_bytes(
@@ -2330,6 +3344,19 @@ def generate_single_sprite_image_bytes(prompt: str, *, provider: str | None = No
     return normalize_single_sprite_image(generate_image_bytes(prompt, provider=provider))
 
 
+@contextmanager
+def reserve_single_sprite_image_bytes(
+    prompt: str,
+    *,
+    provider: str | None = None,
+) -> Iterator[bytes]:
+    with reserve_image_bytes(prompt, provider=provider) as payload:
+        yield normalize_single_sprite_image(payload)
+        mark_current_provider_task_media_saved(
+            _provider_task_operation("image", "pet_creation/image")
+        )
+
+
 def generate_pet_scene_image_bytes(
     character_path: Path,
     *,
@@ -2344,6 +3371,24 @@ def generate_pet_scene_image_bytes(
         size=PET_SCENE_IMAGE_SIZE,
         provider=provider,
     )
+
+
+@contextmanager
+def reserve_pet_scene_image_bytes(
+    character_path: Path,
+    *,
+    provider: str | None = None,
+) -> Iterator[bytes]:
+    if not PET_SCENE_BACKGROUND_PATH.exists():
+        raise RuntimeError(f"Pet scene background not found: {PET_SCENE_BACKGROUND_PATH}")
+    with reserve_multi_image_edit_bytes(
+        PET_SCENE_COMPOSITION_PROMPT,
+        [character_path, PET_SCENE_BACKGROUND_PATH],
+        label="pet_creation/scene",
+        size=PET_SCENE_IMAGE_SIZE,
+        provider=provider,
+    ) as payload:
+        yield payload
 
 
 def generate_pet_scene_video_bytes(
@@ -2381,6 +3426,43 @@ def generate_pet_scene_video_bytes(
     )
 
 
+@contextmanager
+def reserve_pet_scene_video_bytes(
+    scene_path: Path,
+    *,
+    prompt: str = PET_SCENE_VIDEO_PROMPT,
+    label: str = "pet_creation/scene_video",
+    provider: str | None = None,
+) -> Iterator[bytes]:
+    provider_prompt = (
+        KANDINSKY_PET_SCENE_VIDEO_PROMPT
+        if provider == "kandinsky" and prompt == PET_SCENE_VIDEO_PROMPT
+        else prompt
+    )
+    request = VideoRequest(
+        prompt=provider_prompt,
+        source_image=scene_path.read_bytes(),
+        task=label,
+        resolution=PET_SCENE_VIDEO_RESOLUTION,
+        aspect_ratio=PET_SCENE_VIDEO_ASPECT_RATIO,
+        duration_seconds=PET_SCENE_VIDEO_DURATION_SECONDS,
+        provider=provider,
+    )
+    resolved_provider = get_media_router().resolve_video(request).provider
+    with get_media_gateway().generate_video_reserved(request) as video_bytes:
+        start_offset_seconds = (
+            SEEDANCE_PET_SCENE_VIDEO_START_OFFSET_SECONDS
+            if resolved_provider == "openrouter"
+            and "seedance" in get_openrouter_video_model(get_settings()).lower()
+            else PET_SCENE_VIDEO_START_OFFSET_SECONDS
+        )
+        yield render_ping_pong_video_bytes(
+            video_bytes,
+            start_offset_seconds=start_offset_seconds,
+        )
+        mark_current_provider_task_media_saved(_provider_task_operation("video", label))
+
+
 def generate_individual_sprite_paths(
     asset_id: uuid.UUID,
     description: str,
@@ -2411,43 +3493,57 @@ def generate_individual_sprite_image_paths(
     output_paths: dict[tuple[str, str], tuple[Path, str]] = {}
 
     for stage, state in FAST_GENERATION_SKINS:
+        character_path = output_dir / f"{stage}-{state}-character.png"
+        foreground_path = output_dir / f"{stage}-{state}-foreground.png"
+        path = output_dir / f"{stage}-{state}.png"
+        if _is_valid_image_file(path):
+            output_paths[(stage, state)] = (path, PET_SCENE_COMPOSITION_PROMPT)
+            continue
+
         prompt = build_pet_single_sprite_prompt(
             description,
             character_bible,
             stage=stage,
             state=state,
         )
-        try:
-            sprite_bytes = generate_single_sprite_image_bytes(
-                prompt,
-                provider=image_provider,
-            )
-        except Exception as exc:
-            if generation_error_code(exc) != "IMAGE_PROMPT_REJECTED":
-                raise
-            logger.info("Retrying image generation with safety-constrained single sprite prompt")
-            prompt = build_pet_single_sprite_safety_retry_prompt(
-                description,
-                character_bible,
-                stage=stage,
-                state=state,
-            )
-            sprite_bytes = generate_single_sprite_image_bytes(
-                prompt,
-                provider=image_provider,
+        if not _is_valid_image_file(character_path):
+            try:
+                with reserve_single_sprite_image_bytes(
+                    prompt,
+                    provider=image_provider,
+                ) as sprite_bytes:
+                    _atomic_write_nonempty(character_path, sprite_bytes)
+            except Exception as exc:
+                if generation_error_code(exc) != "IMAGE_PROMPT_REJECTED":
+                    raise
+                logger.info(
+                    "Retrying image generation with safety-constrained single sprite prompt"
+                )
+                prompt = build_pet_single_sprite_safety_retry_prompt(
+                    description,
+                    character_bible,
+                    stage=stage,
+                    state=state,
+                )
+                with reserve_single_sprite_image_bytes(
+                    prompt,
+                    provider=image_provider,
+                ) as sprite_bytes:
+                    _atomic_write_nonempty(character_path, sprite_bytes)
+        else:
+            sprite_bytes = character_path.read_bytes()
+
+        if not _is_valid_image_file(foreground_path):
+            _atomic_write_nonempty(
+                foreground_path,
+                make_character_foreground_image_bytes(sprite_bytes),
             )
 
-        character_path = output_dir / f"{stage}-{state}-character.png"
-        character_path.write_bytes(sprite_bytes)
-        foreground_path = output_dir / f"{stage}-{state}-foreground.png"
-        foreground_path.write_bytes(make_character_foreground_image_bytes(sprite_bytes))
-
-        path = output_dir / f"{stage}-{state}.png"
-        scene_bytes = generate_pet_scene_image_bytes(
+        with reserve_pet_scene_image_bytes(
             character_path,
             provider=image_provider,
-        )
-        path.write_bytes(normalize_pet_scene_video_frame_bytes(scene_bytes))
+        ) as scene_bytes:
+            _atomic_write_nonempty(path, normalize_pet_scene_video_frame_bytes(scene_bytes))
         output_paths[(stage, state)] = (path, PET_SCENE_COMPOSITION_PROMPT)
 
     return output_paths
@@ -2459,13 +3555,16 @@ def generate_pet_scene_video_path(
     *,
     provider: str | None = None,
 ) -> Path:
-    video_bytes = (
-        generate_pet_scene_video_bytes(scene_path, provider=provider)
-        if provider is not None
-        else generate_pet_scene_video_bytes(scene_path)
-    )
     video_path = generated_dir_for(asset_id) / f"{FAST_GENERATION_STAGE}-idle.mp4"
-    video_path.write_bytes(video_bytes)
+    if _is_nonempty_file(video_path):
+        return video_path
+    reservation = (
+        reserve_pet_scene_video_bytes(scene_path, provider=provider)
+        if provider is not None
+        else reserve_pet_scene_video_bytes(scene_path)
+    )
+    with reservation as video_bytes:
+        _atomic_write_nonempty(video_path, video_bytes)
     return video_path
 
 
@@ -2474,28 +3573,36 @@ def generate_pet_sad_scene_path(
     *,
     image_provider: str | None = None,
 ) -> Path:
-    sad_pose_bytes = generate_image_edit_bytes(
-        PET_SAD_SCENE_IMAGE_PROMPT,
-        image_set.scene_path,
-        label="pet_creation/sad_pose",
-        provider=image_provider,
-    )
     output_dir = generated_dir_for(image_set.asset_set_id)
-    sad_pose_path = output_dir / f"{FAST_GENERATION_STAGE}-sad-pose.png"
-    sad_pose_path.write_bytes(normalize_pet_scene_video_frame_bytes(sad_pose_bytes))
-    try:
-        sad_scene_bytes = generate_multi_image_edit_bytes(
-            PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT,
-            [image_set.scene_path, sad_pose_path],
-            label="pet_creation/sad_scene",
-            size=PET_SCENE_IMAGE_SIZE,
-            provider=image_provider,
-        )
-    finally:
-        sad_pose_path.unlink(missing_ok=True)
-
     sad_scene_path = output_dir / f"{FAST_GENERATION_STAGE}-sad.png"
-    sad_scene_path.write_bytes(normalize_pet_scene_video_frame_bytes(sad_scene_bytes))
+    if _is_valid_image_file(sad_scene_path):
+        return sad_scene_path
+
+    sad_pose_path = output_dir / f"{FAST_GENERATION_STAGE}-sad-pose.png"
+    if not _is_valid_image_file(sad_pose_path):
+        with reserve_image_edit_bytes(
+            PET_SAD_SCENE_IMAGE_PROMPT,
+            image_set.scene_path,
+            label="pet_creation/sad_pose",
+            provider=image_provider,
+        ) as sad_pose_bytes:
+            _atomic_write_nonempty(
+                sad_pose_path,
+                normalize_pet_scene_video_frame_bytes(sad_pose_bytes),
+            )
+
+    with reserve_multi_image_edit_bytes(
+        PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT,
+        [image_set.scene_path, sad_pose_path],
+        label="pet_creation/sad_scene",
+        size=PET_SCENE_IMAGE_SIZE,
+        provider=image_provider,
+    ) as sad_scene_bytes:
+        _atomic_write_nonempty(
+            sad_scene_path,
+            normalize_pet_scene_video_frame_bytes(sad_scene_bytes),
+        )
+    sad_pose_path.unlink(missing_ok=True)
     return sad_scene_path
 
 
@@ -2503,13 +3610,15 @@ def generate_pet_sad_video_for_image_asset_set(
     image_set: PetAssetImageSet,
     sad_scene_path: Path,
 ) -> Path:
-    video_bytes = generate_pet_scene_video_bytes(
+    video_path = generated_dir_for(image_set.asset_set_id) / f"{FAST_GENERATION_STAGE}-sad.mp4"
+    if _is_nonempty_file(video_path):
+        return video_path
+    with reserve_pet_scene_video_bytes(
         sad_scene_path,
         prompt=PET_SAD_SCENE_VIDEO_PROMPT,
         label="pet_creation/sad_scene_video",
-    )
-    video_path = generated_dir_for(image_set.asset_set_id) / f"{FAST_GENERATION_STAGE}-sad.mp4"
-    video_path.write_bytes(video_bytes)
+    ) as video_bytes:
+        _atomic_write_nonempty(video_path, video_bytes)
     return video_path
 
 
@@ -2519,38 +3628,45 @@ def generate_pet_happy_scene_path(
     image_provider: str | None = None,
 ) -> Path:
     output_dir = generated_dir_for(image_set.asset_set_id)
+    happy_scene_path = output_dir / f"{FAST_GENERATION_STAGE}-happy.png"
+    if _is_valid_image_file(happy_scene_path):
+        return happy_scene_path
+
     source_region_path = output_dir / f"{FAST_GENERATION_STAGE}-happy-source-region.png"
-    source_region_bytes = extract_pet_character_region_bytes(image_set.scene_path)
-    source_region_path.write_bytes(source_region_bytes)
-    with Image.open(BytesIO(source_region_bytes)) as source_region:
+    if not _is_valid_image_file(source_region_path):
+        _atomic_write_nonempty(
+            source_region_path,
+            extract_pet_character_region_bytes(image_set.scene_path),
+        )
+    with Image.open(source_region_path) as source_region:
         region_size = source_region.size
 
     happy_pose_path = output_dir / f"{FAST_GENERATION_STAGE}-happy-pose.png"
-    try:
-        happy_pose_bytes = generate_image_edit_bytes(
+    if not _is_valid_image_file(happy_pose_path):
+        with reserve_image_edit_bytes(
             PET_HAPPY_SCENE_IMAGE_PROMPT,
             source_region_path,
             label="pet_creation/happy_pose",
             provider=image_provider,
-        )
-        happy_pose_path.write_bytes(
-            normalize_pet_character_region_bytes(happy_pose_bytes, region_size)
-        )
-        happy_scene_bytes = generate_multi_image_edit_bytes(
-            PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT,
-            [source_region_path, happy_pose_path],
-            label="pet_creation/happy_scene",
-            size=PET_SCENE_IMAGE_SIZE,
-            provider=image_provider,
-        )
-    finally:
-        happy_pose_path.unlink(missing_ok=True)
-        source_region_path.unlink(missing_ok=True)
+        ) as happy_pose_bytes:
+            _atomic_write_nonempty(
+                happy_pose_path,
+                normalize_pet_character_region_bytes(happy_pose_bytes, region_size),
+            )
 
-    happy_scene_path = output_dir / f"{FAST_GENERATION_STAGE}-happy.png"
-    happy_scene_path.write_bytes(
-        composite_pet_character_region_bytes(image_set.scene_path, happy_scene_bytes)
-    )
+    with reserve_multi_image_edit_bytes(
+        PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT,
+        [source_region_path, happy_pose_path],
+        label="pet_creation/happy_scene",
+        size=PET_SCENE_IMAGE_SIZE,
+        provider=image_provider,
+    ) as happy_scene_bytes:
+        _atomic_write_nonempty(
+            happy_scene_path,
+            composite_pet_character_region_bytes(image_set.scene_path, happy_scene_bytes),
+        )
+    happy_pose_path.unlink(missing_ok=True)
+    source_region_path.unlink(missing_ok=True)
     return happy_scene_path
 
 
@@ -2558,13 +3674,15 @@ def generate_pet_happy_video_for_image_asset_set(
     image_set: PetAssetImageSet,
     happy_scene_path: Path,
 ) -> Path:
-    video_bytes = generate_pet_scene_video_bytes(
+    video_path = generated_dir_for(image_set.asset_set_id) / f"{FAST_GENERATION_STAGE}-happy.mp4"
+    if _is_nonempty_file(video_path):
+        return video_path
+    with reserve_pet_scene_video_bytes(
         happy_scene_path,
         prompt=PET_SCENE_VIDEO_PROMPT,
         label="pet_creation/happy_scene_video",
-    )
-    video_path = generated_dir_for(image_set.asset_set_id) / f"{FAST_GENERATION_STAGE}-happy.mp4"
-    video_path.write_bytes(video_bytes)
+    ) as video_bytes:
+        _atomic_write_nonempty(video_path, video_bytes)
     return video_path
 
 
@@ -2604,6 +3722,10 @@ def _error_chain_contains(exc: BaseException, error_types: Any) -> bool:
 
 
 def generation_error_code(exc: Exception) -> str:
+    if isinstance(exc, StorageCapacityError):
+        return exc.code
+    if isinstance(exc, MediaResultError):
+        return exc.code
     if isinstance(exc, APITimeoutError):
         return "OPENAI_TIMEOUT"
     if isinstance(exc, httpx.TimeoutException):
@@ -2664,25 +3786,38 @@ def generate_pet_image_asset_set(
     *,
     image_provider: str | None = None,
     character_bible: str | dict[str, Any] | None = None,
+    asset_set_id: uuid.UUID | None = None,
 ) -> PetAssetImageSet:
-    asset_set_id = uuid.uuid4()
+    durable_asset_set = asset_set_id is not None
+    asset_set_id = asset_set_id or uuid.uuid4()
     output_dir = generated_dir_for(asset_set_id)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    character_bible = character_bible or create_character_bible(description)
+    if durable_asset_set:
+        character_bible, generated_at, version = _load_or_create_pet_generation_metadata(
+            asset_set_id,
+            description,
+            image_provider,
+            character_bible,
+        )
+    else:
+        character_bible = character_bible or create_character_bible(description)
+        if not isinstance(character_bible, dict):
+            raise ValueError("pet character bible must be an object")
+        generated_at = datetime.now(UTC)
+        version = int(generated_at.timestamp())
     generated_paths = generate_individual_sprite_image_paths(
         asset_set_id,
         description,
         character_bible,
         image_provider=image_provider,
     )
-    generated_at = datetime.now(UTC)
     return PetAssetImageSet(
         asset_set_id=asset_set_id,
         generated_paths=generated_paths,
         scene_path=generated_paths[(FAST_GENERATION_STAGE, "idle")][0],
         character_bible=character_bible,
-        version=int(generated_at.timestamp()),
+        version=version,
         generated_at=generated_at,
     )
 
@@ -2726,11 +3861,14 @@ def build_pet_static_asset_set_response(
 def generate_kandinsky_pet_comparison_assets(
     description: str,
     character_bible: str | dict[str, Any],
+    *,
+    asset_set_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     image_set = generate_pet_image_asset_set(
         description,
         image_provider="kandinsky",
         character_bible=character_bible,
+        asset_set_id=asset_set_id,
     )
     sad_scene_path = generate_pet_sad_scene_path(
         image_set,

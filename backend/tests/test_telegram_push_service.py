@@ -2,18 +2,63 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sqlite3
+from contextlib import contextmanager
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from app.bot import TelegramAPIError
+from app.config import Settings
 from app.schemas import LocalPetPushSnapshotRequest, LocalProactiveResponse
 from app.services import telegram_push_service
 from app.services.telegram_auth_service import TelegramUserContext
+from app.services.telegram_push_store import (
+    JsonTelegramPushStore,
+    SQLiteTelegramPushStore,
+    TelegramPushStoreCapacityError,
+)
 
 TEST_TELEGRAM_ID = 62943754
+
+
+def test_push_store_wiring_selects_backend_from_suffix_or_config(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        telegram_push_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            telegram_push_store_path=str(tmp_path / "push.sqlite3"),
+            telegram_push_legacy_json_path=str(tmp_path / "legacy.json"),
+            telegram_push_legacy_json_required=False,
+        ),
+    )
+
+    assert isinstance(telegram_push_service._push_store(), SQLiteTelegramPushStore)
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            telegram_push_store_path=str(tmp_path / "compat.state"),
+            telegram_push_store_backend="json",
+        ),
+    )
+
+    assert isinstance(telegram_push_service._push_store(), JsonTelegramPushStore)
+
+
+def _reserved(fake):
+    @contextmanager
+    def reservation(*args, **kwargs):
+        yield fake(*args, **kwargs)
+
+    return reservation
 
 
 def _user_with_id(telegram_id: int, username: str = "serge") -> TelegramUserContext:
@@ -60,6 +105,65 @@ def _snapshot_payload() -> LocalPetPushSnapshotRequest:
     )
 
 
+def _seed_due_daily_full_story(
+    telegram_id: int = TEST_TELEGRAM_ID,
+    *,
+    pet_id: str = "pet-1",
+) -> None:
+    snapshot = _snapshot_payload().model_copy(update={"petId": pet_id})
+    telegram_push_service.register_push_snapshot(_user_with_id(telegram_id), snapshot)
+    telegram_push_service.mark_chat_started(chat_id=telegram_id)
+    record = telegram_push_service._read_store()["records"][str(telegram_id)]
+    story = {
+        "overallTitle": "Синтетическая история дня",
+        "generatedAt": "2026-07-12T06:00:00Z",
+        "localDate": "2026-07-12",
+        "parts": [
+            {
+                "partNumber": number,
+                "title": f"Часть {number}",
+                "storyText": "Синтетическое продолжение общей истории.",
+                "valence": "positive",
+                "statImpacts": [],
+            }
+            for number in range(1, 5)
+        ],
+    }
+    record["dailyFullStory"] = story
+    record["lastFullStory"] = deepcopy(story)
+    telegram_push_service._save_record(record)
+
+
+def test_snapshot_schema_rejects_oversized_persisted_fields() -> None:
+    oversized_url = _snapshot_payload().model_dump()
+    oversized_url["pet"]["assetImages"] = {"adult": {"idle": "https://example.test/" + "x" * 1000}}
+    with pytest.raises(ValidationError):
+        LocalPetPushSnapshotRequest.model_validate(oversized_url)
+
+    oversized_bible = _snapshot_payload().model_dump()
+    oversized_bible["pet"]["characterBible"] = {"blob": "x" * 262_144}
+    with pytest.raises(ValidationError, match="persisted size limit"):
+        LocalPetPushSnapshotRequest.model_validate(oversized_bible)
+
+
+def test_character_bible_schema_rejects_adversarial_depth_and_node_count() -> None:
+    deeply_nested: dict[str, object] = {"leaf": "value"}
+    for _ in range(25):
+        deeply_nested = {"next": deeply_nested}
+    deep_payload = _snapshot_payload().model_dump(mode="json")
+    deep_payload["pet"]["characterBible"] = deeply_nested
+
+    with pytest.raises(ValidationError, match="nested too deeply"):
+        LocalPetPushSnapshotRequest.model_validate(deep_payload)
+
+    wide_payload = _snapshot_payload().model_dump(mode="json")
+    wide_payload["pet"]["characterBible"] = {
+        "facts": {f"key-{index}": index for index in range(10_001)}
+    }
+    with pytest.raises(ValidationError, match="too many values"):
+        LocalPetPushSnapshotRequest.model_validate(wide_payload)
+
+
 def test_snapshot_preserves_rich_character_bible_when_legacy_client_sends_only_extensions(
     monkeypatch,
     tmp_path,
@@ -101,6 +205,388 @@ def test_snapshot_preserves_rich_character_bible_when_legacy_client_sends_only_e
     assert bible["extensions"]["lite_overlay"]["facts"] == [{"text": "Громм починил мост."}]
 
 
+def test_modern_snapshot_replaces_client_bible_but_preserves_server_overlay(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    first = _snapshot_payload().model_copy(
+        update={
+            "pet": _snapshot_payload().pet.model_copy(
+                update={
+                    "characterBible": {
+                        "identity": {"name": "Старое имя", "obsolete": True},
+                        "obsoleteBranch": {"blob": "old"},
+                        "extensions": {
+                            "lite_overlay": {
+                                "facts": [{"sphere": "world", "text": "Серверный факт"}]
+                            }
+                        },
+                    }
+                }
+            )
+        }
+    )
+    telegram_push_service.register_push_snapshot(_user(), first)
+    modern = _snapshot_payload().model_copy(
+        update={
+            "pet": _snapshot_payload().pet.model_copy(
+                update={
+                    "characterBible": {
+                        "identity": {"name": "Новое имя"},
+                        "extensions": {
+                            "lite_overlay": {
+                                "facts": [{"sphere": "character", "text": "Локальный факт"}]
+                            }
+                        },
+                    }
+                }
+            )
+        }
+    )
+
+    telegram_push_service.register_push_snapshot(_user(), modern)
+
+    bible = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]["pet"][
+        "characterBible"
+    ]
+    assert bible["identity"] == {"name": "Новое имя"}
+    assert "obsoleteBranch" not in bible
+    assert {fact["text"] for fact in bible["extensions"]["lite_overlay"]["facts"]} == {
+        "Локальный факт",
+        "Серверный факт",
+    }
+
+
+def test_legacy_snapshot_cannot_accumulate_arbitrary_extension_keys(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    initial = _snapshot_payload().model_copy(
+        update={
+            "pet": _snapshot_payload().pet.model_copy(
+                update={"characterBible": {"identity": {"name": "Громм"}}}
+            )
+        }
+    )
+    telegram_push_service.register_push_snapshot(_user(), initial)
+
+    for index in range(5):
+        legacy = _snapshot_payload().model_copy(
+            update={
+                "pet": _snapshot_payload().pet.model_copy(
+                    update={
+                        "characterBible": {
+                            "extensions": {
+                                f"attacker-{index}": {"blob": "x" * 1_000},
+                                "lite_overlay": {"facts": [{"text": f"fact-{index}"}]},
+                            }
+                        }
+                    }
+                )
+            }
+        )
+        telegram_push_service.register_push_snapshot(_user(), legacy)
+
+    bible = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]["pet"][
+        "characterBible"
+    ]
+    extensions = bible["extensions"]
+    assert all(f"attacker-{index}" not in extensions for index in range(5))
+    assert len(extensions["lite_overlay"]["facts"]) == 5
+
+
+def test_snapshot_normalizes_lite_overlay_to_bounded_allowlist(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    payload = _snapshot_payload().model_copy(
+        update={
+            "pet": _snapshot_payload().pet.model_copy(
+                update={
+                    "characterBible": {
+                        "identity": {"name": "Громм"},
+                        "extensions": {
+                            "lite_overlay": {
+                                "facts": [
+                                    {
+                                        "sphere": "world",
+                                        "text": f"fact-{index}-" + "x" * 1_000,
+                                        "unknown": "x" * 1_000,
+                                    }
+                                    for index in range(100)
+                                ],
+                                "spheres": {
+                                    "evil": {"facts": [{"text": "never persist"}]},
+                                    "world": {
+                                        "facts": [
+                                            {"sphere": "world", "text": f"world-{index}"}
+                                            for index in range(50)
+                                        ]
+                                    },
+                                },
+                                "worldSeed": {
+                                    "source": "s" * 500,
+                                    "createdAt": "2026-07-15T00:00:00Z",
+                                    "blob": "x" * 10_000,
+                                },
+                                "unknownRoot": "x" * 10_000,
+                            }
+                        },
+                    }
+                }
+            )
+        }
+    )
+
+    telegram_push_service.register_push_snapshot(_user(), payload)
+
+    overlay = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]["pet"][
+        "characterBible"
+    ]["extensions"]["lite_overlay"]
+    assert set(overlay) <= {"facts", "spheres", "worldSeed"}
+    assert len(overlay["facts"]) == 80
+    assert all(
+        len(fact["text"]) <= 500 and set(fact) <= {"sphere", "text"} for fact in overlay["facts"]
+    )
+    assert set(overlay["spheres"]) == {"world"}
+    assert len(overlay["spheres"]["world"]["facts"]) == 40
+    assert overlay["worldSeed"] == {
+        "source": "s" * 80,
+        "createdAt": "2026-07-15T00:00:00Z",
+    }
+
+
+def test_late_snapshot_cannot_roll_back_same_pet_context(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    newer = LocalPetPushSnapshotRequest.model_validate(
+        {
+            **_snapshot_payload().model_dump(mode="json"),
+            "updatedAt": "2026-07-07T12:01:00Z",
+            "history": [
+                {
+                    "role": "user",
+                    "text": "новая реплика",
+                    "createdAt": "2026-07-07T12:00:59Z",
+                }
+            ],
+            "recentAmbientReplies": ["новый ambient"],
+            "memoryContext": {"summary": "новая память"},
+            "timezone": "Asia/Tokyo",
+        },
+    )
+    older = LocalPetPushSnapshotRequest.model_validate(
+        {
+            **_snapshot_payload().model_dump(mode="json"),
+            "updatedAt": "2026-07-07T12:00:00Z",
+            "history": [
+                {
+                    "role": "user",
+                    "text": "старая реплика",
+                    "createdAt": "2026-07-07T11:59:59Z",
+                }
+            ],
+            "recentAmbientReplies": ["старый ambient"],
+            "memoryContext": {"summary": "старая память"},
+            "timezone": "Europe/Moscow",
+        },
+    )
+
+    telegram_push_service.register_push_snapshot(_user(), newer)
+    telegram_push_service.register_push_snapshot(_user(), older)
+
+    record = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))["records"][
+        str(TEST_TELEGRAM_ID)
+    ]
+    assert record["updatedAt"] == "2026-07-07T12:01:00Z"
+    assert record["history"][0]["text"] == "новая реплика"
+    assert record["recentAmbientReplies"] == ["новый ambient"]
+    assert record["memoryContext"]["summary"] == "новая память"
+    assert record["timezone"] == "Asia/Tokyo"
+
+
+def test_writer_revision_orders_same_pet_without_trusting_device_clock(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    writer_id = "writer-session-00000001"
+    future_clock = LocalPetPushSnapshotRequest.model_validate(
+        {
+            **_snapshot_payload().model_dump(mode="json"),
+            "snapshotWriterId": writer_id,
+            "snapshotRevision": 1,
+            "updatedAt": "2099-07-07T12:00:00Z",
+            "history": [{"role": "user", "text": "старое", "createdAt": None}],
+        }
+    )
+    newer_revision = LocalPetPushSnapshotRequest.model_validate(
+        {
+            **_snapshot_payload().model_dump(mode="json"),
+            "snapshotWriterId": writer_id,
+            "snapshotRevision": 2,
+            "updatedAt": "2026-07-07T12:00:00Z",
+            "history": [{"role": "user", "text": "новое", "createdAt": None}],
+        }
+    )
+
+    telegram_push_service.register_push_snapshot(_user(), future_clock)
+    telegram_push_service.register_push_snapshot(_user(), newer_revision)
+
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert record["snapshotRevision"] == 2
+    assert record["history"][0]["text"] == "новое"
+    assert record["updatedAt"] == "2026-07-07T12:00:00Z"
+
+
+def test_late_old_pet_snapshot_cannot_replace_new_pet_from_same_writer(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    writer_id = "writer-session-00000002"
+    old_pet = LocalPetPushSnapshotRequest.model_validate(
+        {
+            **_snapshot_payload().model_dump(mode="json"),
+            "snapshotWriterId": writer_id,
+            "snapshotRevision": 1,
+            "petId": "pet-old",
+        }
+    )
+    new_pet = LocalPetPushSnapshotRequest.model_validate(
+        {
+            **_snapshot_payload().model_dump(mode="json"),
+            "snapshotWriterId": writer_id,
+            "snapshotRevision": 2,
+            "petId": "pet-new",
+            "createdAt": "2026-07-08T12:00:00Z",
+        }
+    )
+
+    telegram_push_service.register_push_snapshot(_user(), new_pet)
+    telegram_push_service.register_push_snapshot(_user(), old_pet)
+
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert record["petId"] == "pet-new"
+    assert record["snapshotRevision"] == 2
+
+
+def test_late_old_pet_snapshot_cannot_replace_new_pet_from_another_writer(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    old_pet = LocalPetPushSnapshotRequest.model_validate(
+        {
+            **_snapshot_payload().model_dump(mode="json"),
+            "snapshotWriterId": "writer-session-old-0001",
+            "snapshotRevision": 50,
+            "petId": "pet-old",
+            "createdAt": "2026-07-07T12:00:00Z",
+        }
+    )
+    new_pet = LocalPetPushSnapshotRequest.model_validate(
+        {
+            **_snapshot_payload().model_dump(mode="json"),
+            "snapshotWriterId": "writer-session-new-0001",
+            "snapshotRevision": 1,
+            "petId": "pet-new",
+            "createdAt": "2026-07-08T12:00:00Z",
+        }
+    )
+
+    telegram_push_service.register_push_snapshot(_user(), new_pet)
+    telegram_push_service.register_push_snapshot(_user(), old_pet)
+
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert record["petId"] == "pet-new"
+    assert record["snapshotWriterId"] == "writer-session-new-0001"
+    assert record["snapshotRevision"] == 1
+
+
+def test_epoch_snapshot_order_is_total_across_tab_writers(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    revision_floor = telegram_push_service.SNAPSHOT_EPOCH_REVISION_FLOOR
+    newer = LocalPetPushSnapshotRequest.model_validate(
+        {
+            **_snapshot_payload().model_dump(mode="json"),
+            "snapshotWriterId": "writer-tab-newer-0001",
+            "snapshotRevision": revision_floor + 2,
+            "updatedAt": "2026-07-15T12:00:00Z",
+            "history": [{"role": "user", "text": "новое", "createdAt": None}],
+        }
+    )
+    late_older = LocalPetPushSnapshotRequest.model_validate(
+        {
+            **_snapshot_payload().model_dump(mode="json"),
+            "snapshotWriterId": "writer-tab-older-0001",
+            "snapshotRevision": revision_floor + 1,
+            "updatedAt": "2026-07-15T12:05:00Z",
+            "history": [{"role": "user", "text": "старое", "createdAt": None}],
+        }
+    )
+
+    telegram_push_service.register_push_snapshot(_user(), newer)
+    telegram_push_service.register_push_snapshot(_user(), late_older)
+
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert record["snapshotWriterId"] == "writer-tab-newer-0001"
+    assert record["snapshotRevision"] == revision_floor + 2
+    assert record["history"][0]["text"] == "новое"
+
+
+def test_legacy_counter_cannot_overwrite_epoch_snapshot(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    revision_floor = telegram_push_service.SNAPSHOT_EPOCH_REVISION_FLOOR
+    epoch_snapshot = LocalPetPushSnapshotRequest.model_validate(
+        {
+            **_snapshot_payload().model_dump(mode="json"),
+            "snapshotWriterId": "writer-tab-epoch-0001",
+            "snapshotRevision": revision_floor,
+            "history": [{"role": "user", "text": "epoch", "createdAt": None}],
+        }
+    )
+    legacy_counter = LocalPetPushSnapshotRequest.model_validate(
+        {
+            **_snapshot_payload().model_dump(mode="json"),
+            "snapshotWriterId": "writer-tab-legacy-001",
+            "snapshotRevision": 99_999,
+            "updatedAt": "2099-07-15T12:00:00Z",
+            "history": [{"role": "user", "text": "legacy", "createdAt": None}],
+        }
+    )
+
+    telegram_push_service.register_push_snapshot(_user(), epoch_snapshot)
+    telegram_push_service.register_push_snapshot(_user(), legacy_counter)
+
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert record["snapshotWriterId"] == "writer-tab-epoch-0001"
+    assert record["history"][0]["text"] == "epoch"
+
+
+def test_snapshot_schema_requires_writer_and_revision_together() -> None:
+    raw = _snapshot_payload().model_dump(mode="json")
+    with pytest.raises(ValidationError, match="provided together"):
+        LocalPetPushSnapshotRequest.model_validate(
+            {**raw, "snapshotWriterId": "writer-session-00000003"}
+        )
+    with pytest.raises(ValidationError, match="provided together"):
+        LocalPetPushSnapshotRequest.model_validate({**raw, "snapshotRevision": 1})
+
+
+def test_snapshot_schema_normalizes_pet_id() -> None:
+    raw = _snapshot_payload().model_dump(mode="json")
+
+    payload = LocalPetPushSnapshotRequest.model_validate({**raw, "petId": "  pet-1  "})
+
+    assert payload.petId == "pet-1"
+
+
 def test_pet_reset_deletes_server_data_and_resets_only_matching_local_pet(
     monkeypatch,
     tmp_path,
@@ -108,10 +594,17 @@ def test_pet_reset_deletes_server_data_and_resets_only_matching_local_pet(
     settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
     monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
     telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    cleanup_records: list[list[dict[str, object]]] = []
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_cleanup_background_story_media_for_records",
+        lambda records, **_kwargs: cleanup_records.append(records),
+    )
 
     reset_record = telegram_push_service.request_pet_reset(TEST_TELEGRAM_ID)
 
     assert reset_record["petResetRequest"]["petId"] == "pet-1"
+    assert cleanup_records == [[{"telegramId": TEST_TELEGRAM_ID, "petId": "pet-1"}]]
     assert "pet" not in reset_record
     assert "history" not in reset_record
     assert "memoryContext" not in reset_record
@@ -126,6 +619,120 @@ def test_pet_reset_deletes_server_data_and_resets_only_matching_local_pet(
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
     assert store["records"][str(TEST_TELEGRAM_ID)]["petId"] == "pet-2"
     assert "petResetRequest" not in store["records"][str(TEST_TELEGRAM_ID)]
+
+
+def test_unregister_snapshot_fences_late_writes_without_blocking_a_new_pet(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    cleanup_records: list[list[dict[str, object]]] = []
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_cleanup_background_story_media_for_records",
+        lambda records, **_kwargs: cleanup_records.append(records),
+    )
+
+    assert telegram_push_service.unregister_push_snapshot(TEST_TELEGRAM_ID, "pet-1") is True
+    assert cleanup_records == [[{"telegramId": TEST_TELEGRAM_ID, "petId": "pet-1"}]]
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert "pet" not in record
+    assert record["petResetTombstones"][-1]["petId"] == "pet-1"
+
+    late_response = telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    assert late_response.resetPet is True
+    assert "pet" not in telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+
+    new_pet_payload = _snapshot_payload().model_copy(update={"petId": "pet-2"})
+    new_pet_response = telegram_push_service.register_push_snapshot(_user(), new_pet_payload)
+    assert new_pet_response.resetPet is False
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert record["petId"] == "pet-2"
+    assert record["petResetTombstones"][-1]["petId"] == "pet-1"
+
+    assert telegram_push_service.unregister_push_snapshot(TEST_TELEGRAM_ID, "pet-1") is True
+    assert telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]["petId"] == (
+        "pet-2"
+    )
+
+
+def test_unregister_snapshot_matches_legacy_whitespace_pet_id(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    telegram_push_service._save_record(
+        {
+            "telegramId": TEST_TELEGRAM_ID,
+            "petId": "  pet-1  ",
+            "pet": {"description": "legacy"},
+        }
+    )
+
+    assert telegram_push_service.unregister_push_snapshot(TEST_TELEGRAM_ID, " pet-1 ") is True
+
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert "pet" not in record
+    assert record["petResetTombstones"][-1]["petId"] == "pet-1"
+
+
+def test_unregister_old_snapshot_preserves_already_registered_new_pet(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    new_pet_payload = _snapshot_payload().model_copy(update={"petId": "pet-2"})
+    telegram_push_service.register_push_snapshot(_user(), new_pet_payload)
+
+    assert telegram_push_service.unregister_push_snapshot(TEST_TELEGRAM_ID, "pet-1") is True
+
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert record["petId"] == "pet-2"
+    assert record["petResetTombstones"][-1]["petId"] == "pet-1"
+
+
+def test_unregister_missing_snapshot_fails_atomically_at_record_capacity(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = SimpleNamespace(
+        telegram_push_store_path=str(tmp_path / "push.json"),
+        telegram_push_store_max_records=1,
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    telegram_push_service._save_record({"telegramId": 99, "petId": "other-pet", "pet": {}})
+
+    with pytest.raises(TelegramPushStoreCapacityError):
+        telegram_push_service.unregister_push_snapshot(TEST_TELEGRAM_ID, "pet-1")
+
+    records = telegram_push_service._read_store()["records"]
+    assert set(records) == {"99"}
+
+
+def test_unregister_snapshot_keeps_durable_tombstones(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+
+    for index in range(11):
+        assert (
+            telegram_push_service.unregister_push_snapshot(
+                TEST_TELEGRAM_ID,
+                f"pet-{index}",
+            )
+            is True
+        )
+
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    tombstones = record["petResetTombstones"]
+    assert [item["petId"] for item in tombstones] == [f"pet-{index}" for index in range(11)]
+
+    late_payload = _snapshot_payload().model_copy(update={"petId": "pet-0"})
+    late_response = telegram_push_service.register_push_snapshot(_user(), late_payload)
+
+    assert late_response.resetPet is True
+    assert "pet" not in telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
 
 
 def test_manual_push_uses_registered_telegram_chat(monkeypatch, tmp_path) -> None:
@@ -427,13 +1034,13 @@ def test_background_story_is_saved_and_preserved_on_next_snapshot(
 
     monkeypatch.setattr(
         telegram_push_service,
-        "generate_background_story_image_bytes",
-        fake_story_image_bytes,
+        "reserve_background_story_image_bytes",
+        _reserved(fake_story_image_bytes),
     )
     monkeypatch.setattr(
         telegram_push_service,
-        "generate_background_story_video_bytes",
-        lambda image_bytes: b"story-mp4" if image_bytes == b"story-png" else b"",
+        "reserve_background_story_video_bytes",
+        _reserved(lambda image_bytes: b"story-mp4" if image_bytes == b"story-png" else b""),
     )
     monkeypatch.setattr(
         telegram_push_service,
@@ -555,8 +1162,8 @@ def test_background_story_image_error_is_saved(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(
         telegram_push_service,
-        "generate_background_story_image_bytes",
-        fail_story_image,
+        "reserve_background_story_image_bytes",
+        _reserved(fail_story_image),
     )
 
     telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
@@ -677,6 +1284,55 @@ def test_full_story_applies_each_parts_stat_impacts_sequentially(monkeypatch, tm
     assert saved["pet"]["stats"] == {"hunger": 88, "happiness": 78, "energy": 52}
 
 
+def test_full_story_applies_impacts_to_latest_record(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    now = datetime(2026, 7, 7, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: now)
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+
+    class Part:
+        stat_impacts = ({"stat": "hunger", "amount": -7},)
+
+        @staticmethod
+        def model_dump():
+            return {
+                "partNumber": 1,
+                "title": "Поздняя часть",
+                "storyText": "История завершилась после обновления.",
+                "statImpacts": list(Part.stat_impacts),
+            }
+
+    def fake_generate_full_story(**_kwargs):
+        def concurrent_snapshot(current):
+            next_record = deepcopy(current)
+            next_record["pet"]["stats"]["hunger"] = 40
+            return next_record
+
+        telegram_push_service._update_record(TEST_TELEGRAM_ID, concurrent_snapshot)
+        return SimpleNamespace(
+            overall_title="Свежая история",
+            arc_plan={},
+            story_direction={},
+            parts=(Part(),),
+            prompt_debug=[],
+        )
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_full_story",
+        fake_generate_full_story,
+    )
+
+    result = telegram_push_service.generate_full_story_for_telegram_user(
+        telegram_id=TEST_TELEGRAM_ID,
+    )
+
+    assert result["statsPatch"]["stats"]["hunger"] == 33
+    saved = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert saved["pet"]["stats"]["hunger"] == 33
+
+
 def test_manual_full_story_sends_each_part_as_video(monkeypatch, tmp_path) -> None:
     settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
     monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
@@ -697,30 +1353,40 @@ def test_manual_full_story_sends_each_part_as_video(monkeypatch, tmp_path) -> No
         ],
     }
 
-    def fake_generate_full_story_for_telegram_user(**_kwargs):
-        telegram_push_service._update_record(
-            TEST_TELEGRAM_ID,
-            lambda record: {**(record or {}), "lastFullStory": story},
-        )
-        return {"generated": True, "story": story}
+    class Part:
+        stat_impacts: tuple[dict, ...] = ()
+
+        def __init__(self, payload: dict) -> None:
+            self.payload = payload
+
+        def model_dump(self):
+            return self.payload.copy()
 
     monkeypatch.setattr(
         telegram_push_service,
-        "generate_full_story_for_telegram_user",
-        fake_generate_full_story_for_telegram_user,
-    )
-    monkeypatch.setattr(
-        telegram_push_service,
-        "generate_full_story_part_image_bytes",
-        lambda **kwargs: (
-            kwargs["direction_output"].update({"poseFamily": "resting_or_recovering"})
-            or f"png-{kwargs['part']['partNumber']}".encode()
+        "generate_full_story",
+        lambda **_kwargs: SimpleNamespace(
+            overall_title=story["overallTitle"],
+            arc_plan={},
+            story_direction={},
+            parts=tuple(Part(part) for part in story["parts"]),
+            prompt_debug=[],
         ),
     )
     monkeypatch.setattr(
         telegram_push_service,
-        "generate_background_story_video_bytes",
-        lambda image_bytes: b"mp4-" + image_bytes,
+        "reserve_full_story_part_image_bytes",
+        _reserved(
+            lambda **kwargs: (
+                kwargs["direction_output"].update({"poseFamily": "resting_or_recovering"})
+                or f"png-{kwargs['part']['partNumber']}".encode()
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_background_story_video_bytes",
+        _reserved(lambda image_bytes: b"mp4-" + image_bytes),
     )
     monkeypatch.setattr(
         telegram_push_service,
@@ -758,6 +1424,55 @@ def test_manual_full_story_sends_each_part_as_video(monkeypatch, tmp_path) -> No
     assert all(part.get("videoUrl") for part in result["story"]["parts"])
 
 
+def test_manual_full_story_media_failure_does_not_apply_stats(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    now = datetime(2026, 7, 7, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: now)
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+
+    class Part:
+        stat_impacts = ({"stat": "energy", "amount": -25},)
+
+        @staticmethod
+        def model_dump():
+            return {
+                "partNumber": 1,
+                "title": "Опасная часть",
+                "storyText": "Путь оказался трудным.",
+                "statImpacts": list(Part.stat_impacts),
+            }
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_full_story",
+        lambda **_kwargs: SimpleNamespace(
+            overall_title="Несохранённая история",
+            arc_plan={},
+            story_direction={},
+            parts=(Part(),),
+            prompt_debug=[],
+        ),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_full_story_part_image_bytes",
+        _reserved(lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("image unavailable"))),
+    )
+
+    with pytest.raises(telegram_push_service.TelegramPushError) as error:
+        telegram_push_service.send_full_story_for_telegram_user(
+            SimpleNamespace(),
+            telegram_id=TEST_TELEGRAM_ID,
+            keyboard={"inline_keyboard": []},
+        )
+
+    assert error.value.code == "FULL_STORY_MEDIA_FAILED"
+    saved = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert saved["pet"]["stats"] == {"hunger": 80, "happiness": 70, "energy": 60}
+    assert "lastFullStory" not in saved
+
+
 def test_full_story_history_includes_legacy_last_story_without_duplicates() -> None:
     record = {
         "fullStoryHistory": [
@@ -786,6 +1501,372 @@ def test_full_story_history_includes_legacy_last_story_without_duplicates() -> N
     ]
 
 
+def test_bot_generation_receipts_are_bounded_and_replace_same_request() -> None:
+    record: dict[str, object] = {}
+    for index in range(20):
+        record["botGenerationReceipts"] = telegram_push_service._append_bot_generation_receipt(
+            record,
+            {
+                "requestKey": f"telegram-update:{index}",
+                "kind": "story",
+                "story": {"title": f"История {index}"},
+            },
+        )
+
+    receipts = telegram_push_service._record_bot_generation_receipts(record)
+    assert len(receipts) == telegram_push_service.MAX_BOT_GENERATION_RECEIPTS
+    assert receipts[0]["requestKey"] == "telegram-update:4"
+
+    record["botGenerationReceipts"] = telegram_push_service._append_bot_generation_receipt(
+        record,
+        {
+            "requestKey": "telegram-update:19",
+            "kind": "story",
+            "story": {"title": "Обновлённая история"},
+        },
+    )
+    receipts = telegram_push_service._record_bot_generation_receipts(record)
+    assert len(receipts) == telegram_push_service.MAX_BOT_GENERATION_RECEIPTS
+    assert receipts[-1]["story"]["title"] == "Обновлённая история"
+
+
+def test_same_pet_snapshot_preserves_bot_generation_receipts(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        telegram_push_service,
+        "get_settings",
+        lambda: SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json")),
+    )
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+
+    def add_receipt(current):
+        next_record = deepcopy(current)
+        next_record["botGenerationReceipts"] = [
+            {
+                "requestKey": "telegram-update:42",
+                "kind": "story",
+                "story": {"title": "Уже применённая история"},
+            }
+        ]
+        return next_record
+
+    telegram_push_service._update_record(TEST_TELEGRAM_ID, add_receipt)
+    newer_snapshot = _snapshot_payload().model_copy(update={"updatedAt": "2026-07-07T12:01:00Z"})
+    telegram_push_service.register_push_snapshot(_user(), newer_snapshot)
+
+    saved = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert saved["botGenerationReceipts"][0]["requestKey"] == "telegram-update:42"
+
+
+def test_background_story_paid_media_budget_config_is_fail_closed() -> None:
+    field = Settings.model_fields["scheduled_background_story_paid_media_daily_cap"]
+    assert field.default == 0
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, scheduled_background_story_paid_media_daily_cap=-1)
+
+
+def test_background_story_paid_media_budget_uses_durable_global_counter(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    rate_limit_path = tmp_path / "rate-limits.sqlite3"
+    settings = SimpleNamespace(
+        scheduled_background_story_paid_media_daily_cap=0,
+        rate_limit_store_path=str(rate_limit_path),
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+
+    with pytest.raises(telegram_push_service._BackgroundStoryPaidMediaBudgetError) as disabled:
+        telegram_push_service._consume_background_story_paid_media_budget(stage="image")
+
+    assert disabled.value.status == "disabled"
+    assert disabled.value.code == telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED
+    assert not rate_limit_path.exists()
+
+    settings.scheduled_background_story_paid_media_daily_cap = 2
+    telegram_push_service._consume_background_story_paid_media_budget(stage="image")
+    telegram_push_service._consume_background_story_paid_media_budget(stage="video")
+    with pytest.raises(telegram_push_service._BackgroundStoryPaidMediaBudgetError) as exhausted:
+        telegram_push_service._consume_background_story_paid_media_budget(stage="image")
+
+    assert exhausted.value.status == "exhausted"
+    assert exhausted.value.code == (
+        telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_EXHAUSTED
+    )
+    assert exhausted.value.retry_after_seconds >= 1
+    with sqlite3.connect(rate_limit_path) as connection:
+        counter = connection.execute(
+            """
+            SELECT event_count, request_keys_json
+            FROM rate_limit_counters
+            WHERE bucket = ? AND user_id = ?
+            """,
+            (
+                telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_BUCKET,
+                telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_USER_ID,
+            ),
+        ).fetchone()
+    assert counter == (2, "[]")
+
+
+def test_due_background_story_order_is_stable_per_utc_budget_day_and_rotates(
+    monkeypatch,
+) -> None:
+    records = {
+        str(telegram_id): {
+            "telegramId": telegram_id,
+            "petId": f"pet-{telegram_id}",
+            "pet": {},
+            "chatReachable": True,
+        }
+        for telegram_id in range(1_000, 1_064)
+    }
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_read_store",
+        lambda: {"version": 1, "records": records},
+    )
+    monkeypatch.setattr(telegram_push_service, "_record_is_dead", lambda *_args: False)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_background_story_slot",
+        lambda _record, now: (0, now, "UTC"),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_daily_full_story_part",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_daily_full_story_attempt_due",
+        lambda *_args, **_kwargs: True,
+    )
+
+    def ordered_ids(now: datetime) -> list[int]:
+        return [record["telegramId"] for record in telegram_push_service._due_story_records(now)]
+
+    morning = datetime(2026, 7, 12, 0, 1, tzinfo=UTC)
+    evening = datetime(2026, 7, 12, 23, 59, tzinfo=UTC)
+    next_window = datetime(2026, 7, 13, 0, 1, tzinfo=UTC)
+    morning_order = ordered_ids(morning)
+
+    assert morning_order == ordered_ids(evening)
+    assert morning_order != ordered_ids(next_window)
+    assert sorted(morning_order) == list(range(1_000, 1_064))
+
+
+def test_scheduled_background_story_order_breaks_hash_ties_by_telegram_id(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        telegram_push_service.hashlib,
+        "sha256",
+        lambda _value: SimpleNamespace(digest=lambda: b"same-digest"),
+    )
+    now = datetime(2026, 7, 12, tzinfo=UTC)
+    records = [{"telegramId": telegram_id} for telegram_id in (30, 10, 20)]
+
+    ordered = sorted(
+        records,
+        key=lambda record: telegram_push_service._scheduled_background_story_order_key(
+            record,
+            now=now,
+        ),
+    )
+
+    assert [record["telegramId"] for record in ordered] == [10, 20, 30]
+
+
+def test_disabled_paid_media_delivers_text_without_degrading_or_retrying(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    now = datetime(2026, 7, 12, 6, 0, tzinfo=UTC)
+    rate_limit_path = tmp_path / "rate-limits.sqlite3"
+    settings = SimpleNamespace(
+        telegram_push_store_path=str(tmp_path / "push.json"),
+        telegram_daily_push_default_timezone="Europe/Moscow",
+        background_story_enabled=True,
+        background_story_hours=[9, 13, 17, 21],
+        background_story_window_minutes=120,
+        scheduled_background_story_paid_media_daily_cap=0,
+        rate_limit_store_path=str(rate_limit_path),
+        bot_token="bot-token",
+        webapp_url="https://example.com/app",
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: now)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_full_story_part_image_bytes",
+        lambda **_kwargs: pytest.fail("disabled image budget must fail before reserve"),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_background_story_video_bytes",
+        lambda *_args, **_kwargs: pytest.fail("video reserve must not be attempted"),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_photo",
+        lambda *_args, **_kwargs: pytest.fail("there is no image to deliver"),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_video",
+        lambda *_args, **_kwargs: pytest.fail("there is no video to deliver"),
+    )
+    sent_text: list[str] = []
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_message",
+        lambda _client, _chat_id, text, _keyboard: sent_text.append(text),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_cleanup_background_story_media_for_records",
+        lambda *_args, **_kwargs: None,
+    )
+    _seed_due_daily_full_story()
+
+    batch = telegram_push_service._run_due_background_stories()
+
+    assert batch.attempted == 1
+    assert batch.failed == 0
+    assert batch.health_failed == 0
+    assert len(batch.results) == 1
+    assert batch.results[0]["storyMediaStatus"] == "budget_disabled"
+    assert batch.results[0]["storyMediaErrorCode"] == (
+        telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED
+    )
+    assert sent_text and "Синтетическая история дня" in sent_text[0]
+    assert not rate_limit_path.exists()
+
+    stored = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    part = stored["dailyFullStory"]["parts"][0]
+    assert part["deliveredAt"]
+    assert part["mediaStatus"] == "budget_disabled"
+    assert part["mediaBudgetStage"] == "image"
+    assert stored["lastStoryStatus"] == "delivered_media_budget_disabled"
+    assert stored["lastStoryErrorCode"] == (
+        telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED
+    )
+
+    second_batch = telegram_push_service._run_due_background_stories()
+    assert second_batch.attempted == 0
+    assert second_batch.health_failed == 0
+
+
+def test_global_exhausted_video_budget_delivers_one_photo_then_text(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    now = datetime(2026, 7, 12, 6, 0, tzinfo=UTC)
+    rate_limit_path = tmp_path / "rate-limits.sqlite3"
+    settings = SimpleNamespace(
+        telegram_push_store_path=str(tmp_path / "push.json"),
+        telegram_daily_push_default_timezone="Europe/Moscow",
+        background_story_enabled=True,
+        background_story_hours=[9, 13, 17, 21],
+        background_story_window_minutes=120,
+        scheduled_background_story_paid_media_daily_cap=1,
+        rate_limit_store_path=str(rate_limit_path),
+        bot_token="bot-token",
+        webapp_url="https://example.com/app",
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: now)
+    image_calls: list[int] = []
+
+    def image_provider(**kwargs):
+        image_calls.append(kwargs["part"]["partNumber"])
+        return b"paid-image"
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_full_story_part_image_bytes",
+        _reserved(image_provider),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_persist_background_story_image",
+        lambda *_args, **_kwargs: "/static/generated/synthetic-story.png",
+    )
+    video_calls: list[bytes] = []
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_background_story_video_bytes",
+        _reserved(lambda image_bytes: video_calls.append(image_bytes) or b"unexpected-video"),
+    )
+    sent_photos: list[tuple[int, bytes]] = []
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_photo",
+        lambda _client, chat_id, photo, _caption, _keyboard: sent_photos.append((chat_id, photo)),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_video",
+        lambda *_args, **_kwargs: pytest.fail("video must not be sent"),
+    )
+    sent_text: list[int] = []
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_message",
+        lambda _client, chat_id, _text, _keyboard: sent_text.append(chat_id),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "_cleanup_background_story_media_for_records",
+        lambda *_args, **_kwargs: None,
+    )
+    _seed_due_daily_full_story()
+    second_telegram_id = TEST_TELEGRAM_ID + 1
+    _seed_due_daily_full_story(second_telegram_id, pet_id="pet-2")
+
+    batch = telegram_push_service._run_due_background_stories()
+
+    assert batch.attempted == 2
+    assert batch.failed == 0
+    assert batch.health_failed == 0
+    assert image_calls == [1]
+    assert video_calls == []
+    assert sent_photos == [(TEST_TELEGRAM_ID, b"paid-image")]
+    assert sent_text == [second_telegram_id]
+    stored = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    part = stored["dailyFullStory"]["parts"][0]
+    assert part["deliveredAt"]
+    assert part["imageUrl"] == "/static/generated/synthetic-story.png"
+    assert part["videoUrl"] is None
+    assert part["mediaStatus"] == "budget_exhausted"
+    assert part["mediaBudgetStage"] == "video"
+    assert stored["lastStoryStatus"] == "delivered_media_budget_exhausted"
+    assert stored["lastStoryErrorCode"] == (
+        telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_EXHAUSTED
+    )
+    second_stored = telegram_push_service._read_store()["records"][str(second_telegram_id)]
+    second_part = second_stored["dailyFullStory"]["parts"][0]
+    assert second_part["deliveredAt"]
+    assert second_part["imageUrl"] is None
+    assert second_part["videoUrl"] is None
+    assert second_part["mediaStatus"] == "budget_exhausted"
+    assert second_part["mediaBudgetStage"] == "image"
+    with sqlite3.connect(rate_limit_path) as connection:
+        counter = connection.execute(
+            """
+            SELECT event_count
+            FROM rate_limit_counters
+            WHERE bucket = ? AND user_id = ?
+            """,
+            (
+                telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_BUCKET,
+                telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_USER_ID,
+            ),
+        ).fetchone()
+    assert counter == (1,)
+    assert telegram_push_service._run_due_background_stories().attempted == 0
+
+
 def test_automatic_full_story_sends_four_parts_with_images_in_local_slots(
     monkeypatch,
     tmp_path,
@@ -797,6 +1878,8 @@ def test_automatic_full_story_sends_four_parts_with_images_in_local_slots(
         background_story_enabled=True,
         background_story_hours=[9, 13, 17, 21],
         background_story_window_minutes=120,
+        scheduled_background_story_paid_media_daily_cap=100,
+        rate_limit_store_path=str(tmp_path / "rate-limits.sqlite3"),
         bot_token="bot-token",
         webapp_url="https://example.com/app",
     )
@@ -847,8 +1930,8 @@ def test_automatic_full_story_sends_four_parts_with_images_in_local_slots(
 
     monkeypatch.setattr(
         telegram_push_service,
-        "generate_full_story_part_image_bytes",
-        fake_generate_image,
+        "reserve_full_story_part_image_bytes",
+        _reserved(fake_generate_image),
     )
     monkeypatch.setattr(
         telegram_push_service,
@@ -857,8 +1940,8 @@ def test_automatic_full_story_sends_four_parts_with_images_in_local_slots(
     )
     monkeypatch.setattr(
         telegram_push_service,
-        "generate_background_story_video_bytes",
-        lambda image_bytes: b"mp4-" + image_bytes,
+        "reserve_background_story_video_bytes",
+        _reserved(lambda image_bytes: b"mp4-" + image_bytes),
     )
     monkeypatch.setattr(
         telegram_push_service,
@@ -947,6 +2030,8 @@ def test_automatic_full_story_does_not_send_text_when_image_fails(
         background_story_enabled=True,
         background_story_hours=[9, 13, 17, 21],
         background_story_window_minutes=120,
+        scheduled_background_story_paid_media_daily_cap=100,
+        rate_limit_store_path=str(tmp_path / "rate-limits.sqlite3"),
         bot_token="bot-token",
         webapp_url="https://example.com/app",
     )
@@ -975,8 +2060,8 @@ def test_automatic_full_story_does_not_send_text_when_image_fails(
     telegram_push_service._save_record(record)
     monkeypatch.setattr(
         telegram_push_service,
-        "generate_full_story_part_image_bytes",
-        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("image unavailable")),
+        "reserve_full_story_part_image_bytes",
+        _reserved(lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("image unavailable"))),
     )
     monkeypatch.setattr(
         telegram_push_service,
@@ -996,6 +2081,497 @@ def test_automatic_full_story_does_not_send_text_when_image_fails(
     assert "statsAppliedAt" not in stored["dailyFullStory"]["parts"][0]
     assert "deliveredAt" not in stored["dailyFullStory"]["parts"][0]
     assert telegram_push_service._due_story_records(datetime(2026, 7, 12, 10, 0, tzinfo=UTC)) == []
+
+
+@pytest.mark.parametrize("persisted_video", [False, True])
+def test_automatic_full_story_recovers_media_saved_before_checkpoint(
+    monkeypatch,
+    tmp_path,
+    persisted_video,
+) -> None:
+    now = datetime(2026, 7, 12, 6, 0, tzinfo=UTC)
+    settings = SimpleNamespace(
+        telegram_push_store_path=str(tmp_path / "push.json"),
+        telegram_daily_push_default_timezone="Europe/Moscow",
+        background_story_enabled=True,
+        background_story_hours=[9, 13, 17, 21],
+        background_story_window_minutes=120,
+        scheduled_background_story_paid_media_daily_cap=0 if persisted_video else 100,
+        rate_limit_store_path=str(tmp_path / "rate-limits.sqlite3"),
+        bot_token="bot-token",
+        webapp_url="https://example.com/app",
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: now)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generated_dir_for",
+        lambda pet_id: tmp_path / "generated" / str(pet_id),
+    )
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    telegram_push_service.mark_chat_started(chat_id=TEST_TELEGRAM_ID)
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    story = {
+        "overallTitle": "История после сбоя checkpoint",
+        "generatedAt": "2026-07-12T06:00:00Z",
+        "localDate": "2026-07-12",
+        "parts": [
+            {
+                "partNumber": number,
+                "title": f"Часть {number}",
+                "storyText": "Продолжение общей истории.",
+                "valence": "positive",
+                "statImpacts": [{"stat": "happiness", "amount": 2}],
+            }
+            for number in range(1, 5)
+        ],
+    }
+    record["dailyFullStory"] = story
+    record["lastFullStory"] = story
+    telegram_push_service._save_record(record)
+    media_time = datetime(2026, 7, 12, 6, 0, tzinfo=UTC)
+    telegram_push_service._persist_background_story_image(
+        record,
+        b"image-saved-before-checkpoint",
+        generated_at=media_time,
+    )
+    if persisted_video:
+        telegram_push_service._persist_background_story_video(
+            record,
+            b"video-saved-before-checkpoint",
+            generated_at=media_time,
+        )
+
+    image_calls: list[int] = []
+    video_calls: list[bytes] = []
+
+    def unexpected_image(**kwargs):
+        image_calls.append(kwargs["part"]["partNumber"])
+        return b"duplicate-paid-image"
+
+    def synthetic_video(image_bytes: bytes):
+        video_calls.append(image_bytes)
+        return b"new-video"
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_full_story_part_image_bytes",
+        _reserved(unexpected_image),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_background_story_video_bytes",
+        _reserved(synthetic_video),
+    )
+    sent: list[bytes] = []
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_video",
+        lambda _client, _chat_id, video, _caption, _keyboard: sent.append(video),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_message",
+        lambda *_args, **_kwargs: pytest.fail("video delivery was expected"),
+    )
+
+    delivered = telegram_push_service.send_due_background_stories()
+
+    assert delivered[0]["partNumber"] == 1
+    assert image_calls == []
+    assert video_calls == ([] if persisted_video else [b"image-saved-before-checkpoint"])
+    assert sent == [b"video-saved-before-checkpoint" if persisted_video else b"new-video"]
+    stored = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    stored_part = stored["dailyFullStory"]["parts"][0]
+    assert stored_part["imageUrl"]
+    assert stored_part["videoUrl"]
+    if persisted_video:
+        assert not Path(settings.rate_limit_store_path).exists()
+
+
+def test_background_story_media_namespace_is_owner_bound_and_lossless(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    generated_root = tmp_path / "generated"
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generated_dir_for",
+        lambda owner_name: generated_root / str(owner_name),
+    )
+
+    first_telegram_id = 62943754
+    second_telegram_id = 62943755
+    first_record = {"telegramId": first_telegram_id, "petId": "shared/pet"}
+    first_owner, first_path = telegram_push_service._background_story_output(first_record)
+    second_owner, second_path = telegram_push_service._background_story_output(
+        {"telegramId": second_telegram_id, "petId": "shared/pet"}
+    )
+    colliding_legacy_owner, colliding_legacy_path = telegram_push_service._background_story_output(
+        {"telegramId": first_telegram_id, "petId": "shared-pet"}
+    )
+    _target, first_url = telegram_push_service._background_story_media_target(
+        first_record,
+        generated_at=datetime(2026, 7, 12, 6, 0, tzinfo=UTC),
+        suffix=".png",
+    )
+
+    assert first_owner.startswith("story-")
+    assert second_owner.startswith("story-")
+    assert str(first_telegram_id) not in first_owner
+    assert str(first_telegram_id) not in first_url
+    assert first_path != second_path
+    assert first_owner != second_owner
+    assert first_path != colliding_legacy_path
+    assert first_owner != colliding_legacy_owner
+
+
+def test_background_story_crash_recovery_cannot_reuse_another_owners_media(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    generated_root = tmp_path / "generated"
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generated_dir_for",
+        lambda owner_name: generated_root / str(owner_name),
+    )
+    generated_at = datetime(2026, 7, 12, 6, 0, tzinfo=UTC)
+    first = {"telegramId": 111, "petId": "same-pet"}
+    second = {"telegramId": 222, "petId": "same-pet"}
+
+    first_url = telegram_push_service._persist_background_story_image(
+        first,
+        b"first-owner-image",
+        generated_at=generated_at,
+    )
+
+    assert telegram_push_service._existing_background_story_media(
+        first,
+        generated_at=generated_at,
+        suffix=".png",
+    ) == (first_url, b"first-owner-image")
+    assert (
+        telegram_push_service._existing_background_story_media(
+            second,
+            generated_at=generated_at,
+            suffix=".png",
+        )
+        is None
+    )
+
+
+def test_background_story_scheduler_recovery_isolates_same_pet_id_owners(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    now = datetime(2026, 7, 12, 6, 0, tzinfo=UTC)
+    settings = SimpleNamespace(
+        telegram_push_store_path=str(tmp_path / "push.json"),
+        telegram_daily_push_default_timezone="Europe/Moscow",
+        background_story_enabled=True,
+        background_story_hours=[9, 13, 17, 21],
+        background_story_window_minutes=120,
+        scheduled_background_story_paid_media_daily_cap=100,
+        rate_limit_store_path=str(tmp_path / "rate-limits.sqlite3"),
+        generated_media_cleanup_enabled=False,
+        bot_token="bot-token",
+        webapp_url="https://example.com/app",
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: now)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generated_dir_for",
+        lambda owner_name: tmp_path / "generated" / str(owner_name),
+    )
+    payload = _snapshot_payload().model_copy(update={"petId": "same-pet"})
+    story = {
+        "overallTitle": "Общий слот, разные владельцы",
+        "generatedAt": "2026-07-12T06:00:00Z",
+        "localDate": "2026-07-12",
+        "parts": [
+            {
+                "partNumber": number,
+                "title": f"Часть {number}",
+                "storyText": "Синтетическая история.",
+                "valence": "positive",
+                "statImpacts": [],
+            }
+            for number in range(1, 5)
+        ],
+    }
+    records: dict[int, dict[str, object]] = {}
+    for telegram_id in (111, 222):
+        telegram_push_service.register_push_snapshot(_user_with_id(telegram_id), payload)
+        telegram_push_service.mark_chat_started(chat_id=telegram_id)
+        record = telegram_push_service._read_store()["records"][str(telegram_id)]
+        record["dailyFullStory"] = deepcopy(story)
+        record["lastFullStory"] = deepcopy(story)
+        telegram_push_service._save_record(record)
+        records[telegram_id] = record
+
+    telegram_push_service._persist_background_story_image(
+        records[111],
+        b"owner-111-image",
+        generated_at=now,
+    )
+    image_calls: list[int] = []
+
+    def generate_fresh_image(**_kwargs):
+        image_calls.append(1)
+        return b"fresh-owner-222-image"
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_full_story_part_image_bytes",
+        _reserved(generate_fresh_image),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_background_story_video_bytes",
+        _reserved(lambda image_bytes: b"video:" + image_bytes),
+    )
+    sent: dict[int, bytes] = {}
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_video",
+        lambda _client, chat_id, video, _caption, _keyboard: sent.__setitem__(chat_id, video),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_message",
+        lambda *_args, **_kwargs: pytest.fail("video delivery was expected"),
+    )
+
+    delivered = telegram_push_service.send_due_background_stories()
+
+    assert {item["telegramId"] for item in delivered} == {111, 222}
+    assert image_calls == [1]
+    assert sent == {
+        111: b"video:owner-111-image",
+        222: b"video:fresh-owner-222-image",
+    }
+
+
+def test_persisted_background_story_reader_supports_legacy_urls_without_discovery(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    generated_root = tmp_path / "generated"
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generated_dir_for",
+        lambda owner_name: generated_root / str(owner_name),
+    )
+    record = {"telegramId": 111, "petId": "legacy/pet"}
+    generated_at = datetime(2026, 7, 12, 6, 0, tzinfo=UTC)
+    legacy_owner, legacy_dir = telegram_push_service._legacy_background_story_output(record)
+    filename = "background-story-20260712T060000000000Z.mp4"
+    legacy_path = legacy_dir / filename
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_bytes(b"legacy-video")
+    legacy_url = f"/static/generated/{legacy_owner}/{filename}?v=1"
+
+    assert (
+        telegram_push_service._persisted_background_story_media_bytes(
+            record,
+            legacy_url,
+            suffix=".mp4",
+        )
+        == b"legacy-video"
+    )
+    assert (
+        telegram_push_service._existing_background_story_media(
+            record,
+            generated_at=generated_at,
+            suffix=".mp4",
+        )
+        is None
+    )
+
+
+def test_automatic_full_story_retry_reuses_prepared_media(monkeypatch, tmp_path) -> None:
+    current_now = [datetime(2026, 7, 12, 6, 0, tzinfo=UTC)]
+    settings = SimpleNamespace(
+        telegram_push_store_path=str(tmp_path / "push.json"),
+        telegram_daily_push_default_timezone="Europe/Moscow",
+        background_story_enabled=True,
+        background_story_hours=[9, 13, 17, 21],
+        background_story_window_minutes=120,
+        scheduled_background_story_paid_media_daily_cap=100,
+        rate_limit_store_path=str(tmp_path / "rate-limits.sqlite3"),
+        bot_token="bot-token",
+        webapp_url="https://example.com/app",
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: current_now[0])
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generated_dir_for",
+        lambda pet_id: tmp_path / "generated" / str(pet_id),
+    )
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    telegram_push_service.mark_chat_started(chat_id=TEST_TELEGRAM_ID)
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    story = {
+        "overallTitle": "История с повторной доставкой",
+        "generatedAt": "2026-07-12T06:00:00Z",
+        "localDate": "2026-07-12",
+        "parts": [
+            {
+                "partNumber": number,
+                "title": f"Часть {number}",
+                "storyText": "Продолжение общей истории.",
+                "valence": "positive",
+                "statImpacts": [{"stat": "happiness", "amount": 2}],
+            }
+            for number in range(1, 5)
+        ],
+    }
+    record["dailyFullStory"] = story
+    record["lastFullStory"] = story
+    telegram_push_service._save_record(record)
+    image_calls: list[int] = []
+    video_calls: list[bytes] = []
+
+    def fake_image(**kwargs):
+        image_calls.append(kwargs["part"]["partNumber"])
+        return b"prepared-image"
+
+    def fake_video(image_bytes: bytes):
+        video_calls.append(image_bytes)
+        return b"prepared-video"
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_full_story_part_image_bytes",
+        _reserved(fake_image),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_background_story_video_bytes",
+        _reserved(fake_video),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_video",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(httpx.ConnectError("telegram unavailable")),
+    )
+
+    assert telegram_push_service.send_due_background_stories() == []
+    failed = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    failed_part = failed["dailyFullStory"]["parts"][0]
+    assert failed_part["videoUrl"]
+    assert failed_part["statsAppliedAt"]
+    assert "deliveredAt" not in failed_part
+
+    sent: list[bytes] = []
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_video",
+        lambda _client, _chat_id, video, _caption, _keyboard: sent.append(video),
+    )
+    current_now[0] += timedelta(minutes=15)
+
+    retried = telegram_push_service.send_due_background_stories()
+
+    assert retried[0]["partNumber"] == 1
+    assert image_calls == [1]
+    assert video_calls == [b"prepared-image"]
+    assert sent == [b"prepared-video"]
+    delivered = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert delivered["dailyFullStory"]["parts"][0]["deliveredAt"]
+
+
+def test_automatic_full_story_video_retry_reuses_checkpointed_paid_image(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    current_now = [datetime(2026, 7, 12, 6, 0, tzinfo=UTC)]
+    settings = SimpleNamespace(
+        telegram_push_store_path=str(tmp_path / "push.json"),
+        telegram_daily_push_default_timezone="Europe/Moscow",
+        background_story_enabled=True,
+        background_story_hours=[9, 13, 17, 21],
+        background_story_window_minutes=120,
+        scheduled_background_story_paid_media_daily_cap=100,
+        rate_limit_store_path=str(tmp_path / "rate-limits.sqlite3"),
+        bot_token="bot-token",
+        webapp_url="https://example.com/app",
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: current_now[0])
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generated_dir_for",
+        lambda pet_id: tmp_path / "generated" / str(pet_id),
+    )
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+    telegram_push_service.mark_chat_started(chat_id=TEST_TELEGRAM_ID)
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    story = {
+        "overallTitle": "История с ошибкой видео",
+        "generatedAt": "2026-07-12T06:00:00Z",
+        "localDate": "2026-07-12",
+        "parts": [
+            {
+                "partNumber": number,
+                "title": f"Часть {number}",
+                "storyText": "Продолжение общей истории.",
+                "valence": "positive",
+                "statImpacts": [{"stat": "happiness", "amount": 2}],
+            }
+            for number in range(1, 5)
+        ],
+    }
+    record["dailyFullStory"] = story
+    record["lastFullStory"] = story
+    telegram_push_service._save_record(record)
+    image_calls: list[int] = []
+    video_calls: list[bytes] = []
+
+    def fake_image(**kwargs):
+        image_calls.append(kwargs["part"]["partNumber"])
+        return b"paid-image-once"
+
+    def fake_video(image_bytes: bytes):
+        video_calls.append(image_bytes)
+        if len(video_calls) == 1:
+            raise RuntimeError("video provider unavailable")
+        return b"prepared-video"
+
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_full_story_part_image_bytes",
+        _reserved(fake_image),
+    )
+    monkeypatch.setattr(
+        telegram_push_service,
+        "reserve_background_story_video_bytes",
+        _reserved(fake_video),
+    )
+    sent: list[bytes] = []
+    monkeypatch.setattr(
+        telegram_push_service,
+        "send_video",
+        lambda _client, _chat_id, video, _caption, _keyboard: sent.append(video),
+    )
+
+    assert telegram_push_service.send_due_background_stories() == []
+    failed = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    failed_part = failed["dailyFullStory"]["parts"][0]
+    assert failed_part["imageUrl"]
+    assert "videoUrl" not in failed_part
+    assert "statsAppliedAt" not in failed_part
+
+    current_now[0] += timedelta(minutes=15)
+    retried = telegram_push_service.send_due_background_stories()
+
+    assert retried[0]["partNumber"] == 1
+    assert image_calls == [1]
+    assert video_calls == [b"paid-image-once", b"paid-image-once"]
+    assert sent == [b"prepared-video"]
 
 
 def test_recent_story_events_fallback_uses_last_story_for_anti_repeat() -> None:
@@ -1068,6 +2644,24 @@ def test_telegram_send_error_is_sanitized(monkeypatch, tmp_path) -> None:
     assert latest["lastPushErrorCode"] == "TELEGRAM_CHAT_NOT_FOUND"
     assert latest["lastPushAttemptAt"] is not None
     assert latest["chatReachable"] is False
+
+
+def test_telegram_blocked_user_is_marked_unreachable() -> None:
+    request = httpx.Request("POST", "https://api.telegram.org/botredacted/sendMessage")
+    response = httpx.Response(
+        403,
+        request=request,
+        json={
+            "ok": False,
+            "error_code": 403,
+            "description": "Forbidden: bot was blocked by the user",
+        },
+    )
+
+    error = telegram_push_service._telegram_push_error(TelegramAPIError("sendMessage", response))
+
+    assert error.code == "TELEGRAM_CHAT_NOT_FOUND"
+    assert "/start" in error.message
 
 
 def test_failed_daily_attempt_delays_next_due_push(monkeypatch, tmp_path) -> None:
@@ -1322,6 +2916,124 @@ def test_story_novelty_preserves_structural_signature() -> None:
     assert history[0]["resolutionFamily"] == "evidence_based_investigation"
 
 
+def test_background_story_gc_preserves_push_and_durable_inbox_references(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
+    generated_root = tmp_path / "static" / "generated"
+    owner_dir = generated_root / "pet-1"
+    owner_dir.mkdir(parents=True)
+    push_media = owner_dir / "background-story-20260710T120000000000Z.png"
+    inbox_media = owner_dir / "background-story-20260710T120001000000Z.mp4"
+    orphan_media = owner_dir / "background-story-20260710T120002000000Z.png"
+    for path in (push_media, inbox_media, orphan_media):
+        path.write_bytes(b"synthetic")
+        timestamp = (now - timedelta(days=10)).timestamp()
+        os.utime(path, (timestamp, timestamp))
+
+    push_path = tmp_path / "push.json"
+    push_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "records": {
+                    str(TEST_TELEGRAM_ID): {
+                        "telegramId": TEST_TELEGRAM_ID,
+                        "petId": "pet-1",
+                        "lastStory": {"imageUrl": f"/static/generated/pet-1/{push_media.name}?v=1"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    inbox_path = tmp_path / "bot-inbox.sqlite3"
+    with sqlite3.connect(inbox_path) as connection:
+        connection.execute("CREATE TABLE bot_command_inbox (prepared_json TEXT)")
+        connection.execute(
+            "INSERT INTO bot_command_inbox VALUES (?)",
+            (
+                json.dumps(
+                    {
+                        "progress": {
+                            "video": {"url": f"/static/generated/pet-1/{inbox_media.name}?v=2"}
+                        }
+                    }
+                ),
+            ),
+        )
+    settings = SimpleNamespace(
+        telegram_push_store_path=str(push_path),
+        bot_command_inbox_path=str(inbox_path),
+        storage_health_generated_assets_path=str(generated_root),
+        generated_media_cleanup_enabled=True,
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generated_dir_for",
+        lambda pet_id: generated_root / str(pet_id),
+    )
+
+    telegram_push_service._cleanup_background_story_media_for_records(
+        [{"telegramId": TEST_TELEGRAM_ID, "petId": "pet-1"}],
+        now=now,
+    )
+
+    assert push_media.exists()
+    assert inbox_media.exists()
+    assert not orphan_media.exists()
+
+
+def test_background_story_global_gc_never_enters_private_storage(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
+    generated_root = tmp_path / "static" / "generated"
+    orphan = generated_root / "deleted-pet" / "background-story-20260710T120000000000Z.mp4"
+    grace_protected = (
+        generated_root / "recently-deleted-pet" / "background-story-20260708T120000000000Z.png"
+    )
+    reservation = (
+        generated_root
+        / ".private"
+        / "media-storage-reservations"
+        / "background-story-20260710T120000000000Z.mp4"
+    )
+    for path in (orphan, reservation):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"synthetic")
+        timestamp = (now - timedelta(days=10)).timestamp()
+        os.utime(path, (timestamp, timestamp))
+    grace_protected.parent.mkdir(parents=True, exist_ok=True)
+    grace_protected.write_bytes(b"synthetic")
+    grace_timestamp = (now - timedelta(days=7, hours=23)).timestamp()
+    os.utime(grace_protected, (grace_timestamp, grace_timestamp))
+    push_path = tmp_path / "push.json"
+    push_path.write_text('{"version":1,"records":{}}', encoding="utf-8")
+    settings = SimpleNamespace(
+        telegram_push_store_path=str(push_path),
+        bot_command_inbox_path=str(tmp_path / "missing-inbox.sqlite3"),
+        storage_health_generated_assets_path=str(generated_root),
+        generated_media_cleanup_enabled=True,
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generated_dir_for",
+        lambda pet_id: generated_root / str(pet_id),
+    )
+    monkeypatch.setattr(telegram_push_service, "_now", lambda: now)
+
+    telegram_push_service._run_generated_media_cleanup()
+
+    assert not orphan.exists()
+    assert grace_protected.exists()
+    assert reservation.exists()
+
+
 def test_scheduler_loop_survives_iteration_failure() -> None:
     calls = 0
     state = telegram_push_service._scheduler_runtime["dailyPush"]
@@ -1348,3 +3060,35 @@ def test_scheduler_loop_survives_iteration_failure() -> None:
     assert state["running"] is False
     assert state["consecutiveFailures"] == 0
     assert state["lastError"] is None
+
+
+def test_scheduler_start_does_not_create_duplicate_task(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        telegram_daily_push_enabled=True,
+        bot_token="bot-token",
+        webapp_url="https://example.com/app",
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    started = 0
+
+    async def fake_loop() -> None:
+        nonlocal started
+        started += 1
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(telegram_push_service, "_daily_push_loop", fake_loop)
+
+    async def scenario() -> None:
+        first = telegram_push_service.start_daily_push_scheduler()
+        second = telegram_push_service.start_daily_push_scheduler()
+        assert first is not None
+        assert second is None
+        await asyncio.sleep(0)
+        assert started == 1
+        first.cancel()
+        await asyncio.gather(first, return_exceptions=True)
+        await asyncio.sleep(0)
+
+    asyncio.run(scenario())
+
+    assert "dailyPush" not in telegram_push_service._scheduler_tasks

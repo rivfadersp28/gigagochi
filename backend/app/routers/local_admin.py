@@ -68,30 +68,13 @@ class AdminSpeechFileResponse(BaseModel):
     id: str
     label: str
     path: str
-    format: Literal["json", "jsonl"]
+    format: Literal["json"]
     description: str
     exists: bool
     sizeBytes: int
     updatedAt: str | None
     summary: dict[str, Any]
     content: str
-
-
-class AdminDialogueInfluenceItemResponse(BaseModel):
-    id: str
-    label: str
-    role: str | None = None
-    surfaces: list[str]
-    source: str
-    editable: bool
-    fileId: str | None
-    configPath: str | None
-    summary: str
-
-
-class AdminDialogueResponse(BaseModel):
-    modifiers: list[AdminDialogueInfluenceItemResponse]
-    collections: list[AdminDialogueInfluenceItemResponse]
 
 
 class AdminSyncResponse(BaseModel):
@@ -110,7 +93,6 @@ class AdminSpeechManifestResponse(BaseModel):
     generatedAt: str
     mode: AdminSource
     files: list[AdminSpeechFileResponse]
-    dialogue: AdminDialogueResponse
     sync: AdminSyncResponse
     deploy: AdminDeployResponse
 

@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   canUseDebugMenu,
+  canUseInteractiveTravel,
+  setTelegramViewportCssVars,
+  setTelegramServerCapabilities,
   setTelegramBackgroundColor,
 } from "./telegram";
 
@@ -12,6 +15,8 @@ type TelegramTestWindow = Window & {
       initDataUnsafe?: Record<string, unknown>;
       setBackgroundColor?: (color: string) => void;
       setBottomBarColor?: (color: string) => void;
+      viewportHeight?: number;
+      stableViewportHeight?: number;
     };
   };
 };
@@ -27,8 +32,11 @@ function setTelegramUser(id: number) {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   delete (window as TelegramTestWindow).Telegram;
+  setTelegramServerCapabilities(null);
   document.documentElement.style.backgroundColor = "";
+  document.documentElement.style.removeProperty("--tma-viewport-height");
   document.body.style.backgroundColor = "";
 });
 
@@ -53,11 +61,57 @@ describe("Telegram background color", () => {
   });
 });
 
+describe("Telegram viewport fallback", () => {
+  it("keeps keyboard shrinkage locked but resets after an orientation change", () => {
+    const webApp = { initData: "signed-init-data", viewportHeight: 800 };
+    (window as TelegramTestWindow).Telegram = { WebApp: webApp };
+    vi.stubGlobal("innerWidth", 400);
+
+    setTelegramViewportCssVars();
+    expect(document.documentElement.style.getPropertyValue("--tma-viewport-height"))
+      .toBe("800px");
+
+    webApp.viewportHeight = 420;
+    setTelegramViewportCssVars();
+    expect(document.documentElement.style.getPropertyValue("--tma-viewport-height"))
+      .toBe("800px");
+
+    vi.stubGlobal("innerWidth", 800);
+    webApp.viewportHeight = 400;
+    setTelegramViewportCssVars();
+    expect(document.documentElement.style.getPropertyValue("--tma-viewport-height"))
+      .toBe("400px");
+  });
+});
+
 describe("debug menu access", () => {
-  it("enables the debug menu for every Telegram user", () => {
-    setTelegramUser(42);
+  it("uses capabilities returned by the authenticated backend", () => {
+    setTelegramUser(62943754);
+    setTelegramServerCapabilities({
+      telegramUserId: 62943754,
+      debugMenu: true,
+      interactiveTravel: false,
+    });
 
     expect(canUseDebugMenu()).toBe(true);
+    expect(canUseInteractiveTravel()).toBe(false);
+  });
+
+  it("does not retain a hardcoded Telegram allowlist", () => {
+    setTelegramUser(625405535);
+
+    expect(canUseDebugMenu()).toBe(false);
+  });
+
+  it("hides the debug menu from other Telegram users", () => {
+    setTelegramUser(42);
+    setTelegramServerCapabilities({
+      telegramUserId: 62943754,
+      debugMenu: true,
+      interactiveTravel: true,
+    });
+
+    expect(canUseDebugMenu()).toBe(false);
   });
 
   it("enables the debug menu in a local dev browser", () => {

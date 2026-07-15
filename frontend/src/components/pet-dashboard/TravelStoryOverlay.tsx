@@ -36,6 +36,12 @@ export function TravelStoryOverlay({ stories, onClose }: TravelStoryOverlayProps
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)") ?? null;
     let animationFrameId = 0;
     let wheelSnapTimeoutId = 0;
+    let cardMetrics = {
+      activeTop: 0,
+      stackTop: 0,
+      stackGap: 0,
+      exitTop: 0,
+    };
     let pointerStart: {
       pointerId: number;
       scrollTop: number;
@@ -54,17 +60,9 @@ export function TravelStoryOverlay({ stories, onClose }: TravelStoryOverlayProps
 
     const updateCardPositions = () => {
       animationFrameId = 0;
-      const width = phone.clientWidth;
-      const height = phone.clientHeight;
-      const firstCard = cardRefs.current[0];
-      const cardHeight = firstCard?.offsetHeight ?? Math.min((width * 526) / 402, 526);
-      const activeTop = Math.min((width * 142) / 402, 142);
-      const stackPeek = Math.min((width * 141) / 402, 141);
-      const stackGap = Math.min((width * 69) / 402, 69);
-      const stackTop = Math.max(activeTop + cardHeight * 0.7, height - stackPeek);
-      const exitTop = -cardHeight - 64;
       const rawPosition = phone.scrollTop / scrollStepRef.current;
       const position = reducedMotion?.matches ? Math.round(rawPosition) : rawPosition;
+      const { activeTop, stackTop, stackGap, exitTop } = cardMetrics;
 
       cardRefs.current.forEach((card, index) => {
         if (!card) {
@@ -90,9 +88,23 @@ export function TravelStoryOverlay({ stories, onClose }: TravelStoryOverlayProps
     };
 
     const updateMetrics = () => {
-      const step = Math.max(Math.round(phone.clientHeight * 0.58), 1);
+      // Batch layout reads here. Scroll frames below only read scrollTop and
+      // write compositor-friendly transform/opacity values for each card.
+      const width = phone.clientWidth;
+      const height = phone.clientHeight;
+      const firstCard = cardRefs.current[0];
+      const cardHeight = firstCard?.offsetHeight ?? Math.min((width * 526) / 402, 526);
+      const activeTop = Math.min((width * 142) / 402, 142);
+      const stackPeek = Math.min((width * 141) / 402, 141);
+      const step = Math.max(Math.round(height * 0.58), 1);
+      cardMetrics = {
+        activeTop,
+        stackTop: Math.max(activeTop + cardHeight * 0.7, height - stackPeek),
+        stackGap: Math.min((width * 69) / 402, 69),
+        exitTop: -cardHeight - 64,
+      };
       scrollStepRef.current = step;
-      track.style.height = `${phone.clientHeight + step * Math.max(stories.length - 1, 0)}px`;
+      track.style.height = `${height + step * Math.max(stories.length - 1, 0)}px`;
       updateCardPositions();
     };
 
@@ -194,7 +206,7 @@ export function TravelStoryOverlay({ stories, onClose }: TravelStoryOverlayProps
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
-        <Dialog.Content className="travel-story-overlay">
+        <Dialog.Content id="travel-story-overlay" className="travel-story-overlay">
           <Dialog.Description className="sr-only">
             Архив сгенерированных событий питомца
           </Dialog.Description>

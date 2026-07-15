@@ -12,27 +12,28 @@
   --ink: #ffffff;
   --ink-soft: #e5e5e5;
   --ink-muted: #a3a3a3;
-  --ink-faint: #6d6d6d;
+  --ink-faint: #b8b8b8;
   --line: rgba(255, 255, 255, 0.18);
   --line-soft: rgba(255, 255, 255, 0.1);
   --leaf: #3f7f55;
   --leaf-strong: #316845;
   --leaf-soft: rgba(63, 127, 85, 0.22);
-  --danger: #9f2d2d;
-  --danger-bg: rgba(159, 45, 45, 0.16);
-  --danger-line: rgba(159, 45, 45, 0.22);
+  --danger: #ff8a9a;
+  --danger-bg: #2b1116;
+  --danger-line: #8f4050;
   --main-scene-bg: #000000;
   --main-scene-ink: #ffffff;
   --main-scene-ink-soft: rgba(52, 37, 61, 0.72);
   --main-scene-ink-muted: rgba(255, 255, 255, 0.62);
-  --main-scene-surface: rgba(255, 255, 255, 0.15);
-  --main-scene-surface-strong: rgba(255, 255, 255, 0.15);
-  --main-scene-surface-hover: rgba(255, 255, 255, 0.2);
-  --main-scene-line: rgba(41, 41, 41, 0.04);
+  --main-scene-surface: rgb(22 22 22 / 94%);
+  --main-scene-surface-strong: rgb(22 22 22 / 96%);
+  --main-scene-surface-hover: rgb(32 32 32 / 96%);
+  --main-scene-line: rgba(255, 255, 255, 0.55);
   --main-scene-shadow: rgba(62, 35, 64, 0.08);
   --main-scene-shadow-soft: rgba(62, 35, 64, 0.06);
-  --main-focus-ring: rgba(120, 72, 139, 0.36);
-  --main-danger: #b94456;
+  --main-focus-ring: #ffffff;
+  --main-focus-halo: #000000;
+  --main-danger: #ff9aaa;
   --tg-safe-area-inset-top: 0px;
   --tg-safe-area-inset-right: 0px;
   --tg-safe-area-inset-bottom: 0px;
@@ -187,7 +188,7 @@ body {
   min-height: 154px;
   border: 0;
   background: transparent;
-  color: rgba(251, 251, 251, 0.24);
+  color: rgba(251, 251, 251, 0.62);
   caret-color: #756cff;
   font-family: var(--font-sans);
   font-size: clamp(29px, 7.35vw, 44px);
@@ -200,7 +201,7 @@ body {
 }
 
 .create-pet-prompt::placeholder {
-  color: rgba(251, 251, 251, 0.2);
+  color: rgba(251, 251, 251, 0.62);
   opacity: 1;
 }
 
@@ -210,6 +211,13 @@ body {
 
 .create-pet-prompt:disabled {
   opacity: 0.72;
+}
+
+.create-pet-prompt:focus-visible {
+  border-radius: 8px;
+  outline: 3px solid var(--main-focus-ring);
+  outline-offset: 5px;
+  box-shadow: 0 0 0 8px var(--main-focus-halo);
 }
 
 .create-pet-error {
@@ -283,12 +291,6 @@ body {
   left: 0;
   width: 100%;
   color: var(--main-scene-ink);
-}
-
-.main-shell--story-open {
-  filter: blur(26px);
-  transform: scale(1.04);
-  transform-origin: center;
 }
 
 .main-shell,
@@ -391,6 +393,26 @@ body {
   visibility: visible;
 }
 
+.pet-reaction-button {
+  position: absolute;
+  z-index: 4;
+  top: 25%;
+  left: 50%;
+  height: 56.25%;
+  aspect-ratio: 2 / 3;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.pet-reaction-button:focus-visible {
+  border-radius: 42%;
+  outline: 3px solid var(--main-focus-ring);
+  outline-offset: 4px;
+}
+
 .feed-drop-target {
   position: absolute;
   inset: 0;
@@ -447,7 +469,7 @@ body {
   font-size: 26px;
   font-weight: 700;
   line-height: normal;
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
   white-space: normal;
   word-break: normal;
 }
@@ -469,7 +491,7 @@ body {
   z-index: 1;
   max-width: 100%;
   margin: 0;
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
@@ -503,11 +525,9 @@ body {
   justify-content: center;
   gap: 8px;
   padding: 14px 17px 16px 13px;
-  border: 0;
+  border: 2px solid rgba(255, 255, 255, 0.55);
   border-radius: 24px;
-  background: var(--main-scene-surface-strong);
-  backdrop-filter: blur(18.5px);
-  -webkit-backdrop-filter: blur(18.5px);
+  background: rgb(22 22 22 / 94%);
   font-family: "SF Pro Rounded", "SF Pro Display", var(--font-open-runde), ui-rounded,
     system-ui, sans-serif;
   font-size: 23.445px;
@@ -542,7 +562,7 @@ body {
 }
 
 .main-action-button:enabled:hover {
-  background: var(--main-scene-surface-hover);
+  background: rgb(32 32 32 / 96%);
 }
 
 .main-action-button--chat {
@@ -669,10 +689,10 @@ body {
   height: 50px;
   place-items: center;
   overflow: hidden;
-  border: 0;
+  border: 2px solid var(--main-scene-line);
   border-radius: 24px;
-  background: rgba(51, 51, 51, 0.09);
-  color: #333333;
+  background: var(--main-scene-surface);
+  color: var(--main-scene-ink);
   box-shadow:
     inset 0 2px 4px rgba(255, 255, 255, 0.09),
     inset 0 -3.768px 8px rgba(1, 1, 1, 0);
@@ -684,7 +704,7 @@ body {
 }
 
 .main-debug-button:enabled:hover {
-  background: rgba(51, 51, 51, 0.13);
+  background: var(--main-scene-surface-hover);
 }
 
 .main-debug-button:focus-visible {
@@ -719,9 +739,7 @@ body {
 .travel-story-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(26px);
-  -webkit-backdrop-filter: blur(26px);
+  background: rgba(0, 0, 0, 0.78);
   animation: travel-story-backdrop-in 180ms ease-out both;
 }
 
@@ -758,7 +776,7 @@ body {
   top: max(18px, calc(var(--tma-safe-top) + 12px));
   right: max(18px, var(--tma-safe-right));
   z-index: 72;
-  display: none;
+  display: grid;
   width: 48px;
   height: 48px;
   place-items: center;
@@ -965,12 +983,6 @@ body {
   }
 }
 
-@media (min-width: 600px) {
-  .travel-story-close {
-    display: grid;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .travel-story-backdrop {
     animation: none;
@@ -1101,7 +1113,7 @@ body {
   margin: 0;
   border: 1px solid var(--danger-line);
   border-radius: 12px;
-  background: var(--main-scene-surface-strong);
+  background: #2b1116;
   padding: 10px 14px;
   color: var(--danger);
   font-size: 14px;
@@ -1195,6 +1207,18 @@ button.feed-food-token--dragging:enabled:active {
   outline-offset: 3px;
 }
 
+.pet-reaction-button:focus-visible,
+.main-action-button:focus-visible,
+.main-debug-button:focus-visible,
+.travel-story-phone:focus-visible,
+.travel-story-close:focus-visible,
+.travel-story-empty__action:focus-visible,
+.conversation-send-button:focus-visible,
+.feed-mode-close:focus-visible,
+.feed-food-token:focus-visible {
+  box-shadow: 0 0 0 5px var(--main-focus-halo);
+}
+
 .feed-drop-pulse {
   position: absolute;
   top: 404px;
@@ -1222,7 +1246,7 @@ button.feed-food-token--dragging:enabled:active {
   overflow: hidden;
   border: 0;
   border-radius: 56px;
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(20, 20, 20, 0.94);
   box-shadow:
     inset 0 3px 12px rgba(255, 255, 255, 0.3),
     inset 0 2px 4px rgba(255, 255, 255, 0.09);
@@ -1249,16 +1273,8 @@ button.feed-food-token--dragging:enabled:active {
 .feed-food-token,
 .feed-food-token--dragging,
 .conversation-input-panel {
-  --tw-backdrop-blur: blur(18.5px);
-
-  -webkit-backdrop-filter: var(--tw-backdrop-blur, ) var(--tw-backdrop-brightness, )
-    var(--tw-backdrop-contrast, ) var(--tw-backdrop-grayscale, ) var(--tw-backdrop-hue-rotate, )
-    var(--tw-backdrop-invert, ) var(--tw-backdrop-opacity, ) var(--tw-backdrop-saturate, )
-    var(--tw-backdrop-sepia, );
-  backdrop-filter: var(--tw-backdrop-blur, ) var(--tw-backdrop-brightness, )
-    var(--tw-backdrop-contrast, ) var(--tw-backdrop-grayscale, ) var(--tw-backdrop-hue-rotate, )
-    var(--tw-backdrop-invert, ) var(--tw-backdrop-opacity, ) var(--tw-backdrop-saturate, )
-    var(--tw-backdrop-sepia, );
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .main-mobile-scene--chat .conversation-input-panel {
@@ -1288,8 +1304,14 @@ button.feed-food-token--dragging:enabled:active {
   outline: none;
 }
 
+.conversation-input-panel:has(.conversation-input:focus-visible) {
+  outline: 3px solid var(--main-focus-ring);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px var(--main-focus-halo);
+}
+
 .conversation-input::placeholder {
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.72);
   font-size: 20px;
   font-weight: 700;
   line-height: 46px;
@@ -1423,11 +1445,11 @@ button:enabled:active {
   color: transparent;
   background-image: linear-gradient(
     110deg,
-    rgba(255, 255, 255, 0.24) 0%,
-    rgba(255, 255, 255, 0.24) 34%,
-    rgba(255, 255, 255, 0.68) 48%,
-    rgba(255, 255, 255, 0.24) 62%,
-    rgba(255, 255, 255, 0.24) 100%
+    rgba(255, 255, 255, 0.68) 0%,
+    rgba(255, 255, 255, 0.68) 34%,
+    rgba(255, 255, 255, 0.96) 48%,
+    rgba(255, 255, 255, 0.68) 62%,
+    rgba(255, 255, 255, 0.68) 100%
   );
   background-size: 250% 100%;
   background-clip: text;
@@ -1439,7 +1461,7 @@ button:enabled:active {
 
 @media (prefers-reduced-motion: reduce) {
   .creating-friend-shimmer {
-    color: rgba(255, 255, 255, 0.3);
+    color: rgba(255, 255, 255, 0.68);
     background-image: none;
     -webkit-text-fill-color: currentColor;
     animation: none;

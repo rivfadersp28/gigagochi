@@ -70,6 +70,7 @@ def dark_muted_character_palette_direction(description: str) -> str:
         "vivid, electric, neon, candy-colored or luminous color washes."
     )
 
+
 CHARACTER_BIBLE_STYLE_DIRECTION = """
 Global style direction for generated character canon, lore, personality, voice rules,
 sample replies, openings, and character-book facts.

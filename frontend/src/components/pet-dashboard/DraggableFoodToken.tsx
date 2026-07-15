@@ -112,6 +112,23 @@ export function DraggableFoodToken({
     }));
   }
 
+  function cancelPointerDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (dragState.pointerId !== event.pointerId) {
+      return;
+    }
+    suppressClickRef.current = true;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setDragState({
+      pointerId: null,
+      x: 0,
+      y: 0,
+      isDragging: false,
+      animationPhase: "idle",
+    });
+  }
+
   function handleAnimationEnd(event: ReactAnimationEvent<HTMLButtonElement>) {
     if (event.target !== event.currentTarget) {
       return;
@@ -158,7 +175,7 @@ export function DraggableFoodToken({
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={finishPointerDrag}
-      onPointerCancel={finishPointerDrag}
+      onPointerCancel={cancelPointerDrag}
       onAnimationEnd={handleAnimationEnd}
       onClick={(event) => {
         if (suppressClickRef.current) {

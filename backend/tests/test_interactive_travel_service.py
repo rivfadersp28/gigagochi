@@ -9,8 +9,6 @@ import pytest
 from app.schemas import InteractiveTravelResult, LocalPetChatContext
 from app.services import interactive_travel_service
 
-TEST_FACT = interactive_travel_service.FUN_FACTS[0]
-
 
 def _pet() -> LocalPetChatContext:
     return LocalPetChatContext.model_validate(
@@ -74,6 +72,11 @@ def _client(
     )
     monkeypatch.setattr(interactive_travel_service.random, "choice", lambda values: values[0])
     monkeypatch.setattr(interactive_travel_service.random, "randint", lambda start, end: 3)
+    monkeypatch.setattr(
+        interactive_travel_service,
+        "_select_story_tasks",
+        lambda: _test_story_tasks(),
+    )
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     return client, completions
 
@@ -82,45 +85,74 @@ def _start_payload() -> dict[str, Any]:
     return {
         "title": "Ночная тропа",
         "goal": "Добраться до старой обсерватории и зажечь её сигнальный огонь",
-        "ending": (
-            "Я зажигаю сигнальный огонь, достигаю своей цели и могу возвращаться домой"
-        ),
+        "ending": ("Я зажигаю сигнальный огонь, достигаю своей цели и могу возвращаться домой"),
         "parts": [
             {
                 "situation": (
                     "Я прихожу к развилке, где оживает старый фонарь и просит найти север. "
                     "В Северном полушарии Полярная звезда показывает направление на север."
                 ),
+                "obstacle": "Без верного направления фонарь не откроет северную тропу.",
                 "question": "Куда мне идти?",
+                "subject": "nature",
                 "choices": [
                     "Найти Полярную звезду",
                     "Спросить фонарь",
                     "Подбросить монетку",
                 ],
+                "correctChoice": "Найти Полярную звезду",
+                "explanation": "Полярная звезда показывает направление на север",
             },
             {
                 "situation": (
                     "Я прихожу к мосту через реку. Подъёмный механизм заело, и путь закрыт."
                 ),
+                "obstacle": "Мост не опустится, пока я не применю верный способ.",
                 "question": "Как мне опустить мост?",
+                "subject": "physics",
                 "choices": ["Повернуть колесо", "Позвать смотрителя", "Переплыть реку"],
+                "correctChoice": "Повернуть колесо",
+                "explanation": "Колесо приводит подъёмный механизм в движение",
             },
             {
                 "situation": (
                     "Я добираюсь до обсерватории. Каменная дверь не открывается без противовеса."
                 ),
+                "obstacle": "Дверь перекрывает путь, пока я не найду противовес.",
                 "question": "Как мне открыть дверь?",
+                "subject": "logic",
                 "choices": ["Нажать на плиту", "Подвинуть камень", "Позвать хранителя"],
+                "correctChoice": "Подвинуть камень",
+                "explanation": "Камень служит недостающим противовесом",
             },
             {
                 "situation": (
                     "Я вхожу под купол обсерватории. Сигнальный огонь погас, а заслонку заклинило."
                 ),
+                "obstacle": "Огонь не вспыхнет, пока я не восстановлю механизм.",
                 "question": "Как мне зажечь огонь?",
+                "subject": "physics",
                 "choices": ["Поднять заслонку", "Найти рычаг", "Починить механизм"],
+                "correctChoice": "Поднять заслонку",
+                "explanation": "Открытая заслонка пропускает воздух к огню",
             },
         ],
     }
+
+
+def _test_story_tasks() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": f"test-{index}",
+            "subject": part["subject"],
+            "situation": "",
+            "question": part["question"],
+            "choices": part["choices"],
+            "answer": part["correctChoice"],
+            "explanation": part["explanation"],
+        }
+        for index, part in enumerate(_start_payload()["parts"], start=1)
+    ]
 
 
 def _result_payload(
@@ -192,7 +224,7 @@ def test_suggestions_do_not_call_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     assert completions.calls == []
 
 
-def test_start_uses_minimal_state_and_keeps_naturally_embedded_fact(
+def test_start_builds_four_erudition_challenges(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client, completions = _client(monkeypatch, [_start_payload()])
@@ -209,25 +241,31 @@ def test_start_uses_minimal_state_and_keeps_naturally_embedded_fact(
     assert travel.destination == "в ночной лес"
     assert travel.overallTitle == "Ночная тропа"
     assert travel.arcPlan["generatorVersion"] == interactive_travel_service.GENERATOR_VERSION
-    assert travel.arcPlan["funFact"] == TEST_FACT
     assert travel.arcPlan["storyGoal"] == (
         "Добраться до старой обсерватории и зажечь её сигнальный огонь."
     )
     assert travel.arcPlan["storyEnding"] == (
         "Я зажигаю сигнальный огонь, достигаю своей цели и могу возвращаться домой."
     )
-    assert travel.arcPlan["part2Situation"] == (
+    assert travel.arcPlan["part2Situation"].startswith(
         "Я прихожу к мосту через реку. Подъёмный механизм заело, и путь закрыт."
     )
+    assert "Мост не опустится" in travel.arcPlan["part2Situation"]
+    assert "преодолеть препятствие и пройти дальше" in travel.arcPlan["part2Situation"]
     assert travel.arcPlan["part3Situation"].startswith("Я добираюсь до обсерватории")
     assert travel.arcPlan["part4Situation"].startswith("Я вхожу под купол")
-    assert len(travel.arcPlan) == 19
+    assert travel.arcPlan["part1CorrectChoice"] == "Найти Полярную звезду"
+    assert travel.arcPlan["part2CorrectChoice"] == "Повернуть колесо"
+    assert travel.arcPlan["part3CorrectChoice"] == "Подвинуть камень"
+    assert travel.arcPlan["part4CorrectChoice"] == "Поднять заслонку"
+    assert travel.arcPlan["part1Subject"] == "nature"
+    assert travel.arcPlan["part1Explanation"].startswith("Полярная звезда")
+    assert travel.arcPlan["taskBankIds"] == "test-1,test-2,test-3,test-4"
+    assert len(travel.arcPlan) == 31
     assert travel.completed is False
     assert travel.outcomeValence is None
     assert len(travel.parts) == 1
     part = travel.parts[0]
-    assert part.storyText.count(TEST_FACT) == 1
-    assert "Фанфакт:" not in part.storyText
     assert part.challenge == "Куда мне идти?"
     assert part.actionSuggestions == [
         "Найти Полярную звезду",
@@ -240,17 +278,33 @@ def test_start_uses_minimal_state_and_keeps_naturally_embedded_fact(
 
     call = completions.calls[0]
     assert len(call["messages"]) == 2
-    assert "ровно из четырёх частей" in call["messages"][1]["content"]
-    assert "ясную цель" in call["messages"][1]["content"]
-    assert "отдельной развязке ending" in call["messages"][1]["content"]
-    assert TEST_FACT in call["messages"][1]["content"]
-    assert "только в часть 1" in call["messages"][1]["content"]
-    assert "заранее написанную часть" in call["messages"][1]["content"]
+    assert "историю в стиле фэнтези" in call["messages"][1]["content"]
+    assert "задачу на эрудицию" in call["messages"][1]["content"]
+    assert "до 8 класса" in call["messages"][1]["content"]
+    assert "correctChoice" in call["messages"][1]["content"]
+    assert "ИСПЫТАНИЕ 1" in call["messages"][1]["content"]
+    assert "Правильный ответ: Найти Полярную звезду" in call["messages"][1]["content"]
+    assert "персонаж пользователя" in call["messages"][1]["content"]
+    assert "Мяу" not in call["messages"][1]["content"]
+    assert "кошка" not in call["messages"][1]["content"]
+    assert "ночной лес" not in call["messages"][1]["content"]
     schema = call["response_format"]["json_schema"]
-    assert schema["name"] == "interactive_travel_fixed_story_v2"
+    assert schema["name"] == "interactive_travel_erudition_story_v1"
     assert schema["schema"] == interactive_travel_service.START_SCHEMA
     assert schema["schema"]["properties"]["parts"]["minItems"] == 4
     assert schema["schema"]["properties"]["parts"]["maxItems"] == 4
+
+
+def test_task_bank_is_deduplicated_and_has_enough_tasks() -> None:
+    interactive_travel_service._task_bank.cache_clear()
+    tasks = interactive_travel_service._task_bank()
+
+    assert len(tasks) == 100
+    assert len({task["id"] for task in tasks}) == 100
+    assert len({task["question"] for task in tasks}) == 100
+    assert tasks[0]["answer"] == "Тридцать пять градусов"
+    assert tasks[-1]["id"] == "traveler-100"
+    assert all(task["answer"] in task["choices"] for task in tasks)
 
 
 def test_start_retries_invalid_json_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -337,9 +391,11 @@ def test_continue_resolves_choice_and_adds_next_part(
     assert pending.transition.elapsedHours == 3
     assert pending.transition.summary == resolved.result.consequence
     assert pending.transition.departureHook == "Я продолжаю путь. Проходит 3 часа."
-    assert pending.storyText == (
+    assert pending.storyText.startswith(
         "Я прихожу к мосту через реку. Подъёмный механизм заело, и путь закрыт."
     )
+    assert "Мост не опустится" in pending.storyText
+    assert "преодолеть препятствие и пройти дальше" in pending.storyText
     assert pending.challenge == "Как мне опустить мост?"
     assert pending.actionSuggestions == [
         "Повернуть колесо",
@@ -369,9 +425,7 @@ def test_choices_are_limited_to_three_words() -> None:
         "Очень громко позвать",
         "Быстро убежать",
     ]
-    assert interactive_travel_service._choices(["Идти по северной тропе"])[0] == (
-        "Идти по тропе"
-    )
+    assert interactive_travel_service._choices(["Идти по северной тропе"])[0] == ("Идти по тропе")
     assert interactive_travel_service.CHOICE_SCHEMA["maxLength"] == 40
 
 
@@ -435,8 +489,6 @@ def test_story_always_finishes_after_four_parts_with_saved_ending(
     assert travel.parts[1].storyText.startswith("Я прихожу к мосту")
     assert travel.parts[2].storyText.startswith("Я добираюсь до обсерватории")
     assert travel.parts[3].storyText.startswith("Я вхожу под купол")
-    visible_story = " ".join(part.storyText for part in travel.parts)
-    assert visible_story.count(TEST_FACT) == 1
     assert len(completions.calls) == 5
     final_result = travel.parts[-1].result
     assert final_result is not None
@@ -457,7 +509,7 @@ def test_story_always_finishes_after_four_parts_with_saved_ending(
     "arc_plan",
     [
         {},
-        {"funFact": TEST_FACT},
+        {"funFact": "старый факт"},
         {
             "contractVersion": "4",
             "goal": "раскрыть тайну деревни",

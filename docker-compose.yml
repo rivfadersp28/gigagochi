@@ -1,26 +1,78 @@
 services:
+  volume-permissions:
+    build:
+      context: ./backend
+    user: "0:0"
+    command: ["sh", "/app/scripts/ensure_volume_permissions.sh"]
+    restart: "no"
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - generated_assets:/app/static/generated
+      - backend_logs:/app/logs
+      - push_data:/app/data/push
+
   backend:
     build:
       context: ./backend
     env_file:
       - ./backend/.env
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20m
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    depends_on:
+      volume-permissions:
+        condition: service_completed_successfully
+    environment:
+      TMPDIR: /app/static/generated/.private/processing-tmp
+      RATE_LIMIT_STORE_PATH: /app/data/push/rate_limits.sqlite3
+      MEDIA_CONCURRENCY_LOCK_DIR: /app/data/push/media_provider_slots
+      MEDIA_IMAGE_CONCURRENCY: ${MEDIA_IMAGE_CONCURRENCY:-4}
+      MEDIA_VIDEO_CONCURRENCY: ${MEDIA_VIDEO_CONCURRENCY:-2}
+      GENERATION_IMAGE_WORKERS: ${GENERATION_IMAGE_WORKERS:-4}
+      GENERATION_VIDEO_WORKERS: ${GENERATION_VIDEO_WORKERS:-2}
     ports:
       - "8000:8000"
     volumes:
       - generated_assets:/app/static/generated
+      - backend_logs:/app/logs
       - push_data:/app/data/push
 
   frontend:
     build:
       context: ./frontend
       args:
+        BACKEND_URL: http://backend:8000
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
         NEXT_PUBLIC_ENABLE_TMA_DEV_FALLBACK: ${NEXT_PUBLIC_ENABLE_TMA_DEV_FALLBACK:-false}
     ports:
       - "3000:3000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /app/.next/cache:size=128m,mode=0700,uid=1001,gid=1001
     depends_on:
-      - backend
+      backend:
+        condition: service_started
 
 volumes:
   generated_assets:
+  backend_logs:
   push_data:

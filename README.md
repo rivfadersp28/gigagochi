@@ -11,8 +11,8 @@ Telegram-историями.
 3. Frontend хранит питомца, параметры, чат и память в `localStorage`.
 4. Mini App синхронизирует компактный snapshot с backend для Telegram push и
    фоновых историй.
-5. Bot и backend совместно используют JSON registry с межпроцессной блокировкой
-   и атомарной записью.
+5. Bot и backend совместно используют SQLite WAL registry и другие локальные SQLite stores
+   на persistent volumes; транзакции сериализуют межпроцессные изменения общего state.
 
 Прогресс привязан к origin и устройству браузера: стабильный production-домен
 нельзя менять без миграции `localStorage`.
@@ -21,12 +21,13 @@ Telegram-историями.
 
 - Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS, Radix UI, Vitest.
 - Backend: FastAPI, Pydantic, OpenAI/OpenRouter clients, Pillow.
-- Runtime storage: frontend `localStorage`, backend JSON push registry,
-  Docker volumes для сгенерированных ассетов и push state.
+- Runtime storage: frontend `localStorage`; backend SQLite stores для push registry, jobs, quotas,
+  idempotency и bot inbox; Docker volumes для media и durable state.
 - Bot: Telegram Bot API long polling.
-- Production: Docker Compose, Caddy или внешний reverse proxy.
+- Production: Docker Compose во внешней сети существующего Caddy.
 
-База данных в активном приложении не используется.
+Внешний PostgreSQL в активном приложении не используется. Локальные SQLite-файлы являются
+частью production state и должны резервироваться вместе с generated media.
 
 ## Локальный запуск
 
@@ -43,6 +44,10 @@ pip install -e ".[dev]"
 cp .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
+
+В чистом окружении без `data/push/telegram_push_state.json` выставьте в `backend/.env`
+`TELEGRAM_PUSH_LEGACY_JSON_REQUIRED=false`. Для обновления существующей установки оставьте `true`:
+отсутствие ожидаемого legacy registry тогда останавливает миграцию без создания пустого marker.
 
 Frontend:
 
@@ -161,6 +166,10 @@ KANDINSKY_API_KEY=
 использует `k6-image-t2i` без референсов и `k6-i2i` с одним или несколькими
 референсами. Токен передаётся как Bearer; TLS-проверка не отключается.
 
+Диагностический сравнительный набор питомца по умолчанию отключён. Включение
+`PET_COMPARISON_ENABLED=true` создаёт вторую платную линейку Kandinsky для каждого
+нового питомца; использовать только в контролируемом диагностическом окружении.
+
 Новый провайдер реализует `ImageProvider` и/или `VideoProvider`, объявляет
 capabilities (`text_to_image`, `image_to_image`, `image_to_video`) и регистрируется
 в `backend/app/media/runtime.py`. Бизнес-сервисы продолжают вызывать общий media
@@ -187,7 +196,7 @@ cloudflared tunnel --url http://localhost:3000 --no-autoupdate
 
 - `POST /api/generate-pet` и `GET /api/generate-pet/jobs/{job_id}`
 - `POST /api/chat`, `/api/chat/ambient`, `/api/chat/proactive`
-- `POST /api/travel`
+- `POST /api/travel/interactive/*`
 - `POST /api/push/snapshot`
 - legacy memory/lite endpoints под `/api/chat/*`
 
@@ -222,9 +231,11 @@ python -m app.bot
 docker compose up --build
 ```
 
-Production-конфигурация: `docker-compose.prod.yml`, `deploy/Caddyfile` и
+Production-конфигурация: `docker-compose.prod.yml`, `deploy/Caddyfile.host.example` и
 `deploy/HETZNER.md`. Persistent volumes: `generated_assets`, `push_data`,
-`backend_logs`; container Caddy включается профилем `container-caddy`.
+`backend_logs`; backend и frontend подключаются к внешней сети reverse proxy. `push_data` и
+`generated_assets` резервируются и восстанавливаются только вместе через
+`deploy/backup-volumes.sh` / `deploy/restore-volumes.sh`; runbook — в `deploy/HETZNER.md`.
 
 ## Проверки
 

@@ -86,13 +86,24 @@ function pet(assetSetId: string, idleUrl: string): LocalPetState {
 }
 
 describe("interactive travel text portions", () => {
-  it("keeps a complete sentence in one bubble even for legacy long text", () => {
+  it("splits an oversized sentence at word boundaries", () => {
     const text =
       "Персонаж долго пробирался через заросший лес, внимательно прислушиваясь к каждому шороху, чтобы вовремя заметить спрятанную среди деревьев старую каменную башню.";
 
     const portions = splitInteractiveTravelText(text);
 
-    expect(portions).toEqual([text.replace(/\.$/u, "")]);
+    expect(portions.length).toBeGreaterThan(1);
+    expect(portions.every((portion) => Array.from(portion).length <= 80)).toBe(true);
+    expect(portions.join(" ")).toBe(text.replace(/\.$/u, ""));
+  });
+
+  it("hard-wraps a single oversized token without losing characters", () => {
+    const text = "я".repeat(201);
+
+    const portions = splitInteractiveTravelText(text);
+
+    expect(portions.map((portion) => Array.from(portion).length)).toEqual([80, 80, 41]);
+    expect(portions.join("")).toBe(text);
   });
 
   it("builds story portions and puts the character reaction before the result", () => {

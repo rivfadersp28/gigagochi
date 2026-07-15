@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ApiError } from "./apiTransport";
 import { presentError } from "./errorPresentation";
+import { setTelegramServerCapabilities } from "./telegram";
 
 type TelegramTestWindow = Window & {
   Telegram?: {
@@ -23,6 +24,7 @@ function setTelegramUser(id: number) {
 
 afterEach(() => {
   delete (window as TelegramTestWindow).Telegram;
+  setTelegramServerCapabilities(null);
 });
 
 describe("error presentation", () => {
@@ -39,6 +41,11 @@ describe("error presentation", () => {
 
   it("shows diagnostics to Sergey", () => {
     setTelegramUser(62943754);
+    setTelegramServerCapabilities({
+      telegramUserId: 62943754,
+      debugMenu: true,
+      interactiveTravel: true,
+    });
     const error = new ApiError("Сервис временно недоступен", "CHAT_FAILED", 502, {
       requestId: "req-1",
       diagnostic: { providerMessage: "unsupported tool" },

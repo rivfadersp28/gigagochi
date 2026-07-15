@@ -11,8 +11,7 @@ Use an `A` record for `167.233.103.46`. If you want IPv6 too, add an `AAAA` reco
 server's concrete IPv6 address, not the `/64` prefix.
 
 Current observation from outside: `https://gigagochi.serega.works/health` responds with the
-backend health check through Caddy. Do not start the container Caddy profile unless the existing
-host Caddy configuration is intentionally replaced, otherwise ports `80` and `443` can conflict.
+backend health check through the existing host Caddy container.
 
 The existing public Docker network is `bizzy-radio_default`. The app compose joins backend/frontend
 to that network with these aliases:
@@ -59,8 +58,24 @@ chmod 600 .env.production backend/.env
 Fill `backend/.env` with real secrets:
 
 - `BOT_TOKEN`
-- `OPENROUTER_API_KEY`
-- optional OpenAI keys only if `AI_PROVIDER=openai`
+- `OPENAI_API_KEY` — всегда нужен для primary pet assets независимо от `AI_PROVIDER`/`MEDIA_PROFILE`
+- `OPENROUTER_API_KEY` — нужен default `legacy` media profile для video
+- `KANDINSKY_API_KEY` — только если включён Kandinsky route или `PET_COMPARISON_ENABLED=true`
+
+For a confirmed clean install that has no restored `push_data` volume and no
+`telegram_push_state.json`, set `TELEGRAM_PUSH_LEGACY_JSON_REQUIRED=false` before the first start.
+Keep it `true` for every upgrade or restore where a legacy registry is expected: a missing file
+then fails closed instead of committing an empty migration marker.
+
+Create or verify the external proxy network before the first `up` (including a DR host):
+
+```bash
+PUBLIC_PROXY_NETWORK="$(sed -n 's/^PUBLIC_PROXY_NETWORK=//p' .env.production)"
+test -n "$PUBLIC_PROXY_NETWORK"
+docker network inspect "$PUBLIC_PROXY_NETWORK" >/dev/null 2>&1 \
+  || docker network create "$PUBLIC_PROXY_NETWORK"
+docker compose --env-file .env.production -f docker-compose.prod.yml config --quiet
+```
 
 ## Deploy app containers
 
@@ -94,19 +109,176 @@ docker exec bizzy-radio-caddy-1 caddy validate --config /etc/caddy/Caddyfile
 docker exec bizzy-radio-caddy-1 caddy reload --config /etc/caddy/Caddyfile
 ```
 
-If you intentionally want this compose stack to own ports `80` and `443`, stop/disable the existing
-host Caddy first, then start the opt-in container profile:
-
-```bash
-systemctl stop caddy
-systemctl disable caddy
-docker compose --env-file .env.production -f docker-compose.prod.yml --profile container-caddy up -d --build
-```
-
 The active MVP has no PostgreSQL service. Pet progress and chat history stay in Telegram WebView
 `localStorage`; Telegram delivery state uses the persistent `push_data` volume.
 
+## Persistent volume backup and restore
+
+Back up `push_data` and `generated_assets` as one unit. The first volume contains Telegram
+delivery/idempotency state; the second contains media addressed by URLs stored in that state.
+Restoring only one of them can replay paid commands or leave saved media URLs broken.
+
+Create a private backup directory and run a consistent snapshot:
+
+```bash
+install -d -m 0700 /var/backups/gigagochi
+cd /opt/gigagochi
+./deploy/backup-volumes.sh /var/backups/gigagochi
+```
+
+Run both volume scripts as root: the production env is root-readable and helper archives are
+root-owned by design.
+
+The script validates Compose without printing secrets, records whether `backend` and `bot` were
+running, stops both writers, and restarts only the services that were running before the snapshot.
+It atomically publishes a directory containing `generated_assets.tar.gz`, `push_data.tar.gz`,
+`manifest.txt`, and `SHA256SUMS`. An incomplete archive is never published. Copy the whole backup
+directory to independent storage; do not copy only one archive. Retention is intentionally manual
+so that an automation cannot delete the last recovery point.
+
+Restore requires the production env file and the backend image because an isolated, networkless
+Compose helper mounts the named volumes. On a new disaster-recovery host, prepare them first:
+
+```bash
+cd /opt/gigagochi
+docker compose --env-file .env.production -f docker-compose.prod.yml build volume-permissions
+```
+
+Then restore the complete backup with the exact destructive confirmation token:
+
+```bash
+./deploy/restore-volumes.sh \
+  --from /var/backups/gigagochi/gigagochi-volumes-YYYYMMDDTHHMMSSZ-PID \
+  --confirm REPLACE_PUSH_DATA_AND_GENERATED_ASSETS
+```
+
+Before changing either volume, the restore verifies the strict checksum set, manifest, archive
+paths, and archive entry types twice. It stops both writers and saves a second `pre-restore`
+rollback bundle beside the source backup. If extraction fails after mutation, both volumes are
+automatically returned to that pre-restore snapshot before writers restart. If rollback itself
+fails, the script deliberately leaves `backend` and `bot` stopped. Never start them manually in
+that state until both volumes have been recovered together. The pre-restore bundle is retained for
+a manual rollback; remove it only after health, Telegram delivery, and several existing media URLs
+have been verified. Its default location is next to the source backup; pass
+`--rollback-root /another/private/path` when that filesystem is read-only or lacks room for the
+current contents of both volumes.
+
 ## Update
+
+### One-time Telegram push registry migration
+
+The production registry now uses SQLite WAL. Before the first update from
+`telegram_push_state.json`, create the normal two-volume backup, then add these settings without
+removing the legacy file:
+
+```env
+TELEGRAM_PUSH_STORE_PATH=/app/data/push/telegram_push_state.sqlite3
+TELEGRAM_PUSH_STORE_BACKEND=auto
+TELEGRAM_PUSH_LEGACY_JSON_PATH=/app/data/push/telegram_push_state.json
+TELEGRAM_PUSH_LEGACY_JSON_REQUIRED=true
+```
+
+Stop `backend` and `bot` together before deploying so no old process can append to JSON after the
+new processes import it. The first SQLite opener takes the existing JSON file lock, imports every
+record and writes a SHA-256 migration marker in the same `synchronous=FULL` transaction. The second
+process sees that marker and never reimports or overwrites newer SQLite rows. If the required source
+is missing, initialization rolls back and retries after the mount/file is restored.
+
+```bash
+cd /opt/gigagochi
+./deploy/backup-volumes.sh /var/backups/gigagochi
+docker compose --env-file .env.production -f docker-compose.prod.yml stop backend bot
+git pull --ff-only origin main
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+docker compose --env-file .env.production -f docker-compose.prod.yml exec -T backend \
+  python - <<'PY'
+import hashlib
+import sqlite3
+from pathlib import Path
+
+from app.services.telegram_push_service import _push_store
+
+_push_store()
+path = "/app/data/push/telegram_push_state.sqlite3"
+source = Path("/app/data/push/telegram_push_state.json")
+source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+with sqlite3.connect(path) as connection:
+    integrity = connection.execute("PRAGMA quick_check").fetchone()
+    marker = connection.execute(
+        """
+        SELECT status, source_sha256, imported_records
+        FROM push_store_migrations
+        WHERE name = 'legacy-json-v1'
+        """
+    ).fetchone()
+print(
+    integrity[0] if integrity else None,
+    marker[0] if marker else None,
+    marker[2] if marker else None,
+    bool(marker and marker[1] == source_sha256),
+)
+PY
+```
+
+The verification must print `ok imported <expected-count> True`. Keep the old JSON and the
+pre-deploy backup until Telegram delivery and snapshots have been checked. Do not switch one
+process back to JSON after SQLite has accepted writes: that creates split-brain state; restore the
+consistent pre-deploy volume backup instead.
+
+Before the first update to the centralized application config, merge these keys into the existing
+`backend/.env` without replacing its secrets:
+
+```env
+BACKGROUND_STORY_ENABLED=true
+BACKGROUND_STORY_INTERVAL_SECONDS=300
+BACKGROUND_STORY_HOURS=[9,13,17,21]
+BACKGROUND_STORY_WINDOW_MINUTES=120
+SCHEDULED_BACKGROUND_STORY_PAID_MEDIA_DAILY_CAP=16
+DIAGNOSTIC_TELEGRAM_IDS=[62943754]
+OPENROUTER_VIDEO_MODEL=x-ai/grok-imagine-video
+OPENROUTER_VIDEO_TIMEOUT_SECONDS=900
+OPENROUTER_VIDEO_POLL_INTERVAL_SECONDS=5
+```
+
+Before restarting an upgraded installation, explicitly choose and add
+`SCHEDULED_BACKGROUND_STORY_PAID_MEDIA_DAILY_CAP`; when the key is absent its intentional
+fail-closed default is `0`, so scheduled stories become text-only.
+
+The cap is one global fixed UTC 24-hour window shared through `RATE_LIMIT_STORE_PATH`; every
+scheduled image or video provider submission attempt consumes one unit. Set it to `0` to fail
+closed and deliver text-only stories (or recovered media) without paid media calls. A cap of `N`
+funds approximately `N / 2` complete image+video parts; a normal new four-part story needs eight
+units, before crash/provider retries. Set
+`BACKGROUND_STORY_ENABLED=false` when the whole scheduler, including free text generation, must
+remain off. If GigaChat is active, keep the intended `GIGACHAT_MODEL` explicitly; the current
+example uses `GigaChat-3-Ultra`. Also raise the generated-volume processing reservation in
+`.env.production`:
+
+```env
+STORAGE_ADMISSION_VIDEO_RESERVE_BYTES=268435456
+```
+
+Validate without printing secrets:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml config --quiet
+```
+
+The backend image runs as UID/GID `10001`. Before the first update from an older root-running
+image, stop both writers so that the one-shot `volume-permissions` service can safely migrate
+existing `generated_assets`, `backend_logs`, and `push_data` ownership:
+
+```bash
+cd /opt/gigagochi
+git pull --ff-only origin main
+docker compose --env-file .env.production -f docker-compose.prod.yml stop backend bot
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+```
+
+The migration is idempotent and remains a dependency of `backend` for later updates. Once all
+files are owned by `10001:10001`, it only scans the volume trees and changes nothing.
+
+For subsequent updates:
 
 ```bash
 cd /opt/gigagochi
@@ -157,8 +329,11 @@ on the production server.
 curl -fsS https://gigagochi.serega.works/health
 docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail=100 backend
 docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail=100 bot
-docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail=100 caddy
 ```
+
+After a restore, also open several previously generated image/video URLs and confirm that an
+already processed Telegram update is not accepted a second time. These checks exercise the
+cross-volume consistency that `/health` alone cannot prove.
 
 In BotFather and any Telegram bot menu settings, set the Mini App URL to:
 

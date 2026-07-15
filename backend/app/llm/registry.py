@@ -46,9 +46,7 @@ class ProviderRegistry:
 
         with self._lock:
             if name in self._providers and not replace:
-                raise ProviderAlreadyRegisteredError(
-                    f"LLM provider {name!r} is already registered"
-                )
+                raise ProviderAlreadyRegisteredError(f"LLM provider {name!r} is already registered")
             self._providers[name] = provider
         return provider
 

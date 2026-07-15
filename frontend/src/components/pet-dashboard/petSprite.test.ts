@@ -47,18 +47,30 @@ function pet(): LocalPetState {
 }
 
 describe("sad pet assets", () => {
-  it("refreshes a completed local asset set when Kandinsky assets are still missing", () => {
+  it("does not poll a completed job for optional comparison assets", () => {
     const assetSet = pet().assetSet!;
     assetSet.generationJobId = "job-1";
     assetSet.backgroundGenerationStatus = "succeeded";
 
-    expect(shouldPollBackgroundAssets(assetSet)).toBe(true);
+    expect(shouldPollBackgroundAssets(assetSet)).toBe(false);
 
     assetSet.kandinskyAssets = {
       assetSetId: "kandinsky-1",
       generatedAt: assetSet.generatedAt,
       images: assetSet.images,
     };
+    expect(shouldPollBackgroundAssets(assetSet)).toBe(false);
+  });
+
+  it("keeps polling primary assets after the optional comparison fails", () => {
+    const assetSet = pet().assetSet!;
+    assetSet.generationJobId = "job-1";
+    assetSet.backgroundGenerationStatus = "running";
+    assetSet.comparisonGenerationError = "Сравнительная генерация недоступна";
+
+    expect(shouldPollBackgroundAssets(assetSet)).toBe(true);
+
+    assetSet.backgroundGenerationStatus = "succeeded";
     expect(shouldPollBackgroundAssets(assetSet)).toBe(false);
   });
 

@@ -1,9 +1,10 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import Script from "next/script";
 
 import { AppGlimmProvider } from "@/components/AppGlimmProvider";
 import { TelegramBootstrap } from "@/components/TelegramBootstrap";
+import { APP_DESCRIPTION, APP_ORIGIN, APP_TITLE } from "@/lib/appMetadata";
 import { APP_BACKGROUND_COLOR } from "@/lib/theme";
 
 import "./globals.css";
@@ -36,8 +37,26 @@ const openRunde = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "AI Tamagotchi",
-  description: "Local AI Tamagotchi MVP",
+  metadataBase: new URL(APP_ORIGIN),
+  applicationName: APP_TITLE,
+  title: {
+    default: APP_TITLE,
+    template: `%s — ${APP_TITLE}`,
+  },
+  description: APP_DESCRIPTION,
+  robots: {
+    index: false,
+    follow: false,
+    googleBot: {
+      index: false,
+      follow: false,
+    },
+  },
+};
+
+export const viewport: Viewport = {
+  colorScheme: "dark",
+  themeColor: APP_BACKGROUND_COLOR,
 };
 
 const backgroundBootstrapScript = `

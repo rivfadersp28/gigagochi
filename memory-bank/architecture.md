@@ -3,18 +3,48 @@
 ## Persistence
 
 - The active MVP has no external relational database dependency. Pet/chat/memory state is
-  local to the frontend origin, Telegram delivery state uses the locked JSON registry,
+  local to the frontend origin, Telegram delivery state uses a SQLite WAL registry,
   generation-job recovery uses SQLite on the same persistent volume, and generated assets plus
   push state use Docker volumes. Local and production Compose files therefore do not start
   PostgreSQL.
-
+- Sliding-window quotas are persisted in `rate_limits.sqlite3` on the shared `push_data` volume.
+  Backend API media endpoints and bot `/story`/`/full_story` consume the same per-Telegram-user
+  `generation` bucket atomically; `/push` is text-only and does not consume that bucket. The legacy
+  `ENABLE_IN_MEMORY_RATE_LIMIT` name remains the compatibility switch for the durable limiter.
+  Push snapshots use two layers: a 60/hour revision-deduplicated quota and a compact one-row
+  fixed-window attempt counter at 120/hour, so replayed revisions cannot turn into unbounded
+  registry transactions without creating hundreds of SQLite events per user.
+- Scheduled background-story image/video submissions share one durable global fixed UTC 24-hour
+  counter in the same SQLite store. Recovery of an existing file precedes charging; each new image
+  or video provider submission attempt consumes one unit. The fail-closed default cap is zero, so
+  text or recovered media is delivered without a paid call until production explicitly sets a cap.
+- Telegram push rows retain the former per-record, logical-total-byte and record-count limits. Each
+  ordinary update writes one record plus O(1) capacity metadata; a partial index supports
+  capacity-triggered cleanup of only explicitly unreachable records whose latest activity is older
+  than retention. Reachable records and records without a valid activity timestamp are never
+  eviction candidates. The first SQLite startup imports the locked legacy JSON in one transaction
+  with a durable source hash marker; production migration fails closed while that configured source
+  is missing. A confirmed clean install must explicitly disable the source requirement. JSON remains
+  available only as an explicit compatibility mode.
+- Push-snapshot deletion appends a per-pet durable reset fence. Delete-fence records are not
+  retention/capacity-prune candidates, so an arbitrarily late snapshot for an old pet cannot
+  resurrect it; the existing per-record byte ceiling remains the fail-closed bound.
 ## Backend Jobs and Errors
 
 - Backend phrase generation lives in `backend/app/services/pet_reply_engine/lite_generator.py`.
-- Pet-generation admission is sized for 20 concurrent image pipelines plus a bounded queue of 40.
+- Pet-generation executors use 4 image workers, 2 video workers and a bounded queue of 40.
   Job responses and descriptions are persisted in SQLite on the shared `push_data` volume; queued
-  or running jobs are requeued after a backend restart. The API remains a single Uvicorn process,
-  while generation uses dedicated image and video thread pools.
+  or running jobs are claimed with expiring leases and requeued after a backend restart. The API
+  remains a single Uvicorn process, while generation uses dedicated image and video thread pools.
+  Heartbeats return the exact renewed job IDs and immediately fence local records missing from that
+  set. Each paid job stage also holds a bounded-bucket lifetime `flock`; a recovered owner waits for
+  the previous provider call to leave that stage, then rechecks its SQLite lease before dispatch.
+  Every durable job uses a job-derived asset-set ID. Its character bible metadata is atomically
+  persisted before the first paid media call, and completed base, sad, happy, video and deterministic
+  Kandinsky-comparison files are reused when the pipeline resumes. A partial API result is preserved
+  while recovery re-enters the pipeline. An idempotency alias may point to an active job only when
+  description and image provider match exactly; coalescing after quota reservation refunds that
+  reservation.
 - Pet creation is explicitly two-phase for every user. The creation screen stops blocking as soon
   as the normal character scene and primary video are ready, persists the still-running generation
   job ID in the local asset set, and enters the app. Sad and happy image/video assets continue in
@@ -25,22 +55,26 @@
   SQLite database. It records queue start, normal-assets readiness, full derived-assets completion
   and failure status. The diagnostic Telegram user can view personal 30-day average, median, p95
   and recent timings in the debug panel; collection starts from the deployment of this telemetry.
+  Metrics older than 365 days are pruned independently from the shorter job/idempotency retention.
 - Production operations alerts use the existing Telegram bot and a dedicated admin ID allowlist.
   AI failures, unexpected HTTP 500s, scheduler failures, queue saturation and stuck generation jobs
-  are deduplicated before delivery so an incident does not create an alert storm.
+  are deduplicated before delivery so an incident does not create an alert storm. Dedup identities
+  are hashed and capped at 1024; at most eight deliveries may be queued.
 - Async pet creation jobs live in
   `backend/app/services/generation_job_service.py`. The TMA router owns only
   HTTP/auth adaptation and injects image generation, video generation, response
   building, and failure mapping callbacks. Image and video stages use separate
   bounded executors; the service is created lazily and shut down from the
-  FastAPI lifespan.
+  FastAPI lifespan. Shutdown atomically fences new paid stages, cancels queued futures, drains only
+  stages already past the fence, then leaves unfinished jobs durable and unleased for restart claim.
 - AI/provider exception inspection, public error shaping and failure-file
   logging live in `backend/app/services/ai_error_service.py`. Routers select the
   user-facing operation message but do not parse provider payloads or write log
   files themselves.
 - Public API errors now have a safe `message` for every user and an optional
   `diagnostic` object only for Telegram IDs in
-  `Settings.diagnostic_telegram_ids` (Sergey `62943754` by default). The
+  `Settings.diagnostic_telegram_ids` (empty by default; production explicitly configures
+  `62943754`). The
   frontend renders diagnostics in a separate expandable block only when the
   same user passes the debug-menu allowlist. Provider messages, exception text
   and internal validation paths are never used as ordinary UI copy.
@@ -52,15 +86,80 @@
   failed iteration is logged and retried instead of terminating the task.
   `/health` becomes degraded when an enabled scheduler task exits or its latest
   iteration failed.
-- Pending pet generation job ID plus description are stored in frontend
-  localStorage while generation runs, allowing the creation screen to resume
-  polling after a WebView reload. The marker is removed after success or a
-  confirmed `GENERATION_JOB_NOT_FOUND` response.
+- `/health` also performs create/write/fsync/delete probes for generated assets,
+  push data and logs. Disk capacity is measured once per underlying device. The protected floor is
+  the greater of the absolute and percentage watermarks; the generated-assets device additionally
+  requires the largest configured media reservation, so health and paid-media admission share the
+  same free-space boundary. Detailed dependency/storage diagnostics remain server-side for logs and
+  alerts; the unauthenticated response exposes only `{"status":"ok"}` or
+  `{"status":"degraded"}`. Probe results are briefly cached to bound fsync load from repeated
+  health requests.
+- Public LLM and interactive-media handlers acquire process-local
+  global/per-user leases in `request_admission_service` from async FastAPI dependencies before a
+  synchronous handler enters AnyIO's worker pool. Rejection is immediate (per-user 429, global
+  503 with `Retry-After`) and dependency teardown releases the lease. `/health` is async and runs
+  its synchronous probe body in the event loop's default executor, independently of a saturated
+  AnyIO sync-handler pool.
+- Paid image/video calls cross a fresh generated-volume admission check inside `MediaGateway`,
+  immediately before provider dispatch. Before reserving storage, the gateway acquires one of a
+  fixed set of `fcntl.flock` slot files on the shared push-data volume (4 image and 2 video slots by
+  default), globally bounding paid calls across backend and bot processes. Per-kind storage
+  headroom is represented by lifetime-locked reservation files under the generated volume, so it is
+  counted across backend and bot processes. The provider slot is released when bytes arrive, while
+  the reservation context propagates through validation/transformation and is released only after
+  the caller's fsynced atomic replace. Kernel-released locks let the next admission reclaim files
+  left by a crashed process. Admission preserves the stricter of the absolute and percentage
+  free-space floors; failure occurs before the provider is called and maps to the stable retryable
+  storage-capacity error.
+- HTTP request bodies are bounded globally by `RequestBodyLimitMiddleware` before
+  Pydantic parsing. Telegram bot commands use a bounded per-chat single-flight
+  dispatcher and persist the `getUpdates` offset atomically on the shared push volume.
+  Paid `/story` and `/full_story` updates also use a SQLite inbox keyed by Telegram
+  `update_id`: text and every completed media stage are stored as append-only,
+  revisioned progress. Media files use deterministic atomic paths so a retry can
+  recover a file saved immediately before a progress checkpoint. Lease heartbeats return the exact
+  renewed update IDs; lost callbacks are removed from the keeper. A bounded-bucket lifetime
+  `flock` serializes the whole update callback across bot processes, and ownership is rechecked
+  before paid stages, state commits and Telegram delivery.
+- All async Kandinsky image/video and OpenRouter video calls share one durable `provider_tasks`
+  SQLite table on the push-data volume. `global` scopes cover standalone workflows; pet generation
+  uses `job:<job_id>:<stage>`. Scope, provider, exact origin, non-secret account namespace,
+  operation and payload SHA-256 form the identity and its bounded hashed `flock` key. Each row is
+  the complete `admitted -> accepted -> provider_failed|media_saved` state machine; only
+  `admitted` has a null remote task ID, and a partial unique index binds non-null task IDs to one
+  provider/origin/account. Orphaned admissions, exhausted capacity and ambiguous submissions fail
+  closed. Accepted/media-saved rows are never evicted or cascaded with generation-job pruning.
+- Pending pet generation request key, authoritative description and optional job ID are stored in
+  separate frontend localStorage records while generation runs. Recovery keeps the oldest and
+  seven newest valid records, migrates the legacy singleton marker, and removes only the completed
+  request. If another tab already owns the user's active backend job, the 409 response carries that
+  job's persisted description; the frontend adopts both values and resumes with one GET/poll rather
+  than issuing another paid POST. Missing or malformed recovery identity is rejected.
 - Pet creation always uses OpenAI for the primary normal/sad/happy images and
   keeps the existing OpenRouter video path. After the primary normal image and video are ready, the same job
   starts a best-effort Kandinsky branch for normal/sad/happy images plus a normal-state video.
   The nested Kandinsky asset set is persisted with the job response; its failure
   is reported separately and never invalidates the usable OpenAI result.
+
+## Generated Media Retention
+
+- Generated-media cleanup has its own supervised scheduler and starts independently of Telegram
+  credentials and background-story generation. It performs an immediate pass, polls every five
+  minutes, and uses a shared `flock` plus a six-hour global-sweep timestamp to avoid duplicate work
+  across backend and bot. Known processing-temp directory prefixes older than one day are removed
+  only under the exact `.private/processing-tmp` root.
+- Telegram background-story PNG/MP4 files use a strict owner-directory and filename allowlist.
+  Active owner directories are derived from a truncated hash of Telegram owner plus canonical pet
+  ID, so same-pet owners cannot recover each other's files and raw Telegram IDs do not enter public
+  `/static/generated` URLs. The pre-owner-bound pet path is read/collected only for legacy media.
+  A six-hour global sweep and targeted post-generation/reset cleanup remove only files older than
+  eight days that are unreferenced by both the locked push registry and durable bot-command inbox.
+  The private generated-assets subtree is never traversed. Media reads refresh mtime before a
+  SQLite-to-push-store ownership transition so the two persistence systems do not need one shared
+  transaction for GC safety.
+- Expired failed pet jobs delete their deterministic asset directory only when the terminal job has
+  no published result. If deletion fails, the durable job row is restored for retry. Successful pet
+  and travel assets without server-side lifetime proof are retained.
 
 ## Production Routing
 
@@ -69,6 +168,28 @@
   `bizzy-radio-caddy-1` container using `/opt/bizzy-radio/Caddyfile`; the
   repository `deploy/Caddyfile` is the standalone compose equivalent, not the
   currently active proxy configuration on the server.
+- Backend and bot run as UID/GID `10001`. A network-isolated, capability-limited
+  `volume-permissions` init service repairs stale ownership on the three writable named volumes
+  before backend starts; the first migration from the former root image stops both writers first.
+  Backend and bot receive identical storage admission, capacity and media-cleanup settings. All
+  application containers use read-only root filesystems, dropped capabilities, `no-new-privileges`
+  and bounded tmpfs/cache mounts. Python installs umask `077`; writable private files/directories are
+  repaired to `0600`/`0700` semantics.
+- Volume backup/restore stops backend and bot before copying SQLite/WAL state, validates every
+  database with `PRAGMA quick_check`, fsyncs bundle metadata and verifies strict SHA-256 manifests.
+  Restore verifies before stopping writers, stages both volumes, and rolls both back or leaves the
+  writers stopped when an atomic cross-volume apply cannot complete.
+- Production application settings have one source: `backend/.env`. Compose env is limited to
+  topology, container security and explicitly documented resource knobs, so app settings cannot be
+  silently shadowed by a second default. Paid-media kill switches and all provider/profile settings
+  are declared in the shared backend env used by both backend and bot.
+- The frontend is a private Telegram Mini App rather than a searchable landing page: global metadata
+  emits `noindex,nofollow`; canonical, Open Graph and Twitter metadata describe only the root URL.
+- Backend production and CI dependencies are exact, SHA-256-verified wheel pins in
+  `backend/requirements.lock` and `backend/requirements-dev.lock`. The supported lock target is
+  CPython 3.12 on glibc 2.28+ x86_64/aarch64, using both manylinux_2_28 and compatible
+  manylinux2014 wheels where required; Docker and CI install with
+  `--require-hashes --only-binary=:all:` and do not resolve the open ranges in `pyproject.toml`.
 
 ## LLM Routing
 
@@ -107,6 +228,8 @@
   recovered. The local-only `/admin/travel-finale` lab reads these immutable source snapshots,
   compiles an editable 15-second video prompt, and stores prompt-addressed finale attempts without
   regenerating the journey.
+- `/static` is served through `PublicMediaStaticFiles`: only media suffixes are public even when
+  prompt, owner and finale metadata are colocated under the generated-assets volume.
 - Reference-to-video is an explicit media capability. OpenRouter requests may use either one frame
   image or a set of reference assets; the finale lab uses the prior travel MP4 URLs with Seedance
   2.0 while ordinary pet and story animation remains image-to-video on the configured model.
@@ -116,7 +239,9 @@
   images; video requests currently use i2v. Capability checks happen before transport calls.
 - Pet-scene videos from every provider are post-processed provider-neutrally with FFmpeg into
   a forward-then-reverse MP4. The first-frame preroll and duplicate endpoint frames are removed,
-  so the frontend only needs native looping and never seeks H.264 backwards.
+  so the frontend only needs native looping and never seeks H.264 backwards. Provider bytes are
+  forced through the local MOV/MP4 demuxer with the protocol whitelist restricted to `file` and
+  external data references disabled.
 - `MEDIA_PROFILE` selects `backend/data/media_runtime.json` independently from `LLM_PROFILE`.
   The `legacy` profile keeps images on `AI_PROVIDER` and video on OpenRouter. The `kandinsky`
   profile sends t2i/i2i tasks to Kandinsky 6.0 and i2v to Kandinsky 5 HD.
@@ -156,9 +281,19 @@
   by `sessionStorage`; scene taps cannot dismiss that reply, and its own timer hides
   it after five seconds. `localPetStorage.ts` re-exports the public functions for
   compatibility but owns only persistence/migration and non-stat overlays.
+- `localPetSnapshotRevision.ts` owns the independent per-pet dirty signal used by push sync;
+  `localPetScopedCleanup.ts` is the single reset/replacement boundary for auxiliary per-pet browser
+  state. Individual stores retain tombstones while persistent removal is unavailable.
+- Synchronous pet-state mutations use one localStorage snapshot: read the fresh durable value,
+  enforce the expected pet ID, apply the operation, verify the base has not already changed, write
+  once and require an exact read-back. This is intentionally last-writer-wins rather than a local
+  transaction; quota failures and observed lost races return failure/the actual winner instead of a
+  false success. Travel-impact receipts remain inside that snapshot for idempotency.
 - Dashboard browser effects are isolated from `PetDashboard.tsx`:
   `useConversationKeyboardOffset` owns Visual Viewport keyboard positioning and
-  `usePetPushSnapshotSync` owns throttled server snapshot reconciliation.
+  `usePetPushSnapshotSync` owns throttled server snapshot reconciliation. Background generation
+  polling backs off through 2/4/8/15/30/60 seconds, pauses while offline or hidden, and resumes
+  immediately when connectivity/visibility returns.
 - Speech admin orchestration stays in `SpeechAdmin.tsx` (load, validate, save,
   deploy and polling); JSON path manipulation and the runtime/tone/template/raw
   editors live in `SpeechAdminEditors.tsx`.
@@ -170,7 +305,9 @@
   `openapi-typescript` generates `frontend/src/lib/generated/openapi.d.ts`.
   Backend and frontend checks fail when either generated artifact is stale.
 - `frontend/src/lib/apiTransport.ts` owns fetch, safe public errors and malformed
-  JSON handling. `apiContracts.ts` validates successful payloads at runtime and
+  JSON handling. It rejects and cancels response bodies above 8 MiB before runtime parsing.
+  Requests have a five-minute default timeout; synchronous media endpoints and
+  the local Next proxy use a separate twenty-minute window. `apiContracts.ts` validates successful payloads at runtime and
   normalizes nullable wire fields into the frontend domain before `api.ts`
   applies pet-specific request/response mapping.
 - Local speech-admin routes also expose explicit Pydantic response models.
@@ -282,16 +419,18 @@
   visible output is capped at 120 characters and two sentences. `/push` runs
   the same generation path manually without consuming an automatic window.
   Runtime `/story` and `/push` work is submitted by `app.bot` to a bounded worker
-  pool so AI/image generation does not block `getUpdates` polling.
+  pool so AI/image generation does not block `getUpdates` polling. Story stat commits
+  atomically append a bounded per-pet generation receipt to the push registry; the
+  receipt makes a replay idempotent even when a newer operation has overwritten
+  `lastStory` or `lastFullStory`.
 - A story-based push may use only the newest background event by `createdAt`,
   and only while it is at most 12 hours old. Its reason explicitly frames the
   event as something that happened recently; when no fresh event exists, the
   push falls back to a non-story topic instead of recalling an older episode.
-- The MVP push registry remains JSON-backed, but all reads and mutations go
-  through `backend/app/services/telegram_push_store.py`. It uses an advisory
-  file lock shared by backend and bot processes, unique temporary files plus
-  `os.replace`, and transactional record updaters. Invalid JSON fails loudly
-  instead of being treated as an empty registry.
+- The push registry is SQLite WAL-backed and all reads and mutations go through
+  `backend/app/services/telegram_push_store.py`. `BEGIN IMMEDIATE` preserves transactional updater
+  semantics across backend and bot processes, while `synchronous=FULL` protects committed rows.
+  The legacy locked/atomic JSON implementation remains selectable for rollback compatibility.
   `/story` also preserves the `contextRouting.worldContext.query` when selecting
   global stories for the background-story dossier.
 - Chat has a lightweight deterministic `recentEvents` source for
@@ -433,8 +572,8 @@
   phase are persisted with the frontend asset set, polled after navigation, and
   merged atomically only when both sad assets are ready. Background failure is
   recorded without failing or removing the already usable pet. Image generation
-  and video polling use separate configurable thread pools (defaults: three image
-  workers and four video workers), so slow video polling does not occupy an image
+  and video polling use separate configurable thread pools (defaults: four image
+  workers and two video workers), so slow video polling does not occupy an image
   worker. The dashboard renders the selected mp4 as the full-height background with the same
   normalized image as poster/fallback; there is no separate centered pet sprite,
   blink overlay, tap animation, or background removal step on the active path.
@@ -465,8 +604,15 @@
   `frontend/src/lib/localPetChatTurn.ts`. A visible ambient/proactive hook is
   appended as a real pet history message when the user answers it, so the next
   request receives the exact causal turn without regex classification. Chat
-  prompt assembly keeps the latest eight complete messages instead of dropping
+  prompt assembly keeps the latest 12 messages instead of dropping
   prior pet replies.
+- `frontend/src/lib/localPetMutationLock.ts` serializes asynchronous per-pet browser mutations in
+  separate `conversation`, `memory`, and `travel` scopes through native Web Locks. Chat and memory
+  fail closed when that API is unavailable; interactive travel instead uses fresh durable reads and
+  exact-write LWW because backend travel CAS is authoritative. LocalStorage leases are not treated
+  as a mutex. Chat/ambient/proactive read their durable inputs only after acquiring `conversation`;
+  memory extraction/consolidation rereads and merges the latest memory under `memory`. Chat UI and
+  ambient dedupe refs reconcile matching `storage` events from other tabs.
 - Normal `/api/chat` replies return `happinessDelta` from the same structured
   visible-reply pass. Its scale is `20, 0, -20, -40, -60, -80`; only actual
   user send handlers apply it to local `stats.happiness` with a `0..100` clamp.
@@ -509,28 +655,45 @@
 - The backend owns compact response mapping plus illustration/video generation; the frontend persists
   presentation progress locally and renders video-only backgrounds across the full Telegram
   viewport. Generated PNGs are intermediate video sources, not visible background fallbacks.
-- A new interactive travel stores only one short goal in `arcPlan`; there is no fixed `partCount`
-  or parallel `step1...stepN` plot. Parts 1–2 continue, parts 3–5 may finish when the selected action
-  itself completes the goal, and part 6 must finish. Legacy active states still honor saved
-  `partCount`/`targetPartCount` values through 7. Each continuation sees the goal, current situation
-  and immediately previous consequence. The backend appends a deterministic achieved/failed
-  sentence from the exact opening goal to the model's visible final action.
-- The active story contract intentionally has no lexical, named-term, event-count, goal-evidence or
-  continuity validators and no semantic repair prompts. The model returns a result, one bridge and
-  the next unresolved situation; three choices are separate scalar fields. Backend normalization is
-  limited to API bounds, at most two visible sentences, choice-shape cleanup and one technical JSON retry.
+- Interactive-travel stat effects commit with bounded local-only receipts inside the same
+  `LocalPetState` write. `appliedResultParts` in the separate travel session is only a presentation
+  projection and a legacy-migration hint; push snapshots intentionally exclude the receipts.
+- New interactive travels always have three parts. They have no goal contract,
+  target-state ledger, continuity validator or semantic repair. `arcPlan` stores
+  only `generatorVersion` and one reviewed `funFact`; old arc-plan fields are
+  ignored when an unfinished legacy story continues.
+- The model freely generates the opening, selected-action result and next
+  situation from a short prompt. Three choices remain separate scalar JSON
+  fields for provider compatibility. The model receives one reviewed fact and
+  naturally incorporates it into part 1. The backend uses a fixed zero-hour
+  transition and always finishes after part 3. Normalization is limited to API bounds, punctuation, choice
+  cleanup and one technical JSON retry.
 - Interactive travel uses its own daily rate-limit bucket. A diagnostic reset tombstones the
   current travel ID, deletes its generated directory and clears that diagnostic user's travel
   bucket so late image/video completions cannot restore stale assets.
+- If an explicit new-pet start meets an owner-bound active session whose local record was lost, the
+  backend conflict carries its travel ID. `interactiveTravelStartRecovery.ts` accepts only the
+  validated 409/code/ID tuple, durably queues cancellation, calls the owner-checked cancel endpoint,
+  and retries start exactly once. Network/ambiguous cancellation failures are not retried and keep
+  the outbox entry.
+- Interactive-travel pet identity uses the optional validated `LocalPetChatContext.petId`; name,
+  stats and derived asset URL changes do not invalidate an active session. Payloads from legacy
+  clients without `petId` retain the old content fingerprint fallback. Start preflight does not write
+  a placeholder: free text generation runs outside SQLite, then one atomic commit creates the owner
+  proof and session. Concurrent identical starts may both generate text, but only one result becomes
+  durable and the loser replays it; a changed request reports `INTERACTIVE_TRAVEL_ALREADY_ACTIVE`.
+- `InteractiveTravelSessionStore` owns exactly two tables in one private SQLite database: immutable
+  owner proof/tombstones and authoritative narrative sessions. Continue follows the same
+  preflight/free-generation/atomic-CAS shape; an exact retry replays the committed response and a
+  stale different request conflicts. There are no durable `starting` states, operation tokens or
+  expiring operation leases.
+- Illustration, animation and finale capture validate owner, pet, part and exact narrative
+  fingerprint before work and recheck that same fingerprint before late persistence. Cancellation
+  tombstones the owner and deletes narrative state before cancelling generated media, fencing an
+  in-flight completion. Completed sessions are retained for 180 days; completed owner proof remains
+  after session pruning, while missing authoritative state makes late recovery fail closed.
 - Access is canaried on both UI and API through `INTERACTIVE_TRAVEL_PILOT_TELEGRAM_IDS`; the initial production allowlist contains only Telegram ID `62943754`.
 - Destination suggestions are sampled from a small server-side vocabulary without an LLM call.
-- Diagnostic demo playback is a separate read-only path. Its canonical completed
-  fixture is stored in `backend/data/interactive_travel_demo.json`, immutable media
-  lives under `backend/static/demo/interactive-travel/`, and the diagnostic API
-  returns it only to debug users. The frontend stages archived parts in React memory,
-  advances them with fixed five-second waits, and never writes a demo session to
-  localStorage, calls generation, applies pet stats, or captures a finale. Exiting
-  the demo restores any ordinary per-pet travel session unchanged.
 
 ## Local Admin
 
@@ -550,6 +713,10 @@
   schema and template rules shape the output, but world-description datasets,
   few-shot habitat anchors and random lore seed fragments are not injected into
   the character bible prompt.
+- Admin batch saves are serialized across processes with `flock`; unique backups and replacement
+  files are fsynced, and a partial multi-file failure restores every original before returning.
+  The in-memory publish registry keeps all active jobs but only the newest terminal jobs, with a
+  hard total target of 32.
 - Publishing those local admin data edits is a separate opt-in flow. The
   frontend calls `/api/admin/speech/publish`, backed by
   `backend/app/services/local_admin_publish.py`; the job saves dirty drafts,

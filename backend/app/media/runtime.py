@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import Settings, get_settings
+from app.media.concurrency import FileSlotMediaAdmission
 from app.media.contracts import ImageRequest, VideoRequest
 from app.media.gateway import MediaGateway, MediaRoute
 from app.media.providers import (
@@ -16,10 +17,14 @@ from app.media.providers import (
     OpenRouterImageProvider,
     OpenRouterVideoProvider,
 )
+from app.services.storage_health_service import reserve_media_storage_capacity
 
 
 class MediaRuntimeConfigError(RuntimeError):
     pass
+
+
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +44,13 @@ def _runtime_path(settings: Settings) -> Path:
     if path.is_absolute() or path.exists():
         return path
     return Path(__file__).resolve().parents[2] / path
+
+
+def _media_concurrency_lock_dir(settings: Settings) -> Path:
+    path = Path(settings.media_concurrency_lock_dir).expanduser()
+    if path.is_absolute():
+        return path
+    return BACKEND_ROOT / path
 
 
 def _provider(value: Any, *, location: str) -> str:
@@ -137,6 +149,16 @@ def get_media_router() -> RuntimeMediaRouter:
 
 
 @lru_cache
+def get_media_concurrency_admission() -> FileSlotMediaAdmission:
+    settings = get_settings()
+    return FileSlotMediaAdmission(
+        _media_concurrency_lock_dir(settings),
+        image_slots=settings.media_image_concurrency,
+        video_slots=settings.media_video_concurrency,
+    )
+
+
+@lru_cache
 def get_media_gateway() -> MediaGateway:
     return MediaGateway(
         image_providers={
@@ -149,11 +171,14 @@ def get_media_gateway() -> MediaGateway:
             "kandinsky": KandinskyVideoProvider(),
         },
         router=get_media_router(),
+        concurrency_admission=get_media_concurrency_admission().acquire,
+        storage_admission=reserve_media_storage_capacity,
     )
 
 
 def clear_media_runtime_caches() -> None:
     get_media_gateway.cache_clear()
+    get_media_concurrency_admission.cache_clear()
     get_media_router.cache_clear()
 
 

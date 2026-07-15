@@ -8,7 +8,6 @@ import type {
 } from "./localPetMemoryTypes";
 import type {
   ConversationHappinessDelta,
-  GenerateTravelResponse,
   InteractiveTravelAnimationResponse,
   InteractiveTravelIllustrationResponse,
   InteractiveTravelResponse,
@@ -20,6 +19,13 @@ import type {
   PetStatsPatch,
 } from "./types";
 import { ApiContractError } from "./apiTransport";
+import { isSafePublicAssetUrl } from "./publicAssetUrl";
+import { serializedJsonBytes } from "./pushSnapshotPayload";
+import {
+  isSafeJsonRecord,
+  safeJsonClone,
+  type SafeJsonCloneOptions,
+} from "./safeJsonValue";
 
 type ApiSchemas = components["schemas"];
 
@@ -37,6 +43,11 @@ export type PushSnapshotResponse = {
   recentStoryEventsPatch?: Record<string, unknown>;
 };
 
+export type DeletePushSnapshotResponse = {
+  unregistered: boolean;
+  petId: string;
+};
+
 type JsonRecord = Record<string, unknown>;
 
 const PET_MOODS = new Set<PetMood>(["idle", "happy", "hungry", "sad"]);
@@ -47,13 +58,6 @@ const FACE_HINTS = new Set<NonNullable<LocalChatResponse["faceHint"]>>([
   "content",
   "grumpy",
   "sleepy",
-]);
-const TRAVEL_ARCS = new Set<GenerateTravelResponse["story"]["scenes"][number]["arc"]>([
-  "beginning",
-  "exploration",
-  "discovery",
-  "reward",
-  "final",
 ]);
 const INTERACTIVE_TRAVEL_ASSESSMENTS = new Set(["helpful", "harmful", "ambiguous"] as const);
 const INTERACTIVE_TRAVEL_VALENCES = new Set(["positive", "negative"] as const);
@@ -68,8 +72,14 @@ const INTERACTIVE_TRAVEL_REACTION_TONES = new Set(
     "surprised",
   ] as const,
 );
-const JOB_STATUSES = new Set(["queued", "running", "succeeded", "failed"]);
-const JOB_PHASES = new Set([
+const INTERACTIVE_TRAVEL_ID_PATTERN = /^interactive-travel-[A-Za-z0-9_-]+$/u;
+const JOB_STATUSES = new Set<GeneratePetJobResponse["status"]>([
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+]);
+const JOB_PHASES = new Set<GeneratePetJobResponse["phase"]>([
   "queued",
   "generating_images",
   "generating_video",
@@ -94,6 +104,13 @@ const MEMORY_KINDS = new Set<UserMemoryKind>([
 ]);
 const PET_STAT_KEYS = ["hunger", "happiness", "energy"] as const satisfies readonly PetStatKey[];
 const HAPPINESS_DELTAS = new Set<ConversationHappinessDelta>([-80, -60, -40, -20, 0, 30, 100]);
+const MAX_LOCAL_CHAT_REPLY_LENGTH = 8_000;
+const MAX_PATCH_BYTES = 128_000;
+const MAX_DEBUG_BYTES = 512_000;
+const MAX_MEMORY_EXTRACTION_OPERATIONS = 12;
+const MAX_MEMORY_CONSOLIDATION_OPERATIONS = 120;
+const MAX_CHARACTER_BIBLE_BYTES = 512_000;
+const MAX_GENERATION_ERROR_BYTES = 64_000;
 
 function fail(path: string, expectation: string): never {
   throw new ApiContractError(`${path}: ожидалось ${expectation}`);
@@ -108,6 +125,41 @@ function record(value: unknown, path: string): JsonRecord {
 
 function optionalRecord(value: unknown, path: string): JsonRecord | undefined {
   return value === null || value === undefined ? undefined : record(value, path);
+}
+
+function boundedRecord(
+  value: unknown,
+  path: string,
+  maxBytes: number,
+  options: SafeJsonCloneOptions = {},
+): JsonRecord {
+  const parsed = record(value, path);
+  if (serializedJsonBytes(parsed) > maxBytes) {
+    return fail(path, `JSON object no larger than ${maxBytes} bytes`);
+  }
+  const cloned = safeJsonClone(parsed, {
+    maxDepth: 12,
+    maxNodes: 2_500,
+    maxStringLength: 32_000,
+    maxArrayLength: 200,
+    maxObjectKeys: 200,
+    ...options,
+  });
+  if (!isSafeJsonRecord(cloned)) {
+    return fail(path, "safe JSON object");
+  }
+  return cloned;
+}
+
+function optionalBoundedRecord(
+  value: unknown,
+  path: string,
+  maxBytes: number,
+  options: SafeJsonCloneOptions = {},
+): JsonRecord | undefined {
+  return value === null || value === undefined
+    ? undefined
+    : boundedRecord(value, path, maxBytes, options);
 }
 
 function array(value: unknown, path: string): unknown[] {
@@ -140,6 +192,14 @@ function boundedString(
   return parsed;
 }
 
+function interactiveTravelId(value: unknown, path: string): string {
+  const parsed = boundedString(value, path, { max: 120 });
+  if (!INTERACTIVE_TRAVEL_ID_PATTERN.test(parsed)) {
+    return fail(path, "interactive-travel identifier");
+  }
+  return parsed;
+}
+
 function integerInRange(value: unknown, path: string, min: number, max: number): number {
   const parsed = number(value, path);
   if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
@@ -162,11 +222,39 @@ function optionalBoundedString(
     : boundedString(value, path, bounds);
 }
 
+function boundedDateTime(value: unknown, path: string): string {
+  const parsed = boundedString(value, path, { max: 80 });
+  if (Number.isNaN(Date.parse(parsed))) {
+    return fail(path, "ISO date-time string");
+  }
+  return parsed;
+}
+
+function boundedAssetUrl(value: unknown, path: string): string {
+  const parsed = boundedString(value, path, { max: 2_000 });
+  if (!isSafePublicAssetUrl(parsed)) {
+    return fail(path, "same-origin or configured API asset URL");
+  }
+  return parsed.trim();
+}
+
+function optionalBoundedAssetUrl(value: unknown, path: string): string | undefined {
+  return value === null || value === undefined ? undefined : boundedAssetUrl(value, path);
+}
+
 function number(value: unknown, path: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return fail(path, "finite number");
   }
   return value;
+}
+
+function numberInRange(value: unknown, path: string, min: number, max: number): number {
+  const parsed = number(value, path);
+  if (parsed < min || parsed > max) {
+    return fail(path, `number ${min}–${max}`);
+  }
+  return parsed;
 }
 
 function boolean(value: unknown, path: string): boolean {
@@ -206,119 +294,169 @@ function optionalConversationHappinessDelta(
 }
 
 function parseDebug(value: unknown, path: string): LocalChatResponse["debug"] {
-  return optionalRecord(value, path) as LocalChatResponse["debug"];
+  return optionalBoundedRecord(value, path, MAX_DEBUG_BYTES) as LocalChatResponse["debug"];
+}
+
+type GeneratedPetImages = GeneratePetApiResponse["images"];
+type GeneratedPetStaticAsset = NonNullable<GeneratePetApiResponse["kandinskyAssets"]>;
+
+function parseGeneratedPetImages(value: unknown, path: string): GeneratedPetImages {
+  const images = record(value, path);
+  const parseStage = (stage: "baby" | "teen" | "adult") => {
+    const stageImages = record(images[stage], `${path}.${stage}`);
+    return {
+      idle: boundedAssetUrl(stageImages.idle, `${path}.${stage}.idle`),
+      happy: boundedAssetUrl(stageImages.happy, `${path}.${stage}.happy`),
+      hungry: boundedAssetUrl(stageImages.hungry, `${path}.${stage}.hungry`),
+      sad: boundedAssetUrl(stageImages.sad, `${path}.${stage}.sad`),
+    };
+  };
+  return {
+    baby: parseStage("baby"),
+    teen: parseStage("teen"),
+    adult: parseStage("adult"),
+  };
 }
 
 function parseGeneratedPetAsset(value: unknown, path: string): GeneratePetApiResponse {
   const payload = record(value, path);
-  string(payload.assetSetId, `${path}.assetSetId`);
-  string(payload.generatedAt, `${path}.generatedAt`);
-  const images = record(payload.images, `${path}.images`);
-  for (const stage of ["baby", "teen", "adult"] as const) {
-    const stageImages = record(images[stage], `${path}.images.${stage}`);
-    for (const mood of PET_MOODS) {
-      string(stageImages[mood], `${path}.images.${stage}.${mood}`);
-    }
-  }
-  optionalString(payload.videoUrl, `${path}.videoUrl`);
-  optionalString(payload.sadVideoUrl, `${path}.sadVideoUrl`);
-  optionalString(payload.happyVideoUrl, `${path}.happyVideoUrl`);
-  optionalString(payload.blinkImageUrl, `${path}.blinkImageUrl`);
-  optionalString(payload.spriteSheetUrl, `${path}.spriteSheetUrl`);
-  optionalRecord(payload.characterBible, `${path}.characterBible`);
-  if (payload.kandinskyAssets !== null && payload.kandinskyAssets !== undefined) {
-    parseGeneratedPetStaticAsset(payload.kandinskyAssets, `${path}.kandinskyAssets`);
-  }
-  return payload as GeneratePetApiResponse;
+  const characterBible = optionalBoundedRecord(
+    payload.characterBible,
+    `${path}.characterBible`,
+    MAX_CHARACTER_BIBLE_BYTES,
+    {
+      maxDepth: 12,
+      maxNodes: 5_000,
+      maxStringLength: 32_000,
+      maxArrayLength: 200,
+      maxObjectKeys: 200,
+    },
+  );
+  const kandinskyAssets =
+    payload.kandinskyAssets === null || payload.kandinskyAssets === undefined
+      ? undefined
+      : parseGeneratedPetStaticAsset(payload.kandinskyAssets, `${path}.kandinskyAssets`);
+  const videoUrl = optionalBoundedAssetUrl(payload.videoUrl, `${path}.videoUrl`);
+  const sadVideoUrl = optionalBoundedAssetUrl(payload.sadVideoUrl, `${path}.sadVideoUrl`);
+  const happyVideoUrl = optionalBoundedAssetUrl(payload.happyVideoUrl, `${path}.happyVideoUrl`);
+  const blinkImageUrl = optionalBoundedAssetUrl(payload.blinkImageUrl, `${path}.blinkImageUrl`);
+  const spriteSheetUrl = optionalBoundedAssetUrl(
+    payload.spriteSheetUrl,
+    `${path}.spriteSheetUrl`,
+  );
+  return {
+    assetSetId: boundedString(payload.assetSetId, `${path}.assetSetId`, { max: 160 }),
+    generatedAt: boundedDateTime(payload.generatedAt, `${path}.generatedAt`),
+    images: parseGeneratedPetImages(payload.images, `${path}.images`),
+    ...(videoUrl ? { videoUrl } : {}),
+    ...(sadVideoUrl ? { sadVideoUrl } : {}),
+    ...(happyVideoUrl ? { happyVideoUrl } : {}),
+    ...(blinkImageUrl ? { blinkImageUrl } : {}),
+    ...(spriteSheetUrl ? { spriteSheetUrl } : {}),
+    ...(characterBible ? { characterBible } : {}),
+    ...(kandinskyAssets ? { kandinskyAssets } : {}),
+  };
 }
 
-function parseGeneratedPetStaticAsset(value: unknown, path: string) {
+function parseGeneratedPetStaticAsset(
+  value: unknown,
+  path: string,
+): GeneratedPetStaticAsset {
   const payload = record(value, path);
-  string(payload.assetSetId, `${path}.assetSetId`);
-  string(payload.generatedAt, `${path}.generatedAt`);
-  const images = record(payload.images, `${path}.images`);
-  for (const stage of ["baby", "teen", "adult"] as const) {
-    const stageImages = record(images[stage], `${path}.images.${stage}`);
-    for (const mood of PET_MOODS) {
-      string(stageImages[mood], `${path}.images.${stage}.${mood}`);
-    }
-  }
+  const videoUrl = optionalBoundedAssetUrl(payload.videoUrl, `${path}.videoUrl`);
+  return {
+    assetSetId: boundedString(payload.assetSetId, `${path}.assetSetId`, { max: 160 }),
+    generatedAt: boundedDateTime(payload.generatedAt, `${path}.generatedAt`),
+    images: parseGeneratedPetImages(payload.images, `${path}.images`),
+    ...(videoUrl ? { videoUrl } : {}),
+  };
 }
 
 export function parseGeneratePetJobResponse(value: unknown): GeneratePetJobResponse {
   const payload = record(value, "generatePetJob");
-  string(payload.jobId, "generatePetJob.jobId");
-  enumValue(payload.status, JOB_STATUSES, "generatePetJob.status");
-  enumValue(payload.phase, JOB_PHASES, "generatePetJob.phase");
-  string(payload.createdAt, "generatePetJob.createdAt");
-  string(payload.updatedAt, "generatePetJob.updatedAt");
-  if (payload.result !== null && payload.result !== undefined) {
-    parseGeneratedPetAsset(payload.result, "generatePetJob.result");
+  const result =
+    payload.result === null || payload.result === undefined
+      ? undefined
+      : parseGeneratedPetAsset(payload.result, "generatePetJob.result");
+  const errorOptions: SafeJsonCloneOptions = {
+    maxDepth: 8,
+    maxNodes: 500,
+    maxStringLength: 8_000,
+    maxArrayLength: 50,
+    maxObjectKeys: 80,
+  };
+  const error = optionalBoundedRecord(
+    payload.error,
+    "generatePetJob.error",
+    MAX_GENERATION_ERROR_BYTES,
+    errorOptions,
+  );
+  const backgroundError = optionalBoundedRecord(
+    payload.backgroundError,
+    "generatePetJob.backgroundError",
+    MAX_GENERATION_ERROR_BYTES,
+    errorOptions,
+  );
+  const comparisonError = optionalBoundedRecord(
+    payload.comparisonError,
+    "generatePetJob.comparisonError",
+    MAX_GENERATION_ERROR_BYTES,
+    errorOptions,
+  );
+  const status = enumValue(payload.status, JOB_STATUSES, "generatePetJob.status");
+  const phase = enumValue(payload.phase, JOB_PHASES, "generatePetJob.phase");
+  if (status === "succeeded" && !result) {
+    return fail("generatePetJob.result", "a result for a succeeded job");
   }
-  optionalRecord(payload.error, "generatePetJob.error");
-  optionalRecord(payload.backgroundError, "generatePetJob.backgroundError");
-  optionalRecord(payload.comparisonError, "generatePetJob.comparisonError");
-  return payload as GeneratePetJobResponse;
+  if (status === "succeeded" && phase !== "completed") {
+    return fail("generatePetJob.phase", "completed for a succeeded job");
+  }
+  if (phase === "completed" && status !== "succeeded" && status !== "failed") {
+    return fail("generatePetJob.status", "a terminal status for a completed job");
+  }
+  return {
+    jobId: boundedString(payload.jobId, "generatePetJob.jobId", { max: 160 }),
+    status,
+    phase,
+    createdAt: boundedDateTime(payload.createdAt, "generatePetJob.createdAt"),
+    updatedAt: boundedDateTime(payload.updatedAt, "generatePetJob.updatedAt"),
+    ...(result ? { result } : {}),
+    ...(error ? { error } : {}),
+    ...(backgroundError ? { backgroundError } : {}),
+    ...(comparisonError ? { comparisonError } : {}),
+  };
 }
 
 export function parseLocalChatResponse(value: unknown): LocalChatResponse {
   const payload = record(value, "localChat");
   const petPatch = optionalRecord(payload.petPatch, "localChat.petPatch");
   return {
-    reply: string(payload.reply, "localChat.reply"),
+    reply: boundedString(payload.reply, "localChat.reply", {
+      min: 0,
+      max: MAX_LOCAL_CHAT_REPLY_LENGTH,
+    }),
     moodHint: optionalEnumValue(payload.moodHint, PET_MOODS, "localChat.moodHint"),
     happinessDelta: optionalConversationHappinessDelta(
       payload.happinessDelta,
       "localChat.happinessDelta",
     ),
-    complimentKey: optionalString(payload.complimentKey, "localChat.complimentKey"),
-    innerThought: optionalString(payload.innerThought, "localChat.innerThought"),
+    complimentKey: optionalBoundedString(payload.complimentKey, "localChat.complimentKey", {
+      max: 120,
+    }),
+    innerThought: optionalBoundedString(payload.innerThought, "localChat.innerThought", {
+      min: 0,
+      max: 80,
+    }),
     faceHint: optionalEnumValue(payload.faceHint, FACE_HINTS, "localChat.faceHint"),
     petPatch: petPatch
-      ? { name: optionalString(petPatch.name, "localChat.petPatch.name") }
+      ? { name: optionalBoundedString(petPatch.name, "localChat.petPatch.name", { max: 32 }) }
       : undefined,
-    storyLibraryPatch: optionalRecord(
+    storyLibraryPatch: optionalBoundedRecord(
       payload.storyLibraryPatch,
       "localChat.storyLibraryPatch",
+      MAX_PATCH_BYTES,
     ),
     debug: parseDebug(payload.debug, "localChat.debug"),
-  };
-}
-
-export function parseGenerateTravelResponse(value: unknown): GenerateTravelResponse {
-  const payload = record(value, "travel");
-  const story = record(payload.story, "travel.story");
-  const scenes = array(story.scenes, "travel.story.scenes").map((item, index) => {
-    const scene = record(item, `travel.story.scenes[${index}]`);
-    return {
-      index: number(scene.index, `travel.story.scenes[${index}].index`),
-      arc: enumValue(
-        scene.arc,
-        TRAVEL_ARCS,
-        `travel.story.scenes[${index}].arc`,
-      ),
-      title: string(scene.title, `travel.story.scenes[${index}].title`),
-      text: string(scene.text, `travel.story.scenes[${index}].text`),
-      visualBrief: string(scene.visualBrief, `travel.story.scenes[${index}].visualBrief`),
-    };
-  });
-  const images = optionalArray(payload.images, "travel.images").map((item, index) => {
-    const image = record(item, `travel.images[${index}]`);
-    return {
-      sceneIndex: number(image.sceneIndex, `travel.images[${index}].sceneIndex`),
-      imageUrl: string(image.imageUrl, `travel.images[${index}].imageUrl`),
-    };
-  });
-  return {
-    travelId: string(payload.travelId, "travel.travelId"),
-    generatedAt: string(payload.generatedAt, "travel.generatedAt"),
-    story: {
-      title: string(story.title, "travel.story.title"),
-      summary: string(story.summary, "travel.story.summary"),
-      scenes,
-    },
-    images,
-    debug: parseDebug(payload.debug, "travel.debug"),
   };
 }
 
@@ -353,13 +491,15 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
           summary: boundedString(transitionValue.summary, `${partPath}.transition.summary`, {
             max: 240,
           }),
-          departureHook: optionalString(
+          departureHook: optionalBoundedString(
             transitionValue.departureHook,
             `${partPath}.transition.departureHook`,
+            { max: 280 },
           ),
-          continuityAnchor: optionalString(
+          continuityAnchor: optionalBoundedString(
             transitionValue.continuityAnchor,
             `${partPath}.transition.continuityAnchor`,
+            { max: 60 },
           ),
         }
       : undefined;
@@ -384,15 +524,13 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
         { max: 72 },
       ),
     );
-    const backgroundImageUrl = optionalBoundedString(
+    const backgroundImageUrl = optionalBoundedAssetUrl(
       part.backgroundImageUrl,
       `${partPath}.backgroundImageUrl`,
-      { max: 1000 },
     );
-    const backgroundVideoUrl = optionalBoundedString(
+    const backgroundVideoUrl = optionalBoundedAssetUrl(
       part.backgroundVideoUrl,
       `${partPath}.backgroundVideoUrl`,
-      { max: 1000 },
     );
     const resultValue = optionalRecord(part.result, `${partPath}.result`);
     if ((answer === undefined) !== (resultValue === undefined)) {
@@ -473,12 +611,21 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
     }
   }
   const arcPlanValue = record(travel.arcPlan, "interactiveTravelResponse.travel.arcPlan");
-  const arcPlan = Object.fromEntries(
-    Object.entries(arcPlanValue).map(([key, item]) => [
-      key,
-      string(item, `interactiveTravelResponse.travel.arcPlan.${key}`),
-    ]),
-  );
+  const arcPlanEntries = Object.entries(arcPlanValue);
+  if (arcPlanEntries.length > 20) {
+    return fail("interactiveTravelResponse.travel.arcPlan", "at most 20 entries");
+  }
+  const arcPlan: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (const [key, item] of arcPlanEntries) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype" || key.length > 80) {
+      return fail("interactiveTravelResponse.travel.arcPlan", "safe bounded keys");
+    }
+    arcPlan[key] = boundedString(
+      item,
+      `interactiveTravelResponse.travel.arcPlan.${key}`,
+      { max: 500 },
+    );
+  }
   const impactValue = optionalRecord(
     travel.statImpact,
     "interactiveTravelResponse.travel.statImpact",
@@ -490,13 +637,16 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
           new Set(PET_STAT_KEYS),
           "interactiveTravelResponse.travel.statImpact.stat",
         ),
-        amount: number(
+        amount: integerInRange(
           impactValue.amount,
           "interactiveTravelResponse.travel.statImpact.amount",
+          -15,
+          15,
         ),
-        reason: string(
+        reason: boundedString(
           impactValue.reason,
           "interactiveTravelResponse.travel.statImpact.reason",
+          { max: 280 },
         ),
       }
     : undefined;
@@ -531,12 +681,23 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
     : undefined;
   return {
     travel: {
-      travelId: string(travel.travelId, "interactiveTravelResponse.travel.travelId"),
-      generatedAt: string(travel.generatedAt, "interactiveTravelResponse.travel.generatedAt"),
-      destination: string(travel.destination, "interactiveTravelResponse.travel.destination"),
-      overallTitle: string(
+      travelId: interactiveTravelId(
+        travel.travelId,
+        "interactiveTravelResponse.travel.travelId",
+      ),
+      generatedAt: boundedDateTime(
+        travel.generatedAt,
+        "interactiveTravelResponse.travel.generatedAt",
+      ),
+      destination: boundedString(
+        travel.destination,
+        "interactiveTravelResponse.travel.destination",
+        { max: 500 },
+      ),
+      overallTitle: boundedString(
         travel.overallTitle,
         "interactiveTravelResponse.travel.overallTitle",
+        { max: 120 },
       ),
       introReaction,
       arcPlan,
@@ -581,13 +742,9 @@ export function parseInteractiveTravelIllustrationResponse(
       payload.partNumber,
       "interactiveTravelIllustration.partNumber",
       1,
-      6,
+      7,
     ),
-    imageUrl: boundedString(
-      payload.imageUrl,
-      "interactiveTravelIllustration.imageUrl",
-      { max: 1000 },
-    ),
+    imageUrl: boundedAssetUrl(payload.imageUrl, "interactiveTravelIllustration.imageUrl"),
   };
 }
 
@@ -600,11 +757,9 @@ export function parseInteractiveTravelAnimationResponse(
       payload.partNumber,
       "interactiveTravelAnimation.partNumber",
       1,
-      6,
+      7,
     ),
-    videoUrl: boundedString(payload.videoUrl, "interactiveTravelAnimation.videoUrl", {
-      max: 1000,
-    }),
+    videoUrl: boundedAssetUrl(payload.videoUrl, "interactiveTravelAnimation.videoUrl"),
   };
 }
 
@@ -645,22 +800,40 @@ export function parsePushSnapshotResponse(value: unknown): PushSnapshotResponse 
         ? undefined
         : boolean(payload.resetPet, "pushSnapshot.resetPet"),
     statsPatch: parseStatsPatch(payload.statsPatch, "pushSnapshot.statsPatch"),
-    storyLibraryPatch: optionalRecord(
+    storyLibraryPatch: optionalBoundedRecord(
       payload.storyLibraryPatch,
       "pushSnapshot.storyLibraryPatch",
+      MAX_PATCH_BYTES,
     ),
-    liteOverlayPatch: optionalRecord(payload.liteOverlayPatch, "pushSnapshot.liteOverlayPatch"),
-    recentStoryEventsPatch: optionalRecord(
+    liteOverlayPatch: optionalBoundedRecord(
+      payload.liteOverlayPatch,
+      "pushSnapshot.liteOverlayPatch",
+      MAX_PATCH_BYTES,
+    ),
+    recentStoryEventsPatch: optionalBoundedRecord(
       payload.recentStoryEventsPatch,
       "pushSnapshot.recentStoryEventsPatch",
+      MAX_PATCH_BYTES,
     ),
+  };
+}
+
+export function parseDeletePushSnapshotResponse(value: unknown): DeletePushSnapshotResponse {
+  const payload = record(value, "deletePushSnapshot");
+  return {
+    unregistered: boolean(payload.unregistered, "deletePushSnapshot.unregistered"),
+    petId: boundedString(payload.petId, "deletePushSnapshot.petId", { max: 120 }),
   };
 }
 
 export function parseLiteFactExtractionResponse(value: unknown): LiteFactExtractionResponse {
   const payload = record(value, "liteFacts");
   return {
-    liteOverlayPatch: optionalRecord(payload.liteOverlayPatch, "liteFacts.liteOverlayPatch"),
+    liteOverlayPatch: optionalBoundedRecord(
+      payload.liteOverlayPatch,
+      "liteFacts.liteOverlayPatch",
+      MAX_PATCH_BYTES,
+    ),
     debug: parseDebug(payload.debug, "liteFacts.debug"),
   };
 }
@@ -670,17 +843,29 @@ function optionalMemoryKind(value: unknown, path: string): UserMemoryKind | unde
 }
 
 function parseMemoryFields(payload: JsonRecord, path: string) {
+  const rawTags = optionalArray(payload.tags, `${path}.tags`);
+  if (rawTags.length > 12) {
+    return fail(`${path}.tags`, "0–12 tags");
+  }
   return {
     kind: enumValue(payload.kind, MEMORY_KINDS, `${path}.kind`),
-    text: string(payload.text, `${path}.text`),
-    normalizedKey: string(payload.normalizedKey, `${path}.normalizedKey`),
-    confidence: number(payload.confidence, `${path}.confidence`),
-    importance: number(payload.importance, `${path}.importance`),
-    occurredAt: optionalString(payload.occurredAt, `${path}.occurredAt`),
-    dueAt: optionalString(payload.dueAt, `${path}.dueAt`),
-    expiresAt: optionalString(payload.expiresAt, `${path}.expiresAt`),
-    tags: optionalArray(payload.tags, `${path}.tags`).map((tag, index) =>
-      string(tag, `${path}.tags[${index}]`),
+    text: boundedString(payload.text, `${path}.text`, { max: 500 }),
+    normalizedKey: boundedString(payload.normalizedKey, `${path}.normalizedKey`, {
+      max: 160,
+    }),
+    confidence: numberInRange(payload.confidence, `${path}.confidence`, 0, 1),
+    importance: numberInRange(payload.importance, `${path}.importance`, 0, 1),
+    occurredAt: optionalBoundedString(payload.occurredAt, `${path}.occurredAt`, {
+      min: 0,
+      max: 80,
+    }),
+    dueAt: optionalBoundedString(payload.dueAt, `${path}.dueAt`, { min: 0, max: 80 }),
+    expiresAt: optionalBoundedString(payload.expiresAt, `${path}.expiresAt`, {
+      min: 0,
+      max: 80,
+    }),
+    tags: rawTags.map((tag, index) =>
+      boundedString(tag, `${path}.tags[${index}]`, { max: 40 }),
     ),
   };
 }
@@ -691,13 +876,18 @@ function parseMemoryOperation(value: unknown, path: string): MemoryOperation {
   if (type === "capture_learning") {
     return {
       type,
-      observation: string(payload.observation, `${path}.observation`),
-      patternKey: optionalString(payload.patternKey, `${path}.patternKey`),
+      observation: boundedString(payload.observation, `${path}.observation`, { max: 500 }),
+      patternKey: optionalBoundedString(payload.patternKey, `${path}.patternKey`, {
+        max: 120,
+      }),
       kind: optionalMemoryKind(payload.kind, `${path}.kind`),
-      confidence: number(payload.confidence, `${path}.confidence`),
-      importance: number(payload.importance, `${path}.importance`),
-      occurredAt: optionalString(payload.occurredAt, `${path}.occurredAt`),
-      dueAt: optionalString(payload.dueAt, `${path}.dueAt`),
+      confidence: numberInRange(payload.confidence, `${path}.confidence`, 0, 1),
+      importance: numberInRange(payload.importance, `${path}.importance`, 0, 1),
+      occurredAt: optionalBoundedString(payload.occurredAt, `${path}.occurredAt`, {
+        min: 0,
+        max: 80,
+      }),
+      dueAt: optionalBoundedString(payload.dueAt, `${path}.dueAt`, { min: 0, max: 80 }),
     };
   }
   if (type === "remember_user_fact" || type === "replace_user_fact") {
@@ -706,8 +896,15 @@ function parseMemoryOperation(value: unknown, path: string): MemoryOperation {
   if (type === "forget_user_fact") {
     return {
       type,
-      normalizedKey: optionalString(payload.normalizedKey, `${path}.normalizedKey`),
-      matchText: optionalString(payload.matchText ?? payload.text, `${path}.matchText`),
+      normalizedKey: optionalBoundedString(payload.normalizedKey, `${path}.normalizedKey`, {
+        min: 0,
+        max: 160,
+      }),
+      matchText: optionalBoundedString(
+        payload.matchText ?? payload.text,
+        `${path}.matchText`,
+        { min: 0, max: 180 },
+      ),
     };
   }
   return fail(`${path}.type`, "known memory operation");
@@ -722,27 +919,34 @@ function parseConsolidationOperation(
   if (type === "promote_learning") {
     return {
       type,
-      learningId: string(payload.learningId, `${path}.learningId`),
+      learningId: boundedString(payload.learningId, `${path}.learningId`, { max: 160 }),
       memory: parseMemoryFields(record(payload.memory, `${path}.memory`), `${path}.memory`),
     };
   }
   if (type === "prune_learning") {
     return {
       type,
-      learningId: string(payload.learningId, `${path}.learningId`),
-      reason: optionalString(payload.reason, `${path}.reason`),
+      learningId: boundedString(payload.learningId, `${path}.learningId`, { max: 160 }),
+      reason: optionalBoundedString(payload.reason, `${path}.reason`, { min: 0, max: 500 }),
     };
   }
   if (type === "rewrite_summary" || type === "rewrite_user_profile") {
-    return { type, content: string(payload.content, `${path}.content`) };
+    return {
+      type,
+      content: boundedString(payload.content, `${path}.content`, { min: 0, max: 1_000 }),
+    };
   }
   return fail(`${path}.type`, "known consolidation operation");
 }
 
 export function parseMemoryExtractionResponse(value: unknown): MemoryExtractionResponse {
   const payload = record(value, "memoryExtraction");
+  const operations = optionalArray(payload.operations, "memoryExtraction.operations");
+  if (operations.length > MAX_MEMORY_EXTRACTION_OPERATIONS) {
+    return fail("memoryExtraction.operations", "0–12 operations");
+  }
   return {
-    operations: optionalArray(payload.operations, "memoryExtraction.operations").map(
+    operations: operations.map(
       (operation, index) =>
         parseMemoryOperation(operation, `memoryExtraction.operations[${index}]`),
     ),
@@ -754,8 +958,12 @@ export function parseMemoryConsolidationResponse(
   value: unknown,
 ): MemoryConsolidationResponse {
   const payload = record(value, "memoryConsolidation");
+  const operations = optionalArray(payload.operations, "memoryConsolidation.operations");
+  if (operations.length > MAX_MEMORY_CONSOLIDATION_OPERATIONS) {
+    return fail("memoryConsolidation.operations", "0–120 operations");
+  }
   return {
-    operations: optionalArray(payload.operations, "memoryConsolidation.operations").map(
+    operations: operations.map(
       (operation, index) =>
         parseConsolidationOperation(operation, `memoryConsolidation.operations[${index}]`),
     ),

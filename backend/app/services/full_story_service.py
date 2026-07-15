@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -11,6 +13,7 @@ from app.llm.runtime import resolve_llm_model
 from app.schemas import LocalPetChatContext
 from app.services.background_story_service import (
     generate_background_story_image_bytes,
+    reserve_background_story_image_bytes,
 )
 from app.services.character_dossier import story_character_data
 from app.services.full_story_direction import (
@@ -953,15 +956,12 @@ def generate_full_story(
     )
 
 
-def generate_full_story_part_image_bytes(
+def _full_story_part_image_story(
     *,
-    pet: LocalPetChatContext,
     overall_title: str,
     part: FullStoryPart | dict[str, Any],
     prompt_debug: list[dict[str, Any]] | None = None,
-    recent_story_events: list[dict[str, Any]] | None = None,
-    direction_output: dict[str, str] | None = None,
-) -> bytes:
+) -> SimpleNamespace:
     if isinstance(part, FullStoryPart):
         title = part.title
         summary = part.summary
@@ -982,7 +982,7 @@ def generate_full_story_part_image_bytes(
             if local_time or day_period
             else ""
         )
-    image_story = SimpleNamespace(
+    return SimpleNamespace(
         title=f"{overall_title}: {title}",
         summary=f"{summary}{delivery_context}",
         story_text=story_text,
@@ -991,9 +991,49 @@ def generate_full_story_part_image_bytes(
         tags=(),
         prompt_debug=prompt_debug if prompt_debug is not None else [],
     )
+
+
+def generate_full_story_part_image_bytes(
+    *,
+    pet: LocalPetChatContext,
+    overall_title: str,
+    part: FullStoryPart | dict[str, Any],
+    prompt_debug: list[dict[str, Any]] | None = None,
+    recent_story_events: list[dict[str, Any]] | None = None,
+    direction_output: dict[str, str] | None = None,
+) -> bytes:
+    image_story = _full_story_part_image_story(
+        overall_title=overall_title,
+        part=part,
+        prompt_debug=prompt_debug,
+    )
     return generate_background_story_image_bytes(
         pet=pet,
         story=image_story,
         recent_story_events=recent_story_events,
         direction_output=direction_output,
     )
+
+
+@contextmanager
+def reserve_full_story_part_image_bytes(
+    *,
+    pet: LocalPetChatContext,
+    overall_title: str,
+    part: FullStoryPart | dict[str, Any],
+    prompt_debug: list[dict[str, Any]] | None = None,
+    recent_story_events: list[dict[str, Any]] | None = None,
+    direction_output: dict[str, str] | None = None,
+) -> Iterator[bytes]:
+    image_story = _full_story_part_image_story(
+        overall_title=overall_title,
+        part=part,
+        prompt_debug=prompt_debug,
+    )
+    with reserve_background_story_image_bytes(
+        pet=pet,
+        story=image_story,
+        recent_story_events=recent_story_events,
+        direction_output=direction_output,
+    ) as payload:
+        yield payload

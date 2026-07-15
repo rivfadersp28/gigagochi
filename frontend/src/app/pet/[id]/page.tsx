@@ -7,5 +7,5 @@ type PetPageProps = {
 export default async function PetPage({ params }: PetPageProps) {
   const { id } = await params;
 
-  return <PetDashboard petId={id} />;
+  return <PetDashboard key={id} petId={id} />;
 }

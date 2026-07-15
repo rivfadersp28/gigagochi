@@ -31,11 +31,38 @@ type PromptDebugCarrier = {
   };
 };
 
+let sessionEvents: DebugPanelEvent[] | null = null;
+let pendingPersistence: "write" | "clear" | null = null;
+
 function storage() {
   if (typeof window === "undefined") {
     return null;
   }
-  return window.localStorage;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function copyEvents(events: DebugPanelEvent[]): DebugPanelEvent[] {
+  return events.map((event) => ({ ...event }));
+}
+
+function flushPendingPersistence(store: Storage | null) {
+  if (!pendingPersistence || !store) {
+    return;
+  }
+  try {
+    if (pendingPersistence === "write") {
+      store.setItem(DEBUG_EVENTS_STORAGE_KEY, JSON.stringify(sessionEvents ?? []));
+    } else {
+      store.removeItem(DEBUG_EVENTS_STORAGE_KEY);
+    }
+    pendingPersistence = null;
+  } catch {
+    // The session copy/tombstone remains authoritative until storage recovers.
+  }
 }
 
 function createDebugEventId() {
@@ -93,29 +120,29 @@ function notifyDebugEventsChanged() {
 
 export function readDebugPanelEvents(): DebugPanelEvent[] {
   const store = storage();
-  if (!store) {
-    return [];
+  flushPendingPersistence(store);
+  if (pendingPersistence || !store) {
+    return copyEvents(sessionEvents ?? []);
   }
   try {
     const rawValue = store.getItem(DEBUG_EVENTS_STORAGE_KEY);
     const parsed = rawValue ? JSON.parse(rawValue) : [];
     if (!Array.isArray(parsed)) {
+      sessionEvents = [];
       return [];
     }
-    return parsed
+    sessionEvents = parsed
+      .slice(-MAX_EVENTS)
       .map(normalizeEvent)
       .filter((item): item is DebugPanelEvent => Boolean(item))
       .slice(-MAX_EVENTS);
+    return copyEvents(sessionEvents);
   } catch {
-    return [];
+    return copyEvents(sessionEvents ?? []);
   }
 }
 
 export function appendDebugPanelEvents(drafts: DebugEventDraft[]) {
-  const store = storage();
-  if (!store) {
-    return;
-  }
   const events = drafts
     .map((draft) =>
       normalizeEvent({
@@ -129,12 +156,16 @@ export function appendDebugPanelEvents(drafts: DebugEventDraft[]) {
     return;
   }
   const nextEvents = [...readDebugPanelEvents(), ...events].slice(-MAX_EVENTS);
-  store.setItem(DEBUG_EVENTS_STORAGE_KEY, JSON.stringify(nextEvents));
+  sessionEvents = nextEvents;
+  pendingPersistence = "write";
+  flushPendingPersistence(storage());
   notifyDebugEventsChanged();
 }
 
 export function clearDebugPanelEvents() {
-  storage()?.removeItem(DEBUG_EVENTS_STORAGE_KEY);
+  sessionEvents = [];
+  pendingPersistence = "clear";
+  flushPendingPersistence(storage());
   notifyDebugEventsChanged();
 }
 

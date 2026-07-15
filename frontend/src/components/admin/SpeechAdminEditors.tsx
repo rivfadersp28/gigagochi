@@ -229,7 +229,7 @@ function Section({
   return (
     <section className="rounded-lg border border-border/70 bg-background p-4">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <h2 className="text-base font-semibold">{title}</h2>
+        <h2 className="text-balance text-base font-semibold">{title}</h2>
         {meta}
       </div>
       <div className="grid gap-4">{children}</div>

@@ -1,7 +1,8 @@
 import { parseInteractiveTravelResponse } from "./apiContracts";
-import type { InteractiveTravelDemoResponse } from "./types";
 import { ApiContractError, request } from "./apiTransport";
+import { resolveApiAssetUrl } from "./publicAssetUrl";
 import { getTelegramInitData } from "./telegram";
+import type { InteractiveTravelDemoResponse } from "./types";
 
 function debugAuthHeaders(): HeadersInit {
   const initData = getTelegramInitData();
@@ -44,14 +45,20 @@ export function getInteractiveTravelDemo(): Promise<InteractiveTravelDemoRespons
         throw new ApiContractError("Invalid interactive travel demo id");
       }
       const parsed = parseInteractiveTravelResponse({ travel: root.travel });
-      if (
-        parsed.travel.parts.some(
-          (part) => !part.backgroundImageUrl || !part.backgroundVideoUrl,
-        )
-      ) {
-        throw new ApiContractError("Interactive travel demo media is missing");
-      }
-      return { demoId: root.demoId, travel: parsed.travel };
+      return {
+        demoId: root.demoId,
+        travel: {
+          ...parsed.travel,
+          parts: parsed.travel.parts.map((part) => {
+            const backgroundImageUrl = resolveApiAssetUrl(part.backgroundImageUrl);
+            const backgroundVideoUrl = resolveApiAssetUrl(part.backgroundVideoUrl);
+            if (!backgroundImageUrl || !backgroundVideoUrl) {
+              throw new ApiContractError("Interactive travel demo media is missing");
+            }
+            return { ...part, backgroundImageUrl, backgroundVideoUrl };
+          }),
+        },
+      };
     },
   );
 }

@@ -19,106 +19,6 @@
         "title": "AdminDeployResponse",
         "type": "object"
       },
-      "AdminDialogueInfluenceItemResponse": {
-        "properties": {
-          "configPath": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Configpath"
-          },
-          "editable": {
-            "title": "Editable",
-            "type": "boolean"
-          },
-          "fileId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Fileid"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
-          "role": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Role"
-          },
-          "source": {
-            "title": "Source",
-            "type": "string"
-          },
-          "summary": {
-            "title": "Summary",
-            "type": "string"
-          },
-          "surfaces": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Surfaces",
-            "type": "array"
-          }
-        },
-        "required": [
-          "id",
-          "label",
-          "surfaces",
-          "source",
-          "editable",
-          "fileId",
-          "configPath",
-          "summary"
-        ],
-        "title": "AdminDialogueInfluenceItemResponse",
-        "type": "object"
-      },
-      "AdminDialogueResponse": {
-        "properties": {
-          "collections": {
-            "items": {
-              "$ref": "#/components/schemas/AdminDialogueInfluenceItemResponse"
-            },
-            "title": "Collections",
-            "type": "array"
-          },
-          "modifiers": {
-            "items": {
-              "$ref": "#/components/schemas/AdminDialogueInfluenceItemResponse"
-            },
-            "title": "Modifiers",
-            "type": "array"
-          }
-        },
-        "required": [
-          "modifiers",
-          "collections"
-        ],
-        "title": "AdminDialogueResponse",
-        "type": "object"
-      },
       "AdminFileUpdate": {
         "properties": {
           "content": {
@@ -395,10 +295,7 @@
             "type": "boolean"
           },
           "format": {
-            "enum": [
-              "json",
-              "jsonl"
-            ],
+            "const": "json",
             "title": "Format",
             "type": "string"
           },
@@ -455,9 +352,6 @@
           "deploy": {
             "$ref": "#/components/schemas/AdminDeployResponse"
           },
-          "dialogue": {
-            "$ref": "#/components/schemas/AdminDialogueResponse"
-          },
           "files": {
             "items": {
               "$ref": "#/components/schemas/AdminSpeechFileResponse"
@@ -485,7 +379,6 @@
           "generatedAt",
           "mode",
           "files",
-          "dialogue",
           "sync",
           "deploy"
         ],
@@ -538,7 +431,7 @@
           "travelId": {
             "maxLength": 120,
             "minLength": 1,
-            "pattern": "^[A-Za-z0-9_-]+$",
+            "pattern": "^interactive-travel-[A-Za-z0-9_-]+$",
             "title": "Travelid",
             "type": "string"
           }
@@ -813,36 +706,6 @@
             "minLength": 1,
             "title": "Description",
             "type": "string"
-          },
-          "moods": {
-            "items": {
-              "enum": [
-                "idle",
-                "happy",
-                "sad",
-                "hungry"
-              ],
-              "type": "string"
-            },
-            "title": "Moods",
-            "type": "array"
-          },
-          "stages": {
-            "items": {
-              "enum": [
-                "baby",
-                "teen",
-                "adult"
-              ],
-              "type": "string"
-            },
-            "title": "Stages",
-            "type": "array"
-          },
-          "style": {
-            "default": "cute mobile game pet",
-            "title": "Style",
-            "type": "string"
           }
         },
         "required": [
@@ -883,64 +746,6 @@
           "images"
         ],
         "title": "GeneratePetStaticAssetResponse",
-        "type": "object"
-      },
-      "GenerateTravelRequest": {
-        "properties": {
-          "includeDebug": {
-            "default": false,
-            "title": "Includedebug",
-            "type": "boolean"
-          },
-          "pet": {
-            "$ref": "#/components/schemas/LocalPetChatContext"
-          }
-        },
-        "required": [
-          "pet"
-        ],
-        "title": "GenerateTravelRequest",
-        "type": "object"
-      },
-      "GenerateTravelResponse": {
-        "properties": {
-          "debug": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/LocalChatDebug"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "generatedAt": {
-            "format": "date-time",
-            "title": "Generatedat",
-            "type": "string"
-          },
-          "images": {
-            "items": {
-              "$ref": "#/components/schemas/TravelSceneImage"
-            },
-            "maxItems": 7,
-            "title": "Images",
-            "type": "array"
-          },
-          "story": {
-            "$ref": "#/components/schemas/TravelStory"
-          },
-          "travelId": {
-            "title": "Travelid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "travelId",
-          "generatedAt",
-          "story"
-        ],
-        "title": "GenerateTravelResponse",
         "type": "object"
       },
       "GeneratedPetImages": {
@@ -1213,7 +1018,7 @@
           "travelId": {
             "maxLength": 120,
             "minLength": 1,
-            "pattern": "^[A-Za-z0-9_-]+$",
+            "pattern": "^interactive-travel-[A-Za-z0-9_-]+$",
             "title": "Travelid",
             "type": "string"
           }
@@ -1554,7 +1359,13 @@
         "properties": {
           "arcPlan": {
             "additionalProperties": {
+              "maxLength": 500,
               "type": "string"
+            },
+            "maxProperties": 32,
+            "propertyNames": {
+              "maxLength": 80,
+              "minLength": 1
             },
             "title": "Arcplan",
             "type": "object"
@@ -1628,6 +1439,7 @@
           "travelId": {
             "maxLength": 120,
             "minLength": 1,
+            "pattern": "^interactive-travel-[A-Za-z0-9_-]+$",
             "title": "Travelid",
             "type": "string"
           }
@@ -1708,6 +1520,7 @@
           "departureHook": {
             "anyOf": [
               {
+                "maxLength": 280,
                 "minLength": 1,
                 "type": "string"
               },
@@ -1846,6 +1659,7 @@
           },
           "recentAmbientReplies": {
             "items": {
+              "maxLength": 1000,
               "type": "string"
             },
             "maxItems": 30,
@@ -2311,6 +2125,7 @@
               {
                 "additionalProperties": {
                   "additionalProperties": {
+                    "maxLength": 1000,
                     "type": "string"
                   },
                   "propertyNames": {
@@ -2369,6 +2184,7 @@
           "name": {
             "anyOf": [
               {
+                "maxLength": 80,
                 "type": "string"
               },
               {
@@ -2376,6 +2192,20 @@
               }
             ],
             "title": "Name"
+          },
+          "petId": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Petid"
           },
           "stage": {
             "enum": [
@@ -2602,6 +2432,26 @@
         "title": "LocalPetProactiveCandidate",
         "type": "object"
       },
+      "LocalPetPushSnapshotDeleteResponse": {
+        "properties": {
+          "petId": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Petid",
+            "type": "string"
+          },
+          "unregistered": {
+            "title": "Unregistered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "unregistered",
+          "petId"
+        ],
+        "title": "LocalPetPushSnapshotDeleteResponse",
+        "type": "object"
+      },
       "LocalPetPushSnapshotRequest": {
         "properties": {
           "createdAt": {
@@ -2640,6 +2490,7 @@
             "anyOf": [
               {
                 "additionalProperties": {
+                  "maxLength": 80,
                   "type": "string"
                 },
                 "propertyNames": {
@@ -2685,16 +2536,45 @@
           "petId": {
             "maxLength": 120,
             "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
             "title": "Petid",
             "type": "string"
           },
           "recentAmbientReplies": {
             "items": {
+              "maxLength": 1000,
               "type": "string"
             },
             "maxItems": 30,
             "title": "Recentambientreplies",
             "type": "array"
+          },
+          "snapshotRevision": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshotrevision"
+          },
+          "snapshotWriterId": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 16,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshotwriterid"
           },
           "timezone": {
             "anyOf": [
@@ -2724,6 +2604,7 @@
             "anyOf": [
               {
                 "additionalProperties": {
+                  "maxLength": 80,
                   "type": "string"
                 },
                 "propertyNames": {
@@ -2858,6 +2739,7 @@
             "anyOf": [
               {
                 "additionalProperties": {
+                  "maxLength": 80,
                   "type": "string"
                 },
                 "propertyNames": {
@@ -3290,6 +3172,29 @@
         "title": "StartInteractiveTravelRequest",
         "type": "object"
       },
+      "TmaCapabilitiesResponse": {
+        "properties": {
+          "debugMenu": {
+            "title": "Debugmenu",
+            "type": "boolean"
+          },
+          "interactiveTravel": {
+            "title": "Interactivetravel",
+            "type": "boolean"
+          },
+          "telegramUserId": {
+            "title": "Telegramuserid",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "telegramUserId",
+          "debugMenu",
+          "interactiveTravel"
+        ],
+        "title": "TmaCapabilitiesResponse",
+        "type": "object"
+      },
       "TravelFinaleGenerateRequest": {
         "properties": {
           "prompt": {
@@ -3366,107 +3271,6 @@
           "direction"
         ],
         "title": "TravelFinalePromptRequest",
-        "type": "object"
-      },
-      "TravelSceneImage": {
-        "properties": {
-          "imageUrl": {
-            "minLength": 1,
-            "title": "Imageurl",
-            "type": "string"
-          },
-          "sceneIndex": {
-            "maximum": 7.0,
-            "minimum": 1.0,
-            "title": "Sceneindex",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "sceneIndex",
-          "imageUrl"
-        ],
-        "title": "TravelSceneImage",
-        "type": "object"
-      },
-      "TravelStory": {
-        "properties": {
-          "scenes": {
-            "items": {
-              "$ref": "#/components/schemas/TravelStoryScene"
-            },
-            "maxItems": 7,
-            "minItems": 7,
-            "title": "Scenes",
-            "type": "array"
-          },
-          "summary": {
-            "maxLength": 500,
-            "minLength": 1,
-            "title": "Summary",
-            "type": "string"
-          },
-          "title": {
-            "maxLength": 80,
-            "minLength": 1,
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "title",
-          "summary",
-          "scenes"
-        ],
-        "title": "TravelStory",
-        "type": "object"
-      },
-      "TravelStoryScene": {
-        "properties": {
-          "arc": {
-            "enum": [
-              "beginning",
-              "exploration",
-              "discovery",
-              "reward",
-              "final"
-            ],
-            "title": "Arc",
-            "type": "string"
-          },
-          "index": {
-            "maximum": 7.0,
-            "minimum": 1.0,
-            "title": "Index",
-            "type": "integer"
-          },
-          "text": {
-            "maxLength": 260,
-            "minLength": 1,
-            "title": "Text",
-            "type": "string"
-          },
-          "title": {
-            "maxLength": 70,
-            "minLength": 1,
-            "title": "Title",
-            "type": "string"
-          },
-          "visualBrief": {
-            "maxLength": 1800,
-            "minLength": 1,
-            "title": "Visualbrief",
-            "type": "string"
-          }
-        },
-        "required": [
-          "index",
-          "arc",
-          "title",
-          "text",
-          "visualBrief"
-        ],
-        "title": "TravelStoryScene",
         "type": "object"
       },
       "ValidationError": {
@@ -3922,6 +3726,27 @@
         ]
       }
     },
+    "/api/capabilities": {
+      "get": {
+        "operationId": "tma_capabilities_api_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TmaCapabilitiesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Tma Capabilities",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
     "/api/chat": {
       "post": {
         "operationId": "chat_api_chat_post",
@@ -4171,6 +3996,22 @@
     "/api/generate-pet": {
       "post": {
         "operationId": "generate_pet_api_generate_pet_post",
+        "parameters": [
+          {
+            "description": "Required for paid generation. Reusing the same key for this Telegram user replays or resumes the original operation without restarting completed media.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Required for paid generation. Reusing the same key for this Telegram user replays or resumes the original operation without restarting completed media.",
+              "maxLength": 96,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -4347,25 +4188,28 @@
         ]
       }
     },
-    "/api/travel": {
-      "post": {
-        "operationId": "travel_api_travel_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GenerateTravelRequest"
-              }
+    "/api/push/snapshot/{pet_id}": {
+      "delete": {
+        "operationId": "delete_push_snapshot_api_push_snapshot__pet_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pet_id",
+            "required": true,
+            "schema": {
+              "maxLength": 120,
+              "minLength": 1,
+              "title": "Pet Id",
+              "type": "string"
             }
-          },
-          "required": true
-        },
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GenerateTravelResponse"
+                  "$ref": "#/components/schemas/LocalPetPushSnapshotDeleteResponse"
                 }
               }
             },
@@ -4382,7 +4226,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Travel",
+        "summary": "Delete Push Snapshot",
         "tags": [
           "telegram-mini-app"
         ]
@@ -4654,6 +4498,55 @@
           }
         },
         "summary": "Interactive Travel Suggestions",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/interactive/{travel_id}/cancel": {
+      "post": {
+        "operationId": "interactive_travel_cancel_api_travel_interactive__travel_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "travel_id",
+            "required": true,
+            "schema": {
+              "maxLength": 160,
+              "minLength": 20,
+              "pattern": "^interactive-travel-[A-Za-z0-9_-]+$",
+              "title": "Travel Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Interactive Travel Cancel Api Travel Interactive  Travel Id  Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interactive Travel Cancel",
         "tags": [
           "telegram-mini-app"
         ]

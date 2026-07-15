@@ -1,22 +1,25 @@
 services:
-  caddy:
-    image: caddy:2-alpine
-    profiles:
-      - container-caddy
-    restart: unless-stopped
-    depends_on:
-      - backend
-      - frontend
-    environment:
-      WEBAPP_HOST: ${WEBAPP_HOST:?Set WEBAPP_HOST in .env.production}
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+  volume-permissions:
+    image: gigagochi-backend:latest
+    build:
+      context: ./backend
+    user: "0:0"
+    command: ["sh", "/app/scripts/ensure_volume_permissions.sh"]
+    restart: "no"
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
     volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - generated_assets:/app/static/generated
+      - backend_logs:/app/logs
+      - push_data:/app/data/push
     logging: &default-logging
       driver: json-file
       options:
@@ -28,48 +31,34 @@ services:
     build:
       context: ./backend
     restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    depends_on:
+      volume-permissions:
+        condition: service_completed_successfully
+    stop_grace_period: 20m
     env_file:
       - ./backend/.env
     environment:
-      LLM_PROFILE: ${LLM_PROFILE:-legacy}
-      GIGACHAT_BASE_URL: ${GIGACHAT_BASE_URL:-}
-      GIGACHAT_USERNAME: ${GIGACHAT_USERNAME:-}
-      GIGACHAT_PASSWORD: ${GIGACHAT_PASSWORD:-}
-      GIGACHAT_MODEL: ${GIGACHAT_MODEL:-GigaChat-3.5-432B-A28B}
-      GIGACHAT_SSL_VERIFY: ${GIGACHAT_SSL_VERIFY:-true}
-      GIGACHAT_CA_BUNDLE: ${GIGACHAT_CA_BUNDLE:-}
-      GIGACHAT_TOKEN_TIMEOUT_SECONDS: ${GIGACHAT_TOKEN_TIMEOUT_SECONDS:-30}
-      GIGACHAT_CHAT_TIMEOUT_SECONDS: ${GIGACHAT_CHAT_TIMEOUT_SECONDS:-120}
-      GIGACHAT_TOKEN_TTL_SECONDS: ${GIGACHAT_TOKEN_TTL_SECONDS:-1500}
-      TELEGRAM_DAILY_PUSH_ENABLED: "true"
-      TELEGRAM_DAILY_PUSH_HOURS: "[9,15,21]"
-      TELEGRAM_DAILY_PUSH_WINDOW_MINUTES: "120"
-      TELEGRAM_DAILY_PUSH_DEFAULT_TIMEZONE: "Europe/Moscow"
-      BACKGROUND_STORY_ENABLED: "true"
-      BACKGROUND_STORY_HOURS: "[9,13,17,21]"
-      BACKGROUND_STORY_WINDOW_MINUTES: "120"
+      TMPDIR: /app/static/generated/.private/processing-tmp
       BACKEND_INTERNAL_URL: http://backend:8000
       ALLOW_DEV_TMA_AUTH: "false"
-      ENABLE_IN_MEMORY_RATE_LIMIT: "true"
-      GENERATION_IMAGE_WORKERS: "20"
-      GENERATION_VIDEO_WORKERS: "20"
-      GENERATION_MAX_QUEUED_JOBS: "40"
-      GENERATION_JOB_STORE_PATH: "/app/data/push/generation_jobs.sqlite3"
-      OPENROUTER_VIDEO_MODEL: "x-ai/grok-imagine-video"
-      OPENAI_MAX_RETRIES: "2"
-      OPS_ALERTS_ENABLED: "true"
-      OPS_ALERT_TELEGRAM_IDS: "[62943754]"
-      GENERATION_RATE_LIMIT_PER_DAY: "3"
-      INTERACTIVE_TRAVEL_RATE_LIMIT_PER_DAY: "30"
-      CHAT_RATE_LIMIT_PER_HOUR: "120"
-      LITE_FACTS_RATE_LIMIT_PER_HOUR: "120"
-      MEMORY_RATE_LIMIT_PER_HOUR: "120"
-      DIAGNOSTIC_TELEGRAM_IDS: "[62943754]"
-      INTERACTIVE_TRAVEL_PILOT_TELEGRAM_IDS: "[62943754]"
+      STORAGE_HEALTH_MIN_FREE_BYTES: "${STORAGE_HEALTH_MIN_FREE_BYTES:-1073741824}"
+      STORAGE_HEALTH_MIN_FREE_PERCENT: "${STORAGE_HEALTH_MIN_FREE_PERCENT:-5}"
+      STORAGE_HEALTH_PROBE_CACHE_SECONDS: "${STORAGE_HEALTH_PROBE_CACHE_SECONDS:-10}"
+      STORAGE_ADMISSION_IMAGE_RESERVE_BYTES: "${STORAGE_ADMISSION_IMAGE_RESERVE_BYTES:-33554432}"
+      STORAGE_ADMISSION_VIDEO_RESERVE_BYTES: "${STORAGE_ADMISSION_VIDEO_RESERVE_BYTES:-268435456}"
+      MEDIA_IMAGE_CONCURRENCY: "${MEDIA_IMAGE_CONCURRENCY:-4}"
+      MEDIA_VIDEO_CONCURRENCY: "${MEDIA_VIDEO_CONCURRENCY:-2}"
+      GENERATION_IMAGE_WORKERS: "${GENERATION_IMAGE_WORKERS:-4}"
+      GENERATION_VIDEO_WORKERS: "${GENERATION_VIDEO_WORKERS:-2}"
     ports:
       - "127.0.0.1:18080:8000"
-    expose:
-      - "8000"
     networks:
       default:
       public_proxy:
@@ -85,7 +74,6 @@ services:
       - ./backend/data/lore_runtime.json:/app/data/lore_runtime.json:ro
       - ./backend/data/story_library.json:/app/data/story_library.json:ro
       - ./backend/data/story_constructor.json:/app/data/story_constructor.json:ro
-      - ./backend/data/travel_story_templates.json:/app/data/travel_story_templates.json:ro
       - ./backend/data/character_bible_template.json:/app/data/character_bible_template.json:ro
       - ./backend/data/age_speech_examples:/app/data/age_speech_examples:ro
       - ./backend/data/world_descriptions:/app/data/world_descriptions:ro
@@ -110,22 +98,28 @@ services:
     build:
       context: ./backend
     restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    stop_grace_period: 20m
     depends_on:
       - backend
     env_file:
       - ./backend/.env
     environment:
+      TMPDIR: /app/static/generated/.private/processing-tmp
       BACKEND_INTERNAL_URL: http://backend:8000
-      LLM_PROFILE: ${LLM_PROFILE:-legacy}
-      GIGACHAT_BASE_URL: ${GIGACHAT_BASE_URL:-}
-      GIGACHAT_USERNAME: ${GIGACHAT_USERNAME:-}
-      GIGACHAT_PASSWORD: ${GIGACHAT_PASSWORD:-}
-      GIGACHAT_MODEL: ${GIGACHAT_MODEL:-GigaChat-3.5-432B-A28B}
-      GIGACHAT_SSL_VERIFY: ${GIGACHAT_SSL_VERIFY:-true}
-      GIGACHAT_CA_BUNDLE: ${GIGACHAT_CA_BUNDLE:-}
-      GIGACHAT_TOKEN_TIMEOUT_SECONDS: ${GIGACHAT_TOKEN_TIMEOUT_SECONDS:-30}
-      GIGACHAT_CHAT_TIMEOUT_SECONDS: ${GIGACHAT_CHAT_TIMEOUT_SECONDS:-120}
-      GIGACHAT_TOKEN_TTL_SECONDS: ${GIGACHAT_TOKEN_TTL_SECONDS:-1500}
+      STORAGE_HEALTH_MIN_FREE_BYTES: "${STORAGE_HEALTH_MIN_FREE_BYTES:-1073741824}"
+      STORAGE_HEALTH_MIN_FREE_PERCENT: "${STORAGE_HEALTH_MIN_FREE_PERCENT:-5}"
+      STORAGE_HEALTH_PROBE_CACHE_SECONDS: "${STORAGE_HEALTH_PROBE_CACHE_SECONDS:-10}"
+      STORAGE_ADMISSION_IMAGE_RESERVE_BYTES: "${STORAGE_ADMISSION_IMAGE_RESERVE_BYTES:-33554432}"
+      STORAGE_ADMISSION_VIDEO_RESERVE_BYTES: "${STORAGE_ADMISSION_VIDEO_RESERVE_BYTES:-268435456}"
+      MEDIA_IMAGE_CONCURRENCY: "${MEDIA_IMAGE_CONCURRENCY:-4}"
+      MEDIA_VIDEO_CONCURRENCY: "${MEDIA_VIDEO_CONCURRENCY:-2}"
     command: ["python", "-m", "app.bot"]
     healthcheck:
       test:
@@ -140,6 +134,7 @@ services:
       retries: 3
       start_period: 50s
     volumes:
+      - generated_assets:/app/static/generated
       - backend_logs:/app/logs
       - ./backend/data/speech_runtime.json:/app/data/speech_runtime.json:ro
       - ./backend/data/llm_runtime.json:/app/data/llm_runtime.json:ro
@@ -148,7 +143,6 @@ services:
       - ./backend/data/lore_runtime.json:/app/data/lore_runtime.json:ro
       - ./backend/data/story_library.json:/app/data/story_library.json:ro
       - ./backend/data/story_constructor.json:/app/data/story_constructor.json:ro
-      - ./backend/data/travel_story_templates.json:/app/data/travel_story_templates.json:ro
       - ./backend/data/character_bible_template.json:/app/data/character_bible_template.json:ro
       - ./backend/data/age_speech_examples:/app/data/age_speech_examples:ro
       - ./backend/data/world_descriptions:/app/data/world_descriptions:ro
@@ -161,16 +155,22 @@ services:
     build:
       context: ./frontend
       args:
+        BACKEND_URL: http://backend:8000
         NEXT_PUBLIC_API_URL: ""
         NEXT_PUBLIC_ENABLE_TMA_DEV_FALLBACK: "false"
     restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /app/.next/cache:size=128m,mode=0700,uid=1001,gid=1001
     environment:
       NODE_ENV: production
-      BACKEND_URL: http://backend:8000
     ports:
       - "127.0.0.1:13000:3000"
-    expose:
-      - "3000"
     networks:
       default:
       public_proxy:
@@ -191,8 +191,6 @@ services:
     logging: *default-logging
 
 volumes:
-  caddy_data:
-  caddy_config:
   generated_assets:
   backend_logs:
   push_data:

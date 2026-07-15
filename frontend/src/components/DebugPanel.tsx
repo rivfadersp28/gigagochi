@@ -543,7 +543,7 @@ export function DebugPanel({
                 <button
                   type="button"
                   onClick={onOpenTravelDemo}
-                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-[8px] bg-black px-3 text-[12px] font-medium leading-none text-white transition-colors hover:bg-black/80 focus:outline-none focus:ring-2 focus:ring-black/10"
+                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-[8px] bg-black/[0.055] px-3 text-[12px] font-medium leading-none text-black/62 transition-colors hover:bg-black/[0.085] hover:text-black/78 focus:outline-none focus:ring-2 focus:ring-black/10"
                 >
                   <Play className="size-3.5" aria-hidden="true" />
                   <span>Запустить демо-историю</span>

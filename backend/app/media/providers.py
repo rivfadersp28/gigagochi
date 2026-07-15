@@ -66,9 +66,7 @@ class KandinskyVideoProvider:
 
 class OpenRouterVideoProvider:
     name = "openrouter"
-    capabilities = frozenset(
-        {MediaCapability.IMAGE_TO_VIDEO, MediaCapability.REFERENCE_TO_VIDEO}
-    )
+    capabilities = frozenset({MediaCapability.IMAGE_TO_VIDEO, MediaCapability.REFERENCE_TO_VIDEO})
 
     def generate_video(self, request: VideoRequest) -> bytes:
         from app.services.image_service import generate_openrouter_video_from_image_bytes

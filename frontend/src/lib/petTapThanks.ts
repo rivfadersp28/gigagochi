@@ -37,3 +37,15 @@ export function claimPetTapThanksForSession(petId: string) {
     return true;
   }
 }
+
+export function clearPetTapThanksForSession(petId: string) {
+  claimedPetIds.delete(petId);
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.removeItem(`${PET_TAP_THANKS_SESSION_PREFIX}:${petId}`);
+  } catch {
+    // Session storage is best-effort; the in-memory claim is already removed.
+  }
+}

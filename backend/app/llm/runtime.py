@@ -49,13 +49,8 @@ def _route_config(value: Any, *, location: str, settings: Settings) -> _RouteCon
     model = _clean_optional(value.get("model"))
     if model and model.startswith("$"):
         setting_name = model[1:].strip().lower()
-        if (
-            not setting_name.endswith("_model")
-            or not hasattr(settings, setting_name)
-        ):
-            raise LLMRuntimeConfigError(
-                f"{location}.model references unknown setting {model!r}"
-            )
+        if not setting_name.endswith("_model") or not hasattr(settings, setting_name):
+            raise LLMRuntimeConfigError(f"{location}.model references unknown setting {model!r}")
         model = _clean_optional(getattr(settings, setting_name))
         if model is None:
             raise LLMRuntimeConfigError(
@@ -111,9 +106,7 @@ def _load_runtime(settings: Settings) -> tuple[str, dict[str, _ProfileConfig]]:
         settings=settings,
     )
     if default.provider is None:
-        raise LLMRuntimeConfigError(
-            f"profiles.{active_profile}.default must define provider"
-        )
+        raise LLMRuntimeConfigError(f"profiles.{active_profile}.default must define provider")
     raw_tasks = raw_profile.get("tasks", {})
     if not isinstance(raw_tasks, dict):
         raise LLMRuntimeConfigError(f"profiles.{active_profile}.tasks must be an object")
@@ -126,9 +119,7 @@ def _load_runtime(settings: Settings) -> tuple[str, dict[str, _ProfileConfig]]:
         for task, route in raw_tasks.items()
     }
     if any(not task for task in tasks):
-        raise LLMRuntimeConfigError(
-            f"profiles.{active_profile}.tasks contains an empty task"
-        )
+        raise LLMRuntimeConfigError(f"profiles.{active_profile}.tasks contains an empty task")
     for task, route in tasks.items():
         if (
             route.provider is not None
@@ -207,11 +198,7 @@ def _provider_registry(settings: Settings) -> ProviderRegistry:
 
     from app.llm.providers.gigachat import GigaChatProvider
 
-    if (
-        settings.gigachat_base_url
-        and settings.gigachat_username
-        and settings.gigachat_password
-    ):
+    if settings.gigachat_base_url and settings.gigachat_username and settings.gigachat_password:
         registry.register(
             GigaChatProvider(
                 base_url=settings.gigachat_base_url,

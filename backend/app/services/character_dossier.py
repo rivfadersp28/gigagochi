@@ -269,3 +269,35 @@ def build_character_capsule(pet: Any, *, include_durable_facts: bool = True) -> 
             [item.get("text") for item in durable if isinstance(item, dict)],
         )
     return "\n".join(lines)
+
+
+def build_visible_character_capsule(pet: Any) -> str | None:
+    """Return only stable identity and appearance facts for visible pet speech."""
+    bible = _record(_pet_value(pet, "characterBible"))
+    identity = _record(bible.get("identity"))
+    visual = _record(bible.get("visual"))
+    growth_forms = _record(visual.get("growth_forms"))
+    stage = _text(_pet_value(pet, "stage"), 20)
+
+    lines = [
+        "БАЗОВЫЕ ЗНАНИЯ О СЕБЕ:",
+        "Это факты идентичности и внешности, а не характер или манера речи.",
+    ]
+
+    def add(label: str, value: Any) -> None:
+        values = _texts(value, limit=8, item_limit=220)
+        if values:
+            lines.append(f"{label}: {'; '.join(values)}")
+
+    add("Имя", _pet_value(pet, "name") or identity.get("name"))
+    add("Вид", identity.get("species") or _pet_value(pet, "description"))
+    add("Общее описание", _pet_value(pet, "description"))
+    add("Цвета", visual.get("colors"))
+    add("Внешние признаки", visual.get("features"))
+    add("Материалы тела", visual.get("materials"))
+    add("Пропорции", visual.get("proportions"))
+    if stage:
+        add("Текущая форма", growth_forms.get(stage))
+    add("Постоянные визуальные детали", visual.get("anchors"))
+
+    return "\n".join(lines) if len(lines) > 2 else None

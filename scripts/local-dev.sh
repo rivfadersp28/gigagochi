@@ -43,7 +43,7 @@ pid_from_file() {
 
 port_pids() {
   local port="$1"
-  lsof -ti "tcp:$port" 2>/dev/null || true
+  lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
 }
 
 stop_pid_file() {

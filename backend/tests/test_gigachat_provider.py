@@ -134,9 +134,10 @@ def test_default_owned_client_enables_tls_verification() -> None:
         client_factory=client_factory,
     )
     try:
-        assert provider.complete(
-            LLMRequest(messages=[{"role": "user", "content": "Привет"}])
-        ).content == "готово"
+        assert (
+            provider.complete(LLMRequest(messages=[{"role": "user", "content": "Привет"}])).content
+            == "готово"
+        )
     finally:
         provider.close()
 
@@ -260,9 +261,7 @@ def test_structured_output_and_ordinary_tools_share_legacy_functions() -> None:
                         "type": "object",
                         "properties": {
                             "reply": {"type": "string"},
-                            "mood": {
-                                "anyOf": [{"type": "string"}, {"type": "null"}]
-                            },
+                            "mood": {"anyOf": [{"type": "string"}, {"type": "null"}]},
                         },
                         "required": ["reply"],
                     }
@@ -298,9 +297,7 @@ def test_structured_output_and_ordinary_tools_share_legacy_functions() -> None:
     assert "tools" not in payloads[0]
     assert all(function["name"] != "text2image" for function in payloads[0]["functions"])
     assert "$defs" not in payloads[0]["functions"][1]["parameters"]
-    assert payloads[0]["functions"][1]["parameters"]["properties"]["mood"] == {
-        "type": "string"
-    }
+    assert payloads[0]["functions"][1]["parameters"]["properties"]["mood"] == {"type": "string"}
     assert "format" not in payloads[0]["functions"][0]["parameters"]["properties"]["name"]
 
     assert tool_result.content is None

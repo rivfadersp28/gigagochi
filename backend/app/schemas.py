@@ -1,13 +1,30 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 PetStageValue = Literal["baby", "teen", "adult"]
 PetStateValue = Literal["idle", "happy", "sad", "hungry"]
 PetStatKeyValue = Literal["hunger", "happiness", "energy"]
+AssetImageUrl = Annotated[str, Field(max_length=1000)]
+ShortPetName = Annotated[str, Field(max_length=80)]
+RecentAmbientReply = Annotated[str, Field(max_length=1000)]
+TimestampText = Annotated[str, Field(max_length=80)]
+InteractiveTravelId = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=120,
+        pattern=r"^interactive-travel-[A-Za-z0-9_-]+$",
+    ),
+]
+SNAPSHOT_MAX_SERIALIZED_BYTES = 262_144
+CHARACTER_BIBLE_MAX_SERIALIZED_BYTES = 262_144
+CHARACTER_BIBLE_MAX_DEPTH = 20
+CHARACTER_BIBLE_MAX_NODES = 10_000
 GeneratePetJobStatusValue = Literal["queued", "running", "succeeded", "failed"]
 GeneratePetJobPhaseValue = Literal[
     "queued",
@@ -20,6 +37,14 @@ GeneratePetJobPhaseValue = Literal[
     "generating_kandinsky",
     "completed",
 ]
+
+
+class TmaCapabilitiesResponse(BaseModel):
+    telegramUserId: int
+    debugMenu: bool
+    interactiveTravel: bool
+
+
 UserMemoryKind = Literal[
     "user_fact",
     "preference",
@@ -36,6 +61,8 @@ FaceHintValue = Literal["happy", "excited", "curious", "content", "grumpy", "sle
 HappinessDeltaValue = Literal[-80, -60, -40, -20, 0, 30, 100]
 ComplimentKeyValue = Annotated[str, Field(min_length=1, max_length=120)]
 InteractiveTravelSuggestionValue = Annotated[str, Field(min_length=1, max_length=72)]
+InteractiveTravelArcPlanKey = Annotated[str, Field(min_length=1, max_length=80)]
+InteractiveTravelArcPlanValue = Annotated[str, Field(max_length=500)]
 PET_STAGE_VALUES: tuple[PetStageValue, ...] = ("baby", "teen", "adult")
 PET_STATE_VALUES: tuple[PetStateValue, ...] = ("idle", "happy", "hungry", "sad")
 HAPPINESS_DELTA_VALUES: tuple[HappinessDeltaValue, ...] = (-80, -60, -40, -20, 0, 30, 100)
@@ -43,9 +70,6 @@ HAPPINESS_DELTA_VALUES: tuple[HappinessDeltaValue, ...] = (-80, -60, -40, -20, 0
 
 class GeneratePetRequest(BaseModel):
     description: str = Field(min_length=1, max_length=300)
-    style: str = "cute mobile game pet"
-    stages: list[PetStageValue] = Field(default_factory=lambda: ["baby", "teen", "adult"])
-    moods: list[PetStateValue] = Field(default_factory=lambda: ["idle", "happy", "hungry", "sad"])
 
 
 class GeneratedPetImages(BaseModel):
@@ -129,17 +153,58 @@ class LocalPetStats(BaseModel):
 class LocalPetStatsPatch(BaseModel):
     stats: dict[PetStatKeyValue, int] = Field(default_factory=dict)
     lastStatsTickAt: str | None = Field(default=None, max_length=80)
-    lastStatTickAt: dict[PetStatKeyValue, str] | None = None
+    lastStatTickAt: dict[PetStatKeyValue, TimestampText] | None = None
 
 
 class LocalPetChatContext(BaseModel):
-    name: str | None = None
+    petId: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=120,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    name: ShortPetName | None = None
     description: str = Field(min_length=1, max_length=300)
     stage: PetStageValue
     mood: PetStateValue
     stats: LocalPetStats
     characterBible: dict[str, Any] | None = None
-    assetImages: dict[PetStageValue, dict[PetStateValue, str]] | None = None
+    assetImages: dict[PetStageValue, dict[PetStateValue, AssetImageUrl]] | None = None
+
+    @field_validator("petId", mode="before")
+    @classmethod
+    def normalize_pet_id(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("characterBible", mode="before")
+    @classmethod
+    def validate_character_bible_shape(cls, value: Any) -> Any:
+        if value is None or not isinstance(value, dict):
+            return value
+
+        nodes = 0
+        stack: list[tuple[Any, int]] = [(value, 1)]
+        while stack:
+            current, depth = stack.pop()
+            nodes += 1
+            if nodes > CHARACTER_BIBLE_MAX_NODES:
+                raise ValueError("character bible contains too many values")
+            if depth > CHARACTER_BIBLE_MAX_DEPTH:
+                raise ValueError("character bible is nested too deeply")
+            if isinstance(current, dict):
+                stack.extend((item, depth + 1) for item in current.values())
+            elif isinstance(current, list):
+                stack.extend((item, depth + 1) for item in current)
+
+        serialized = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(serialized) > CHARACTER_BIBLE_MAX_SERIALIZED_BYTES:
+            raise ValueError("character bible exceeds the persisted size limit")
+        return value
 
 
 class LocalChatHistoryItem(BaseModel):
@@ -218,37 +283,6 @@ class LocalPetPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=32)
 
 
-class TravelStoryScene(BaseModel):
-    index: int = Field(ge=1, le=7)
-    arc: Literal["beginning", "exploration", "discovery", "reward", "final"]
-    title: str = Field(min_length=1, max_length=70)
-    text: str = Field(min_length=1, max_length=260)
-    visualBrief: str = Field(min_length=1, max_length=1800)
-
-
-class TravelStory(BaseModel):
-    title: str = Field(min_length=1, max_length=80)
-    summary: str = Field(min_length=1, max_length=500)
-    scenes: list[TravelStoryScene] = Field(min_length=7, max_length=7)
-
-
-class TravelSceneImage(BaseModel):
-    sceneIndex: int = Field(ge=1, le=7)
-    imageUrl: str = Field(min_length=1)
-
-
-class GenerateTravelRequest(BaseModel):
-    pet: LocalPetChatContext
-    includeDebug: bool = False
-
-
-class GenerateTravelResponse(BaseModel):
-    travelId: str
-    generatedAt: datetime
-    story: TravelStory
-    images: list[TravelSceneImage] = Field(default_factory=list, max_length=7)
-    debug: LocalChatDebug | None = None
-
 class InteractiveTravelStatImpact(BaseModel):
     stat: PetStatKeyValue
     amount: int = Field(ge=-15, le=15)
@@ -289,7 +323,7 @@ class InteractiveTravelResult(BaseModel):
 class InteractiveTravelTransition(BaseModel):
     elapsedHours: int = Field(ge=0, le=8)
     summary: str = Field(min_length=1, max_length=240)
-    departureHook: str | None = Field(default=None, min_length=1)
+    departureHook: str | None = Field(default=None, min_length=1, max_length=280)
     continuityAnchor: str | None = Field(default=None, min_length=1, max_length=60)
 
 
@@ -321,16 +355,26 @@ class InteractiveTravelPart(BaseModel):
 
 
 class InteractiveTravelState(BaseModel):
-    travelId: str = Field(min_length=1, max_length=120)
+    travelId: InteractiveTravelId
     generatedAt: datetime
     destination: str = Field(min_length=1, max_length=500)
     overallTitle: str = Field(min_length=1, max_length=120)
-    arcPlan: dict[str, str]
+    arcPlan: dict[InteractiveTravelArcPlanKey, InteractiveTravelArcPlanValue] = Field(max_length=32)
     introReaction: InteractiveTravelIntroReaction | None = None
     parts: list[InteractiveTravelPart] = Field(min_length=1, max_length=7)
     completed: bool = False
     outcomeValence: Literal["positive", "negative"] | None = None
     statImpact: InteractiveTravelStatImpact | None = None
+
+    @field_validator("arcPlan")
+    @classmethod
+    def reject_unsafe_arc_plan_keys(
+        cls,
+        value: dict[str, str],
+    ) -> dict[str, str]:
+        if any(key in {"__proto__", "constructor", "prototype"} for key in value):
+            raise ValueError("interactive travel arc plan contains an unsafe key")
+        return value
 
     @model_validator(mode="after")
     def validate_part_sequence(self) -> InteractiveTravelState:
@@ -379,7 +423,7 @@ class InteractiveTravelSuggestionsResponse(BaseModel):
 
 class IllustrateInteractiveTravelPartRequest(BaseModel):
     pet: LocalPetChatContext
-    travelId: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    travelId: InteractiveTravelId
     destination: str = Field(min_length=1, max_length=500)
     partNumber: int = Field(ge=1, le=7)
     title: str = Field(min_length=1, max_length=120)
@@ -392,7 +436,7 @@ class InteractiveTravelIllustrationResponse(BaseModel):
 
 
 class AnimateInteractiveTravelPartRequest(BaseModel):
-    travelId: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    travelId: InteractiveTravelId
     partNumber: int = Field(ge=1, le=7)
 
 
@@ -497,7 +541,7 @@ class LocalPushRequest(BaseModel):
 class LocalAmbientRequest(BaseModel):
     pet: LocalPetChatContext
     history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
-    recentAmbientReplies: list[str] = Field(default_factory=list, max_length=30)
+    recentAmbientReplies: list[RecentAmbientReply] = Field(default_factory=list, max_length=30)
     memoryContext: LocalPetMemoryContext | None = None
     replyMaxChars: int | None = Field(default=None, ge=1, le=300)
     nowIso: str | None = Field(default=None, max_length=80)
@@ -514,18 +558,38 @@ class LocalProactiveResponse(BaseModel):
 
 
 class LocalPetPushSnapshotRequest(BaseModel):
-    petId: str = Field(min_length=1, max_length=120)
+    petId: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    snapshotWriterId: str | None = Field(
+        default=None,
+        min_length=16,
+        max_length=120,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    snapshotRevision: int | None = Field(default=None, ge=1, le=9_007_199_254_740_991)
     pet: LocalPetChatContext
     history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
-    recentAmbientReplies: list[str] = Field(default_factory=list, max_length=30)
+    recentAmbientReplies: list[RecentAmbientReply] = Field(default_factory=list, max_length=30)
     memoryContext: LocalPetMemoryContext | None = None
     createdAt: str | None = Field(default=None, max_length=80)
     updatedAt: str | None = Field(default=None, max_length=80)
     lastStatsTickAt: str | None = Field(default=None, max_length=80)
-    lastStatTickAt: dict[PetStatKeyValue, str] | None = None
-    zeroStatSinceAt: dict[PetStatKeyValue, str] | None = None
+    lastStatTickAt: dict[PetStatKeyValue, TimestampText] | None = None
+    zeroStatSinceAt: dict[PetStatKeyValue, TimestampText] | None = None
     diedAt: str | None = Field(default=None, max_length=80)
     timezone: str | None = Field(default=None, max_length=80)
+
+    @field_validator("petId", mode="before")
+    @classmethod
+    def normalize_pet_id(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def validate_serialized_size(self) -> LocalPetPushSnapshotRequest:
+        if (self.snapshotWriterId is None) != (self.snapshotRevision is None):
+            raise ValueError("snapshot writer and revision must be provided together")
+        if len(self.model_dump_json().encode("utf-8")) > SNAPSHOT_MAX_SERIALIZED_BYTES:
+            raise ValueError("snapshot payload exceeds the persisted size limit")
+        return self
 
 
 class LocalPetPushSnapshotResponse(BaseModel):
@@ -537,3 +601,8 @@ class LocalPetPushSnapshotResponse(BaseModel):
     storyLibraryPatch: dict[str, Any] | None = None
     liteOverlayPatch: dict[str, Any] | None = None
     recentStoryEventsPatch: dict[str, Any] | None = None
+
+
+class LocalPetPushSnapshotDeleteResponse(BaseModel):
+    unregistered: bool
+    petId: str = Field(min_length=1, max_length=120)

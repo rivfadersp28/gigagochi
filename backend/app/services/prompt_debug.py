@@ -9,6 +9,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.config import get_settings
+from app.services.jsonl_log import append_bounded_jsonl
+
 AI_PROMPT_LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "ai-prompts.jsonl"
 AI_RESPONSE_LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "ai-responses.jsonl"
 _prompt_log_context: ContextVar[dict[str, Any] | None] = ContextVar(
@@ -58,30 +61,36 @@ def _now_iso() -> str:
 
 
 def write_prompt_log_line(payload: Mapping[str, Any]) -> dict[str, Any]:
-    AI_PROMPT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     context = _prompt_log_context.get() or {}
     line_payload = {
         "timestamp": _now_iso(),
         **context,
         **payload,
     }
-    with AI_PROMPT_LOG_PATH.open("a", encoding="utf-8") as log_file:
-        log_file.write(json.dumps(line_payload, ensure_ascii=False, default=str))
-        log_file.write("\n")
+    settings = get_settings()
+    append_bounded_jsonl(
+        AI_PROMPT_LOG_PATH,
+        line_payload,
+        max_bytes=settings.ai_log_max_bytes,
+        backup_count=settings.ai_log_backup_count,
+    )
     return line_payload
 
 
 def write_response_log_line(payload: Mapping[str, Any]) -> dict[str, Any]:
-    AI_RESPONSE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     context = current_ai_log_context()
     line_payload = {
         "timestamp": _now_iso(),
         **context,
         **payload,
     }
-    with AI_RESPONSE_LOG_PATH.open("a", encoding="utf-8") as log_file:
-        log_file.write(json.dumps(line_payload, ensure_ascii=False, default=str))
-        log_file.write("\n")
+    settings = get_settings()
+    append_bounded_jsonl(
+        AI_RESPONSE_LOG_PATH,
+        line_payload,
+        max_bytes=settings.ai_log_max_bytes,
+        backup_count=settings.ai_log_backup_count,
+    )
     return line_payload
 
 
@@ -169,7 +178,13 @@ def _prompt_hash(messages: Any) -> str:
 
 
 def _full_prompt_logging_enabled() -> bool:
-    return os.getenv("AI_PROMPT_LOG_FULL", "").strip().lower() in {"1", "true", "yes", "on"}
+    requested = os.getenv("AI_PROMPT_LOG_FULL", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    return requested and bool(getattr(get_settings(), "allow_dev_tma_auth", False))
 
 
 def _text_hash(value: str) -> str:
@@ -362,4 +377,53 @@ def log_image_generation_prompt(label: str, request_kwargs: Mapping[str, Any]) -
         print(f"\n=== AI image prompt: {label} ===", flush=True)
         print(json.dumps(payload, ensure_ascii=False, indent=2, default=str), flush=True)
         print("=== End AI image prompt ===\n", flush=True)
+    return payload
+
+
+def video_generation_prompt_snapshot(
+    label: str,
+    request_kwargs: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "label": label,
+        "model": request_kwargs.get("model"),
+        "prompt": request_kwargs.get("prompt"),
+        "duration": request_kwargs.get("duration"),
+        "resolution": request_kwargs.get("resolution"),
+        "aspect_ratio": request_kwargs.get("aspect_ratio"),
+        "hasSourceImage": request_kwargs.get("has_source_image") is True,
+        "inputReferenceCount": len(request_kwargs.get("input_references") or []),
+    }
+
+
+def log_video_generation_prompt(label: str, request_kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    payload = video_generation_prompt_snapshot(label, request_kwargs)
+    prompt = str(payload.get("prompt") or "")
+    log_payload = (
+        payload
+        if _full_prompt_logging_enabled()
+        else {key: value for key, value in payload.items() if key != "prompt"}
+    )
+    if not _full_prompt_logging_enabled():
+        log_payload["promptHash"] = _text_hash(prompt)
+        log_payload["promptChars"] = len(prompt)
+    line_payload = write_prompt_log_line(
+        {
+            "event": "ai_prompt",
+            "promptType": "video_generation",
+            **log_payload,
+        }
+    )
+    _last_prompt_context.set(
+        {
+            "timestamp": line_payload["timestamp"],
+            "promptType": "video_generation",
+            "label": label,
+            "model": payload.get("model"),
+        }
+    )
+    if _full_prompt_logging_enabled():
+        print(f"\n=== AI video prompt: {label} ===", flush=True)
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str), flush=True)
+        print("=== End AI video prompt ===\n", flush=True)
     return payload

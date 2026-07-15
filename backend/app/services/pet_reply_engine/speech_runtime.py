@@ -538,14 +538,11 @@ def ambient_state_requires_attention(
     happiness: int | None,
     energy: int | None,
 ) -> bool:
-    mild_below = _required_int(
+    threshold = _required_int(
         speech_runtime_config(),
         ("stateLayer", "ambientStateReaction", "thresholds", "mildBelow"),
     )
-    return any(
-        value is not None and value < mild_below
-        for value in (hunger, happiness, energy)
-    )
+    return any(value is not None and value < threshold for value in (hunger, happiness, energy))
 
 
 def _state_param_band(value: int | None, *, low_max: int, high_min: int) -> str:

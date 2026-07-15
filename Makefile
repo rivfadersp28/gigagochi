@@ -3,6 +3,7 @@
 check: backend-check frontend-check
 
 backend-check:
+	cd backend && .venv/bin/python scripts/check_dependency_lock.py
 	cd backend && .venv/bin/ruff check app tests scripts
 	cd backend && .venv/bin/ruff format app tests scripts --check
 	cd backend && .venv/bin/pytest -q

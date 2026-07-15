@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
@@ -100,6 +101,7 @@ class AdminPublishJob:
 
 _jobs_lock = threading.Lock()
 _jobs: dict[str, AdminPublishJob] = {}
+MAX_RETAINED_ADMIN_PUBLISH_JOBS = 32
 
 
 def _now_iso() -> str:
@@ -108,6 +110,17 @@ def _now_iso() -> str:
 
 def _setting(settings: Any, name: str, default: Any = None) -> Any:
     return getattr(settings, name, default)
+
+
+def _prune_terminal_jobs_locked(*, reserve_slots: int = 0) -> None:
+    keep = max(0, MAX_RETAINED_ADMIN_PUBLISH_JOBS - reserve_slots)
+    terminal = sorted(
+        (job for job in _jobs.values() if job.status in TERMINAL_STATUSES),
+        key=lambda job: (job.finished_at or job.created_at, job.id),
+        reverse=True,
+    )
+    for job in terminal[keep:]:
+        _jobs.pop(job.id, None)
 
 
 def unexpected_publish_paths(paths: list[str] | tuple[str, ...]) -> list[str]:
@@ -133,6 +146,7 @@ def start_admin_publish(
         )
 
     with _jobs_lock:
+        _prune_terminal_jobs_locked(reserve_slots=1)
         active = [job for job in _jobs.values() if job.status not in TERMINAL_STATUSES]
         if active:
             raise AdminPublishError(
@@ -266,148 +280,6 @@ def read_admin_manifest_from_server(
             "updatedAt": _now_iso(),
         },
     )
-
-
-def read_admin_push_status_from_server(settings: Any) -> dict[str, Any]:
-    return _run_push_command_on_server(settings, {"action": "status"})
-
-
-def send_admin_push_on_server(
-    settings: Any,
-    *,
-    telegram_id: int | None,
-    reason: str | None,
-    include_debug: bool,
-) -> dict[str, Any]:
-    return _run_push_command_on_server(
-        settings,
-        {
-            "action": "send",
-            "telegramId": telegram_id,
-            "reason": reason,
-            "includeDebug": include_debug,
-        },
-    )
-
-
-def send_admin_push_all_on_server(
-    settings: Any,
-    *,
-    reason: str | None,
-    include_debug: bool,
-) -> dict[str, Any]:
-    return _run_push_command_on_server(
-        settings,
-        {
-            "action": "send_all",
-            "reason": reason,
-            "includeDebug": include_debug,
-        },
-    )
-
-
-def _run_push_command_on_server(settings: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    timeout = float(_setting(settings, "admin_publish_command_timeout_seconds", 1200))
-    remote_path = str(_setting(settings, "admin_publish_remote_path", "/opt/gigagochi"))
-    payload_json = json.dumps(payload, ensure_ascii=False)
-    remote_script = dedent(
-        """
-        import json
-
-        from app.services.telegram_push_service import (
-            TelegramPushError,
-            push_status,
-            send_manual_push,
-            send_manual_push_to_reachable,
-        )
-
-        payload = json.loads(PAYLOAD_JSON)
-        action = payload.get("action")
-        try:
-            if action == "status":
-                result = push_status()
-            elif action == "send":
-                result = send_manual_push(
-                    telegram_id=payload.get("telegramId"),
-                    reason=payload.get("reason"),
-                    include_debug=bool(payload.get("includeDebug", True)),
-                )
-            elif action == "send_all":
-                result = send_manual_push_to_reachable(
-                    reason=payload.get("reason"),
-                    include_debug=bool(payload.get("includeDebug", True)),
-                )
-            else:
-                raise TelegramPushError("ADMIN_PUSH_ACTION_INVALID", "Unknown push action.")
-        except TelegramPushError as exc:
-            print(json.dumps(
-                {"ok": False, "code": exc.code, "message": exc.message},
-                ensure_ascii=False,
-            ))
-        except Exception as exc:
-            print(json.dumps(
-                {"ok": False, "code": "PUSH_SEND_FAILED", "message": str(exc)},
-                ensure_ascii=False,
-            ))
-        else:
-            print(json.dumps({"ok": True, "result": result}, ensure_ascii=False))
-        """
-    ).strip()
-    remote_script = remote_script.replace("PAYLOAD_JSON", repr(payload_json))
-    remote_command = (
-        f"set -e; cd {shlex.quote(remote_path)}; "
-        "docker compose --env-file .env.production -f docker-compose.prod.yml "
-        f"exec -T backend python - <<'PY'\n{remote_script}\nPY"
-    )
-    output = _run_capture(
-        [
-            *_ssh_command_args(
-                settings,
-                missing_code="ADMIN_PRODUCTION_PUSH_SSH_TARGET_MISSING",
-                invalid_code="ADMIN_PRODUCTION_PUSH_SSH_TARGET_INVALID",
-            ),
-            remote_command,
-        ],
-        cwd=REPO_ROOT,
-        timeout=timeout,
-    )
-    parsed = _parse_push_command_output(output)
-    if parsed.get("ok") is True and isinstance(parsed.get("result"), dict):
-        return parsed["result"]
-
-    code = parsed.get("code") if isinstance(parsed.get("code"), str) else "PRODUCTION_PUSH_FAILED"
-    message = (
-        parsed.get("message")
-        if isinstance(parsed.get("message"), str)
-        else "Production push failed."
-    )
-    raise AdminPublishError(code, message)
-
-
-def _parse_push_command_output(output: str) -> dict[str, Any]:
-    for line in reversed(output.splitlines()):
-        text = line.strip()
-        if not text.startswith("{") or not text.endswith("}"):
-            continue
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict) and "ok" in parsed:
-            return parsed
-    try:
-        parsed = json.loads(output)
-    except json.JSONDecodeError as exc:
-        raise AdminPublishError(
-            "ADMIN_PRODUCTION_PUSH_RESPONSE_INVALID",
-            f"Production push вернул некорректный ответ: {output[:500]}",
-        ) from exc
-    if not isinstance(parsed, dict):
-        raise AdminPublishError(
-            "ADMIN_PRODUCTION_PUSH_RESPONSE_INVALID",
-            "Production push вернул не JSON object.",
-        )
-    return parsed
 
 
 def sync_admin_files_from_server(settings: Any) -> dict[str, Any]:
@@ -782,7 +654,7 @@ def _deploy_admin_data_on_hetzner(job: AdminPublishJob, settings: Any, timeout: 
     remote_command = (
         f"set -e; cd {shlex.quote(remote_path)}; "
         f"git pull --ff-only {git_remote} {git_branch}; "
-        f"{compose} up -d --no-build backend bot; "
+        f"{compose} up -d --no-build --force-recreate backend bot; "
         f"{compose} ps backend bot"
     )
     job.log(f"Запускаю быстрый data deploy на Hetzner без rebuild: {ssh_target}.")
@@ -801,6 +673,12 @@ def _check_health(job: AdminPublishJob, health_url: str) -> None:
             level="warning",
         )
         return
+    parsed_health_url = urllib.parse.urlsplit(health_url)
+    if parsed_health_url.scheme not in {"http", "https"} or not parsed_health_url.hostname:
+        raise AdminPublishError(
+            "ADMIN_PUBLISH_HEALTH_URL_INVALID",
+            "Health-check URL должен использовать http или https.",
+        )
     job.log(f"Проверяю health-check: {health_url}.")
     last_error = ""
     for attempt in range(1, HEALTH_CHECK_ATTEMPTS + 1):
@@ -887,7 +765,13 @@ def _run_logged_command(
             f"Не удалось запустить команду: {_format_command(args)}",
         ) from exc
 
-    assert process.stdout is not None
+    if process.stdout is None:
+        process.kill()
+        process.wait(timeout=5)
+        raise AdminPublishError(
+            "ADMIN_PUBLISH_COMMAND_FAILED",
+            "Не удалось открыть stdout запущенной команды.",
+        )
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ)
     deadline = time.monotonic() + timeout

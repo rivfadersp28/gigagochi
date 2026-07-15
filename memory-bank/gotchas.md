@@ -1,15 +1,124 @@
 # Gotchas
 
+- Never replace `PublicMediaStaticFiles` with an unrestricted `StaticFiles` mount. Generated media
+  directories also contain `finale.json`, Telegram owner data, prompts and provider metadata; only
+  the media-extension allowlist may be reachable through `/static`.
+- Never turn generated-media cleanup into an age-only recursive sweep. Background-story GC must
+  preserve references from both the push registry and `bot_command_inbox.prepared_json`, honor the
+  eight-day grace fence, and skip `.private` entirely. Whole asset directories may be deleted only
+  from durable terminal proof: a failed pet job without `result` or an explicit fenced
+  interactive-travel reset. Successful pet/travel assets remain until a durable client
+  ownership/expiry registry exists.
+- Keep `lite_overlay` bounded in both frontend and backend merges (80 aggregate facts, 40 per
+  sphere). Unbounded extraction eventually exceeds WebView localStorage and the push-snapshot body
+  contract. Backend persistence also allowlists the four known spheres and fact fields, truncates
+  text/source/path/timestamps, and drops arbitrary `worldSeed`/overlay keys. Do not restore a
+  recursive union of client `characterBible`: modern full bibles replace client-owned state, while
+  extension-only legacy snapshots may preserve only the bounded server overlay.
+- Video prompts must cross `log_video_generation_prompt`; direct INFO logging bypasses the default
+  hash/length redaction and can expose user story content and reference URLs.
+- Every delayed frontend mutation must carry the originating `expectedPetId`. A missing current pet
+  is a superseded request too: reset must not let a late chat/media response recreate history or
+  overwrite a new pet.
+- A frontend push snapshot is dirty when pet state, chat history, memory, ambient replies or
+  overlays change; `pet.updatedAt` alone does not cover those independently persisted inputs.
+  Keep the per-pet dirty revision separate. Revisions use a shared wall-clock-backed localStorage
+  counter, but each tab must keep its own writer ID in sessionStorage; a shared writer lets two tabs
+  issue the same `(writer, revision)` pair after a racy read-modify-write.
+- Failed `localStorage.removeItem()` is not a successful reset. Keep per-pet clear tombstones in
+  memory until removal succeeds, and route reset/replacement through the centralized scoped cleanup
+  so stale travel, introduction, compliment and ambient data cannot reappear.
+- Test suites deny external network by default (`backend/tests/conftest.py` and frontend Vitest
+  setup). The Python guard patches both `socket.connect` and `connect_ex`; subprocess tests must
+  preserve the inherited `PYTHONPATH` so `tests/network_guard/sitecustomize.py` is imported.
+  Provider, Telegram and media tests must stub transport explicitly; this is the guard against an
+  incomplete mock triggering a paid generation.
+- Pet-generation recovery identity is the pair `(jobId, description)`, not the job ID alone. On
+  `GENERATION_ALREADY_ACTIVE`, use only the authenticated backend's persisted active description or
+  an exact local marker for that job; otherwise one tab can create the result of prompt A under the
+  description from prompt B. Recovery performs one GET/poll and never repeats the paid POST.
+- Active-job idempotency aliases are valid only for the exact `(description, image provider)`
+  payload. If alias adoption is discovered after a quota reservation, refund that new reservation;
+  never charge a coalesced request or bind a different prompt to the active result.
+- Async-provider receipts close the restart window only after the remote task ID has been written
+  to SQLite. If a provider accepts a paid POST but the process dies before its response/task ID is
+  durably saved, automatic recovery cannot distinguish that from a request that never arrived.
+  Synchronous OpenAI/OpenRouter image endpoints expose no resumable task ID at all. Do not prune
+  accepted/media-saved receipts to recover capacity: the unified store deliberately fails
+  closed at its configured cap instead of risking a duplicate paid submission.
+  A durable `admitted` state without a task ID is ambiguous and must also fail closed: only a
+  definite HTTP rejection, pre-send connection failure or missing credential may release it.
+  Configure the stable non-secret provider account namespace before rotating a credential for the
+  same account; otherwise the safe fallback credential hash intentionally creates a new identity.
+- Storage health and media admission share one boundary: free space must cover the greater of the
+  byte/percentage floors plus the largest configured media reservation on the generated-assets
+  device. Keep write/delete probes per logical mount even when disk telemetry is deduplicated by
+  device; a degraded health result must block paid generation before provider dispatch.
+- Provider timeout maxima must stay below the 20-minute container stop grace. Resumable video stages
+  are capped at 900 seconds; requests with client retries are capped at 300 seconds per attempt, so
+  graceful shutdown has headroom before Docker sends SIGKILL.
+- A storage reservation must outlive provider return. Production media writers use the reserved
+  context variants and keep that context open through validation, post-processing and the fsynced
+  atomic commit. The bytes-only generation helpers are compatibility APIs; do not use them for a
+  new durable path. Reservation files live under generated `.private`, hold `flock` for their whole
+  lifetime and are reclaimed as stale only when their lock can be acquired.
+- Keep provider/post-processing temporary directories under the exact generated-volume path
+  `.private/processing-tmp` and use only the cleanup service's known prefixes. A generic tmp sweep,
+  symlink traversal or moving `TMPDIR` back to the container overlay can either delete unrelated
+  files or exhaust ephemeral rootfs while the persistent generated volume still appears healthy.
+
 - Interactive-travel text and choices live in browser localStorage during the journey; generated
   PNG/MP4 files alone cannot reconstruct them. Preserve the completed `finale.json` snapshot or
   recover it by reopening the still-present completed client session before starting a new travel.
+- Every interactive-travel media/finale side effect must authorize against the durable session's
+  exact owner, pet, part and narrative fingerprint before provider admission and before persistence.
+  Terminal session rows expire after 180 days; completed owner proof remains, but late recovery then
+  fails closed because assets alone are not authoritative narrative state.
+- Do not add durable `starting`/`in_progress` rows or expiring operation leases around interactive
+  travel text calls. Text generation is free and may race; reliability comes from the short atomic
+  start/continue commit, which replays an exact winner and rejects a stale different request.
 - Finale reference-to-video needs public HTTPS asset URLs. A localhost static URL is not fetchable
   by OpenRouter; keep the production asset origin in the snapshot or supply it as the lab's
   reference base URL.
+- Backend and bot must mount the same `push_data` volume and use the same
+  `RATE_LIMIT_STORE_PATH`/`GENERATION_RATE_LIMIT_PER_DAY`; otherwise bot media commands bypass the
+  API quota. `/full_story` is one user generation action, while `/push` stays outside the paid
+  generation bucket.
+- `request_admission_service` protects FastAPI's local sync-handler pool, not all Uvicorn processes
+  or bot work. Keep its async dependency ahead of every public synchronous LLM/media handler and
+  release in dependency teardown; moving admission into the sync endpoint is too late because the
+  request already occupies an AnyIO worker.
+- `SCHEDULED_BACKGROUND_STORY_PAID_MEDIA_DAILY_CAP` is deliberately fail-closed at zero and counts
+  provider submission attempts globally, not successful files or users. Check deterministic saved
+  media before charging, charge immediately before each image/video reservation, and do not add a
+  request-key dedupe or refund: a crash after provider acceptance must make a retry consume another
+  unit. Budget-disabled/exhausted delivery is a successful text/photo fallback with persisted
+  status, so it must not degrade scheduler health or remain due for paid retry. Sort due records by
+  the hash of the UTC budget-window date plus Telegram ID (with Telegram ID as the tie-breaker): JSON
+  insertion order permanently starves later users when the global cap is smaller than the queue.
+- Never put a raw Telegram ID in a public generated-media owner directory. Background-story paths
+  must remain owner-bound via the hash of `(telegram_id, canonical_pet_id)`; compatibility reads or
+  GC for older pet-only paths must not become active cross-owner discovery.
 
-- Do not add Uvicorn workers while generation jobs use the local SQLite-backed executor. Multiple
-  API processes would each recover the same active jobs. Scale beyond one backend process only after
-  moving execution ownership to a broker/worker system such as Redis plus a dedicated worker.
+- Generation-job SQLite leases fence duplicate recovery across processes, but each Uvicorn process
+  still owns a separate local queue and worker pools. Do not scale worker count casually: admission
+  capacity, SQLite contention and shutdown/drain behavior must be designed as a multi-process system.
+  A broker plus dedicated workers remains the safer scaling boundary.
+- Never treat a bulk lease-renew `rowcount` as proof that every requested task is still owned. Renew
+  with exact IDs, fence the missing local tasks, and recheck ownership only after acquiring the
+  paid-stage/update lifetime lock. The bucketed lock files intentionally cap inode growth.
+- Paid generation checkpoints must write nonempty media through atomic replace and persist character
+  metadata before the first provider call. SQLite job commits use `synchronous=FULL`. This still
+  cannot eliminate the narrow crash window after a provider accepts a request but before its bytes
+  reach local storage; retries in that window may be billed twice.
+- Deployments that previously served `POST /api/travel` may leave
+  `legacy_travel_requests.sqlite3`. The application no longer reads that database. Archive it after
+  stopping old backend processes; do not bulk-delete generated directories from its rows because
+  completed assets have no independent lifetime proof.
+- Every real image/video provider dispatch must stay inside `MediaGateway` so the shared
+  `MEDIA_CONCURRENCY_LOCK_DIR` file slots apply to backend and bot together. Acquire the global slot
+  before storage reservation, block when full instead of rejecting, and never create request-derived
+  lock filenames; the fixed image/video files keep inode growth bounded.
 - Do not use `get_openai_client()` for text. It is now the media compatibility
   selector controlled by `AI_PROVIDER`; every reply, extractor, character
   bible and story text call must cross `app.llm.complete_chat`. Use
@@ -83,9 +192,9 @@
   tools. Provider-level capability metadata cannot prove that every LiteLLM
   model supports those features; qualify a new model before enabling its
   profile.
-- `GENERATION_IMAGE_WORKERS=20` means accepted concurrency, not guaranteed provider throughput.
-  OpenAI project rate limits and billing must be checked separately; keep the bounded queue and retry
-  policy enabled, and watch memory before increasing the worker count further.
+- Generation worker counts control local pipeline scheduling, not global provider throughput. The
+  defaults are 4 image/2 video workers and the shared media slots independently cap actual paid
+  calls; keep both limits coordinated before increasing either one.
 - Do not send the whole story dataset in every reply prompt.
   `contextRouting.worldContext` may request a small `WORLD_CONTEXT`, but final
   inclusion must still pass `speech_runtime.contextSources`.
@@ -174,6 +283,9 @@
   Trim the provider video's low-motion final 0.35 seconds before reversing; removing only an exact
   duplicate endpoint frame still leaves a visible hold because i2v providers often settle before
   the nominal end. Production backend images therefore require the `ffmpeg` and `ffprobe` binaries.
+- Treat downloaded provider video as hostile input. Force FFprobe/FFmpeg to the local MOV/MP4
+  demuxer, allow only the `file` protocol, and disable external/absolute data references; otherwise
+  a crafted manifest can turn post-processing into an SSRF or local-file read.
 - Grok may return AAC audio and an attached MJPEG preview even with
   `generate_audio=false`. Story videos must pass through
   `strip_generated_video_auxiliary_streams` before persistence or Telegram delivery.
@@ -186,8 +298,9 @@
   `result`, then persist and poll its job id for sad-asset progress.
 - Do not recreate generation executors or the in-memory job registry in the
   TMA router. `GenerationJobService` owns them and FastAPI lifespan shutdown
-  must call `tma.shutdown_generation_jobs()` so queued futures are cancelled
-  during process exit.
+  must call `tma.shutdown_generation_jobs()`. Shutdown first fences every new paid stage, cancels
+  queued futures, and waits only for stages already past the fence; unfinished jobs must remain
+  durable, unleased and claimable after restart rather than being marked failed.
 - Do not mutate character template fields during chat. Evolving per-pet
   character facts belong in `extensions.lite_overlay`; evolving story entities
   belong in `extensions.story_library_overlay`.
@@ -266,6 +379,9 @@
 - Do not make the background-story aftermath analyzer choose stats again.
   `statImpacts[]` comes from the story generation payload and backend caps it;
   aftermath only extracts durable lite facts plus compact recent-event data.
+- Never persist interactive-travel stats before its idempotency receipt. Both belong in one bounded
+  `LocalPetState` write keyed by `travelId:partNumber`; the travel session's `appliedResultParts`
+  marker can lag or disappear after a crash and must not authorize a second delta.
 - Do not put `extensions.recent_story_events` back into `CHARACTER_PROFILE`.
   Chat recall uses the deterministic `recentEvents` source and the canonical
   `RECENT_EVENTS` block, which must stay above generic `WORLD_CONTEXT`.
@@ -286,7 +402,9 @@
 - Speech/dataset saves validate JSON or JSONL, create backups under
   `backend/data/.admin-backups/`, and clear runtime `lru_cache` loaders. If a
   new cached dataset is added, include its cache clear hook in
-  `local_admin_store._clear_runtime_caches()`.
+  `local_admin_store._clear_runtime_caches()`. Keep the cross-process write lock, unique backup
+  creation, file/directory fsync and whole-batch rollback together; independent per-file writes can
+  publish a mixed runtime configuration after a crash.
 - `speech_runtime.json` must keep `meta.format=tamagochi-speech-runtime-v1`.
   If it starts with story-library keys like `pools`, it was overwritten with
   the wrong admin file and should be restored before publishing.
@@ -346,7 +464,8 @@
   for generation prompts, context routing and image/story art direction.
 - Admin publish is local-only and opt-in. Keep `ADMIN_PUBLISH_ENABLED=false` on
   Hetzner; the publish job must stage only `managed_admin_git_paths()` and never
-  `.admin-backups/` or unrelated dirty/untracked files.
+  `.admin-backups/` or unrelated dirty/untracked files. Retain every active publish job but prune old
+  terminal entries before insertion so the in-memory registry stays at 32 jobs.
 - Admin publish is a data-only deploy path. Production compose bind-mounts
   individual managed `./backend/data` files/directories into backend and bot
   containers and keeps `push_data` mounted at `/app/data/push`. Do not mount
@@ -356,6 +475,24 @@
   bind-mounted managed files such as `tone_runtime.json` are definitely visible
   inside running containers. Use full `--build` only for code/dependency/image
   changes.
+- Do not remove the `volume-permissions` compose dependency while persistent volumes from the old
+  root-running backend may exist. Image-layer `chown` does not affect an already-created named
+  volume. Stop backend and bot for the first UID/GID 10001 migration so an old root writer cannot
+  create a stale file after the ownership scan. Keep bot storage/GC environment values identical to
+  backend because bot `/story` dispatches through the same media admission boundary. Keep Python's
+  `077` umask and the init service's group/world permission repair; read-only container roots do not
+  protect secrets already created with permissive modes on persistent volumes.
+- Never archive or restore the named volumes while backend/bot may write SQLite WAL files. Mark the
+  cleanup obligation before the first Compose stop, validate `quick_check` and checksums before
+  mutation, and leave both writers stopped if cross-volume restore plus automatic rollback cannot be
+  proven complete.
+- Do not duplicate application defaults in `docker-compose.prod.yml`: `backend/.env` is the shared
+  source for provider/profile/scheduler/limit settings. Compose env owns only topology, security and
+  documented resource knobs; shadowing a key there makes backend and bot drift during env changes.
+- Do not regenerate backend locks with `pip lock` on a developer Mac: pip guarantees that output
+  only for the current Python/platform. Resolve and hash CPython 3.12 manylinux2014 wheels for both
+  x86_64 and aarch64, keep both hashes for compiled packages, and verify both targets with
+  `pip download --require-hashes --only-binary=:all:` before changing the checked-in locks.
 - Admin server-sync is also local-only and opt-in. Keep
   `ADMIN_SYNC_FROM_SERVER_ENABLED=false` on Hetzner; local sync should refuse to
   overwrite managed data files when they already differ from the server commit.
@@ -406,11 +543,8 @@
 - After changing a FastAPI route or Pydantic schema, run the backend OpenAPI
   exporter and `npm run contracts`. `make check` deliberately fails on stale
   `frontend/openapi.json` or `src/lib/generated/openapi.d.ts`.
-- Interactive-travel provider output may omit the visible time-gap prefix even when transition metadata is valid. Normalize the next part with a deterministic `Через N часов…` sentence instead of returning a 502 after repeated LLM repair.
-- Interactive-travel's 80-character sentence limit is a generation-quality target, not a hard
-  response-contract limit. Retry one compactness violation, but if the retry is still over the
-  length/word target, preserve the complete sentence. Do not reintroduce a smaller Pydantic or
-  frontend-parser cap for `departureHook`, or the lenient fallback will become a 502 again.
+- Interactive travel deliberately uses the fixed transition «Я иду дальше».
+  Do not add time-gap generation or compactness retries back to this simple path.
 - User-facing "здоровье" still uses the legacy internal stat key `energy`.
   Keep API/storage compatibility and translate only at prompt/UI boundaries
   unless a deliberate migration is planned.
@@ -434,6 +568,12 @@
   partial `statsPatch`. Do not replace the whole stats object unless every
   `lastStatTickAt` key is also reset consistently; otherwise independent decay
   timers will double-decay or collapse into one shared clock.
+- `useLocalPetState` keeps `feed`/`play`/tap and most pet-state patches synchronous, so browser
+  localStorage cannot make them atomic across tabs. Keep the fresh read, expected-pet fence,
+  pre-write stale check, single snapshot write and exact read-back; these prevent false success but
+  do not eliminate a last-writer-wins race after read-back. Do not reintroduce a journal, generation
+  WAL or localStorage pseudo-lock. Interactive travel relies on backend CAS when native Web Locks are
+  missing; conversation/memory mutations fail closed.
 - Do not derive the 24-hour death window from the latest stat tick: ticks keep
   advancing while a stat is already zero. Persist the first continuous zero
   time in `zeroStatSinceAt`, clear it as soon as the stat becomes positive, and
@@ -441,15 +581,28 @@
 - Telegram story photo captions are capped at 1024 chars. Keep the stat debug
   footer reserved during truncation, otherwise `/story` debugging can hide the
   analyzer result behind a long generated story.
-- Backend and bot share the push registry volume from separate processes. Do
-  not read, rewrite or replace `telegram_push_state.json` directly; use
-  `JsonTelegramPushStore.update_record()` so the cross-process file lock and
-  atomic write are preserved. Corrupt registry JSON is an operational error,
-  not an empty store.
+- Backend and bot share the SQLite WAL push registry from separate processes. Always use the store
+  `update_record()` contract so `BEGIN IMMEDIATE`, logical capacity metadata and retention indexes
+  stay consistent. The first JSON-to-SQLite deploy must stop both writers together; a mixed rollout
+  can append to the now-inactive JSON after the durable import marker and create split-brain state.
+  Keep the legacy JSON and a consistent volume backup until the SQLite marker and delivery flow are
+  verified; never merge it over a non-empty unmarked SQLite database. Keep
+  `TELEGRAM_PUSH_LEGACY_JSON_REQUIRED=true` during upgrades/restores; use `false` only for a confirmed
+  clean install, otherwise a temporarily missing mount can become silent empty state.
+- A pet unregister is a permanent late-write fence, not an eight-entry recent-history cache. Preserve
+  every `petResetTombstones` entry within the record byte limit and never treat a record containing
+  one as unreachable/prunable; otherwise a delayed old snapshot can resurrect a deleted pet.
+- Push-store updaters receive an isolated deep copy. Keep all changes inside the updater and return
+  the resulting object; direct nested mutation of a previously read snapshot is not transactional.
 - Do not run `/story` or `/push` generation inline in the Telegram `getUpdates`
   loop. `app.bot` submits both to the bounded `telegram-command` executor;
   worker tasks create their own `httpx.Client` rather than sharing the polling
   client.
+- Telegram `/story` and `/full_story` durable progress is append-only: add a new
+  top-level stage key and increment the checkpoint revision; never rewrite an
+  existing nested value or list. Preserve bounded `botGenerationReceipts` when
+  registering a snapshot for the same pet, otherwise replay after a newer story
+  overwrites `lastStory`/`lastFullStory` can apply stat deltas twice.
 - Main-screen speech bubble must stretch from the bubble container, not from an
   absolutely positioned `<img>` SVG. Percentage height on that replaced element
   can stay at the intrinsic SVG height while animated text grows; use the SVG
@@ -464,26 +617,25 @@
   cacheable. `preload="auto"` on the travel screen starts too late, while the generic `/figma/*`
   `no-store` header otherwise discards the warm download. Keep the scene at full viewport size;
   a fixed `402px` cap leaves side gutters in wider Telegram WebViews.
-- Interactive travel needs 9–21 text/image/video calls for a complete 3–7-part route. Never charge
+- Interactive travel needs 9 text/image/video calls for a complete three-part route. Never charge
   them to the pet-generation `3/day` bucket. The debug reset must invalidate the travel ID before
   deleting its directory; deleting files alone lets an already-running provider call write them back.
-- Do not place a completed archived travel directly into the normal local session:
-  presentation reconciliation treats it as already finished and skips the interactive
-  reveal. Demo playback must stage pending/revealed parts only in ephemeral React state.
-- Versioned demo media belongs under `backend/static/demo`, not `static/generated`:
-  production mounts the generated-assets volume over the latter, which would hide
-  repository fixtures and couple the demo to runtime generation storage.
-- Do not restore interactive-travel root matching, named-term checks, event counters, continuity
-  anchors or validator-specific retries. They made semantic heuristics drive generation and caused
-  valid Russian output to fail. Do not restore a parallel `step1...stepN` plot either: the model can
-  make it disagree with the scene produced after a user's choice. New travels also have no fixed
-  `partCount`: a preselected length made the model add an epilogue after an already completed goal.
-  Let the selected action end the story on parts 3–5 and force closure only on part 6. If quality
-  regresses, first adjust the short goal or immediate context, then verify with complete synthetic stories.
+- Do not restore interactive-travel goals, target states, root matching, named-term checks, event
+  counters, continuity anchors or validator-specific retries. The current product decision accepts
+  weak continuity in exchange for a fixed three-part generator that is easy to change.
 - GigaChat 3.5 may return arrays as nested objects/strings and may omit final JSON closers. Travel
   choices therefore use three scalar schema fields. The provider repairs only missing trailing
   brackets when a strict stack scan plus `json.loads` proves that no other syntax is damaged.
-- Keep the exact opening goal in `arcPlan` and build the visible final achieved/failed sentence from
-  it. In a final response, `outcome=positive` means the goal was achieved and `negative` means it
-  definitively failed; the model's concrete result must say the same thing. Semantic validation is
-  intentionally not used to reject or regenerate it.
+- The simple travel generator supplies one reviewed fact for natural integration into part 1 but
+  does not validate the model's wording. Surrounding events are fiction and are not scientifically validated.
+- Treat every image-provider result as untrusted even after a compressed-byte limit. Validate it
+  with Pillow before any `convert()`/`load()`, reject either side above 8192 px or more than
+  16 million pixels, and reopen the bytes for subsequent processing; Pillow's default bomb warning
+  alone permits payloads far larger than this service can safely decode concurrently.
+- Async paid media tasks must persist provider origin, task ID and a request fingerprint in the
+  unified provider-task SQLite store before the first poll, while still holding the existing paid-stage
+  lock. A `media_saved` receipt is not proof that the local file still exists: if the file is
+  missing, resume poll/download using the same task instead of submitting again. Synchronous image
+  endpoints expose no resumable task ID; keep automatic retries disabled, and treat a provider-
+  accepted request whose response was lost before local persistence as an irreducible ambiguity
+  unless the provider adds a client idempotency token.

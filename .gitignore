@@ -20,6 +20,7 @@ build/
 
 public/generated/
 backend/static/generated/
+backend/backend/
 backend/logs/
 backend/data/push/
 /data/push/

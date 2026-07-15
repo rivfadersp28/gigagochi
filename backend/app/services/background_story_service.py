@@ -5,6 +5,8 @@ import json
 import logging
 import random
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -22,6 +24,8 @@ from app.services.character_dossier import story_character_data
 from app.services.image_service import (
     generate_image_bytes,
     generate_video_from_image_bytes,
+    reserve_image_bytes,
+    reserve_video_from_image_bytes,
     strip_generated_video_auxiliary_streams,
 )
 from app.services.lite_overlay import (
@@ -62,6 +66,7 @@ from app.services.pet_reply_engine.speech_runtime import (
     state_param_usage_rule,
 )
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
+from app.services.reference_assets import trusted_generated_asset_url
 from app.services.story_library import search_story_library
 from app.services.tone_runtime import tone_prompt_block
 
@@ -78,7 +83,6 @@ STORY_STAT_MAX_SINGLE_DAMAGE = 25
 STORY_STAT_MAX_TOTAL_DAMAGE = 35
 STORY_DIRECTION_HISTORY_LIMIT = 12
 STORY_MODE_COOLDOWN = 3
-LOCAL_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS = 8400
 BACKGROUND_STORY_IMAGE_SCENE_STORY_MAX_CHARS = 2400
 BACKGROUND_STORY_IMAGE_SCENE_MAX_CHARS = 700
@@ -104,8 +108,9 @@ BACKGROUND_STORY_VIDEO_PROMPT = (
     "settle. Do not invent a new action. The main character may perform one slow blink and barely "
     "noticeable breathing. A gentle breeze may softly move loose fabric, grass, leaves, hanging "
     "ornaments or fur. Water, dust, mist or tiny particles may move subtly if already present.\n\n"
-    "No walking, large body movement, head turn, broad arm gesture, expression change, lip movement, "
-    "object relocation, new element, physics change or dramatic animation. The scene should feel "
+    "No walking, large body movement, head turn, broad arm gesture, expression change, lip "
+    "movement, object relocation, new element, physics change or dramatic animation. The scene "
+    "should feel "
     "quietly alive through sparse, slow, visibly handcrafted stop-motion beats."
 )
 BACKGROUND_STORY_IMAGE_POSE_FAMILIES = (
@@ -960,30 +965,8 @@ def _isolated_character_asset_image_url(pet: LocalPetChatContext) -> str:
     return parsed._replace(path=character_path).geturl()
 
 
-def _is_public_reference_url(image_url: str) -> bool:
-    if image_url.startswith("data:image/"):
-        return True
-    parsed = urlparse(image_url)
-    if parsed.scheme not in {"http", "https"}:
-        return False
-    hostname = parsed.hostname or ""
-    return hostname not in LOCAL_REFERENCE_HOSTS and not hostname.endswith(".local")
-
-
 def _absolute_reference_url(image_url: str, settings: Any) -> str:
-    if _is_public_reference_url(image_url):
-        return image_url
-    if not image_url.startswith("/"):
-        return ""
-
-    base_url = _text_value(getattr(settings, "backend_public_url", None)) or _text_value(
-        getattr(settings, "webapp_url", None)
-    )
-    if not base_url:
-        return ""
-
-    absolute_url = f"{base_url.rstrip('/')}/{image_url.lstrip('/')}"
-    return absolute_url if _is_public_reference_url(absolute_url) else ""
+    return trusted_generated_asset_url(image_url, settings)
 
 
 def _isolated_character_asset_reference_url(pet: LocalPetChatContext) -> str:
@@ -1291,7 +1274,7 @@ COLOR SCRIPT — REQUIRED FOR THIS SCENE:
     return _truncate_text(prompt, BACKGROUND_STORY_IMAGE_PROMPT_MAX_CHARS)
 
 
-def generate_background_story_image_bytes(
+def _background_story_image_inputs(
     *,
     pet: LocalPetChatContext,
     story: BackgroundStoryResult,
@@ -1300,7 +1283,7 @@ def generate_background_story_image_bytes(
     direction_output: dict[str, str] | None = None,
     image_size: str = BACKGROUND_STORY_IMAGE_SIZE,
     composition_direction: str = "",
-) -> bytes:
+) -> tuple[str, list[dict[str, Any]], str]:
     input_references = _asset_input_references_for_background_story(pet)
     if not input_references:
         raise RuntimeError("BACKGROUND_STORY_IMAGE_REFERENCE_MISSING")
@@ -1313,22 +1296,74 @@ def generate_background_story_image_bytes(
     )
     if direction_output is not None:
         direction_output.update(image_direction)
+    prompt = build_background_story_image_prompt(
+        scene=scene,
+        mode=prompt_mode,
+        pose_family=image_direction.get("poseFamily", ""),
+        hero_pose=image_direction.get("heroPose", ""),
+        camera=image_direction.get("camera", ""),
+        color_palette=image_direction.get("colorPalette", ""),
+        accent_color=image_direction.get("accentColor", ""),
+        palette_family=image_direction.get("paletteFamily", ""),
+        composition_direction=composition_direction,
+    )
+    return prompt, input_references, image_size
+
+
+def generate_background_story_image_bytes(
+    *,
+    pet: LocalPetChatContext,
+    story: BackgroundStoryResult,
+    prompt_mode: BackgroundStoryImagePromptMode = "full_stop_motion",
+    recent_story_events: list[dict[str, Any]] | None = None,
+    direction_output: dict[str, str] | None = None,
+    image_size: str = BACKGROUND_STORY_IMAGE_SIZE,
+    composition_direction: str = "",
+) -> bytes:
+    prompt, input_references, image_size = _background_story_image_inputs(
+        pet=pet,
+        story=story,
+        prompt_mode=prompt_mode,
+        recent_story_events=recent_story_events,
+        direction_output=direction_output,
+        image_size=image_size,
+        composition_direction=composition_direction,
+    )
     return generate_image_bytes(
-        build_background_story_image_prompt(
-            scene=scene,
-            mode=prompt_mode,
-            pose_family=image_direction.get("poseFamily", ""),
-            hero_pose=image_direction.get("heroPose", ""),
-            camera=image_direction.get("camera", ""),
-            color_palette=image_direction.get("colorPalette", ""),
-            accent_color=image_direction.get("accentColor", ""),
-            palette_family=image_direction.get("paletteFamily", ""),
-            composition_direction=composition_direction,
-        ),
+        prompt,
         label="background_story/image",
         size=image_size,
         input_references=input_references,
     )
+
+
+@contextmanager
+def reserve_background_story_image_bytes(
+    *,
+    pet: LocalPetChatContext,
+    story: BackgroundStoryResult,
+    prompt_mode: BackgroundStoryImagePromptMode = "full_stop_motion",
+    recent_story_events: list[dict[str, Any]] | None = None,
+    direction_output: dict[str, str] | None = None,
+    image_size: str = BACKGROUND_STORY_IMAGE_SIZE,
+    composition_direction: str = "",
+) -> Iterator[bytes]:
+    prompt, input_references, image_size = _background_story_image_inputs(
+        pet=pet,
+        story=story,
+        prompt_mode=prompt_mode,
+        recent_story_events=recent_story_events,
+        direction_output=direction_output,
+        image_size=image_size,
+        composition_direction=composition_direction,
+    )
+    with reserve_image_bytes(
+        prompt,
+        label="background_story/image",
+        size=image_size,
+        input_references=input_references,
+    ) as payload:
+        yield payload
 
 
 def generate_background_story_video_bytes(
@@ -1346,6 +1381,23 @@ def generate_background_story_video_bytes(
             duration=BACKGROUND_STORY_VIDEO_DURATION_SECONDS,
         )
     )
+
+
+@contextmanager
+def reserve_background_story_video_bytes(
+    image_bytes: bytes,
+    *,
+    aspect_ratio: str = BACKGROUND_STORY_VIDEO_ASPECT_RATIO,
+) -> Iterator[bytes]:
+    with reserve_video_from_image_bytes(
+        image_bytes,
+        label="background_story/video",
+        prompt=BACKGROUND_STORY_VIDEO_PROMPT,
+        resolution=BACKGROUND_STORY_VIDEO_RESOLUTION,
+        aspect_ratio=aspect_ratio,
+        duration=BACKGROUND_STORY_VIDEO_DURATION_SECONDS,
+    ) as payload:
+        yield strip_generated_video_auxiliary_streams(payload)
 
 
 def _clean_context_value(value: Any) -> Any:

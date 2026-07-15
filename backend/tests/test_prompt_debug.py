@@ -1,9 +1,25 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
+
+import pytest
 
 from app.llm import LLMResponse, LLMUsage
 from app.services import prompt_debug
+
+
+@pytest.fixture(autouse=True)
+def isolated_prompt_log_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        prompt_debug,
+        "get_settings",
+        lambda: SimpleNamespace(
+            ai_log_max_bytes=10 * 1024 * 1024,
+            ai_log_backup_count=3,
+            allow_dev_tma_auth=True,
+        ),
+    )
 
 
 def test_prompt_debug_writes_prompt_log_with_generation_context(monkeypatch, tmp_path) -> None:
@@ -158,3 +174,57 @@ def test_prompt_debug_redacts_prompt_content_by_default(monkeypatch, tmp_path) -
     assert "messages" not in payload
     assert "Секрет" not in log_path.read_text(encoding="utf-8")
     assert payload["promptContentChars"] == len("Меня зовут Секрет")
+
+
+def test_full_prompt_logging_stays_redacted_outside_dev_mode(monkeypatch, tmp_path) -> None:
+    log_path = tmp_path / "ai-prompts.jsonl"
+    monkeypatch.setenv("AI_PROMPT_LOG_FULL", "true")
+    monkeypatch.setattr(prompt_debug, "AI_PROMPT_LOG_PATH", log_path)
+    monkeypatch.setattr(
+        prompt_debug,
+        "get_settings",
+        lambda: SimpleNamespace(
+            ai_log_max_bytes=10 * 1024 * 1024,
+            ai_log_backup_count=3,
+            allow_dev_tma_auth=False,
+        ),
+    )
+
+    prompt_debug.log_chat_completion_prompt(
+        "pet_reply/lite",
+        {
+            "model": "gpt-5.5",
+            "messages": [{"role": "user", "content": "production secret"}],
+        },
+    )
+
+    raw_log = log_path.read_text(encoding="utf-8")
+    assert "production secret" not in raw_log
+    assert "messages" not in json.loads(raw_log)
+
+
+def test_video_prompt_debug_redacts_prompt_and_references_by_default(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    log_path = tmp_path / "ai-prompts.jsonl"
+    monkeypatch.delenv("AI_PROMPT_LOG_FULL", raising=False)
+    monkeypatch.setattr(prompt_debug, "AI_PROMPT_LOG_PATH", log_path)
+
+    prompt_debug.log_video_generation_prompt(
+        "travel/video",
+        {
+            "model": "video-model",
+            "prompt": "Секретный сюжет пользователя",
+            "duration": 8,
+            "input_references": [{"url": "https://private.example/user-image.png"}],
+        },
+    )
+
+    raw_log = log_path.read_text(encoding="utf-8")
+    payload = json.loads(raw_log)
+    assert payload["promptType"] == "video_generation"
+    assert payload["promptChars"] == len("Секретный сюжет пользователя")
+    assert payload["inputReferenceCount"] == 1
+    assert "Секретный" not in raw_log
+    assert "private.example" not in raw_log

@@ -10,8 +10,10 @@ import httpx
 from fastapi import HTTPException, status
 from openai import APIStatusError
 
+from app.config import get_settings
 from app.llm.contracts import LLMProviderError
 from app.services.image_service import generation_error_code
+from app.services.jsonl_log import append_bounded_jsonl
 from app.services.ops_alert_service import notify_ops
 from app.services.prompt_debug import current_ai_log_context
 
@@ -21,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 def generation_error_message(code: str) -> str:
+    if code == "STORAGE_CAPACITY_LOW":
+        return "На сервере временно недостаточно места. Попробуйте позже."
     if code in {"OPENAI_TIMEOUT", "LLM_TIMEOUT"}:
         return "Создание питомца заняло больше времени, чем ожидалось. Попробуйте ещё раз."
     if code in {"OPENAI_RATE_LIMIT", "LLM_RATE_LIMIT"}:
@@ -46,6 +50,8 @@ def chat_error_code(exc: Exception) -> str:
 
 
 def chat_error_message(code: str) -> str:
+    if code == "STORAGE_CAPACITY_LOW":
+        return "Сервис временно не может сохранить результат. Попробуйте позже."
     if code in {"OPENAI_TIMEOUT", "LLM_TIMEOUT"}:
         return "Ответ занял больше времени, чем ожидалось. Отправьте сообщение ещё раз."
     if code in {"OPENAI_RATE_LIMIT", "LLM_RATE_LIMIT"}:
@@ -66,6 +72,8 @@ def chat_error_message(code: str) -> str:
 
 
 def travel_error_message(code: str) -> str:
+    if code == "STORAGE_CAPACITY_LOW":
+        return "Путешествие временно нельзя сохранить. Попробуйте позже."
     if code in {"OPENAI_TIMEOUT", "LLM_TIMEOUT"}:
         return "Путешествие заняло больше времени, чем ожидалось. Попробуйте ещё раз."
     if code in {"OPENAI_RATE_LIMIT", "LLM_RATE_LIMIT"}:
@@ -206,14 +214,17 @@ def public_error_detail(
 
 
 def write_ai_failure_log_line(log_payload: dict[str, Any]) -> None:
-    AI_FAILURE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     line_payload = {
         "timestamp": datetime.now(UTC).isoformat(),
         **log_payload,
     }
-    with AI_FAILURE_LOG_PATH.open("a", encoding="utf-8") as log_file:
-        log_file.write(json.dumps(line_payload, ensure_ascii=False, default=str))
-        log_file.write("\n")
+    settings = get_settings()
+    append_bounded_jsonl(
+        AI_FAILURE_LOG_PATH,
+        line_payload,
+        max_bytes=settings.ai_log_max_bytes,
+        backup_count=settings.ai_log_backup_count,
+    )
 
 
 def log_ai_request_failure(
@@ -267,7 +278,13 @@ def ai_failure_http_exception(
 ) -> HTTPException:
     detail = error_detail(error, code, message, exc)
     log_ai_request_failure(endpoint, detail, exc)
+    storage_capacity_low = code == "STORAGE_CAPACITY_LOW"
     return HTTPException(
-        status_code=status.HTTP_502_BAD_GATEWAY,
+        status_code=(
+            status.HTTP_503_SERVICE_UNAVAILABLE
+            if storage_capacity_low
+            else status.HTTP_502_BAD_GATEWAY
+        ),
         detail=public_error_detail(detail, include_diagnostic=include_diagnostic),
+        headers={"Retry-After": "300"} if storage_capacity_low else None,
     )

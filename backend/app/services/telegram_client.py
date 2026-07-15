@@ -33,6 +33,12 @@ def telegram_api_url(method: str, bot_token: str) -> str:
     return f"https://api.telegram.org/bot{bot_token}/{method}"
 
 
+def redact_telegram_token(value: object, bot_token: str | None) -> str:
+    text = str(value)
+    token = str(bot_token or "").strip()
+    return text.replace(token, "<redacted>") if token else text
+
+
 def mini_app_keyboard(webapp_url: str) -> dict[str, Any]:
     return {
         "inline_keyboard": [

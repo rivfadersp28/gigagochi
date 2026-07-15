@@ -51,7 +51,7 @@ function generatedAssetSet(
 }
 
 describe("DebugPanel visual mode selector", () => {
-  it("opens the interactive travel demo", () => {
+  it("launches the travel demo from the debug panel", () => {
     const onOpenTravelDemo = vi.fn();
     render(
       <DebugPanel

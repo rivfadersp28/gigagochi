@@ -22,7 +22,7 @@ from app.schemas import (
     LocalProactiveResponse,
     LocalPushRequest,
 )
-from app.services.character_dossier import build_character_capsule
+from app.services.character_dossier import build_visible_character_capsule
 from app.services.context_assembler import (
     AssembledPetContext,
     assemble_pet_context,
@@ -33,7 +33,7 @@ from app.services.lite_overlay import (
     merge_lite_overlay_patch,
     overlay_patch_from_extracted_facts,
 )
-from app.services.lore_runtime import dialogue_vocabulary_block, lore_prompt_block
+from app.services.lore_runtime import lore_prompt_block
 from app.services.openai_service import (
     chat_reasoning_effort_kwargs,
     get_chat_model,
@@ -164,7 +164,6 @@ class PhrasePlan:
     tone_block: str | None = None
     character_block: str | None = None
     memory_block: str | None = None
-    voice_block: str | None = None
     recent_events_block: str | None = None
     world_block: str | None = None
     recent_ambient_block: str | None = None
@@ -176,7 +175,6 @@ class PhrasePlan:
             self.identity_line,
             self.tone_block,
             self.character_block,
-            self.voice_block,
             self.recent_events_block,
             self.world_block,
             self.memory_block,
@@ -859,9 +857,24 @@ def _anti_repeat_block(lines: list[str]) -> str | None:
 
 QUESTION_STOP_WORDS = frozenset(
     {
-        "знал", "знаешь", "слышал", "слышишь", "хочешь", "можешь",
-        "почему", "какой", "какая", "какие", "когда", "куда", "откуда",
-        "тебе", "тебя", "правда", "что", "это",
+        "знал",
+        "знаешь",
+        "слышал",
+        "слышишь",
+        "хочешь",
+        "можешь",
+        "почему",
+        "какой",
+        "какая",
+        "какие",
+        "когда",
+        "куда",
+        "откуда",
+        "тебе",
+        "тебя",
+        "правда",
+        "что",
+        "это",
     }
 )
 
@@ -1171,9 +1184,7 @@ def _plan_contexts_for_visible_reply(
     }
     prompt_debug = log_chat_completion_prompt("pet_reply/context_routing", request_kwargs)
     completion = complete_chat("visible_reply", request_kwargs, client=client)
-    log_chat_completion_response(
-        "pet_reply/context_routing", response_log_value(completion)
-    )
+    log_chat_completion_response("pet_reply/context_routing", response_log_value(completion))
     content = completion.content or "{}"
     routing = _parse_context_routing_decision(surface=surface, raw_content=content)
     context_plan = build_context_plan(
@@ -1236,7 +1247,6 @@ def _character_block_for_surface(
     return _combine_character_blocks(
         _character_capsule_block(
             pet,
-            include_durable_facts=surface != "chat",
         ),
         _character_context_block(pet, surface, routing),
     )
@@ -1325,15 +1335,8 @@ def _join_labeled_line(label: str, *values: Any, limit: int = 320) -> str | None
     return f"{label}: {'; '.join(parts)}"
 
 
-def _character_capsule_block(
-    pet: Any,
-    *,
-    include_durable_facts: bool = True,
-) -> str | None:
-    capsule = build_character_capsule(
-        pet,
-        include_durable_facts=include_durable_facts,
-    )
+def _character_capsule_block(pet: Any) -> str | None:
+    capsule = build_visible_character_capsule(pet)
     if not capsule:
         return None
     return capsule
@@ -1345,8 +1348,7 @@ def _combine_character_blocks(*blocks: str | None) -> str | None:
 
 
 def _visible_world_block(context_bundle: AssembledPetContext) -> str:
-    values = [dialogue_vocabulary_block(), context_bundle.prompt_block]
-    return "\n\n".join(value for value in values if value)
+    return context_bundle.prompt_block
 
 
 def _story_context_for_routing(
@@ -1775,9 +1777,7 @@ def _world_seed_overlay_patch(
     }
     prompt_debug.append(log_chat_completion_prompt("pet_reply/lite_world_seed", request_kwargs))
     completion = complete_chat("visible_reply", request_kwargs, client=client)
-    log_chat_completion_response(
-        "pet_reply/lite_world_seed", response_log_value(completion)
-    )
+    log_chat_completion_response("pet_reply/lite_world_seed", response_log_value(completion))
     world_text = _parse_world_seed_text(completion.content or "")
     if not world_text:
         return None
@@ -2372,11 +2372,7 @@ def generate_lite_pet_reply(
             structured_reply_debug = structured_reply.debug
             structured_reply_used_fallback = structured_reply.used_fallback
             structured_reply_validation_flags = structured_reply.validation_flags
-            if (
-                _model_is_gigachat(model)
-                and not structured_reply_used_fallback
-                and reply
-            ):
+            if _model_is_gigachat(model) and not structured_reply_used_fallback and reply:
                 cleaned_reply = _remove_gigachat_generic_support_opener(reply)
                 if cleaned_reply != reply:
                     reply = cleaned_reply
@@ -2491,9 +2487,7 @@ def extract_lite_overlay_patch_from_reply(
         log_chat_completion_prompt("pet_reply/lite_fact_extraction", request_kwargs)
     )
     completion = complete_chat("lite_facts", request_kwargs, client=llm_client)
-    log_chat_completion_response(
-        "pet_reply/lite_fact_extraction", response_log_value(completion)
-    )
+    log_chat_completion_response("pet_reply/lite_fact_extraction", response_log_value(completion))
     patch = _parse_lite_fact_extraction_payload(completion.content or "{}")
     selected_events, recent_events_debug = _select_recent_events_for_text(
         events=_recent_story_events_from_pet(payload.pet),
@@ -2886,10 +2880,10 @@ def build_ambient_messages(
         )
     else:
         ambient_request = (
-            "Расскажи один объективный проверяемый образовательный фанфакт о реальной "
-            "природе или науке от лица этого персонажа. Начни вовлекающе и не так, "
-            "как в недавних репликах. Используй 1–3 законченных предложения до 40 "
-            "символов каждое, без многоточия."
+            "Скажи одну компактную реплику владельцу. Используй только доступную "
+            "память, текущий контекст или базовые факты внешности. Не изображай "
+            "особую манеру речи или характер. Используй 1–2 законченных предложения "
+            "до 40 символов каждое, без многоточия."
         )
     return [
         {"role": "system", "content": plan.system_content()},
@@ -2981,24 +2975,28 @@ def generate_ambient_pet_message(
             log_chat_completion_prompt("pet_reply/ambient_question_retry", retry_request_kwargs)
         )
         retry_completion = complete_chat(
-            "visible_reply", retry_request_kwargs, client=llm_client
+            "visible_reply",
+            retry_request_kwargs,
+            client=llm_client,
         )
         log_chat_completion_response(
-            "pet_reply/ambient_question_retry", response_log_value(retry_completion)
+            "pet_reply/ambient_question_retry",
+            response_log_value(retry_completion),
         )
         raw_reply = retry_completion.content or ""
         structured_reply = _parse_visible_reply_response(
-            raw_reply, surface="ambient", reply_limit=reply_limit
+            raw_reply,
+            surface="ambient",
+            reply_limit=reply_limit,
         )
         structured_reply.validation_flags.append("ambient_reply_regenerated")
         if structured_reply.reply.endswith("…"):
             structured_reply.validation_flags.append("ambient_truncated_after_regeneration")
         if _ambient_repeats_recent_question(
-            structured_reply.reply, payload.recentAmbientReplies
+            structured_reply.reply,
+            payload.recentAmbientReplies,
         ):
-            structured_reply.validation_flags.append(
-                "ambient_question_repeat_after_regeneration"
-            )
+            structured_reply.validation_flags.append("ambient_question_repeat_after_regeneration")
     log_ambient_reply_diagnostic(
         "pet_reply/ambient",
         request_kwargs,

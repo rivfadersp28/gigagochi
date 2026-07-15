@@ -88,6 +88,8 @@ export type LocalPetStateV2 = {
     happiness: number;
     energy: number;
   };
+  /** Local-only idempotency receipts; intentionally excluded from push snapshots. */
+  travelImpactReceipts?: string[];
   assetSet?: LocalPetAssetSet;
 };
 
@@ -162,33 +164,6 @@ export type LocalChatResponse = {
 
 export type LiteFactExtractionResponse = {
   liteOverlayPatch?: Record<string, unknown>;
-  debug?: LocalChatResponse["debug"];
-};
-
-export type TravelStoryScene = {
-  index: number;
-  arc: "beginning" | "exploration" | "discovery" | "reward" | "final";
-  title: string;
-  text: string;
-  visualBrief: string;
-};
-
-export type TravelStory = {
-  title: string;
-  summary: string;
-  scenes: TravelStoryScene[];
-};
-
-export type TravelSceneImage = {
-  sceneIndex: number;
-  imageUrl: string;
-};
-
-export type GenerateTravelResponse = {
-  travelId: string;
-  generatedAt: string;
-  story: TravelStory;
-  images: TravelSceneImage[];
   debug?: LocalChatResponse["debug"];
 };
 

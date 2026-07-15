@@ -45,21 +45,26 @@ export function saveAdminSpeechFiles(
 export function startAdminSpeechPublish(
   files: Array<Pick<AdminSpeechFile, "id" | "content">>,
   message?: string,
+  signal?: AbortSignal,
 ): Promise<AdminSpeechPublishJob> {
   return request(
     "/api/admin/speech/publish",
     {
       method: "POST",
       body: { files, message },
+      signal,
     },
     parseAdminSpeechPublishJob,
   );
 }
 
-export function fetchAdminSpeechPublishJob(jobId: string): Promise<AdminSpeechPublishJob> {
+export function fetchAdminSpeechPublishJob(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<AdminSpeechPublishJob> {
   return request(
     `/api/admin/speech/publish/${encodeURIComponent(jobId)}`,
-    {},
+    { signal },
     parseAdminSpeechPublishJob,
   );
 }
