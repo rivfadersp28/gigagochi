@@ -51,6 +51,7 @@ type RunLocalPetChatTurnOptions = {
   message: string;
   includePromptDebug: boolean;
   replyMaxChars?: number;
+  replyTransform?: (reply: string) => string;
   dialogueHookMessage?: LocalChatMessage | null;
   history?: LocalChatMessage[];
   logLabel: string;
@@ -223,6 +224,7 @@ async function runLocalPetChatTurnLocked({
   message,
   includePromptDebug,
   replyMaxChars,
+  replyTransform,
   dialogueHookMessage,
   history,
   logLabel,
@@ -292,6 +294,12 @@ async function runLocalPetChatTurnLocked({
   if (!isCurrentPet(requestPet.petId)) {
     removeLocalChatMessages([userMessage.id]);
     throw new LocalPetTurnSupersededError();
+  }
+  if (replyTransform) {
+    response = {
+      ...response,
+      reply: replyTransform(response.reply),
+    };
   }
   if (response.happinessDelta === 30 || response.happinessDelta === 100) {
     rememberCompliment(requestPet.petId, response.complimentKey ?? message);

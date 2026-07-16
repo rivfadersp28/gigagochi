@@ -58,12 +58,14 @@ describe("localPetStats", () => {
   });
 
   it("creates a new pet with full stats", () => {
-    expect(createLocalPetState("мышонок").stats).toEqual({
+    const created = createLocalPetState("мышонок");
+    expect(created.stats).toEqual({
       hunger: 100,
       happiness: 100,
       energy: 100,
     });
-    expect(createLocalPetState("мышонок").petTapProgress).toBe(0);
+    expect(created.petTapProgress).toBe(0);
+    expect(created.experience).toBe(0);
   });
 
   it("migrates legacy pet state and bounds persisted travel receipts", () => {

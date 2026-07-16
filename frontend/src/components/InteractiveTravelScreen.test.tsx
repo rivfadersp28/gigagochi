@@ -438,7 +438,34 @@ describe("InteractiveTravelScreen", () => {
     fireEvent.click(correct);
 
     expect(screen.getByText("+100")).toBeInTheDocument();
-    expect(screen.getByLabelText("Получено 100 единиц опыта")).toBeInTheDocument();
+    const outcome = screen.getByLabelText("Получено 100 единиц опыта");
+    const resultFrame = screen.getByLabelText("Результат выбора");
+    const reaction = screen.getByLabelText("Получилось! Малыш снова рядом с мамой.");
+    const mainCharacters = Array.from(resultFrame.children)
+      .filter((element) => element.tagName === "P")
+      .flatMap((paragraph) => Array.from(paragraph.querySelectorAll<HTMLElement>("[style]")));
+    const reactionCharacters = Array.from(
+      reaction.querySelectorAll<HTMLElement>("[style]"),
+    );
+    const lastMainDelay = Number.parseInt(
+      mainCharacters.at(-1)?.style.animationDelay ?? "0",
+      10,
+    );
+    const firstReactionDelay = Number.parseInt(
+      reactionCharacters[0]?.style.animationDelay ?? "0",
+      10,
+    );
+    const lastReactionDelay = Number.parseInt(
+      reactionCharacters.at(-1)?.style.animationDelay ?? "0",
+      10,
+    );
+    const outcomeDelay = Number.parseInt(
+      outcome.parentElement?.style.animationDelay ?? "0",
+      10,
+    );
+
+    expect(firstReactionDelay - lastMainDelay).toBe(300);
+    expect(outcomeDelay - lastReactionDelay).toBe(300);
     expect(document.querySelector(
       'video[src="/static/onboarding/bat-help/success.mp4"]',
     )).not.toBeNull();

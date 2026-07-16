@@ -5,6 +5,11 @@ import {
   resetLocalPetState,
   writeLocalPetState,
 } from "@/lib/localPetStorage";
+import {
+  readLocalPetFirstSession,
+  restartLocalPetFirstSession,
+  updateLocalPetFirstSession,
+} from "@/lib/localPetFirstSession";
 import type { LocalPetState } from "@/lib/types";
 
 import { PetDashboard } from "./PetDashboard";
@@ -15,11 +20,14 @@ const mocks = vi.hoisted(() => ({
   introduction: "Привет" as string | null,
   interactiveTravel: false,
   localPet: undefined as unknown,
+  queueOutfitGeneration: vi.fn(),
+  resumeCompletedPetGeneration: vi.fn(),
   router: {
     push: vi.fn(),
     replace: vi.fn(),
   },
   runLocalPetChatTurn: vi.fn(),
+  simplifyOutfitRequest: vi.fn(),
   storyHistory: [] as Array<{ id: string; title: string; text: string }>,
   useTelegramBackButton: vi.fn(),
   withLocalPetMutationLock: vi.fn(),
@@ -51,6 +59,10 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/api")>(),
   generateLocalAmbientMessage: (...args: unknown[]) =>
     mocks.generateLocalAmbientMessage(...args),
+  queueOutfitGeneration: (...args: unknown[]) => mocks.queueOutfitGeneration(...args),
+  resumeCompletedPetGeneration: (...args: unknown[]) =>
+    mocks.resumeCompletedPetGeneration(...args),
+  simplifyOutfitRequest: (...args: unknown[]) => mocks.simplifyOutfitRequest(...args),
 }));
 
 vi.mock("@/lib/localPetIntroduction", () => ({
@@ -172,6 +184,12 @@ beforeEach(() => {
   mocks.introduction = "Привет";
   mocks.interactiveTravel = false;
   mocks.storyHistory = [];
+  mocks.queueOutfitGeneration.mockResolvedValue("outfit-job-1");
+  mocks.resumeCompletedPetGeneration.mockReturnValue(new Promise(() => undefined));
+  mocks.simplifyOutfitRequest.mockResolvedValue({
+    displayItem: "плащ",
+    generationDescription: "зелёный походный плащ",
+  });
   window.localStorage.clear();
   window.sessionStorage.clear();
   writeLocalPetState(pet);
@@ -194,6 +212,7 @@ beforeEach(() => {
     applyStoryLibraryPatch: vi.fn(),
     applyRecentStoryEventsPatch: vi.fn(),
     applyStatsPatch: vi.fn(),
+    spendExperience: vi.fn(() => true),
   };
 });
 
@@ -220,6 +239,9 @@ it("keeps the bottom actions enabled when onboarding is not opted in", async () 
 
   expect(screen.getByRole("button", { name: "Покормить" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "В путешествие" })).toBeEnabled();
+  expect(screen.getByLabelText("Баланс опыта: 450")).toBeInTheDocument();
+  expect(screen.queryByRole("progressbar", { name: "Опыт 450 из 3000" }))
+    .not.toBeInTheDocument();
 });
 
 it("guides the local first session through chat and both cards", async () => {
@@ -246,8 +268,11 @@ it("guides the local first session through chat and both cards", async () => {
     await vi.advanceTimersByTimeAsync(0);
   });
 
-  expect(screen.getByRole("button", { name: "Поболтать" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Покормить" })).toBeDisabled();
+  const onboardingChatButton = screen.getByRole("button", { name: "Поболтать" });
+  expect(onboardingChatButton).toBeEnabled();
+  expect(onboardingChatButton.parentElement).toHaveClass("w-full", "justify-center");
+  expect(screen.queryByRole("button", { name: "Покормить" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/Баланс опыта/u)).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Поболтать" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Сообщение персонажу" }), {
@@ -260,6 +285,8 @@ it("guides the local first session through chat and both cards", async () => {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(3_100);
   });
+  const firstReplyTransform = mocks.runLocalPetChatTurn.mock.calls[0]?.[0]?.replyTransform;
+  expect(firstReplyTransform?.("Очень приятно! А как твои дела?")).toBe("Очень приятно!");
   expect(screen.getByLabelText("А чем ты любишь заниматься?")).toBeInTheDocument();
 
   fireEvent.change(screen.getByRole("textbox", { name: "Сообщение персонажу" }), {
@@ -269,12 +296,15 @@ it("guides the local first session through chat and both cards", async () => {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(4_000);
   });
+  const secondReplyTransform = mocks.runLocalPetChatTurn.mock.calls[1]?.[0]?.replyTransform;
+  expect(secondReplyTransform?.("Здорово! Часто ходишь?")).toBe("Здорово!");
 
   const backHandler = mocks.useTelegramBackButton.mock.calls.at(-1)?.[0] as
     | (() => void)
     | undefined;
   act(() => backHandler?.());
   expect(screen.getByRole("button", { name: "Покормить" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Поболтать" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Покормить" }));
 
   const berries = screen.getByRole("button", { name: "Дать персонажу ягоды" });
@@ -293,10 +323,67 @@ it("guides the local first session through chat and both cards", async () => {
   fireEvent.click(remedy);
   const helpBat = screen.getByRole("button", { name: "Помочь летучей мыши" });
   expect(helpBat).toBeEnabled();
+  expect(helpBat).toHaveClass("main-action-button--onboarding");
+  expect(helpBat.parentElement).toHaveClass("w-full", "justify-center");
+  expect(screen.queryByRole("button", { name: "Покормить" })).not.toBeInTheDocument();
   fireEvent.click(helpBat);
   expect(mocks.router.push).toHaveBeenCalledWith(`/pet/${firstSessionPet.petId}/travel`);
   expect(localPetMock.feed).toHaveBeenNthCalledWith(1, "berry-bowl");
   expect(localPetMock.feed).toHaveBeenNthCalledWith(2, "leaf-crunch");
+});
+
+it("finishes onboarding only after the first outfit request is queued", async () => {
+  const moods = {
+    idle: "/outfit-idle.png",
+    happy: "/outfit-happy.png",
+    hungry: "/outfit-hungry.png",
+    sad: "/outfit-sad.png",
+  };
+  const onboardingPet: LocalPetState = {
+    ...pet,
+    experience: 100,
+    introductionPending: true,
+    assetSet: {
+      assetSetId: "onboarding-assets",
+      generatedAt: "2026-07-15T10:00:00.000Z",
+      images: {
+        baby: { ...moods },
+        teen: { ...moods },
+        adult: { ...moods },
+      },
+    },
+  };
+  writeLocalPetState(onboardingPet);
+  (mocks.localPet as { pet: LocalPetState }).pet = onboardingPet;
+  const started = restartLocalPetFirstSession(onboardingPet.petId)!;
+  updateLocalPetFirstSession(started, "awaiting-completion-message");
+
+  render(<PetDashboard petId={onboardingPet.petId} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  const outfitButton = screen.getByRole("button", { name: "Нарядить" });
+  expect(outfitButton.parentElement).toHaveClass("w-full", "justify-center");
+  expect(screen.queryByRole("button", { name: "Поболтать" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Покормить" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "В путешествие" })).not.toBeInTheDocument();
+  expect(readLocalPetFirstSession(onboardingPet)?.stage)
+    .toBe("awaiting-completion-message");
+
+  fireEvent.click(outfitButton);
+  fireEvent.change(screen.getByRole("textbox", { name: "Описание наряда" }), {
+    target: { value: "Зелёный походный плащ" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(mocks.queueOutfitGeneration).toHaveBeenCalledOnce();
+  expect(screen.getByRole("heading", { name: "Наряд заказан" })).toBeInTheDocument();
+  expect(readLocalPetFirstSession(onboardingPet)?.stage).toBe("completed");
 });
 
 it("does not show a late chat error after the pet is reset", async () => {

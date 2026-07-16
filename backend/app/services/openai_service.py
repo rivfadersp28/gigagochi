@@ -74,8 +74,7 @@ def get_openrouter_image_model(settings: Any) -> str:
 
 def get_openrouter_video_model(settings: Any) -> str:
     return (
-        _clean_string(getattr(settings, "openrouter_video_model", None))
-        or "bytedance/seedance-2.0"
+        _clean_string(getattr(settings, "openrouter_video_model", None)) or "bytedance/seedance-2.0"
     )
 
 

@@ -73,6 +73,7 @@ import { claimPetIntroduction } from "@/lib/localPetIntroduction";
 import {
   FIRST_SESSION_COPY,
   firstSessionDashboardMessage,
+  firstSessionReactionReply,
   isLocalFirstSessionActive,
   isLocalFirstSessionEnabled,
   readLocalPetFirstSession,
@@ -100,7 +101,6 @@ import {
   clampPetExperience,
   PET_EXPERIENCE_MAX,
   PET_OUTFIT_EXPERIENCE_COST,
-  petExperiencePercent,
 } from "@/lib/localPetExperience";
 import {
   refreshedTestPetAssetSet,
@@ -1442,6 +1442,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       setPendingOutfitJobId(pending.requestKey, jobId);
       setPendingOutfit({ ...pending, jobId });
       setOutfitStep("queued");
+      if (firstSession?.stage === "awaiting-completion-message") {
+        setFirstSession(updateLocalPetFirstSession(firstSession, "completed"));
+      }
       hapticNotification("success");
     } catch (caught) {
       if (controller.signal.aborted) {
@@ -1532,6 +1535,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         message,
         includePromptDebug,
         replyMaxChars: CHAT_REPLY_MAX_CHARS,
+        replyTransform: firstSession?.stage === "awaiting-chat"
+          ? (reply) => firstSessionReactionReply(
+              reply,
+              FIRST_SESSION_COPY.afterNameFallback,
+            )
+          : firstSession?.stage === "awaiting-chat-followup"
+            ? (reply) => firstSessionReactionReply(
+                reply,
+                FIRST_SESSION_COPY.afterChatFallback,
+              )
+            : undefined,
         dialogueHookMessage,
         logLabel: "dashboard quick chat",
         onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
@@ -1722,16 +1736,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       claimPetIntroduction(pet);
       const message = firstSessionDashboardMessage(pet, firstSession);
       if (message) {
-        const completesFirstSession = firstSession.stage === "awaiting-completion-message";
         window.queueMicrotask(() => {
           showPetReplyMessage(message, true, {
             dialogueHook: true,
             voiceMode: "generated",
             autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
           });
-          if (completesFirstSession) {
-            setFirstSession(updateLocalPetFirstSession(firstSession, "completed"));
-          }
         });
       }
       return;
@@ -2017,19 +2027,31 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const moodPercent = Math.max(0, Math.min(100, pet.stats.happiness));
   const healthPercent = Math.max(0, Math.min(100, pet.stats.energy));
   const experience = clampPetExperience(pet.experience);
-  const experiencePercent = petExperiencePercent(experience);
   const roundedHungerPercent = Math.round(hungerPercent);
   const roundedMoodPercent = Math.round(moodPercent);
   const roundedHealthPercent = Math.round(healthPercent);
-  const firstSessionChatDisabled = firstSessionActive
-    && firstSession?.stage !== "awaiting-chat"
-    && firstSession?.stage !== "awaiting-chat-followup";
-  const firstSessionFeedDisabled = firstSessionActive
-    && firstSession?.stage !== "awaiting-first-food"
-    && firstSession?.stage !== "awaiting-remedy";
-  const firstSessionTravelDisabled = firstSessionActive
-    && firstSession?.stage !== "awaiting-travel"
-    && firstSession?.stage !== "confirming-travel";
+  const showAllMainActions = !firstSessionActive;
+  const showFirstSessionChatAction = showAllMainActions
+    || firstSession?.stage === "awaiting-chat"
+    || firstSession?.stage === "awaiting-chat-followup";
+  const showFirstSessionFeedAction = showAllMainActions
+    || firstSession?.stage === "awaiting-first-food"
+    || firstSession?.stage === "awaiting-remedy";
+  const showFirstSessionTravelAction = showAllMainActions
+    || firstSession?.stage === "awaiting-travel"
+    || firstSession?.stage === "confirming-travel";
+  const showFirstSessionOutfitAction = showAllMainActions
+    || firstSession?.stage === "awaiting-completion-message";
+  const visibleFirstSessionActionCount = firstSessionActive
+    ? Number(showFirstSessionChatAction)
+      + Number(showFirstSessionFeedAction)
+      + Number(canShowInteractiveTravel && showFirstSessionTravelAction)
+      + Number(showFirstSessionOutfitAction)
+    : 0;
+  const centerSingleFirstSessionAction = visibleFirstSessionActionCount === 1;
+  const showExperience = !firstSession
+    || firstSession.stage === "awaiting-completion-message"
+    || firstSession.stage === "completed";
   const conversationSceneStyle: ConversationSceneStyle = {
     "--conversation-input-offset-y": `${conversationInputOffsetY}px`,
   };
@@ -2132,32 +2154,23 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         <div className="sr-only">
           Стадия: {accessibleStageLabels[pet.stage]}. Состояние: {accessibleMoodLabels[pet.mood]}.
           Голод: {roundedHungerPercent} из 100. Настроение: {roundedMoodPercent} из 100.
-          Здоровье: {roundedHealthPercent} из 100. Опыт: {experience} из {PET_EXPERIENCE_MAX}.
+          Здоровье: {roundedHealthPercent} из 100.
+          {showExperience ? ` Опыт: ${experience} из ${PET_EXPERIENCE_MAX}.` : ""}
         </div>
 
-        <div className="pet-status-level">
-          Уровень: Малыш
-        </div>
+        {showExperience ? (
+          <>
+            <div className="pet-status-level">
+              Уровень: Малыш
+            </div>
 
-        <div
-          className="pet-experience-track"
-          role="progressbar"
-          aria-label={`Опыт ${experience} из ${PET_EXPERIENCE_MAX}`}
-          aria-valuemin={0}
-          aria-valuemax={PET_EXPERIENCE_MAX}
-          aria-valuenow={experience}
-        >
-          <span
-            className="pet-experience-progress"
-            style={{ width: `${experiencePercent}%` }}
-          />
-        </div>
-
-        <XpAmount
-          text={`${experience}`}
-          ariaLabel={`Баланс опыта: ${experience}`}
-          className="pet-experience-balance"
-        />
+            <XpAmount
+              text={`${experience}`}
+              ariaLabel={`Баланс опыта: ${experience}`}
+              className="pet-experience-balance"
+            />
+          </>
+        ) : null}
 
         <div
           className="top-status-strip"
@@ -2270,52 +2283,60 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       <div
         className={`main-actions-scroll conversation-fade-target absolute top-[762px] z-30 ${
           isChatMode || isFeedMode ? "conversation-fade-target--hidden" : ""
-        }`}
+        } ${centerSingleFirstSessionAction ? "main-actions-scroll--single" : ""}`}
         aria-hidden={isChatMode || isFeedMode}
         inert={isChatMode || isFeedMode ? true : undefined}
       >
-        <div className="main-actions-row flex w-max gap-[19px] pr-[29px]">
-          <button
-            type="button"
-            className="main-action-button main-action-button--chat"
-            onClick={handleOpenChatMode}
-            disabled={firstSessionChatDisabled}
-          >
-            <img
-              src={actionIconSrc.chat}
-              alt=""
-              aria-hidden="true"
-              className="main-action-button__icon"
-              draggable={false}
-            />
-            <span>Поболтать</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleFeed}
-            disabled={isFeeding || firstSessionFeedDisabled}
-            className="main-action-button main-action-button--feed disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {isFeeding ? (
-              <Loader2 className="size-[24px] animate-spin" aria-hidden="true" />
-            ) : (
+        <div className={`main-actions-row flex gap-[19px] ${
+          centerSingleFirstSessionAction
+            ? "w-full justify-center"
+            : "w-max pr-[29px]"
+        }`}>
+          {showFirstSessionChatAction ? (
+            <button
+              type="button"
+              className="main-action-button main-action-button--chat"
+              onClick={handleOpenChatMode}
+            >
               <img
-                src={actionIconSrc.feed}
+                src={actionIconSrc.chat}
                 alt=""
                 aria-hidden="true"
                 className="main-action-button__icon"
                 draggable={false}
               />
-            )}
-            <span>Покормить</span>
-          </button>
+              <span>Поболтать</span>
+            </button>
+          ) : null}
+          {showFirstSessionFeedAction ? (
+            <button
+              type="button"
+              onClick={handleFeed}
+              disabled={isFeeding}
+              className="main-action-button main-action-button--feed disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {isFeeding ? (
+                <Loader2 className="size-[24px] animate-spin" aria-hidden="true" />
+              ) : (
+                <img
+                  src={actionIconSrc.feed}
+                  alt=""
+                  aria-hidden="true"
+                  className="main-action-button__icon"
+                  draggable={false}
+                />
+              )}
+              <span>Покормить</span>
+            </button>
+          ) : null}
 
-          {canShowInteractiveTravel ? (
+          {canShowInteractiveTravel && showFirstSessionTravelAction ? (
             <button
               type="button"
               onClick={handleTravel}
-              disabled={firstSessionTravelDisabled}
-              className="main-action-button main-action-button--travel"
+              className={`main-action-button main-action-button--travel ${
+                firstSessionActive ? "main-action-button--onboarding" : ""
+              }`}
             >
               <img
                 src={actionIconSrc.travel}
@@ -2331,19 +2352,20 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               </span>
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={handleOpenOutfitMode}
-            disabled={
-              isGeneratingOutfit
-              || firstSessionActive
-              || pet?.assetSet?.backgroundGenerationStatus === "running"
-            }
-            className="main-action-button main-action-button--outfit"
-          >
-            <span>Нарядить</span>
-          </button>
-          {storyHistory.length ? (
+          {showFirstSessionOutfitAction ? (
+            <button
+              type="button"
+              onClick={handleOpenOutfitMode}
+              disabled={
+                isGeneratingOutfit
+                || pet?.assetSet?.backgroundGenerationStatus === "running"
+              }
+              className="main-action-button main-action-button--outfit"
+            >
+              <span>Нарядить</span>
+            </button>
+          ) : null}
+          {showAllMainActions && storyHistory.length ? (
             <button
               type="button"
               onClick={() => setIsStoryHistoryOpen(true)}

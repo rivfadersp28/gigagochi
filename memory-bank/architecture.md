@@ -689,10 +689,11 @@
 - Interactive-travel stat effects commit with bounded local-only receipts inside the same
   `LocalPetState` write. `appliedResultParts` in the separate travel session is only a presentation
   projection and a legacy-migration hint; push snapshots intentionally exclude the receipts.
-- Pet experience is local state with a `0..3000` bound and a migration default of `450`. A newly
+- Pet experience is local state with a `0..3000` bound. New pets start at `0`; legacy pets whose
+  stored state has no experience field still migrate to `450`. A newly
   committed successful interactive-travel result grants `100..150` EXP through the same bounded
   receipt path as stat impacts, so replaying a result cannot grant EXP twice. The dashboard renders
-  the current EXP as an accessible progress bar.
+  the current EXP as a centered coin badge beneath the level label, without a separate progress bar.
 - New interactive travels contain four independent episodes joined only by the destination.
   Start samples all four unique tasks from the reviewed
   `backend/data/задачи_путешественника_без_расчётов.md` bank before generation. Four neutral
@@ -739,9 +740,16 @@
   answer and versioned local travel ID; static poster/video pairs live under
   `backend/static/onboarding/bat-help`. Resolving it uses the normal local travel-impact receipt path
   for EXP. The first session remains active on the result screen; pressing Finish moves it to the
-  one-shot `awaiting-completion-message` stage and returns to the pet dashboard. The dashboard shows
-  the final onboarding reply, then persists `completed`. The fixed story must not submit, illustrate,
-  animate, cancel or capture a server travel.
+  `awaiting-completion-message` stage and returns to the pet dashboard. The dashboard explains that
+  correct answers award spendable coins and exposes only the centered outfit action. The session is
+  persisted as `completed` only after an outfit-generation request is successfully queued. The fixed
+  story must not submit, illustrate, animate, cancel or capture a server travel.
+- During the active first-session flow the dashboard renders only the action required by the current
+  stage and centers that single action horizontally. The centered level label and XP balance remain
+  hidden until the bat-help result is completed; the
+  fixed result awards exactly 100 XP. The two introductory generated reactions are normalized to
+  declarative sentences before they are persisted, because the scripted next question/message owns
+  the conversational transition.
 
 ## Local Admin
 

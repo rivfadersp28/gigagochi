@@ -515,6 +515,16 @@ body {
   display: none;
 }
 
+.main-actions-scroll--single {
+  left: 50%;
+  right: auto;
+  width: min(402px, 100vw);
+  padding-left: 0;
+  overflow-x: visible;
+  touch-action: auto;
+  transform: translate3d(-50%, 0, 0);
+}
+
 .main-action-button {
   position: relative;
   display: inline-flex;
@@ -582,6 +592,13 @@ body {
 
 .main-action-button--travel {
   --main-action-button-width: 241px;
+}
+
+.main-action-button--onboarding {
+  width: max-content;
+  max-width: calc(100% - 56px);
+  padding-inline: 20px;
+  font-size: clamp(20px, 5.83vw, 23.445px);
 }
 
 .main-action-button--outfit {
@@ -726,10 +743,10 @@ body {
 
 .pet-status-level {
   position: absolute;
-  top: 106px;
+  top: 80px;
   left: 50%;
   z-index: 40;
-  max-width: 260px;
+  max-width: 240px;
   overflow: hidden;
   color: var(--main-scene-ink);
   font-family: var(--font-open-runde), ui-rounded, system-ui, sans-serif;
@@ -742,54 +759,38 @@ body {
   transform: translate3d(-50%, 0, 0);
 }
 
-.pet-experience-track {
-  position: absolute;
-  top: 135px;
-  left: 50%;
-  z-index: 40;
-  width: 174px;
-  height: 8px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(48, 235, 135, 0.25);
-  box-shadow: inset 0 1px 2px rgba(19, 111, 62, 0.16);
-  transform: translate3d(-50%, 0, 0);
-}
-
 .pet-experience-balance {
-  /* Figma 218:1907 — live XP balance below the level progress. */
   position: absolute;
-  top: 162px;
+  top: 112px;
   left: 50%;
   z-index: 40;
+  box-sizing: border-box;
+  min-width: 87px;
+  height: 35.119px;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 11px;
+  border-radius: 31.927px;
+  background: rgba(132, 92, 5, 0.29);
+  backdrop-filter: blur(13.595px);
+  font-size: 22.623px;
   transform: translate3d(-50%, 0, 0);
-  font-size: 28.344px;
 }
 
 .pet-experience-balance img {
-  width: 21.761px;
-  height: 21.683px;
-}
-
-.pet-experience-progress {
-  display: block;
-  height: 100%;
-  min-width: 8px;
-  border-radius: inherit;
-  background: #30eb87;
-  box-shadow: 0 0 10px rgba(48, 235, 135, 0.28);
-  transition: width 450ms cubic-bezier(0.16, 1, 0.3, 1);
+  width: 17.369px;
+  height: 17.307px;
 }
 
 .top-status-strip {
   position: absolute;
-  top: 106px;
-  right: 12px;
+  top: 77px;
+  right: 20px;
   z-index: 40;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 21px;
 }
 
 .top-status-strip img,
@@ -835,8 +836,8 @@ body {
 }
 
 .stat-progress-ring--mid {
-  --stat-ring-progress: #eeaa35;
-  --stat-ring-track: rgba(238, 170, 53, 0.25);
+  --stat-ring-progress: #ffb107;
+  --stat-ring-track: rgba(255, 177, 7, 0.25);
 }
 
 .stat-progress-ring--high {
@@ -1642,7 +1643,6 @@ button:enabled:active {
   .conversation-input-panel,
   .main-scene-media,
   .pet-status-level,
-  .pet-experience-progress,
   .top-status-strip,
   .stat-progress-ring,
   .stat-progress-ring__track,

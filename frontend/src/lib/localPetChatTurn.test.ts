@@ -223,6 +223,33 @@ it("keeps a single-view chat working when Web Locks are unavailable", async () =
   }
 });
 
+it("persists a transformed onboarding reply instead of the raw model question", async () => {
+  apiMocks.sendLocalChatMessage.mockResolvedValueOnce({
+    reply: "Очень приятно! Как твои дела?",
+    happinessDelta: 0,
+  });
+
+  const turn = await runLocalPetChatTurn({
+    pet,
+    message: "Меня зовут Сергей",
+    includePromptDebug: false,
+    logLabel: "onboarding-reaction",
+    replyTransform: (reply) => reply.replace(" Как твои дела?", ""),
+  });
+
+  expect(turn.response.reply).toBe("Очень приятно!");
+  expect(readLocalChatHistory().messages.at(-1)?.text).toBe("Очень приятно!");
+  await waitForLocalPetPostReplyMemory(pet.petId);
+  expect(apiMocks.extractLocalUserMemory).toHaveBeenCalledWith(
+    "Меня зовут Сергей",
+    "Очень приятно!",
+    expect.anything(),
+    expect.anything(),
+    expect.anything(),
+    expect.anything(),
+  );
+});
+
 it("does not block the next reply on post-reply memory but serializes memory tasks", async () => {
   let finishFirstExtraction: ((value: { operations: never[] }) => void) | undefined;
   apiMocks.extractLocalUserMemory

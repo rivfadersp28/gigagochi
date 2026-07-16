@@ -183,10 +183,14 @@ function fallbackIntroReaction(destination: string | undefined) {
 
 function AnimatedTravelParagraph({
   animationKey,
+  baseDelayMs = 0,
+  className,
   startIndex,
   text,
 }: {
   animationKey: string;
+  baseDelayMs?: number;
+  className?: string;
   startIndex: number;
   text: string;
 }) {
@@ -194,7 +198,7 @@ function AnimatedTravelParagraph({
   const tokenOffsets = tokens.map((_, index) =>
     tokens.slice(0, index).reduce((total, token) => total + Array.from(token).length, 0));
   return (
-    <p aria-label={text}>
+    <p className={className} aria-label={text}>
       {tokens.map((token, tokenIndex) => {
         const isWhitespace = /^\s+$/u.test(token);
         if (isWhitespace) {
@@ -216,7 +220,8 @@ function AnimatedTravelParagraph({
           >
             {Array.from(token).map((character, characterOffset) => {
               const characterIndex = startIndex + tokenOffsets[tokenIndex] + characterOffset;
-              const delay = characterIndex * STORY_CHARACTER_RISE_STAGGER_MS;
+              const delay = baseDelayMs
+                + characterIndex * STORY_CHARACTER_RISE_STAGGER_MS;
               const key = `${animationKey}:character:${characterIndex}`;
               return (
                 <span
@@ -1910,6 +1915,17 @@ export function InteractiveTravelScreen({
     (total, paragraph) => total + Array.from(paragraph).length,
     0,
   );
+  const storyRevealDuration = storyRevealCharacterCount === 0
+    ? 0
+    : STORY_CHARACTER_RISE_DURATION_MS
+      + (storyRevealCharacterCount - 1) * STORY_CHARACTER_RISE_STAGGER_MS;
+  const resultReaction = phase === "result" ? activePart?.result?.reaction ?? "" : "";
+  const resultReactionCharacterCount = Array.from(resultReaction).length;
+  const resultReactionDuration = resultReactionCharacterCount === 0
+    ? 0
+    : STORY_CHARACTER_RISE_DURATION_MS
+      + (resultReactionCharacterCount - 1) * STORY_CHARACTER_RISE_STAGGER_MS;
+  const resultOutcomeDelay = storyRevealDuration + resultReactionDuration;
   const isStoryTextRevealComplete = Boolean(
     storyRevealKey && completedStoryRevealKey === storyRevealKey,
   );
@@ -1919,15 +1935,12 @@ export function InteractiveTravelScreen({
     }
     const reducedMotion = typeof window.matchMedia === "function"
       && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const revealDuration = reducedMotion || storyRevealCharacterCount === 0
-      ? 0
-      : STORY_CHARACTER_RISE_DURATION_MS
-        + (storyRevealCharacterCount - 1) * STORY_CHARACTER_RISE_STAGGER_MS;
+    const revealDuration = reducedMotion ? 0 : storyRevealDuration;
     const timeoutId = window.setTimeout(() => {
       setCompletedStoryRevealKey(storyRevealKey);
     }, revealDuration);
     return () => window.clearTimeout(timeoutId);
-  }, [storyRevealCharacterCount, storyRevealKey]);
+  }, [storyRevealDuration, storyRevealKey]);
   const animatedStoryParagraphs = visibleStoryParagraphs.map((paragraph, index) => {
     const startIndex = visibleStoryParagraphs
       .slice(0, index)
@@ -2200,19 +2213,33 @@ export function InteractiveTravelScreen({
               {animatedStoryParagraphs}
               {phase === "result" && activePart.result ? (
                 <div className={styles.storyResultMeta}>
-                  <p className={styles.storyCharacterReaction}>
-                    {activePart.result.reaction}
-                  </p>
+                  <AnimatedTravelParagraph
+                    animationKey={`${storyRevealKey ?? "story"}:reaction`}
+                    baseDelayMs={storyRevealDuration}
+                    className={styles.storyCharacterReaction}
+                    startIndex={0}
+                    text={activePart.result.reaction}
+                  />
                   {activePart.result.outcomeValence === "positive" ? (
-                    <XpAmount
-                      text={`+${activePart.result.experienceGained ?? 0}`}
-                      ariaLabel={`Получено ${activePart.result.experienceGained ?? 0} единиц опыта`}
-                      className={`${styles.storyOutcomeDelta} ${styles.storyOutcomePositive}`}
-                    />
+                    <div
+                      className={styles.storyOutcomeAnimated}
+                      style={{ animationDelay: `${resultOutcomeDelay}ms` }}
+                    >
+                      <XpAmount
+                        text={`+${activePart.result.experienceGained ?? 0}`}
+                        ariaLabel={`Получено ${activePart.result.experienceGained ?? 0} единиц опыта`}
+                        className={`${styles.storyOutcomeDelta} ${styles.storyOutcomePositive}`}
+                      />
+                    </div>
                   ) : resultImpact ? (
-                    <p className={`${styles.storyOutcomeDelta} ${styles.storyOutcomeNegative}`}>
-                      −{Math.abs(resultImpact.amount)} {resultImpactLabel}
-                    </p>
+                    <div
+                      className={styles.storyOutcomeAnimated}
+                      style={{ animationDelay: `${resultOutcomeDelay}ms` }}
+                    >
+                      <p className={`${styles.storyOutcomeDelta} ${styles.storyOutcomeNegative}`}>
+                        −{Math.abs(resultImpact.amount)} {resultImpactLabel}
+                      </p>
+                    </div>
                   ) : null}
                 </div>
               ) : null}

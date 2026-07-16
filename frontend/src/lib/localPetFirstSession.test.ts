@@ -4,6 +4,7 @@ import {
   FIRST_SESSION_COPY,
   firstSessionTravelConfirmation,
   firstSessionIntroduction,
+  firstSessionReactionReply,
   isLocalFirstSessionActive,
   isLocalFirstSessionEnabled,
   readLocalPetFirstSession,
@@ -112,9 +113,20 @@ describe("localPetFirstSession", () => {
     expect(FIRST_SESSION_COPY.afterName).toBe("А чем ты любишь заниматься?");
   });
 
-  it("explains experience and future help after the first challenge", () => {
-    expect(FIRST_SESSION_COPY.afterFirstChallenge).toContain("снова будет нужна твоя помощь");
-    expect(FIRST_SESSION_COPY.afterFirstChallenge).toContain("получаю опыт");
-    expect(FIRST_SESSION_COPY.afterFirstChallenge).toContain("новый уровень");
+  it("keeps only declarative reactions during the scripted dialogue", () => {
+    expect(firstSessionReactionReply(
+      "Очень приятно! Как прошёл твой день?",
+      FIRST_SESSION_COPY.afterNameFallback,
+    )).toBe("Очень приятно!");
+    expect(firstSessionReactionReply(
+      "Чем ещё увлекаешься?",
+      FIRST_SESSION_COPY.afterChatFallback,
+    )).toBe("Звучит здорово!");
+  });
+
+  it("explains coins and invites the owner to dress the pet after the first challenge", () => {
+    expect(FIRST_SESSION_COPY.afterFirstChallenge).toBe(
+      "За правильные ответы я получаю монетки. Их можно потратить на новый гардероб или внешность. Попробуй меня во что-то нарядить.",
+    );
   });
 });

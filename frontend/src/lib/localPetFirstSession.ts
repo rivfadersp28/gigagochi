@@ -165,8 +165,12 @@ export function firstSessionIntroduction(pet: LocalPetState) {
 }
 
 export const FIRST_SESSION_COPY = {
+  afterNameFallback:
+    "Приятно познакомиться!",
   afterName:
     "А чем ты любишь заниматься?",
+  afterChatFallback:
+    "Звучит здорово!",
   afterChat:
     "Слушай, что-то я проголодался. Может, у тебя что-нибудь завалялось?",
   afterFirstFood:
@@ -174,8 +178,16 @@ export const FIRST_SESSION_COPY = {
   afterRemedy:
     "Уф, мне стало гораздо лучше. Иногда я могу проголодаться или со мной что-нибудь случится. Будет круто, если ты будешь заходить и помогать мне. Ой, что это? Я увидел летучую мышь, и ей нужна помощь.",
   afterFirstChallenge:
-    "Иногда мне снова будет нужна твоя помощь. За каждое пройденное испытание я получаю опыт и быстрее перехожу на новый уровень. Заглядывай ко мне почаще!",
+    "За правильные ответы я получаю монетки. Их можно потратить на новый гардероб или внешность. Попробуй меня во что-то нарядить.",
 } as const;
+
+export function firstSessionReactionReply(reply: string, fallback: string) {
+  const declarativeSentences = reply
+    .split(/(?<=[.!?…])\s+/u)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence && !/[?？]/u.test(sentence));
+  return declarativeSentences.join(" ").trim() || fallback;
+}
 
 export function firstSessionDashboardMessage(
   pet: LocalPetState,
