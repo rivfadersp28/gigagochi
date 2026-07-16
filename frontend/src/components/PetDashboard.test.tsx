@@ -258,6 +258,14 @@ it("guides the local first session through chat and both cards", async () => {
     await vi.advanceTimersByTimeAsync(4_000);
   });
 
+  fireEvent.change(screen.getByRole("textbox", { name: "Сообщение персонажу" }), {
+    target: { value: "Люблю ходить в походы" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(4_000);
+  });
+
   const backHandler = mocks.useTelegramBackButton.mock.calls.at(-1)?.[0] as
     | (() => void)
     | undefined;
@@ -270,11 +278,14 @@ it("guides the local first session through chat and both cards", async () => {
   expect(berries).toBeEnabled();
   expect(remedy).toBeDisabled();
   fireEvent.click(berries);
-  expect(berries).toBeDisabled();
+  expect(berries).toBeEnabled();
   expect(remedy).toBeEnabled();
 
   fireEvent.click(remedy);
-  expect(screen.getByRole("button", { name: "В путешествие" })).toBeEnabled();
+  const helpBat = screen.getByRole("button", { name: "Помочь летучей мыши" });
+  expect(helpBat).toBeEnabled();
+  fireEvent.click(helpBat);
+  expect(mocks.router.push).toHaveBeenCalledWith(`/pet/${firstSessionPet.petId}/travel`);
   expect(localPetMock.feed).toHaveBeenNthCalledWith(1, "berry-bowl");
   expect(localPetMock.feed).toHaveBeenNthCalledWith(2, "leaf-crunch");
 });

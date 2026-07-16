@@ -51,6 +51,22 @@ function generatedAssetSet(
 }
 
 describe("DebugPanel visual mode selector", () => {
+  it("offers a first-session restart even while onboarding is disabled", () => {
+    const onRestartFirstSession = vi.fn();
+    render(
+      <DebugPanel
+        pet={pet()}
+        isOpen
+        onClose={() => undefined}
+        firstSessionEnabled={false}
+        onRestartFirstSession={onRestartFirstSession}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Перезапустить первую сессию" }));
+    expect(onRestartFirstSession).toHaveBeenCalledOnce();
+  });
+
   it("launches the travel demo from the debug panel", () => {
     const onOpenTravelDemo = vi.fn();
     render(

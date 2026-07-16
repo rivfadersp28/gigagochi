@@ -1,15 +1,16 @@
 import type { LocalPetState } from "./types";
 
 const STORAGE_PREFIX = "tamagochi:v1:first-session:";
-const REPLAY_SESSION_PREFIX = "tamagochi:v1:first-session-replay:";
 const ENABLED_KEY = "tamagochi:v1:first-session-enabled";
 
 export const FIRST_SESSION_STAGES = [
   "awaiting-chat",
+  "awaiting-chat-followup",
   "awaiting-first-food",
   "awaiting-remedy",
   "awaiting-travel",
   "confirming-travel",
+  "awaiting-completion-message",
   "completed",
 ] as const;
 
@@ -28,17 +29,6 @@ function localStore(): Storage | null {
   }
   try {
     return window.localStorage;
-  } catch {
-    return null;
-  }
-}
-
-function sessionStore(): Storage | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  try {
-    return window.sessionStorage;
   } catch {
     return null;
   }
@@ -127,23 +117,6 @@ export function readLocalPetFirstSession(
     return null;
   }
 
-  const replayKey = `${REPLAY_SESSION_PREFIX}${petId}`;
-  const replayStore = sessionStore();
-  let replayed = false;
-  try {
-    replayed = replayStore?.getItem(replayKey) === "1";
-  } catch {
-    replayed = false;
-  }
-  if (!replayed) {
-    try {
-      replayStore?.setItem(replayKey, "1");
-    } catch {
-      // A blocked session store should not prevent local onboarding work.
-    }
-    return writeState(initialState(petId));
-  }
-
   try {
     const raw = localStore()?.getItem(`${STORAGE_PREFIX}${petId}`);
     const parsed = raw ? parseState(JSON.parse(raw), petId) : null;
@@ -158,7 +131,11 @@ export function readLocalPetFirstSession(
 
 export function restartLocalPetFirstSession(petId: string): LocalPetFirstSession | null {
   const normalized = normalizedPetId(petId);
-  return normalized ? writeState(initialState(normalized)) : null;
+  if (!normalized) {
+    return null;
+  }
+  setLocalFirstSessionEnabled(true);
+  return writeState(initialState(normalized));
 }
 
 export function updateLocalPetFirstSession(
@@ -193,7 +170,9 @@ export const FIRST_SESSION_COPY = {
   afterFirstFood:
     "Хм, вкусно! Но что-то я себя неважно чувствую. Может, у тебя есть какое-нибудь снадобье?",
   afterRemedy:
-    "Уф, мне стало гораздо лучше. Иногда я могу проголодаться или со мной что-нибудь случится. Будет круто, если ты будешь заходить и помогать мне. А сейчас мне как-то скучно. Может, отправимся в путешествие?",
+    "Уф, мне стало гораздо лучше. Иногда я могу проголодаться или со мной что-нибудь случится. Будет круто, если ты будешь заходить и помогать мне. Ой, что это? Я увидел летучую мышь, и ей нужна помощь.",
+  afterFirstChallenge:
+    "Иногда мне снова будет нужна твоя помощь. За каждое пройденное испытание я получаю опыт и быстрее перехожу на новый уровень. Заглядывай ко мне почаще!",
 } as const;
 
 export function firstSessionDashboardMessage(
@@ -203,6 +182,8 @@ export function firstSessionDashboardMessage(
   switch (state.stage) {
     case "awaiting-chat":
       return firstSessionIntroduction(pet);
+    case "awaiting-chat-followup":
+      return null;
     case "awaiting-first-food":
       return FIRST_SESSION_COPY.afterChat;
     case "awaiting-remedy":
@@ -210,6 +191,8 @@ export function firstSessionDashboardMessage(
     case "awaiting-travel":
     case "confirming-travel":
       return FIRST_SESSION_COPY.afterRemedy;
+    case "awaiting-completion-message":
+      return FIRST_SESSION_COPY.afterFirstChallenge;
     case "completed":
       return null;
   }

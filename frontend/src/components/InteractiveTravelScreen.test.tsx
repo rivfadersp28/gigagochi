@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { LocalInteractiveTravel } from "@/lib/localInteractiveTravel";
 import { readLocalPetState, writeLocalPetState } from "@/lib/localPetStorage";
-import { setLocalFirstSessionEnabled } from "@/lib/localPetFirstSession";
+import {
+  readLocalPetFirstSession,
+  restartLocalPetFirstSession,
+  updateLocalPetFirstSession,
+} from "@/lib/localPetFirstSession";
 import { applyInteractiveTravelImpactsToPet } from "@/lib/localPetTravelImpacts";
 import type {
   InteractiveTravelPart,
@@ -408,21 +412,65 @@ afterEach(() => {
 });
 
 describe("InteractiveTravelScreen", () => {
-  it("asks for onboarding confirmation before starting the selected travel", async () => {
-    setLocalFirstSessionEnabled(true);
+  it("runs the fixed bat-help onboarding story without server generation", async () => {
+    vi.useFakeTimers();
+    const initial = restartLocalPetFirstSession(pet.petId)!;
+    updateLocalPetFirstSession(initial, "awaiting-travel");
+
+    render(<InteractiveTravelScreen petId="pet-1" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(screen.getByLabelText("К какой группе относится летучая мышь?"))
+      .toBeInTheDocument();
+    expect(document.querySelector(
+      'video[src="/static/onboarding/bat-help/situation.mp4"]',
+    )).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Птицы" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Насекомые" })).toBeDisabled();
+    const correct = screen.getByRole("button", { name: "Млекопитающие" });
+    expect(correct).toBeEnabled();
+
+    fireEvent.click(correct);
+
+    expect(screen.getByText("+100 Exp")).toBeInTheDocument();
+    expect(document.querySelector(
+      'video[src="/static/onboarding/bat-help/success.mp4"]',
+    )).not.toBeNull();
+    expect(mocks.startInteractiveTravel).not.toHaveBeenCalled();
+    expect(mocks.continueInteractiveTravel).not.toHaveBeenCalled();
+    expect(mocks.illustrateInteractiveTravelPart).not.toHaveBeenCalled();
+    expect(mocks.animateInteractiveTravelPart).not.toHaveBeenCalled();
+    expect(mocks.applyInteractiveTravelImpacts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        travelId: expect.stringContaining("onboarding-bat-help-v1-"),
+      }),
+      pet.petId,
+    );
+    expect(readLocalPetFirstSession({
+      petId: pet.petId,
+      introductionPending: true,
+    })?.stage).toBe("awaiting-travel");
+
+    fireEvent.click(screen.getByRole("button", { name: "Завершить" }));
+
+    expect(mocks.replace).toHaveBeenCalledWith(`/pet/${pet.petId}`);
+    expect(readLocalPetFirstSession({
+      petId: pet.petId,
+      introductionPending: true,
+    })?.stage).toBe("awaiting-completion-message");
+  });
+
+  it("starts an ordinary selected travel directly outside onboarding", async () => {
     mocks.startInteractiveTravel.mockResolvedValue({ travel: travel([pendingPart(1)]) });
 
     render(<InteractiveTravelScreen petId="pet-1" />);
     fireEvent.click(await screen.findByRole("button", { name: "В горы" }));
 
-    expect(mocks.startInteractiveTravel).not.toHaveBeenCalled();
-    expect(await screen.findByText(/Отправиться — В горы/u)).toBeInTheDocument();
-    while (screen.queryByRole("button", { name: "Далее" })) {
-      fireEvent.click(screen.getByRole("button", { name: "Далее" }));
-    }
-    expect(screen.getByRole("button", { name: "Подтвердить" })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Подтвердить" }));
     await waitFor(() => expect(mocks.startInteractiveTravel).toHaveBeenCalledTimes(1));
     expect(mocks.startInteractiveTravel).toHaveBeenCalledWith(
       "В горы",

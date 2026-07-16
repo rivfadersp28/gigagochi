@@ -556,7 +556,7 @@ export function DebugPanel({
                   <span>Первая сессия: {firstSessionEnabled ? "включена" : "выключена"}</span>
                 </button>
               ) : null}
-              {onRestartFirstSession && firstSessionEnabled ? (
+              {onRestartFirstSession ? (
                 <button
                   type="button"
                   onClick={onRestartFirstSession}

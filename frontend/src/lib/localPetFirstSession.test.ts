@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  FIRST_SESSION_COPY,
   firstSessionTravelConfirmation,
   firstSessionIntroduction,
   isLocalFirstSessionActive,
@@ -45,7 +46,7 @@ describe("localPetFirstSession", () => {
     expect(readLocalPetFirstSession(pet())).toBeNull();
   });
 
-  it("replays from the first step only once per browser session", () => {
+  it("keeps the current stage across browser sessions", () => {
     const initial = readLocalPetFirstSession(pet());
     expect(initial?.stage).toBe("awaiting-chat");
 
@@ -53,7 +54,17 @@ describe("localPetFirstSession", () => {
     expect(readLocalPetFirstSession(pet())).toEqual(progressed);
 
     window.sessionStorage.clear();
-    expect(readLocalPetFirstSession(pet())?.stage).toBe("awaiting-chat");
+    expect(readLocalPetFirstSession(pet())).toEqual(progressed);
+  });
+
+  it("keeps chat active for one follow-up answer", () => {
+    const initial = restartLocalPetFirstSession(pet().petId)!;
+
+    const followup = updateLocalPetFirstSession(initial, "awaiting-chat-followup");
+
+    expect(isLocalFirstSessionActive(followup)).toBe(true);
+    expect(followup.stage).toBe("awaiting-chat-followup");
+    expect(readLocalPetFirstSession(pet())).toEqual(followup);
   });
 
   it("persists a selected destination and completes the flow", () => {
@@ -70,6 +81,15 @@ describe("localPetFirstSession", () => {
     expect(completed.selectedDestination).toBeUndefined();
   });
 
+  it("enables onboarding when restarting a disabled first session", () => {
+    setLocalFirstSessionEnabled(false);
+
+    const restarted = restartLocalPetFirstSession(pet().petId);
+
+    expect(isLocalFirstSessionEnabled()).toBe(true);
+    expect(restarted?.stage).toBe("awaiting-chat");
+  });
+
   it("describes the future timed delivery contract before confirmation", () => {
     expect(firstSessionTravelConfirmation("в горы")).toContain("несколько часов");
     expect(firstSessionTravelConfirmation("в горы")).toContain("четыре части истории");
@@ -80,5 +100,17 @@ describe("localPetFirstSession", () => {
     expect(firstSessionIntroduction(pet())).toBe(
       "Привет, меня зовут Листик. Давай познакомимся. Как тебя зовут?",
     );
+  });
+
+  it("invites the owner to help the bat after the remedy", () => {
+    expect(FIRST_SESSION_COPY.afterRemedy).toContain("Я увидел летучую мышь");
+    expect(FIRST_SESSION_COPY.afterRemedy).toContain("ей нужна помощь");
+    expect(FIRST_SESSION_COPY.afterRemedy).not.toContain("отправимся в путешествие");
+  });
+
+  it("explains experience and future help after the first challenge", () => {
+    expect(FIRST_SESSION_COPY.afterFirstChallenge).toContain("снова будет нужна твоя помощь");
+    expect(FIRST_SESSION_COPY.afterFirstChallenge).toContain("получаю опыт");
+    expect(FIRST_SESSION_COPY.afterFirstChallenge).toContain("новый уровень");
   });
 });

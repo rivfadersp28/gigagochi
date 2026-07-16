@@ -726,6 +726,14 @@
   after session pruning, while missing authoritative state makes late recovery fail closed.
 - Access is canaried on both UI and API through `INTERACTIVE_TRAVEL_PILOT_TELEGRAM_IDS`; the initial production allowlist contains only Telegram ID `62943754`.
 - Destination suggestions are sampled from a small server-side vocabulary without an LLM call.
+- The first-session bat-help episode is a frontend-owned fixed story, not an interactive-travel
+  backend session. `localPetOnboardingBatStory.ts` supplies its reviewed text, one enabled correct
+  answer and versioned local travel ID; static poster/video pairs live under
+  `backend/static/onboarding/bat-help`. Resolving it uses the normal local travel-impact receipt path
+  for EXP. The first session remains active on the result screen; pressing Finish moves it to the
+  one-shot `awaiting-completion-message` stage and returns to the pet dashboard. The dashboard shows
+  the final onboarding reply, then persists `completed`. The fixed story must not submit, illustrate,
+  animate, cancel or capture a server travel.
 
 ## Local Admin
 

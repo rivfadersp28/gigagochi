@@ -1174,14 +1174,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       hapticNotification("warning");
       return false;
     }
-    if (
-      firstSession?.stage === "awaiting-remedy"
-      && foodId !== "leaf-crunch"
-    ) {
-      hapticNotification("warning");
-      return false;
-    }
-
     cancelReplyAutoAdvance();
     setFeedError(null);
     setFeedReplyMessageId(null);
@@ -1211,7 +1203,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       showPetReplyMessage(FIRST_SESSION_COPY.afterFirstFood, true, {
         showInFeed: true,
         voiceMode: "generated",
-        maxPortions: IDLE_REPLY_MAX_PORTIONS,
         autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
       });
       foodReactionAbortRef.current = null;
@@ -1219,7 +1210,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return true;
     }
 
-    if (firstSession?.stage === "awaiting-remedy") {
+    if (
+      firstSession?.stage === "awaiting-remedy"
+      && foodId === "leaf-crunch"
+    ) {
       const nextFirstSession = updateLocalPetFirstSession(
         firstSession,
         "awaiting-travel",
@@ -1227,7 +1221,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       setFirstSession(nextFirstSession);
       showPetReplyMessage(FIRST_SESSION_COPY.afterRemedy, true, {
         voiceMode: "generated",
-        maxPortions: IDLE_REPLY_MAX_PORTIONS,
         autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
       });
       foodReactionAbortRef.current = null;
@@ -1369,7 +1362,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }
 
   function handleOpenChatMode() {
-    if (firstSessionActive && firstSession?.stage !== "awaiting-chat") {
+    if (
+      firstSessionActive
+      && firstSession?.stage !== "awaiting-chat"
+      && firstSession?.stage !== "awaiting-chat-followup"
+    ) {
       return;
     }
     cancelReplyAutoAdvance();
@@ -1443,14 +1440,20 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           requestedPetId,
         );
       });
-      const isFirstSessionChat = firstSession?.stage === "awaiting-chat";
-      if (isFirstSessionChat) {
+      const isFirstSessionInitialChat = firstSession?.stage === "awaiting-chat";
+      const isFirstSessionFollowupChat = firstSession?.stage === "awaiting-chat-followup";
+      if (isFirstSessionInitialChat) {
+        setFirstSession(updateLocalPetFirstSession(
+          firstSession,
+          "awaiting-chat-followup",
+        ));
+      } else if (isFirstSessionFollowupChat) {
         setFirstSession(updateLocalPetFirstSession(
           firstSession,
           "awaiting-first-food",
         ));
       }
-      const visibleReply = isFirstSessionChat
+      const visibleReply = isFirstSessionFollowupChat
         ? `${response.reply} ${FIRST_SESSION_COPY.afterChat}`
         : response.reply;
       showPetReplyMessage(visibleReply, true, {
@@ -1538,7 +1541,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       showPetReplyMessage(firstSessionDashboardMessage(pet, restarted) ?? "", true, {
         dialogueHook: true,
         voiceMode: "generated",
-        maxPortions: IDLE_REPLY_MAX_PORTIONS,
         autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
       });
     }
@@ -1610,13 +1612,16 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       claimPetIntroduction(pet);
       const message = firstSessionDashboardMessage(pet, firstSession);
       if (message) {
+        const completesFirstSession = firstSession.stage === "awaiting-completion-message";
         window.queueMicrotask(() => {
           showPetReplyMessage(message, true, {
             dialogueHook: true,
             voiceMode: "generated",
-            maxPortions: IDLE_REPLY_MAX_PORTIONS,
             autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
           });
+          if (completesFirstSession) {
+            setFirstSession(updateLocalPetFirstSession(firstSession, "completed"));
+          }
         });
       }
       return;
@@ -1907,7 +1912,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const roundedMoodPercent = Math.round(moodPercent);
   const roundedHealthPercent = Math.round(healthPercent);
   const firstSessionChatDisabled = firstSessionActive
-    && firstSession?.stage !== "awaiting-chat";
+    && firstSession?.stage !== "awaiting-chat"
+    && firstSession?.stage !== "awaiting-chat-followup";
   const firstSessionFeedDisabled = firstSessionActive
     && firstSession?.stage !== "awaiting-first-food"
     && firstSession?.stage !== "awaiting-remedy";
@@ -2134,9 +2140,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
                   disabled={
                     firstSession?.stage === "awaiting-first-food"
                       ? food.id !== "berry-bowl"
-                      : firstSession?.stage === "awaiting-remedy"
-                        ? food.id !== "leaf-crunch"
-                        : false
+                      : false
                   }
                   onDrop={handleFoodDrop}
                   onActivate={serveFood}
@@ -2204,7 +2208,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
                 className="main-action-button__icon"
                 draggable={false}
               />
-              <span>В путешествие</span>
+              <span>
+                {firstSession?.stage === "awaiting-travel"
+                  ? "Помочь летучей мыши"
+                  : "В путешествие"}
+              </span>
             </button>
           ) : null}
           <button

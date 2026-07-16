@@ -62,6 +62,12 @@ import {
   type LocalPetFirstSession,
 } from "@/lib/localPetFirstSession";
 import {
+  createOnboardingBatStorySession,
+  isOnboardingBatTravelId,
+  ONBOARDING_BAT_CORRECT_CHOICE,
+  resolveOnboardingBatStory,
+} from "@/lib/localPetOnboardingBatStory";
+import {
   hapticNotification,
   setTelegramBackgroundColor,
   useTelegramBackButton,
@@ -394,6 +400,7 @@ export function InteractiveTravelScreen({
   const petName = pet?.name?.trim() || "Персонаж";
   const currentPetId = pet?.petId;
   const currentPetIntroductionPending = pet?.introductionPending;
+  const isOnboardingBatSession = isOnboardingBatTravelId(session?.travel.travelId);
 
   useEffect(() => {
     let cancelled = false;
@@ -422,6 +429,11 @@ export function InteractiveTravelScreen({
       setSession(null);
       return;
     }
+    if (isOnboardingBatSession) {
+      activeTravelIdRef.current = null;
+      setSession(null);
+      return;
+    }
     const latest = readLocalInteractiveTravel(petId);
     if (!demoTravel) {
       const travelId = latest?.travel.travelId ?? activeTravelIdRef.current;
@@ -439,7 +451,7 @@ export function InteractiveTravelScreen({
     clearLocalInteractiveTravel(petId);
     setSession(null);
     setDemoTravel(null);
-  }, [automaticStoryToken, demoTravel, petId]);
+  }, [automaticStoryToken, demoTravel, isOnboardingBatSession, petId]);
 
   const goBack = useCallback(() => {
     if (showCustomDestination) {
@@ -511,6 +523,24 @@ export function InteractiveTravelScreen({
       generationStatusRequestRef.current = null;
     };
   }, [automaticStoryToken, petId]);
+
+  useEffect(() => {
+    if (
+      automaticStoryToken
+      || firstSession?.stage !== "awaiting-travel"
+      || isOnboardingBatSession
+      || localPet.status !== "ready"
+      || !pet
+    ) {
+      return;
+    }
+    const next = createOnboardingBatStorySession(pet.petId);
+    activeTravelIdRef.current = next.travel.travelId;
+    setSession(next);
+    setVisibleBackgroundVideoUrl(next.travel.parts[0]?.backgroundVideoUrl ?? null);
+    setIsLoadingSuggestions(false);
+    setIsRestored(true);
+  }, [automaticStoryToken, firstSession, isOnboardingBatSession, localPet.status, pet]);
 
   useEffect(() => {
     if (
@@ -632,6 +662,7 @@ export function InteractiveTravelScreen({
     }
     if (
       !demoTravel
+      && !isOnboardingBatTravelId(travel?.travelId)
       && travel?.completed
       && queuedFinaleTravelIdRef.current !== travel.travelId
       && enqueueInteractiveTravelCapture(travel)
@@ -743,7 +774,7 @@ export function InteractiveTravelScreen({
 
   const updatePresentation = useCallback(
     (presentation: InteractiveTravelPresentation) => {
-      if (demoTravel || automaticStoryToken) {
+      if (demoTravel || automaticStoryToken || isOnboardingBatSession) {
         setSession((current) => current ? { ...current, presentation } : current);
         return;
       }
@@ -776,7 +807,7 @@ export function InteractiveTravelScreen({
         }
       });
     },
-    [automaticStoryToken, demoTravel, petId],
+    [automaticStoryToken, demoTravel, isOnboardingBatSession, petId],
   );
 
   const patchLatestMedia = useCallback(
@@ -834,7 +865,7 @@ export function InteractiveTravelScreen({
 
   useEffect(() => {
     const reconcileFromStorage = (event: StorageEvent) => {
-      if (demoTravel || automaticStoryToken) {
+      if (demoTravel || automaticStoryToken || isOnboardingBatSession) {
         return;
       }
       if (!isLocalInteractiveTravelStorageKey(event.key, petId)) {
@@ -858,7 +889,7 @@ export function InteractiveTravelScreen({
     };
     window.addEventListener("storage", reconcileFromStorage);
     return () => window.removeEventListener("storage", reconcileFromStorage);
-  }, [adoptStoredSession, automaticStoryToken, demoTravel, petId]);
+  }, [adoptStoredSession, automaticStoryToken, demoTravel, isOnboardingBatSession, petId]);
 
   useEffect(() => {
     if (
@@ -1464,6 +1495,26 @@ export function InteractiveTravelScreen({
       return;
     }
     primeInteractiveTravelSuccessSound();
+    if (isOnboardingBatSession) {
+      if (value !== ONBOARDING_BAT_CORRECT_CHOICE) {
+        return;
+      }
+      const next = resolveOnboardingBatStory(session);
+      const applied = localPet.applyInteractiveTravelImpacts(
+        { travelId: next.travel.travelId, parts: next.travel.parts },
+        pet.petId,
+      );
+      if (!applied) {
+        setError(STORAGE_ERROR);
+        hapticNotification("error");
+        return;
+      }
+      setSession({ ...next, appliedResultParts: applied.appliedResultParts });
+      setVisibleBackgroundVideoUrl(next.travel.parts[0]?.backgroundVideoUrl ?? null);
+      void playInteractiveTravelSuccessSound();
+      hapticNotification("success");
+      return;
+    }
     if (automaticStoryToken) {
       submittingRef.current = true;
       const requestEpoch = ++requestEpochRef.current;
@@ -1744,6 +1795,16 @@ export function InteractiveTravelScreen({
       return;
     }
     if (session.travel.completed) {
+      if (isOnboardingBatSession) {
+        if (firstSession) {
+          setFirstSession(updateLocalPetFirstSession(
+            firstSession,
+            "awaiting-completion-message",
+          ));
+        }
+        router.replace(`/pet/${petId}`);
+        return;
+      }
       updatePresentation({
         phase: "completed",
         partNumber: activePart.partNumber,
@@ -2167,7 +2228,11 @@ export function InteractiveTravelScreen({
                       type="button"
                       className={styles.storyAnswerButton}
                       style={{ animationDelay: `${index * 200}ms` }}
-                      disabled={isSubmitting}
+                      disabled={
+                        isSubmitting
+                        || (isOnboardingBatSession
+                          && suggestion !== ONBOARDING_BAT_CORRECT_CHOICE)
+                      }
                       onClick={() => void submitAdvice(suggestion)}
                     >
                       {suggestion}
@@ -2229,14 +2294,16 @@ export function InteractiveTravelScreen({
                 <button type="button" onClick={goBack} className={styles.completionButton}>
                   К персонажу
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void handleNewTravel()}
-                  className={styles.completionButton}
-                  disabled={isResettingTravel}
-                >
-                  Новое путешествие
-                </button>
+                {!isOnboardingBatSession ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleNewTravel()}
+                    className={styles.completionButton}
+                    disabled={isResettingTravel}
+                  >
+                    Новое путешествие
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </>
