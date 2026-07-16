@@ -529,6 +529,48 @@ class InteractiveTravelResponse(BaseModel):
     debug: LocalChatDebug | None = None
 
 
+TravelVideoPrototypeStatusValue = Literal[
+    "queued",
+    "writing",
+    "illustrating",
+    "animating",
+    "ready",
+    "failed",
+]
+
+
+class StartTravelVideoPrototypeRequest(BaseModel):
+    pet: LocalPetChatContext
+    prompt: str = Field(min_length=1, max_length=1000)
+    requestKey: str = Field(
+        min_length=36,
+        max_length=36,
+        pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+    )
+
+    @field_validator("prompt", mode="before")
+    @classmethod
+    def normalize_prompt(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+
+class TravelVideoPrototypeResponse(BaseModel):
+    jobId: str = Field(
+        min_length=55,
+        max_length=55,
+        pattern=r"^travel-video-prototype-[a-f0-9]{32}$",
+    )
+    status: TravelVideoPrototypeStatusValue
+    prompt: str = Field(min_length=1, max_length=1000)
+    title: str | None = Field(default=None, max_length=100)
+    scenario: str | None = Field(default=None, max_length=1600)
+    imageUrl: str | None = None
+    videoUrl: str | None = None
+    error: str | None = Field(default=None, max_length=300)
+    createdAt: str
+    updatedAt: str
+
+
 class InteractiveTravelDemoResponse(BaseModel):
     demoId: str = Field(min_length=1, max_length=120)
     travel: InteractiveTravelState

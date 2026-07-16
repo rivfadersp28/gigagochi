@@ -51,7 +51,9 @@ from app.schemas import (
     OutfitSimplificationRequest,
     OutfitSimplificationResponse,
     StartInteractiveTravelRequest,
+    StartTravelVideoPrototypeRequest,
     TmaCapabilitiesResponse,
+    TravelVideoPrototypeResponse,
 )
 from app.services.ai_error_service import (
     ai_failure_http_exception,
@@ -173,6 +175,13 @@ from app.services.telegram_push_service import (
 from app.services.telegram_push_store import (
     TelegramPushRecordTooLargeError,
     TelegramPushStoreCapacityError,
+)
+from app.services.travel_video_prototype_service import (
+    TravelVideoPrototypeNotFoundError,
+    create_travel_video_prototype,
+    generate_travel_video_prototype,
+    read_travel_video_prototype,
+    should_resume_travel_video_prototype,
 )
 
 router = APIRouter(prefix="/api", tags=["telegram-mini-app"])
@@ -1394,6 +1403,65 @@ def interactive_travel_suggestions(
         ) from exc
     finally:
         reset_prompt_log_context(prompt_log_token)
+
+
+@router.post(
+    "/travel/video-prototype",
+    response_model=TravelVideoPrototypeResponse,
+    response_model_exclude_none=True,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def start_travel_video_prototype(
+    payload: StartTravelVideoPrototypeRequest,
+    background_tasks: BackgroundTasks,
+    user: TelegramUser,
+) -> TravelVideoPrototypeResponse:
+    _require_interactive_travel_pilot(user)
+    check_rate_limit("interactive_travel", user)
+    response = create_travel_video_prototype(
+        telegram_id=user.telegram_id,
+        prompt=payload.prompt,
+        request_key=payload.requestKey,
+        pet=payload.pet,
+    )
+    if should_resume_travel_video_prototype(response.jobId, telegram_id=user.telegram_id):
+        background_tasks.add_task(
+            generate_travel_video_prototype,
+            job_id=response.jobId,
+            telegram_id=user.telegram_id,
+        )
+    return response
+
+
+@router.get(
+    "/travel/video-prototype/{job_id}",
+    response_model=TravelVideoPrototypeResponse,
+    response_model_exclude_none=True,
+)
+def travel_video_prototype_status(
+    job_id: Annotated[
+        str,
+        PathParameter(
+            min_length=55,
+            max_length=55,
+            pattern=r"^travel-video-prototype-[a-f0-9]{32}$",
+        ),
+    ],
+    background_tasks: BackgroundTasks,
+    user: TelegramUser,
+) -> TravelVideoPrototypeResponse:
+    _require_interactive_travel_pilot(user)
+    try:
+        response = read_travel_video_prototype(job_id, telegram_id=user.telegram_id)
+        if should_resume_travel_video_prototype(job_id, telegram_id=user.telegram_id):
+            background_tasks.add_task(
+                generate_travel_video_prototype,
+                job_id=job_id,
+                telegram_id=user.telegram_id,
+            )
+        return response
+    except TravelVideoPrototypeNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found") from None
 
 
 @router.get(

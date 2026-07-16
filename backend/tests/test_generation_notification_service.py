@@ -86,3 +86,38 @@ def test_sends_outfit_ready_notification(monkeypatch) -> None:
     generation_notification_service.send_outfit_ready_notification(42)
 
     assert sent["text"] == "Ваш персонаж переоделся. Скорее посмотрите на него в обновках!"
+
+
+def test_sends_travel_ready_video(monkeypatch) -> None:
+    sent: dict[str, object] = {}
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(generation_notification_service.httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        generation_notification_service,
+        "get_settings",
+        lambda: SimpleNamespace(bot_token="token", webapp_url="https://example.test/app"),
+    )
+    monkeypatch.setattr(
+        generation_notification_service,
+        "send_video",
+        lambda _client, chat_id, video, caption, _reply_markup: sent.update(
+            chat_id=chat_id,
+            video=video,
+            caption=caption,
+        ),
+    )
+
+    generation_notification_service.send_travel_ready_video(42, b"travel-video")
+
+    assert sent == {
+        "chat_id": 42,
+        "video": b"travel-video",
+        "caption": "Я вернулся из путешествия! Смотри, как всё прошло.",
+    }

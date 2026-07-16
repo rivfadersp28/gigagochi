@@ -18,6 +18,7 @@ import type {
   PetMood,
   PetStatKey,
   PetStatsPatch,
+  TravelVideoPrototype,
 } from "./types";
 import { ApiContractError } from "./apiTransport";
 import { isSafePublicAssetUrl } from "./publicAssetUrl";
@@ -77,6 +78,15 @@ const INTERACTIVE_TRAVEL_REACTION_TONES = new Set(
   ] as const,
 );
 const INTERACTIVE_TRAVEL_ID_PATTERN = /^interactive-travel-[A-Za-z0-9_-]+$/u;
+const TRAVEL_VIDEO_PROTOTYPE_ID_PATTERN = /^travel-video-prototype-[a-f0-9]{32}$/u;
+const TRAVEL_VIDEO_PROTOTYPE_STATUSES = new Set<TravelVideoPrototype["status"]>([
+  "queued",
+  "writing",
+  "illustrating",
+  "animating",
+  "ready",
+  "failed",
+]);
 const JOB_STATUSES = new Set<GeneratePetJobResponse["status"]>([
   "queued",
   "running",
@@ -877,6 +887,50 @@ export function parseInteractiveTravelAnimationResponse(
       4,
     ),
     videoUrl: boundedAssetUrl(payload.videoUrl, "interactiveTravelAnimation.videoUrl"),
+  };
+}
+
+export function parseTravelVideoPrototype(value: unknown): TravelVideoPrototype {
+  const payload = record(value, "travelVideoPrototype");
+  const jobId = boundedString(payload.jobId, "travelVideoPrototype.jobId", { max: 55 });
+  if (!TRAVEL_VIDEO_PROTOTYPE_ID_PATTERN.test(jobId)) {
+    return fail("travelVideoPrototype.jobId", "prototype job id");
+  }
+  const status = enumValue(
+    payload.status,
+    TRAVEL_VIDEO_PROTOTYPE_STATUSES,
+    "travelVideoPrototype.status",
+  );
+  const title = optionalBoundedString(payload.title, "travelVideoPrototype.title", { max: 100 });
+  const scenario = optionalBoundedString(
+    payload.scenario,
+    "travelVideoPrototype.scenario",
+    { max: 1600 },
+  );
+  const imageUrl = payload.imageUrl === undefined || payload.imageUrl === null
+    ? undefined
+    : boundedAssetUrl(payload.imageUrl, "travelVideoPrototype.imageUrl");
+  const videoUrl = payload.videoUrl === undefined || payload.videoUrl === null
+    ? undefined
+    : boundedAssetUrl(payload.videoUrl, "travelVideoPrototype.videoUrl");
+  const error = optionalBoundedString(payload.error, "travelVideoPrototype.error", { max: 300 });
+  if (status === "ready" && (!title || !scenario || !imageUrl || !videoUrl)) {
+    return fail("travelVideoPrototype", "complete ready prototype");
+  }
+  if (status === "failed" && !error) {
+    return fail("travelVideoPrototype.error", "failed prototype error");
+  }
+  return {
+    jobId,
+    status,
+    prompt: boundedString(payload.prompt, "travelVideoPrototype.prompt", { max: 1000 }),
+    ...(title ? { title } : {}),
+    ...(scenario ? { scenario } : {}),
+    ...(imageUrl ? { imageUrl } : {}),
+    ...(videoUrl ? { videoUrl } : {}),
+    ...(error ? { error } : {}),
+    createdAt: boundedDateTime(payload.createdAt, "travelVideoPrototype.createdAt"),
+    updatedAt: boundedDateTime(payload.updatedAt, "travelVideoPrototype.updatedAt"),
   };
 }
 

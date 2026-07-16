@@ -280,3 +280,24 @@ export type InteractiveTravelAnimationResponse = {
   partNumber: number;
   videoUrl: string;
 };
+
+export type TravelVideoPrototypeStatus =
+  | "queued"
+  | "writing"
+  | "illustrating"
+  | "animating"
+  | "ready"
+  | "failed";
+
+export type TravelVideoPrototype = {
+  jobId: string;
+  status: TravelVideoPrototypeStatus;
+  prompt: string;
+  title?: string;
+  scenario?: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+};

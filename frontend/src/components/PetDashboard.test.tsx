@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   },
   runLocalPetChatTurn: vi.fn(),
   simplifyOutfitRequest: vi.fn(),
+  startTravelVideoPrototype: vi.fn(),
   storyHistory: [] as Array<{ id: string; title: string; text: string }>,
   useTelegramBackButton: vi.fn(),
   withLocalPetMutationLock: vi.fn(),
@@ -64,6 +65,8 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   resumeCompletedPetGeneration: (...args: unknown[]) =>
     mocks.resumeCompletedPetGeneration(...args),
   simplifyOutfitRequest: (...args: unknown[]) => mocks.simplifyOutfitRequest(...args),
+  startTravelVideoPrototype: (...args: unknown[]) =>
+    mocks.startTravelVideoPrototype(...args),
 }));
 
 vi.mock("@/lib/localPetIntroduction", () => ({
@@ -191,6 +194,13 @@ beforeEach(() => {
     displayItem: "плащ",
     generationDescription: "зелёный походный плащ",
   });
+  mocks.startTravelVideoPrototype.mockResolvedValue({
+    jobId: "travel-video-prototype-0123456789abcdef0123456789abcdef",
+    status: "queued",
+    prompt: "На ночной рынок духов",
+    createdAt: "2026-07-16T10:00:00.000Z",
+    updatedAt: "2026-07-16T10:00:00.000Z",
+  });
   window.localStorage.clear();
   window.sessionStorage.clear();
   writeLocalPetState(pet);
@@ -243,6 +253,49 @@ it("keeps the bottom actions enabled when onboarding is not opted in", async () 
   expect(screen.getByLabelText("Баланс опыта: 450")).toBeInTheDocument();
   expect(screen.queryByRole("progressbar", { name: "Опыт 450 из 3000" }))
     .not.toBeInTheDocument();
+});
+
+it("starts a video journey from the inline conversation input", async () => {
+  mocks.interactiveTravel = true;
+
+  render(<PetDashboard petId={pet.petId} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "В путешествие" }));
+
+  expect(mocks.router.push).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Куда мне отправиться?")).toBeInTheDocument();
+  expect(screen.queryByLabelText(/Голод 50 из 100/u)).not.toBeInTheDocument();
+  const input = screen.getByRole("textbox", { name: "Место путешествия" });
+  fireEvent.change(input, { target: { value: "На ночной рынок духов" } });
+  fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
+
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(mocks.startTravelVideoPrototype).toHaveBeenCalledWith(
+    "На ночной рынок духов",
+    pet,
+    expect.any(String),
+  );
+  expect(screen.queryByRole("textbox", { name: "Место путешествия" }))
+    .not.toBeInTheDocument();
+  expect(screen.getByLabelText("На ночной рынок духов?")).toBeInTheDocument();
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3_100);
+  });
+  expect(screen.getByLabelText("Надеюсь, со мной всё будет в порядке"))
+    .toBeInTheDocument();
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3_100);
+  });
+  expect(screen.getByLabelText("Пришлю видео, когда вернусь")).toBeInTheDocument();
 });
 
 it("shows a stored outfit delivery failure once on the next open", async () => {

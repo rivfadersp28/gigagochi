@@ -14,6 +14,7 @@ import type {
   LocalPetState,
   PetMood,
   PetStage,
+  TravelVideoPrototype,
 } from "./types";
 import type {
   LocalPetMemoryContext,
@@ -39,6 +40,7 @@ import {
   parseMemoryConsolidationResponse,
   parseMemoryExtractionResponse,
   parsePushSnapshotResponse,
+  parseTravelVideoPrototype,
   type GeneratePetApiResponse,
   type GeneratePetJobResponse,
   type DeletePushSnapshotResponse,
@@ -947,6 +949,48 @@ export async function startInteractiveTravel(
     parseInteractiveTravelResponse,
   );
   return withPublicInteractiveTravelImages(response);
+}
+
+function withPublicTravelVideoPrototypeAssets(
+  prototype: TravelVideoPrototype,
+): TravelVideoPrototype {
+  return {
+    ...prototype,
+    ...(prototype.imageUrl ? { imageUrl: publicImageUrl(prototype.imageUrl) } : {}),
+    ...(prototype.videoUrl ? { videoUrl: publicImageUrl(prototype.videoUrl) } : {}),
+  };
+}
+
+export async function startTravelVideoPrototype(
+  prompt: string,
+  pet: LocalPetState,
+  requestKey: string,
+): Promise<TravelVideoPrototype> {
+  const response = await request(
+    "/api/travel/video-prototype",
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      body: {
+        prompt: prompt.trim().slice(0, 1000),
+        requestKey,
+        pet: interactiveTravelPetContextForApi(pet),
+      },
+    },
+    parseTravelVideoPrototype,
+  );
+  return withPublicTravelVideoPrototypeAssets(response);
+}
+
+export async function getTravelVideoPrototype(
+  jobId: string,
+): Promise<TravelVideoPrototype> {
+  const response = await request(
+    `/api/travel/video-prototype/${encodeURIComponent(jobId)}`,
+    { method: "GET", headers: tmaAuthHeaders(), timeoutMs: 15_000 },
+    parseTravelVideoPrototype,
+  );
+  return withPublicTravelVideoPrototypeAssets(response);
 }
 
 export async function getInteractiveTravelStatus(

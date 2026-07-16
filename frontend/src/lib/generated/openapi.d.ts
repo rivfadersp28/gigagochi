@@ -583,6 +583,40 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/travel/video-prototype": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Start Travel Video Prototype */
+        readonly post: operations["start_travel_video_prototype_api_travel_video_prototype_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/travel/video-prototype/{job_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Travel Video Prototype Status */
+        readonly get: operations["travel_video_prototype_status_api_travel_video_prototype__job_id__get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/health": {
         readonly parameters: {
             readonly query?: never;
@@ -1590,6 +1624,14 @@ export interface components {
             readonly includeDebug: boolean;
             readonly pet: components["schemas"]["LocalPetChatContext"];
         };
+        /** StartTravelVideoPrototypeRequest */
+        readonly StartTravelVideoPrototypeRequest: {
+            readonly pet: components["schemas"]["LocalPetChatContext"];
+            /** Prompt */
+            readonly prompt: string;
+            /** Requestkey */
+            readonly requestKey: string;
+        };
         /** TmaCapabilitiesResponse */
         readonly TmaCapabilitiesResponse: {
             /** Debugmenu */
@@ -1623,6 +1665,32 @@ export interface components {
         readonly TravelFinalePromptRequest: {
             /** Direction */
             readonly direction: string;
+        };
+        /** TravelVideoPrototypeResponse */
+        readonly TravelVideoPrototypeResponse: {
+            /** Createdat */
+            readonly createdAt: string;
+            /** Error */
+            readonly error?: string | null;
+            /** Imageurl */
+            readonly imageUrl?: string | null;
+            /** Jobid */
+            readonly jobId: string;
+            /** Prompt */
+            readonly prompt: string;
+            /** Scenario */
+            readonly scenario?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "queued" | "writing" | "illustrating" | "animating" | "ready" | "failed";
+            /** Title */
+            readonly title?: string | null;
+            /** Updatedat */
+            readonly updatedAt: string;
+            /** Videourl */
+            readonly videoUrl?: string | null;
         };
         /** ValidationError */
         readonly ValidationError: {
@@ -2764,6 +2832,70 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["InteractiveTravelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly start_travel_video_prototype_api_travel_video_prototype_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["StartTravelVideoPrototypeRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TravelVideoPrototypeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly travel_video_prototype_status_api_travel_video_prototype__job_id__get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly job_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TravelVideoPrototypeResponse"];
                 };
             };
             /** @description Validation Error */

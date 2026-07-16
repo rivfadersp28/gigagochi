@@ -3363,6 +3363,33 @@
         "title": "StartInteractiveTravelRequest",
         "type": "object"
       },
+      "StartTravelVideoPrototypeRequest": {
+        "properties": {
+          "pet": {
+            "$ref": "#/components/schemas/LocalPetChatContext"
+          },
+          "prompt": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "requestKey": {
+            "maxLength": 36,
+            "minLength": 36,
+            "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+            "title": "Requestkey",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pet",
+          "prompt",
+          "requestKey"
+        ],
+        "title": "StartTravelVideoPrototypeRequest",
+        "type": "object"
+      },
       "TmaCapabilitiesResponse": {
         "properties": {
           "debugMenu": {
@@ -3462,6 +3489,110 @@
           "direction"
         ],
         "title": "TravelFinalePromptRequest",
+        "type": "object"
+      },
+      "TravelVideoPrototypeResponse": {
+        "properties": {
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "imageUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imageurl"
+          },
+          "jobId": {
+            "maxLength": 55,
+            "minLength": 55,
+            "pattern": "^travel-video-prototype-[a-f0-9]{32}$",
+            "title": "Jobid",
+            "type": "string"
+          },
+          "prompt": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "scenario": {
+            "anyOf": [
+              {
+                "maxLength": 1600,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "writing",
+              "illustrating",
+              "animating",
+              "ready",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updatedAt": {
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "videoUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Videourl"
+          }
+        },
+        "required": [
+          "jobId",
+          "status",
+          "prompt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "TravelVideoPrototypeResponse",
         "type": "object"
       },
       "ValidationError": {
@@ -5031,6 +5162,92 @@
           }
         },
         "summary": "Interactive Travel Status",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/video-prototype": {
+      "post": {
+        "operationId": "start_travel_video_prototype_api_travel_video_prototype_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartTravelVideoPrototypeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TravelVideoPrototypeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Travel Video Prototype",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/travel/video-prototype/{job_id}": {
+      "get": {
+        "operationId": "travel_video_prototype_status_api_travel_video_prototype__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "maxLength": 55,
+              "minLength": 55,
+              "pattern": "^travel-video-prototype-[a-f0-9]{32}$",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TravelVideoPrototypeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Travel Video Prototype Status",
         "tags": [
           "telegram-mini-app"
         ]

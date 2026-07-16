@@ -1420,15 +1420,17 @@ def generate_background_story_video_bytes(
     image_bytes: bytes,
     *,
     aspect_ratio: str = BACKGROUND_STORY_VIDEO_ASPECT_RATIO,
+    duration_seconds: int = BACKGROUND_STORY_VIDEO_DURATION_SECONDS,
+    prompt: str = BACKGROUND_STORY_VIDEO_PROMPT,
 ) -> bytes:
     return strip_generated_video_auxiliary_streams(
         generate_video_from_image_bytes(
             image_bytes,
             label="background_story/video",
-            prompt=BACKGROUND_STORY_VIDEO_PROMPT,
+            prompt=prompt,
             resolution=BACKGROUND_STORY_VIDEO_RESOLUTION,
             aspect_ratio=aspect_ratio,
-            duration=BACKGROUND_STORY_VIDEO_DURATION_SECONDS,
+            duration=duration_seconds,
         )
     )
 
@@ -1438,14 +1440,16 @@ def reserve_background_story_video_bytes(
     image_bytes: bytes,
     *,
     aspect_ratio: str = BACKGROUND_STORY_VIDEO_ASPECT_RATIO,
+    duration_seconds: int = BACKGROUND_STORY_VIDEO_DURATION_SECONDS,
+    prompt: str = BACKGROUND_STORY_VIDEO_PROMPT,
 ) -> Iterator[bytes]:
     with reserve_video_from_image_bytes(
         image_bytes,
         label="background_story/video",
-        prompt=BACKGROUND_STORY_VIDEO_PROMPT,
+        prompt=prompt,
         resolution=BACKGROUND_STORY_VIDEO_RESOLUTION,
         aspect_ratio=aspect_ratio,
-        duration=BACKGROUND_STORY_VIDEO_DURATION_SECONDS,
+        duration=duration_seconds,
     ) as payload:
         yield strip_generated_video_auxiliary_streams(payload)
 
