@@ -1,0 +1,290 @@
+.screen {
+  position: fixed;
+  inset: 0;
+  isolation: isolate;
+  width: 100%;
+  height: var(--tma-viewport-height);
+  min-height: var(--tma-viewport-height);
+  overflow: hidden;
+  color: #fff;
+  background: #000;
+}
+
+.scene {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  margin: 0 auto;
+  overflow: hidden;
+  background: #000;
+  font-family: var(--font-sb-sans-display), var(--font-open-runde), sans-serif;
+}
+
+.screen :global(button) {
+  color: #05152c;
+  color: color(display-p3 0.019 0.082 0.174);
+}
+
+.background {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  background-position: center;
+  background-size: cover;
+  transform: none;
+  transition: opacity 160ms ease;
+}
+
+.grain {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.7;
+  pointer-events: none;
+  user-select: none;
+}
+
+.dimmed {
+  opacity: 0.8;
+}
+
+.questionPanel {
+  position: absolute;
+  z-index: 2;
+  inset: 40.62% 0 0;
+  background: linear-gradient(180deg, rgb(41 72 94 / 0%) 0%, #173a58 100%);
+}
+
+.title {
+  position: absolute;
+  top: 8.12vh;
+  left: calc(50% + 5.5px);
+  display: flex;
+  width: 261px;
+  height: 52px;
+  align-items: flex-end;
+  justify-content: center;
+  color: #fff;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 26px;
+  text-align: center;
+  text-wrap: balance;
+  transform: translateX(-50%);
+}
+
+.options {
+  position: absolute;
+  top: 18.31vh;
+  right: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 19px;
+}
+
+.customForm {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+.customTitle {
+  position: absolute;
+  top: 185px;
+  left: calc(50% + 2.5px);
+  width: 261px;
+  height: 52px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  color: rgb(255 255 255 / 40%);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 26px;
+  text-align: center;
+  text-wrap: balance;
+  transform: translateX(-50%);
+}
+
+.customInput {
+  position: absolute;
+  top: 261px;
+  left: 50%;
+  width: min(341px, calc(100% - 40px));
+  min-height: 120px;
+  max-height: 160px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  outline: 0;
+  color: #fff;
+  background: transparent;
+  caret-color: #fff;
+  font: inherit;
+  font-size: 39.45px;
+  font-weight: 700;
+  line-height: 40px;
+  text-align: center;
+  resize: none;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+  transform: translateX(-50%);
+}
+
+.customInput::placeholder {
+  color: rgb(255 255 255 / 40%);
+  opacity: 1;
+}
+
+.customInput:focus,
+.customInput:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.customNextButton {
+  position: absolute;
+  top: min(444px, calc(100dvh - 95px));
+  left: 50%;
+  transform: translateX(-50%) rotate(var(--tilted-glass-rotation));
+  transform-origin: center;
+  animation: customNextButtonIn 300ms ease-out both;
+}
+
+.customNextButton:active {
+  transform: translateX(-50%) rotate(var(--tilted-glass-rotation)) scale(0.97);
+}
+
+@keyframes customNextButtonIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) rotate(var(--tilted-glass-rotation)) scale(0.6);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%) rotate(var(--tilted-glass-rotation)) scale(1);
+  }
+}
+
+.error {
+  position: absolute;
+  z-index: 5;
+  right: 24px;
+  bottom: calc(var(--tma-safe-bottom) + 16px);
+  left: 24px;
+  color: #fff;
+  text-align: center;
+}
+
+.finalPanel {
+  position: absolute;
+  z-index: 2;
+  inset: 70.02% 0 0;
+  background: linear-gradient(180deg, rgb(41 72 94 / 0%) 0%, #173a58 100%);
+}
+
+.finalContent {
+  position: absolute;
+  inset: 0;
+  transform-origin: center;
+  animation: finalContentIn 300ms ease-out both;
+}
+
+.finalContent :global([data-pet-thinking-indicator="true"]) {
+  top: -30px;
+  width: 80px;
+  height: 55.5px;
+}
+
+@keyframes finalContentIn {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.finalTitle {
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  width: 280px;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 26px;
+  text-align: center;
+  transform: translateX(-50%);
+}
+
+.finalCopy {
+  position: absolute;
+  top: 129px;
+  left: 50%;
+  width: 303px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  text-wrap: balance;
+  transform: translateX(-50%);
+}
+
+.retryButton {
+  position: absolute;
+  top: 197px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.retryButton:active {
+  transform: translateX(-50%) scale(0.97);
+}
+
+@media (max-height: 760px) {
+  .title {
+    top: 5.5vh;
+  }
+
+  .options {
+    top: 13vh;
+    gap: 12px;
+  }
+
+  .customTitle {
+    top: 132px;
+  }
+
+  .customInput {
+    top: 200px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .background {
+    transition: none;
+  }
+
+  .customNextButton {
+    animation: none;
+  }
+
+  .finalContent {
+    animation: none;
+  }
+}

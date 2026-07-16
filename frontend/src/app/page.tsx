@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { CreatePetForm } from "@/components/CreatePetForm";
+import { HomeRedirect } from "@/components/HomeRedirect";
 import { APP_DESCRIPTION, APP_TITLE } from "@/lib/appMetadata";
 
 export const metadata: Metadata = {
@@ -23,5 +23,5 @@ export const metadata: Metadata = {
 };
 
 export default function Home() {
-  return <CreatePetForm />;
+  return <HomeRedirect />;
 }

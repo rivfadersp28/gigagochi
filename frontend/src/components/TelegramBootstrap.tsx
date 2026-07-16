@@ -19,6 +19,7 @@ const BUTTON_PRESS_SOUND_SRC = "/sounds/button-press.wav";
 const PENDING_TRAVEL_RETRY_INTERVAL_MS = 30_000;
 
 let buttonPressAudio: HTMLAudioElement | null = null;
+let buttonPressAudioSrc = "";
 
 function getFeedbackButton(target: EventTarget | null): HTMLButtonElement | null {
   if (!(target instanceof Element)) {
@@ -47,9 +48,17 @@ function playButtonPressSound(button: HTMLButtonElement) {
   }
 
   try {
-    if (!buttonPressAudio) {
-      buttonPressAudio = new Audio(BUTTON_PRESS_SOUND_SRC);
+    const scopedSoundSrc = button
+      .closest<HTMLElement>("[data-button-press-sound-src]")
+      ?.dataset.buttonPressSoundSrc
+      ?.trim();
+    const soundSrc = scopedSoundSrc || BUTTON_PRESS_SOUND_SRC;
+
+    if (!buttonPressAudio || buttonPressAudioSrc !== soundSrc) {
+      buttonPressAudio?.pause();
+      buttonPressAudio = new Audio(soundSrc);
       buttonPressAudio.preload = "auto";
+      buttonPressAudioSrc = soundSrc;
     }
 
     buttonPressAudio.currentTime = 0;

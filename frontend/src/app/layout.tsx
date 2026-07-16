@@ -36,6 +36,14 @@ const openRunde = localFont({
   display: "swap",
 });
 
+const sbSansDisplay = localFont({
+  src: "./fonts/sb-sans-display/SBSansDisplay-Bold.otf",
+  weight: "700",
+  style: "normal",
+  variable: "--font-sb-sans-display",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   metadataBase: new URL(APP_ORIGIN),
   applicationName: APP_TITLE,
@@ -96,7 +104,7 @@ export default function RootLayout({
   return (
     <html
       lang="ru"
-      className={`${openRunde.variable} dark h-full antialiased`}
+      className={`${openRunde.variable} ${sbSansDisplay.variable} dark h-full antialiased`}
       style={{ backgroundColor: APP_BACKGROUND_COLOR }}
       suppressHydrationWarning
     >

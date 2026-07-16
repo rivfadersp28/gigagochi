@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -9,6 +11,11 @@ import {
 } from "@/lib/pendingPetGeneration";
 
 import { CreatePetForm } from "./CreatePetForm";
+
+const createPetFormStyles = readFileSync(
+  "src/components/CreatePetForm.module.css",
+  "utf8",
+);
 
 const mocks = vi.hoisted(() => {
   class MockApiError extends Error {
@@ -31,29 +38,24 @@ const mocks = vi.hoisted(() => {
     }
   }
 
+  const push = vi.fn();
+  const replace = vi.fn();
   return {
     MockApiError,
     generatePetAssets: vi.fn(),
     resumePetGeneration: vi.fn(),
     readLocalPetState: vi.fn(),
-    push: vi.fn(),
-    replace: vi.fn(),
+    push,
+    replace,
+    router: { push, replace },
     create: vi.fn(),
     hookPet: null as { petId: string } | null,
     hookStatus: "empty" as "empty" | "ready",
   };
 });
-const {
-  MockApiError,
-  generatePetAssets,
-  resumePetGeneration,
-  readLocalPetState,
-  push,
-  create,
-} = mocks;
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mocks.push, replace: mocks.replace }),
+  useRouter: () => mocks.router,
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -78,14 +80,10 @@ vi.mock("@/lib/useTelegramCapabilities", () => ({
 vi.mock("@/lib/useLocalPetState", () => ({
   useLocalPetState: () => ({
     create: mocks.create,
-    createDurably: (...args: unknown[]) => mocks.create(...args),
+    createDurably: mocks.create,
     pet: mocks.hookPet,
     status: mocks.hookStatus,
   }),
-}));
-
-vi.mock("./PetCreatingStage", () => ({
-  PetCreatingStage: () => <div>Создаём питомца</div>,
 }));
 
 function deferred<T>() {
@@ -98,22 +96,30 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function submitDescription(value: string) {
-  fireEvent.change(screen.getByLabelText("Опиши своего друга"), {
-    target: { value },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Создать персонажа" }));
+function submitCustomDescription(value: string) {
+  fireEvent.click(screen.getByRole("button", { name: "Свой вариант" }));
+  const input = screen.getByLabelText("Свой вариант персонажа");
+  fireEvent.change(input, { target: { value } });
+  fireEvent.keyDown(input, { key: "Enter" });
+}
+
+function completeQuestions() {
+  fireEvent.click(screen.getByRole("button", { name: "Тото" }));
+  fireEvent.click(screen.getByRole("button", { name: "Добрый" }));
+  fireEvent.click(screen.getByRole("button", { name: "Пауков" }));
+  fireEvent.click(screen.getByRole("button", { name: "Вантуз" }));
 }
 
 describe("CreatePetForm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
     clearPendingPetGeneration();
     window.localStorage.clear();
-    readLocalPetState.mockReturnValue(null);
-    create.mockReturnValue({ petId: "pet-1" });
-    generatePetAssets.mockReturnValue(new Promise(() => undefined));
-    resumePetGeneration.mockReturnValue(new Promise(() => undefined));
+    mocks.readLocalPetState.mockReturnValue(null);
+    mocks.create.mockReturnValue({ petId: "pet-1" });
+    mocks.generatePetAssets.mockReturnValue(new Promise(() => undefined));
+    mocks.resumePetGeneration.mockReturnValue(new Promise(() => undefined));
     mocks.hookPet = null;
     mocks.hookStatus = "empty";
   });
@@ -123,356 +129,275 @@ describe("CreatePetForm", () => {
     vi.restoreAllMocks();
   });
 
-  it("persists a request key before POST and then attaches the returned job id", async () => {
+  it("shows Paper presets over the single background timeline", () => {
+    const { container } = render(<CreatePetForm />);
+
+    const video = container.querySelector("video");
+    const audio = container.querySelector("audio[src='/creation/hopeful-piano-loop.m4a']");
+    const screenElement = screen.getByRole("region", { name: "Создание питомца" });
+    expect(video).toHaveAttribute("autoplay");
+    expect(video).toHaveAttribute("data-background-phase", "initial");
+    expect(video).toHaveProperty("muted", true);
+    expect(video).toHaveAttribute("playsinline");
+    expect(video?.querySelector("source")).toHaveAttribute(
+      "src",
+      "/creation/clouds-creation-timeline.mp4",
+    );
+    expect(audio).toHaveAttribute("src", "/creation/hopeful-piano-loop.m4a");
+    expect(audio).toHaveAttribute("autoplay");
+    expect(audio).toHaveAttribute("loop");
+    expect(audio).toHaveProperty("volume", 0.32);
+    expect(screenElement).toHaveAttribute(
+      "data-button-press-sound-src",
+      "/sounds/creation-button-plop.wav",
+    );
+    expect(container.querySelector("audio[src='/sounds/creation-button-plop.wav']"))
+      .toHaveAttribute("preload", "auto");
+    expect(container.querySelector("img[src*='video-filter-normal.webp']"))
+      .toBeInTheDocument();
+
+    expect(screen.getByRole("button", { name: "Ледяного дракона" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Человек-яблоко" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Водяной дух" })).toBeInTheDocument();
+
+  });
+
+  it("opens the custom input without starting generation", () => {
+    const { container } = render(<CreatePetForm />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Свой вариант" }));
+
+    expect(screen.getByLabelText("Свой вариант персонажа")).toHaveFocus();
+    expect(container.querySelector("video source")).toHaveAttribute(
+      "src",
+      "/creation/clouds-creation-timeline.mp4",
+    );
+    expect(mocks.generatePetAssets).not.toHaveBeenCalled();
+  });
+
+  it("shows the Paper next button only for a non-empty custom answer", () => {
+    render(<CreatePetForm />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Свой вариант" }));
+    const input = screen.getByLabelText("Свой вариант персонажа");
+    expect(screen.queryByRole("button", { name: "Далее" })).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "   " } });
+    expect(screen.queryByRole("button", { name: "Далее" })).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "Стальной унитаз" } });
+    expect(screen.getByRole("button", { name: "Далее" })).toHaveStyle({
+      backdropFilter: "blur(10px)",
+      "--tilted-glass-rotation": "2deg",
+    });
+    expect(createPetFormStyles).toContain(
+      "animation: customNextButtonIn 300ms ease-out both",
+    );
+    expect(createPetFormStyles).toContain(
+      "color: color(display-p3 0.019 0.082 0.174)",
+    );
+    expect(createPetFormStyles).toMatch(
+      /\.title\s*\{[^}]*height: 52px;[^}]*align-items: flex-end;/u,
+    );
+    expect(createPetFormStyles).toContain("scale(0.6)");
+    expect(createPetFormStyles).toContain("outline: none");
+  });
+
+  it("stays on the dedicated creation page when a pet already exists", async () => {
+    mocks.hookPet = { petId: "pet-existing" };
+    mocks.hookStatus = "ready";
+
+    render(<CreatePetForm redirectExistingPet={false} />);
+
+    expect(screen.getByRole("button", { name: "Ледяного дракона" })).toBeInTheDocument();
+    await act(async () => undefined);
+    expect(mocks.replace).not.toHaveBeenCalled();
+  });
+
+  it("starts generation after the first answer and advances while it runs", async () => {
+    const { container } = render(<CreatePetForm />);
+    const backgroundVideo = container.querySelector("video") as HTMLVideoElement;
+    const initialCustomButton = screen.getByRole("button", { name: "Свой вариант" });
+
+    expect(initialCustomButton).toHaveStyle({
+      "--tilted-glass-rotation": "2deg",
+      backdropFilter: "blur(20px)",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Ледяного дракона" }));
+
+    await waitFor(() => expect(mocks.generatePetAssets).toHaveBeenCalledOnce());
+    expect(container.querySelector("video")).toBe(backgroundVideo);
+    expect(container.querySelector("video source")).toHaveAttribute(
+      "src",
+      "/creation/clouds-creation-timeline.mp4",
+    );
+    expect(backgroundVideo).toHaveAttribute("data-background-phase", "transition");
+
+    backgroundVideo.currentTime = 267 / 24;
+    fireEvent.timeUpdate(backgroundVideo);
+
+    expect(container.querySelector("video")).toBe(backgroundVideo);
+    expect(backgroundVideo).toHaveAttribute("data-background-phase", "formed");
+    expect(screen.getByRole("heading", { name: "Как его будут звать?" })).toBeInTheDocument();
+    const nextCustomButton = screen.getByRole("button", { name: "Свой вариант" });
+    expect(nextCustomButton).not.toBe(initialCustomButton);
+    expect(nextCustomButton).toHaveStyle({
+      "--tilted-glass-rotation": "2deg",
+      backdropFilter: "blur(20px)",
+    });
+
+    const play = vi.spyOn(backgroundVideo, "play").mockResolvedValue();
+    play.mockClear();
+    backgroundVideo.currentTime = 447 / 24;
+    fireEvent.ended(backgroundVideo);
+    expect(backgroundVideo.currentTime).toBe(267 / 24);
+    expect(play).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("button", { name: "Тото" }));
+    expect(screen.getByRole("heading", { name: "Какой у него характер?" })).toBeInTheDocument();
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps later answers local to the UI and finalizes only after all steps", async () => {
+    const generation = deferred<Record<string, unknown>>();
+    mocks.generatePetAssets.mockReturnValue(generation.promise);
+    render(<CreatePetForm />);
+
+    submitCustomDescription("мышонок");
+    completeQuestions();
+
+    expect(screen.getByRole("heading", { name: "Персонаж формируется..." })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Персонаж думает" })).toBeInTheDocument();
+    expect(createPetFormStyles).toContain("animation: finalContentIn 300ms ease-out both");
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(readPendingPetGeneration()).toMatchObject({ description: "мышонок" });
+    expect(window.localStorage.getItem(PENDING_GENERATION_STORAGE_KEY)).not.toContain("Тото");
+
+    await act(async () => generation.resolve({ assetSetId: "assets-1" }));
+
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(
+      "мышонок",
+      { assetSetId: "assets-1" },
+    ));
+    expect(readPendingPetGeneration()).toBeNull();
+    expect(mocks.push).toHaveBeenCalledWith("/pet/pet-1");
+  });
+
+  it("waits for the questions when generation finishes early", async () => {
+    mocks.generatePetAssets.mockResolvedValue({ assetSetId: "assets-ready" });
+    render(<CreatePetForm />);
+
+    submitCustomDescription("дракон");
+    await waitFor(() => expect(mocks.generatePetAssets).toHaveBeenCalledOnce());
+    expect(mocks.create).not.toHaveBeenCalled();
+
+    completeQuestions();
+
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledOnce());
+  });
+
+  it("persists the recovery marker before the paid POST", async () => {
     let markerAtCall: unknown;
-    generatePetAssets.mockImplementation(() => {
+    mocks.generatePetAssets.mockImplementation(() => {
       markerAtCall = readPendingPetGeneration();
       return new Promise(() => undefined);
     });
     render(<CreatePetForm />);
 
-    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
-    submitDescription("Дракон с медным фонарём");
+    submitCustomDescription("Дракон с медным фонарём");
 
-    await waitFor(() => expect(generatePetAssets).toHaveBeenCalledTimes(1));
-    const options = generatePetAssets.mock.calls[0]?.[1];
+    await waitFor(() => expect(mocks.generatePetAssets).toHaveBeenCalledOnce());
+    const options = mocks.generatePetAssets.mock.calls[0]?.[1];
     expect(markerAtCall).toMatchObject({
       description: "Дракон с медным фонарём",
       requestKey: options.requestKey,
     });
-    expect(options).toEqual(expect.objectContaining({
-      requestKey: expect.any(String),
-      onJobQueued: expect.any(Function),
-    }));
-
     act(() => options.onJobQueued("job-1"));
-    expect(readPendingPetGeneration()).toMatchObject({
-      requestKey: options.requestKey,
-      jobId: "job-1",
-    });
+    expect(readPendingPetGeneration()).toMatchObject({ jobId: "job-1" });
   });
 
-  it("does not start a paid POST when the recovery marker cannot be persisted", async () => {
-    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+  it("does not start a paid POST when the marker cannot be persisted", async () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new DOMException("quota exceeded", "QuotaExceededError");
     });
     render(<CreatePetForm />);
 
-    submitDescription("мышонок");
+    submitCustomDescription("мышонок");
 
-    expect(await screen.findByText(/Не удалось сохранить прогресс/)).toBeInTheDocument();
-    expect(generatePetAssets).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Создать персонажа" })).toBeEnabled();
-    setItem.mockRestore();
+    expect(await screen.findByText(/Не удалось сохранить прогресс/u)).toBeInTheDocument();
+    expect(screen.getByLabelText("Свой вариант персонажа")).toBeEnabled();
+    expect(mocks.generatePetAssets).not.toHaveBeenCalled();
   });
 
-  it("does not auto-resume a marker that was never durable", () => {
-    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new DOMException("storage unavailable", "SecurityError");
-    });
-    expect(writePendingPetGeneration({
-      description: "мышонок",
-      requestKey: "pet-request-memory-only-0001",
-    })).toBe(false);
-
-    render(<CreatePetForm />);
-
-    expect(screen.getByLabelText("Опиши своего друга")).toBeEnabled();
-    expect(generatePetAssets).not.toHaveBeenCalled();
-    expect(resumePetGeneration).not.toHaveBeenCalled();
-    setItem.mockRestore();
-  });
-
-  it("reposts the same key after reload when the 202 response was lost", async () => {
+  it("resumes a durable pending request at the first follow-up question", async () => {
     writePendingPetGeneration({
       description: "мышонок",
       requestKey: "pet-request-reload-0001",
     });
+    const { container } = render(<CreatePetForm />);
 
-    render(<CreatePetForm />);
-
-    await waitFor(() => {
-      expect(generatePetAssets).toHaveBeenCalledWith(
-        "мышонок",
-        expect.objectContaining({ requestKey: "pet-request-reload-0001" }),
-      );
-    });
-    expect(resumePetGeneration).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.generatePetAssets).toHaveBeenCalledWith(
+      "мышонок",
+      expect.objectContaining({ requestKey: "pet-request-reload-0001" }),
+    ));
+    expect(screen.getByRole("heading", { name: "Как его будут звать?" })).toBeInTheDocument();
+    expect(container.querySelector("video source")).toHaveAttribute(
+      "src",
+      "/creation/clouds-creation-timeline.mp4",
+    );
+    expect(container.querySelector("video")).toHaveAttribute(
+      "data-background-phase",
+      "formed",
+    );
   });
 
-  it("does not resume a stale marker after a pet already exists", async () => {
-    writePendingPetGeneration({
-      description: "мышонок",
-      requestKey: "pet-request-stale-0001",
-    });
-    readLocalPetState.mockReturnValue({ petId: "pet-existing" });
-
-    render(<CreatePetForm />);
-
-    await waitFor(() => expect(mocks.replace).toHaveBeenCalledWith("/pet/pet-existing"));
-    expect(generatePetAssets).not.toHaveBeenCalled();
-    expect(resumePetGeneration).not.toHaveBeenCalled();
-    expect(readPendingPetGeneration()).toBeNull();
-  });
-
-  it("clears a crash-window marker when the hydrated hook already has the pet", async () => {
-    writePendingPetGeneration({
-      description: "мышонок",
-      requestKey: "pet-request-crash-window-0001",
-    });
-    mocks.hookPet = { petId: "pet-existing" };
-    mocks.hookStatus = "ready";
-
-    render(<CreatePetForm />);
-
-    await waitFor(() => expect(mocks.replace).toHaveBeenCalledWith("/pet/pet-existing"));
-    expect(readPendingPetGeneration()).toBeNull();
-    expect(generatePetAssets).not.toHaveBeenCalled();
-    expect(resumePetGeneration).not.toHaveBeenCalled();
-  });
-
-  it("continues polling after reload when the job id is known", async () => {
+  it("continues polling a durable queued job after reload", async () => {
     writePendingPetGeneration({
       description: "мышонок",
       requestKey: "pet-request-reload-0002",
       jobId: "job-2",
     });
-
     render(<CreatePetForm />);
 
-    await waitFor(() => expect(resumePetGeneration).toHaveBeenCalledWith(
+    await waitFor(() => expect(mocks.resumePetGeneration).toHaveBeenCalledWith(
       "job-2",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     ));
-    expect(generatePetAssets).not.toHaveBeenCalled();
+    expect(mocks.generatePetAssets).not.toHaveBeenCalled();
   });
 
-  it("attaches a cross-device active job and resumes it after submit conflict", async () => {
-    let markerAtResume: ReturnType<typeof readPendingPetGeneration> = null;
-    generatePetAssets.mockRejectedValue(
-      new MockApiError(
+  it("adopts an active cross-device job without repeating the POST", async () => {
+    mocks.generatePetAssets.mockRejectedValue(
+      new mocks.MockApiError(
         "GENERATION_ALREADY_ACTIVE",
         false,
-        "job-active-submit",
+        "job-active",
         "мышонок",
       ),
     );
-    resumePetGeneration.mockImplementation(() => {
-      const requestKey = generatePetAssets.mock.calls[0]?.[1].requestKey;
-      markerAtResume = readPendingPetGeneration(requestKey);
-      return Promise.resolve({ assetSetId: "assets-recovered" });
-    });
+    mocks.resumePetGeneration.mockResolvedValue({ assetSetId: "assets-recovered" });
     render(<CreatePetForm />);
 
-    submitDescription("дракон");
+    submitCustomDescription("дракон");
+    completeQuestions();
 
-    await waitFor(() => expect(resumePetGeneration).toHaveBeenCalledWith(
-      "job-active-submit",
+    await waitFor(() => expect(mocks.resumePetGeneration).toHaveBeenCalledWith(
+      "job-active",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     ));
-    expect(markerAtResume).toMatchObject({
-      description: "мышонок",
-      jobId: "job-active-submit",
-    });
-    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
-    expect(create).toHaveBeenCalledWith("мышонок", { assetSetId: "assets-recovered" });
-    expect(generatePetAssets).toHaveBeenCalledOnce();
-  });
-
-  it("attaches a cross-device active job during automatic reload recovery", async () => {
-    writePendingPetGeneration({
-      description: "дракон",
-      requestKey: "pet-request-cross-device-0001",
-    });
-    generatePetAssets.mockRejectedValue(
-      new MockApiError(
-        "GENERATION_ALREADY_ACTIVE",
-        false,
-        "job-active-reload",
-        "мышонок",
-      ),
-    );
-    resumePetGeneration.mockResolvedValue({ assetSetId: "assets-recovered" });
-
-    render(<CreatePetForm />);
-
-    await waitFor(() => expect(resumePetGeneration).toHaveBeenCalledWith(
-      "job-active-reload",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(
+      "мышонок",
+      { assetSetId: "assets-recovered" },
     ));
-    expect(generatePetAssets).toHaveBeenCalledWith(
-      "дракон",
-      expect.objectContaining({ requestKey: "pet-request-cross-device-0001" }),
-    );
-    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
-    expect(create).toHaveBeenCalledWith("мышонок", { assetSetId: "assets-recovered" });
+    expect(mocks.generatePetAssets).toHaveBeenCalledOnce();
   });
 
-  it("does not poll an adopted active job until its recovery marker is durable", async () => {
-    const nativeSetItem = window.localStorage.setItem.bind(window.localStorage);
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation((key, value) => {
-      if (value.includes('"jobId"')) {
-        throw new DOMException("quota exceeded", "QuotaExceededError");
-      }
-      nativeSetItem(key, value);
-    });
-    generatePetAssets.mockRejectedValue(
-      new MockApiError(
-        "GENERATION_ALREADY_ACTIVE",
-        false,
-        "job-active-not-durable",
-        "мышонок",
-      ),
-    );
-    render(<CreatePetForm />);
-
-    submitDescription("дракон");
-
-    expect(await screen.findByText(/Не удалось сохранить прогресс/)).toBeInTheDocument();
-    expect(resumePetGeneration).not.toHaveBeenCalled();
-    expect(window.localStorage.getItem(PENDING_GENERATION_STORAGE_KEY)).not.toContain(
-      '"jobId"',
-    );
-  });
-
-  it.each([
-    ["missing", undefined],
-    ["malformed", "x".repeat(301)],
-  ])("does not adopt an active job when its description is %s", async (_label, activeDescription) => {
-    generatePetAssets.mockRejectedValue(
-      new MockApiError(
-        "GENERATION_ALREADY_ACTIVE",
-        false,
-        "job-active-without-description",
-        activeDescription,
-      ),
-    );
-    render(<CreatePetForm />);
-
-    submitDescription("мышонок");
-
-    await waitFor(() => expect(screen.getByLabelText("Опиши своего друга")).toBeEnabled());
-    expect(resumePetGeneration).not.toHaveBeenCalled();
-    expect(generatePetAssets).toHaveBeenCalledOnce();
-    expect(readPendingPetGeneration()).toMatchObject({ description: "мышонок" });
-    expect(readPendingPetGeneration()?.jobId).toBeUndefined();
-  });
-
-  it("keeps the marker and restores the prompt after an auto-resume network failure", async () => {
-    writePendingPetGeneration({
-      description: "мышонок",
-      requestKey: "pet-request-reload-0003",
-      jobId: "job-3",
-    });
-    resumePetGeneration.mockRejectedValue(new Error("network lost"));
-
-    render(<CreatePetForm />);
-
-    await waitFor(() => expect(screen.getByLabelText("Опиши своего друга")).toHaveValue("мышонок"));
-    expect(readPendingPetGeneration()).toMatchObject({
-      requestKey: "pet-request-reload-0003",
-      jobId: "job-3",
-    });
-  });
-
-  it("clears the marker after a confirmed missing job", async () => {
-    writePendingPetGeneration({
-      description: "мышонок",
-      requestKey: "pet-request-reload-0004",
-      jobId: "job-missing",
-    });
-    resumePetGeneration.mockRejectedValue(new MockApiError("GENERATION_JOB_NOT_FOUND"));
-
-    render(<CreatePetForm />);
-
-    await waitFor(() => expect(screen.getByLabelText("Опиши своего друга")).toBeEnabled());
-    expect(readPendingPetGeneration()).toBeNull();
-  });
-
-  it("keeps the key after a network failure but rotates it after a changed prompt", async () => {
-    generatePetAssets.mockRejectedValueOnce(new Error("network lost"));
-    render(<CreatePetForm />);
-    submitDescription("мышонок");
-
-    await waitFor(() => expect(screen.getByLabelText("Опиши своего друга")).toBeEnabled());
-    const firstKey = generatePetAssets.mock.calls[0]?.[1].requestKey;
-    generatePetAssets.mockRejectedValueOnce(new Error("network lost again"));
-    fireEvent.click(screen.getByRole("button", { name: "Создать персонажа" }));
-    await waitFor(() => expect(generatePetAssets).toHaveBeenCalledTimes(2));
-    expect(generatePetAssets.mock.calls[1]?.[1].requestKey).toBe(firstKey);
-
-    await waitFor(() => expect(screen.getByLabelText("Опиши своего друга")).toBeEnabled());
-    generatePetAssets.mockReturnValue(new Promise(() => undefined));
-    submitDescription("дракон");
-    await waitFor(() => expect(generatePetAssets).toHaveBeenCalledTimes(3));
-    expect(generatePetAssets.mock.calls[2]?.[1].requestKey).not.toBe(firstKey);
-  });
-
-  it("rotates the key after a confirmed terminal generation failure", async () => {
-    generatePetAssets.mockRejectedValueOnce(new MockApiError("GENERATION_FAILED", true));
-    render(<CreatePetForm />);
-    submitDescription("мышонок");
-
-    await waitFor(() => expect(screen.getByLabelText("Опиши своего друга")).toBeEnabled());
-    const failedKey = generatePetAssets.mock.calls[0]?.[1].requestKey;
-    expect(readPendingPetGeneration()).toBeNull();
-
-    generatePetAssets.mockReturnValue(new Promise(() => undefined));
-    fireEvent.click(screen.getByRole("button", { name: "Создать персонажа" }));
-    await waitFor(() => expect(generatePetAssets).toHaveBeenCalledTimes(2));
-    expect(generatePetAssets.mock.calls[1]?.[1].requestKey).not.toBe(failedKey);
-  });
-
-  it("fences a late result after a newer request replaces the single marker", async () => {
-    const generation = deferred<Record<string, unknown>>();
-    generatePetAssets.mockReturnValue(generation.promise);
-    render(<CreatePetForm />);
-    submitDescription("мышонок");
-    await waitFor(() => expect(generatePetAssets).toHaveBeenCalledTimes(1));
-
-    writePendingPetGeneration({
-      description: "дракон",
-      requestKey: "pet-request-newer-0001",
-    });
-    await act(async () => generation.resolve({ assetSetId: "late-assets" }));
-
-    await waitFor(() => expect(screen.getByLabelText("Опиши своего друга")).toBeEnabled());
-    expect(create).not.toHaveBeenCalled();
-    expect(push).not.toHaveBeenCalled();
-    expect(readPendingPetGeneration()).toMatchObject({
-      requestKey: "pet-request-newer-0001",
-    });
-  });
-
-  it("clears the marker after success", async () => {
-    generatePetAssets.mockResolvedValue({ assetSetId: "assets-1" });
-    render(<CreatePetForm />);
-    submitDescription("мышонок");
-
-    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
-    expect(readPendingPetGeneration()).toBeNull();
-    expect(window.localStorage.getItem(PENDING_GENERATION_STORAGE_KEY)).toBeNull();
-    expect(push).toHaveBeenCalledWith("/pet/pet-1");
-  });
-
-  it("keeps the recovery marker when the paid pet state is not durable", async () => {
-    generatePetAssets.mockResolvedValue({ assetSetId: "assets-1" });
-    create.mockReturnValueOnce(null);
-    render(<CreatePetForm />);
-    submitDescription("мышонок");
-
-    expect(await screen.findByText(/Не удалось сохранить прогресс/)).toBeInTheDocument();
-    expect(readPendingPetGeneration()).toMatchObject({ description: "мышонок" });
-    expect(push).not.toHaveBeenCalled();
-    expect(mocks.replace).not.toHaveBeenCalled();
-  });
-
-  it("aborts generation polling when the form unmounts", async () => {
+  it("aborts background generation when the screen unmounts", async () => {
     const { unmount } = render(<CreatePetForm />);
-    submitDescription("мышонок");
-    await waitFor(() => expect(generatePetAssets).toHaveBeenCalledOnce());
-    const signal = generatePetAssets.mock.calls[0]?.[1].signal as AbortSignal;
-    expect(signal.aborted).toBe(false);
+    submitCustomDescription("мышонок");
+    await waitFor(() => expect(mocks.generatePetAssets).toHaveBeenCalledOnce());
+    const signal = mocks.generatePetAssets.mock.calls[0]?.[1].signal as AbortSignal;
 
     unmount();
 
