@@ -773,6 +773,34 @@ def test_reference_image_reads_own_generated_asset_without_network(
     assert _reference_image_bytes(public_url) == b"local-image"
 
 
+def test_reference_image_uses_scene_when_isolated_character_asset_is_missing(
+    monkeypatch, tmp_path
+) -> None:
+    generated_root = tmp_path / "generated"
+    scene_path = generated_root / "outfit" / "teen-idle.png"
+    scene_path.parent.mkdir(parents=True)
+    scene_path.write_bytes(b"outfit-scene")
+    character_url = (
+        "https://gigagochi.serega.works/static/generated/"
+        "outfit/teen-idle-character.png?v=42"
+    )
+    monkeypatch.setattr("app.services.image_service.GENERATED_ASSET_ROOT", generated_root)
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            backend_internal_url="http://backend:8000",
+            backend_public_url="https://gigagochi.serega.works",
+            webapp_url="https://gigagochi.serega.works",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.httpx.stream",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not fetch")),
+    )
+
+    assert _reference_image_bytes(character_url) == b"outfit-scene"
+
+
 def test_local_reference_image_rejects_symlink_escape(monkeypatch, tmp_path) -> None:
     generated_root = tmp_path / "generated"
     generated_root.mkdir()

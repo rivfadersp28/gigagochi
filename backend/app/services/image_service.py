@@ -1636,7 +1636,15 @@ def _local_reference_image_bytes(image_url: str) -> bytes | None:
     try:
         resolved = candidate.resolve(strict=True)
     except FileNotFoundError:
-        return None
+        if not candidate.stem.endswith("-character"):
+            return None
+        scene_candidate = candidate.with_name(
+            f"{candidate.stem.removesuffix('-character')}{candidate.suffix}"
+        )
+        try:
+            resolved = scene_candidate.resolve(strict=True)
+        except FileNotFoundError:
+            return None
     try:
         resolved.relative_to(root)
     except ValueError as exc:
