@@ -286,6 +286,10 @@ it("guides the local first session through chat and both cards", async () => {
     await vi.advanceTimersByTimeAsync(3_100);
   });
   const firstReplyTransform = mocks.runLocalPetChatTurn.mock.calls[0]?.[0]?.replyTransform;
+  expect(mocks.runLocalPetChatTurn.mock.calls[0]?.[0]).toMatchObject({
+    history: [],
+    isolatePriorContext: true,
+  });
   expect(firstReplyTransform?.("Очень приятно! А как твои дела?")).toBe("Очень приятно!");
   expect(screen.getByLabelText("А чем ты любишь заниматься?")).toBeInTheDocument();
 
@@ -297,6 +301,7 @@ it("guides the local first session through chat and both cards", async () => {
     await vi.advanceTimersByTimeAsync(4_000);
   });
   const secondReplyTransform = mocks.runLocalPetChatTurn.mock.calls[1]?.[0]?.replyTransform;
+  expect(mocks.runLocalPetChatTurn.mock.calls[1]?.[0]?.isolatePriorContext).toBe(true);
   expect(secondReplyTransform?.("Здорово! Часто ходишь?")).toBe("Здорово!");
 
   const backHandler = mocks.useTelegramBackButton.mock.calls.at(-1)?.[0] as

@@ -250,6 +250,69 @@ it("persists a transformed onboarding reply instead of the raw model question", 
   );
 });
 
+it("isolates an onboarding turn from stored history and memory", async () => {
+  appendLocalChatMessages([
+    {
+      id: "old-user",
+      role: "user",
+      text: "Меня зовут Серёга",
+      createdAt: "2026-07-13T11:00:00.000Z",
+    },
+    {
+      id: "old-pet",
+      role: "pet",
+      text: "Я тебя запомнил",
+      createdAt: "2026-07-13T11:00:01.000Z",
+    },
+  ]);
+  writeLocalPetMemory(applyMemoryOperations(
+    readLocalPetMemory(pet.petId),
+    [{
+      type: "remember_user_fact",
+      kind: "user_fact",
+      text: "Пользователя зовут Серёга.",
+      normalizedKey: "user-name",
+      confidence: 1,
+      importance: 1,
+      tags: [],
+    }],
+  ));
+  const currentOnboardingHistory = [{
+    id: "onboarding-intro",
+    role: "pet" as const,
+    text: "Привет! Как тебя зовут?",
+    createdAt: "2026-07-13T12:00:01.000Z",
+  }];
+
+  await runLocalPetChatTurn({
+    pet,
+    message: "Меня зовут Анна",
+    history: currentOnboardingHistory,
+    isolatePriorContext: true,
+    includePromptDebug: false,
+    logLabel: "isolated-onboarding",
+  });
+
+  expect(apiMocks.sendLocalChatMessage).toHaveBeenCalledWith(
+    "Меня зовут Анна",
+    expect.anything(),
+    currentOnboardingHistory,
+    expect.objectContaining({
+      complimentHistory: [],
+      excludeMutableCharacterContext: true,
+      memoryContext: expect.objectContaining({ relevantMemories: [] }),
+    }),
+  );
+  await waitForLocalPetPostReplyMemory(pet.petId);
+  expect(apiMocks.extractLocalUserMemory.mock.calls[0]?.[4]).toMatchObject({
+    memories: [],
+    learnings: [],
+  });
+  expect(apiMocks.extractLocalUserMemory.mock.calls[0]?.[5]).toMatchObject({
+    excludeMutableCharacterContext: true,
+  });
+});
+
 it("does not block the next reply on post-reply memory but serializes memory tasks", async () => {
   let finishFirstExtraction: ((value: { operations: never[] }) => void) | undefined;
   apiMocks.extractLocalUserMemory

@@ -1558,6 +1558,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         }
       : null;
     const requestedPetId = pet.petId;
+    const isolateOnboardingContext = firstSession?.stage === "awaiting-chat"
+      || firstSession?.stage === "awaiting-chat-followup";
+    const onboardingHistory = firstSession?.stage === "awaiting-chat-followup"
+      ? readLocalChatHistory().messages.slice(-3)
+      : [];
 
     try {
       const { response } = await runLocalPetChatTurn({
@@ -1577,6 +1582,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
               )
             : undefined,
         dialogueHookMessage,
+        history: isolateOnboardingContext ? onboardingHistory : undefined,
+        isolatePriorContext: isolateOnboardingContext,
         logLabel: "dashboard quick chat",
         onLiteOverlayPatch: localPet.applyLiteOverlayPatch,
       });

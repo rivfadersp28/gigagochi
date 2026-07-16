@@ -62,6 +62,7 @@ type LocalChatOptions = {
   includeDebug?: boolean;
   memoryContext?: LocalPetMemoryContext;
   complimentHistory?: string[];
+  excludeMutableCharacterContext?: boolean;
   replyMaxChars?: number;
   signal?: AbortSignal;
   visibleContext?: {
@@ -430,7 +431,16 @@ function memoryContextForApi(
   };
 }
 
-export function characterBibleForApi(pet: LocalPetState): Record<string, unknown> | undefined {
+const MUTABLE_CHARACTER_CONTEXT_KEYS = [
+  "lite_overlay",
+  "story_library_overlay",
+  "recent_story_events",
+] as const;
+
+export function characterBibleForApi(
+  pet: LocalPetState,
+  options: { excludeMutableContext?: boolean } = {},
+): Record<string, unknown> | undefined {
   const template = isRecord(pet.assetSet?.characterTemplate)
     ? pet.assetSet.characterTemplate
     : {};
@@ -454,14 +464,30 @@ export function characterBibleForApi(pet: LocalPetState): Record<string, unknown
       };
     }
   }
+  if (options.excludeMutableContext && isRecord(result.extensions)) {
+    const extensions = { ...result.extensions };
+    for (const key of MUTABLE_CHARACTER_CONTEXT_KEYS) {
+      delete extensions[key];
+    }
+    if (Object.keys(extensions).length) {
+      result.extensions = extensions;
+    } else {
+      delete result.extensions;
+    }
+  }
   return result;
 }
 
-function petContextForApi(pet: LocalPetState) {
+function petContextForApi(
+  pet: LocalPetState,
+  options: { excludeMutableCharacterContext?: boolean } = {},
+) {
   return {
     name: cleanApiText(petNameForApi(pet), 80),
     description: cleanApiText(pet.description, 300) ?? "Персонаж",
-    characterBible: characterBibleForApi(pet),
+    characterBible: characterBibleForApi(pet, {
+      excludeMutableContext: options.excludeMutableCharacterContext,
+    }),
     stage: pet.stage,
     mood: pet.mood,
     stats: petStatsForApi(pet.stats),
@@ -1110,7 +1136,9 @@ export async function sendLocalChatMessage(
         .slice(-500),
       replyMaxChars: options.replyMaxChars,
       visibleContext: options.visibleContext,
-      pet: petContextForApi(pet),
+      pet: petContextForApi(pet, {
+        excludeMutableCharacterContext: options.excludeMutableCharacterContext,
+      }),
       history: chatHistoryForApi(history),
     },
   }, parseLocalChatResponse);
@@ -1122,7 +1150,11 @@ export async function extractLocalUserMemory(
   pet: LocalPetState,
   history: LocalChatMessage[],
   memory: LocalPetMemoryStateV1,
-  options: { includeDebug?: boolean; memoryContext?: LocalPetMemoryContext } = {},
+  options: {
+    includeDebug?: boolean;
+    memoryContext?: LocalPetMemoryContext;
+    excludeMutableCharacterContext?: boolean;
+  } = {},
 ): Promise<MemoryExtractionResponse> {
   return request("/api/chat/memory-extract", {
     method: "POST",
@@ -1135,7 +1167,9 @@ export async function extractLocalUserMemory(
       timezone: browserTimezone(),
       existingMemoryBrief: buildExistingMemoryBrief(memory),
       memoryContext: memoryContextForApi(options.memoryContext),
-      pet: petContextForApi(pet),
+      pet: petContextForApi(pet, {
+        excludeMutableCharacterContext: options.excludeMutableCharacterContext,
+      }),
       history: chatHistoryForApi(history),
     },
   }, parseMemoryExtractionResponse);

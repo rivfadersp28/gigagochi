@@ -211,6 +211,43 @@ describe("API request payloads", () => {
     ]);
   });
 
+  it("removes mutable character memories from isolated chat payloads", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ reply: "Приятно познакомиться" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const pet: LocalPetState = {
+      ...petState(),
+      assetSet: {
+        assetSetId: "onboarding-assets",
+        generatedAt: "2026-07-10T12:00:00Z",
+        images: assetImages("/generated"),
+        characterBible: {
+          identity: { name: "Листик" },
+          extensions: {
+            generation: { pipeline: "test" },
+            lite_overlay: { facts: [{ text: "Пользователя зовут Серёга" }] },
+            story_library_overlay: { bricks: [{ title: "Старая встреча" }] },
+            recent_story_events: [{ title: "Разговор с Серёгой" }],
+          },
+        },
+      },
+    };
+
+    await sendLocalChatMessage("Меня зовут Анна", pet, [], {
+      excludeMutableCharacterContext: true,
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const payload = JSON.parse(String(requestInit.body));
+    expect(payload.pet.characterBible.extensions).toEqual({
+      generation: { pipeline: "test" },
+    });
+  });
+
   it("sends the pet-generation idempotency key through the transport", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({

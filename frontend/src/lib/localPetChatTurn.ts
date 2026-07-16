@@ -16,6 +16,7 @@ import { readComplimentHistory, rememberCompliment } from "./localPetCompliments
 import {
   applyMemoryConsolidationOperations,
   applyMemoryOperations,
+  createEmptyLocalPetMemory,
   markMemoryContextUsed,
   readLocalPetMemory,
   shouldRunDailyConsolidation,
@@ -54,6 +55,7 @@ type RunLocalPetChatTurnOptions = {
   replyTransform?: (reply: string) => string;
   dialogueHookMessage?: LocalChatMessage | null;
   history?: LocalChatMessage[];
+  isolatePriorContext?: boolean;
   logLabel: string;
   onHistoryChange?: (messages: LocalChatMessage[]) => void;
   onLiteOverlayPatch?: (patch: Record<string, unknown>, expectedPetId: string) => void;
@@ -126,6 +128,7 @@ async function persistPostReplyMemory({
   memoryContext,
   sourceMessageIds,
   includePromptDebug,
+  isolatePriorContext,
   onLiteOverlayPatch,
 }: {
   pet: LocalPetState;
@@ -135,6 +138,7 @@ async function persistPostReplyMemory({
   memoryContext: ReturnType<typeof buildMemoryContextForMessage>;
   sourceMessageIds: string[];
   includePromptDebug: boolean;
+  isolatePriorContext: boolean;
   onLiteOverlayPatch?: (patch: Record<string, unknown>, expectedPetId: string) => void;
 }) {
   return withLocalPetMutationLock(pet.petId, "memory", async ({ assertOwned }) => {
@@ -142,11 +146,14 @@ async function persistPostReplyMemory({
     if (!currentPet || currentPet.petId !== pet.petId) {
       return;
     }
-    const memoryBeforeExtraction = readLocalPetMemory(pet.petId);
+    const memoryBeforeExtraction = isolatePriorContext
+      ? createEmptyLocalPetMemory(pet.petId)
+      : readLocalPetMemory(pet.petId);
     const [memoryResult, liteFactsResult] = await Promise.allSettled([
       extractLocalUserMemory(message, reply, currentPet, history, memoryBeforeExtraction, {
         includeDebug: includePromptDebug,
         memoryContext,
+        excludeMutableCharacterContext: isolatePriorContext,
       }),
       extractLocalLiteFacts(message, reply, currentPet, history, {
         includeDebug: includePromptDebug,
@@ -227,6 +234,7 @@ async function runLocalPetChatTurnLocked({
   replyTransform,
   dialogueHookMessage,
   history,
+  isolatePriorContext = false,
   logLabel,
   onHistoryChange,
   onLiteOverlayPatch,
@@ -243,7 +251,9 @@ async function runLocalPetChatTurnLocked({
     text: message,
     createdAt: now,
   };
-  const storedHistoryBeforeMessage = readLocalChatHistory().messages;
+  const storedHistoryBeforeMessage = isolatePriorContext
+    ? []
+    : readLocalChatHistory().messages;
   const fullHistoryBeforeMessage = history
     ? appendUniqueMessages(storedHistoryBeforeMessage, history)
     : storedHistoryBeforeMessage;
@@ -255,7 +265,9 @@ async function runLocalPetChatTurnLocked({
     ? appendUniqueMessages(fullHistoryBeforeMessage, [dialogueHookMessage])
     : fullHistoryBeforeMessage;
   const historyBeforeMessage = historyWithDialogueHook.slice(-12);
-  const memoryBeforeMessage = readLocalPetMemory(requestPet.petId);
+  const memoryBeforeMessage = isolatePriorContext
+    ? createEmptyLocalPetMemory(requestPet.petId)
+    : readLocalPetMemory(requestPet.petId);
   const memoryContext = buildMemoryContextForMessage(
     historyWithDialogueHook,
     message,
@@ -278,7 +290,8 @@ async function runLocalPetChatTurnLocked({
   try {
     response = await sendLocalChatMessage(message, requestPet, historyBeforeMessage, {
       includeDebug: includePromptDebug,
-      complimentHistory: readComplimentHistory(requestPet.petId),
+      complimentHistory: isolatePriorContext ? [] : readComplimentHistory(requestPet.petId),
+      excludeMutableCharacterContext: isolatePriorContext,
       memoryContext,
       replyMaxChars,
     });
@@ -352,6 +365,7 @@ async function runLocalPetChatTurnLocked({
       memoryContext,
       sourceMessageIds: [userMessage.id, assistantMessage.id],
       includePromptDebug,
+      isolatePriorContext,
       onLiteOverlayPatch,
     }),
     (error: unknown) => {
