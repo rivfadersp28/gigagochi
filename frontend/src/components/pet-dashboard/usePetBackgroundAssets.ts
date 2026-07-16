@@ -57,6 +57,15 @@ export function shouldPollBackgroundAssets(assetSet?: LocalPetAssetSet): boolean
   );
 }
 
+function shouldReconcileCompletedComparisonAssets(assetSet?: LocalPetAssetSet): boolean {
+  return Boolean(
+    assetSet?.generationJobId
+    && assetSet.backgroundGenerationStatus === "succeeded"
+    && !assetSet.kandinskyAssets
+    && !assetSet.comparisonGenerationError,
+  );
+}
+
 export function backgroundAssetsAfterJobNotFound(
   assetSet: LocalPetAssetSet,
   message: string,
@@ -82,7 +91,14 @@ export function usePetBackgroundAssets({
   const updatedAt = assetSet?.backgroundGenerationUpdatedAt;
 
   useEffect(() => {
-    if (!derivedAssetsEnabled || !assetSet || !petId || !shouldPollBackgroundAssets(assetSet)) {
+    const shouldPollContinuously = shouldPollBackgroundAssets(assetSet);
+    const shouldReconcileOnce = shouldReconcileCompletedComparisonAssets(assetSet);
+    if (
+      !derivedAssetsEnabled
+      || !assetSet
+      || !petId
+      || (!shouldPollContinuously && !shouldReconcileOnce)
+    ) {
       return;
     }
 
@@ -104,6 +120,10 @@ export function usePetBackgroundAssets({
 
     const scheduleNextPoll = () => {
       if (cancelled || terminal || pollInFlight || !canPoll()) {
+        return;
+      }
+      if (!shouldPollContinuously) {
+        terminal = true;
         return;
       }
       const delay = BACKGROUND_ASSET_POLL_DELAYS_MS[

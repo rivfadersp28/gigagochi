@@ -83,6 +83,71 @@ describe("usePetBackgroundAssets", () => {
     expect(shouldPollBackgroundAssets(terminal)).toBe(false);
   });
 
+  it("reconciles newly attached Kandinsky assets for a completed local job", async () => {
+    const currentAssets = {
+      ...assetSet("assets-completed", "2026-07-15T12:01:00.000Z"),
+      backgroundGenerationStatus: "succeeded" as const,
+      backgroundGenerationPhase: "completed" as const,
+    };
+    const kandinskyAssets = {
+      ...assetSet("assets-kandinsky", "2026-07-15T12:02:00.000Z"),
+      generationJobId: undefined,
+      backgroundGenerationStatus: undefined,
+      backgroundGenerationUpdatedAt: undefined,
+    };
+    const refreshedAssets = {
+      ...currentAssets,
+      backgroundGenerationUpdatedAt: "2026-07-15T12:03:00.000Z",
+      kandinskyAssets,
+    };
+    const applyGeneratedAssets = vi.fn();
+    mocks.refreshPetBackgroundAssets.mockResolvedValue(refreshedAssets);
+
+    renderHook(() =>
+      usePetBackgroundAssets({
+        assetSet: currentAssets,
+        petId: "pet-completed",
+        applyGeneratedAssets,
+        derivedAssetsEnabled: true,
+      }),
+    );
+
+    await waitFor(() => expect(mocks.refreshPetBackgroundAssets).toHaveBeenCalledTimes(1));
+    expect(applyGeneratedAssets).toHaveBeenCalledWith(
+      refreshedAssets,
+      "pet-completed",
+      currentAssets,
+    );
+  });
+
+  it("checks a completed job without comparison assets only once", async () => {
+    vi.useFakeTimers();
+    const currentAssets = {
+      ...assetSet("assets-legacy", "2026-07-15T12:01:00.000Z"),
+      backgroundGenerationStatus: "succeeded" as const,
+      backgroundGenerationPhase: "completed" as const,
+    };
+    mocks.refreshPetBackgroundAssets.mockResolvedValue(currentAssets);
+
+    renderHook(() =>
+      usePetBackgroundAssets({
+        assetSet: currentAssets,
+        petId: "pet-legacy",
+        applyGeneratedAssets: vi.fn(),
+        derivedAssetsEnabled: true,
+      }),
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.refreshPetBackgroundAssets).toHaveBeenCalledTimes(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    expect(mocks.refreshPetBackgroundAssets).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores pet A assets resolved after pet B and tags the current write", async () => {
     const petAResponse = deferred<LocalPetAssetSet>();
     const petBResponse = deferred<LocalPetAssetSet>();
