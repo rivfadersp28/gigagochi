@@ -58,6 +58,7 @@ type UseLocalPetStateResult = {
     assetSet: LocalPetAssetSet,
     expectedPetId?: string,
     expectedBaseAssetSet?: LocalPetAssetSet,
+    replaceExpectedBase?: boolean,
   ) => LocalPetState | null;
   applyMoodHint: (
     moodHint?: PetMood,
@@ -375,6 +376,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
     assetSet: LocalPetAssetSet,
     expectedPetId?: string,
     expectedBaseAssetSet?: LocalPetAssetSet,
+    replaceExpectedBase?: boolean,
   ) => {
     if (!pet) {
       return null;
@@ -384,6 +386,7 @@ export function useLocalPetState(): UseLocalPetStateResult {
       kind: "generated-assets",
       assetSet,
       expectedBaseAssetSet,
+      replaceExpectedBase,
     }, expectedPetId ?? pet.petId)?.pet ?? null;
   }, [commitPetMutation, pet]);
 

@@ -48,6 +48,14 @@
   the background; the dashboard polls the same job and atomically applies newer URLs. Until those
   assets are ready, mood rendering uses the normal asset fallback, which is safe because new-pet
   stats start at 100.
+- Outfit generation is also asynchronous, but waits for the full normal/sad/happy image and video
+  pipeline before replacing the active asset set. The frontend persists the request key, job ID,
+  source asset set and grammatical display item in a separate localStorage recovery marker; a
+  reopened Mini App resumes the same idempotent job and applies it only if the source pet/assets
+  still match. Birth notifications remain tied to the foreground result, while outfit notifications
+  are sent only after the job reaches `completed`. The image chain first edits the previous idle
+  scene into the new outfit; sad and happy are then derived from that new idle image, preserving one
+  clothing design while changing only expression and pose.
 - Generation timing telemetry is stored independently from expiring job responses in the same
   SQLite database. It records queue start, normal-assets readiness, full derived-assets completion
   and failure status. The diagnostic Telegram user can view personal 30-day average, median, p95

@@ -37,8 +37,16 @@ _OUTFIT_SCHEMA = {
             ),
             "maxLength": 80,
         },
+        "displayItem": {
+            "type": "string",
+            "description": (
+                "Тот же предмет одежды в именительном падеже, пригодный в начале фразы "
+                "'... мне отлично подойдёт'."
+            ),
+            "maxLength": 80,
+        },
     },
-    "required": ["item"],
+    "required": ["item", "displayItem"],
     "additionalProperties": False,
 }
 
@@ -50,7 +58,7 @@ def _clean_item(value: object) -> str:
     return item[:80].strip()
 
 
-def simplify_outfit_request(request: str, pet_description: str) -> tuple[str, str]:
+def simplify_outfit_request(request: str, pet_description: str) -> tuple[str, str, str]:
     del pet_description  # Identity now comes only from the three image references.
     settings = get_settings()
     fallback_model = getattr(settings, "openai_chat_model", None)
@@ -65,8 +73,10 @@ def simplify_outfit_request(request: str, pet_description: str) -> tuple[str, st
                     "content": (
                         "Ты упрощаешь пожелание к одежде персонажа. Верни только JSON. "
                         "Выбери ровно один главный предмет одежды. Запиши короткую именную "
-                        "группу в винительном падеже, чтобы она грамматически продолжала фразу "
-                        "«Одень персонажа в ...». Исправь опечатки и согласование. Оставь "
+                        "группу дважды: item — в винительном падеже после фразы "
+                        "«Одень персонажа в ...», displayItem — в именительном падеже перед "
+                        "фразой «... мне отлично подойдёт». Исправь опечатки и "
+                        "согласование. Оставь "
                         "значимое уточнение пользователя — страну, команду, цвет или рисунок. "
                         "Например, «прикольненькая милая футболка Аргентины» превращается в "
                         "«футболку Аргентины». Удали эмоции, сюжет, действия, фон, бренды, "
@@ -92,9 +102,10 @@ def simplify_outfit_request(request: str, pet_description: str) -> tuple[str, st
     except json.JSONDecodeError as exc:
         raise RuntimeError("OUTFIT_SIMPLIFICATION_INVALID_JSON") from exc
     item = _clean_item(payload.get("item") if isinstance(payload, dict) else None)
-    if not item:
+    display_item = _clean_item(payload.get("displayItem") if isinstance(payload, dict) else None)
+    if not item or not display_item:
         raise RuntimeError("OUTFIT_SIMPLIFICATION_EMPTY")
-    return item, f"Одень персонажа в {item}."
+    return item, display_item, f"Одень персонажа в {item}."
 
 
 def encode_outfit_generation_description(
@@ -146,21 +157,33 @@ def _generated_reference_path(image_url: object) -> Path:
     return candidate
 
 
-def _outfit_edit_prompt(prompt: str, mood: str) -> str:
-    mood_rule = {
-        "idle": "Сохрани спокойное выражение и обычную позу.",
-        "sad": "Сохрани грустное выражение и грустную позу.",
-        "happy": "Сохрани радостное выражение и радостную позу.",
-    }[mood]
+def _outfit_edit_prompt(prompt: str) -> str:
     return (
         f"{prompt.strip()} "
         "Это точечное редактирование изображения. Используй референс как единственный источник "
         "идентичности и композиции. Сохрани абсолютно того же персонажа: вид, лицо, окраску, "
         "форму головы и тела, пропорции, конечности, крылья, хвост, материалы и все уникальные "
         "черты. Сохрани фон, кадрирование, масштаб, освещение и положение персонажа. "
-        f"{mood_rule} Измени только одежду на указанную в первой фразе. Удали прежнюю одежду, "
+        "Сохрани спокойное выражение и обычную позу. Измени только одежду на указанную "
+        "в первой фразе. Удали прежнюю одежду, "
         "если она мешает новой. Не добавляй новых персонажей, предметов, надписей, рамок или "
         "декора. Не переосмысляй и не перерисовывай дизайн персонажа."
+    )
+
+
+def _outfit_mood_prompt(mood: str) -> str:
+    mood_rule = {
+        "sad": "Сделай выражение и позу персонажа грустными.",
+        "happy": "Сделай выражение и позу персонажа радостными.",
+    }[mood]
+    return (
+        "Это последовательное редактирование уже переодетого персонажа. Используй референс "
+        "как единственный источник дизайна персонажа и одежды. Сохрани одежду полностью без "
+        "изменений: тот же предмет, крой, посадку, цвет, материал, фактуру, рисунок, логотип, "
+        "надпись, швы и все мелкие детали. Не генерируй и не переосмысляй одежду заново. "
+        "Сохрани того же персонажа, фон, кадрирование, масштаб и освещение. "
+        f"{mood_rule} Измени только выражение лица и позу. Не добавляй новых персонажей, "
+        "предметов, надписей, рамок или декора."
     )
 
 
@@ -191,29 +214,38 @@ def generate_outfit_image_asset_set(
             "generatedAt": generated_at.isoformat(),
             "prompt": prompt,
             "references": references,
+            "outfitPipeline": "idle-derived-moods-v1",
         }
         metadata_path.write_text(
             json.dumps(metadata, ensure_ascii=False, sort_keys=True),
             encoding="utf-8",
         )
 
-    paths: dict[str, Path] = {}
-    prompts: dict[str, str] = {}
-    for mood in ("idle", "sad", "happy"):
-        source_path = _generated_reference_path(references.get(mood))
-        output_path = output_dir / f"teen-{mood}.png"
-        edit_prompt = _outfit_edit_prompt(prompt, mood)
-        if not _is_valid_image_file(output_path):
+    paths: dict[str, Path] = {"idle": output_dir / "teen-idle.png"}
+    prompts: dict[str, str] = {"idle": _outfit_edit_prompt(prompt)}
+    if not _is_valid_image_file(paths["idle"]):
+        idle_source_path = _generated_reference_path(references.get("idle"))
+        with reserve_image_edit_bytes(
+            prompts["idle"],
+            idle_source_path,
+            label="pet_outfit/idle_image",
+            size=PET_SCENE_IMAGE_SIZE,
+            provider=image_provider,
+        ) as image_bytes:
+            _atomic_write_nonempty(paths["idle"], image_bytes)
+
+    for mood in ("sad", "happy"):
+        paths[mood] = output_dir / f"teen-{mood}.png"
+        prompts[mood] = _outfit_mood_prompt(mood)
+        if not _is_valid_image_file(paths[mood]):
             with reserve_image_edit_bytes(
-                edit_prompt,
-                source_path,
+                prompts[mood],
+                paths["idle"],
                 label=f"pet_outfit/{mood}_image",
                 size=PET_SCENE_IMAGE_SIZE,
                 provider=image_provider,
             ) as image_bytes:
-                _atomic_write_nonempty(output_path, image_bytes)
-        paths[mood] = output_path
-        prompts[mood] = edit_prompt
+                _atomic_write_nonempty(paths[mood], image_bytes)
 
     return PetAssetImageSet(
         asset_set_id=asset_set_id,

@@ -652,3 +652,13 @@
   endpoints expose no resumable task ID; keep automatic retries disabled, and treat a provider-
   accepted request whose response was lost before local persistence as an irreducible ambiguity
   unless the provider adds a client idempotency token.
+- `reserve_background_story_video_bytes()` returns a downloaded provider result but does not mark
+  its durable receipt `media_saved`; the caller must do so only after atomically persisting the MP4.
+  Until then the receipt intentionally remains `accepted`, even when a valid local video exists.
+- Dashboard speech portions use surface-specific message IDs to decide whether the shared bubble is
+  visible. Advancing a portion must move both the conversation and feed IDs when either owns the
+  current message; updating only the conversation ID makes multi-sentence feed replies disappear.
+- Background mood completion and outfit replacement use different asset-set CAS semantics. A mood
+  delta must retain the original `assetSetId` and merge against its base snapshot; a completed
+  outfit must atomically verify that same base is still current and then replace it with the new
+  `assetSetId`. Requiring the generated ID to equal the base silently leaves the old outfit active.

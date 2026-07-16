@@ -834,6 +834,7 @@ export type LocalPetStateMutationOperation =
       kind: "generated-assets";
       assetSet: LocalPetAssetSet;
       expectedBaseAssetSet?: LocalPetAssetSet;
+      replaceExpectedBase?: boolean;
     }
   | {
       kind: "mood-hint";
@@ -1165,12 +1166,15 @@ function applyMutationOperation(
           && (
             !currentAssetSet
             || currentAssetSet.assetSetId !== expectedBase.assetSetId
-            || assetSet.assetSetId !== expectedBase.assetSetId
+            || (
+              !operation.replaceExpectedBase
+              && assetSet.assetSetId !== expectedBase.assetSetId
+            )
           )
         ) {
           return { pet: state, rejected: true };
         }
-        const nextAssetSet = expectedBase && currentAssetSet
+        const nextAssetSet = expectedBase && currentAssetSet && !operation.replaceExpectedBase
           ? mergeGeneratedAssetDelta(currentAssetSet, expectedBase, assetSet)
           : assetSet;
         return {

@@ -86,6 +86,7 @@ export type TelegramCapabilities = {
 
 export type OutfitSimplification = {
   item: string;
+  displayItem: string;
   generationDescription: string;
 };
 
@@ -263,6 +264,8 @@ function parseOutfitSimplification(value: unknown): OutfitSimplification {
     !isRecord(value)
     || typeof value.item !== "string"
     || !value.item.trim()
+    || typeof value.displayItem !== "string"
+    || !value.displayItem.trim()
     || typeof value.generationDescription !== "string"
     || !value.generationDescription.trim()
   ) {
@@ -270,6 +273,7 @@ function parseOutfitSimplification(value: unknown): OutfitSimplification {
   }
   return {
     item: value.item.trim(),
+    displayItem: value.displayItem.trim(),
     generationDescription: value.generationDescription.trim(),
   };
 }
@@ -774,7 +778,52 @@ export async function generateOutfitAssets(
     parseGeneratePetJobResponse,
   );
   options.onJobQueued?.(job.jobId);
-  return generatedPetResponseFromJob(await waitForGeneratedPet(job, options.signal));
+  const generated = generatedPetResponseFromJob(
+    await waitForGeneratedPet(job, options.signal, true),
+  );
+  if (generated.backgroundGenerationStatus === "failed") {
+    throw new ApiError(
+      generated.backgroundGenerationError
+        ?? "Не удалось подготовить все состояния нового наряда.",
+      "OUTFIT_BACKGROUND_GENERATION_FAILED",
+    );
+  }
+  return generated;
+}
+
+export async function queueOutfitGeneration(
+  prompt: string,
+  references: {
+    idleImageUrl: string;
+    sadImageUrl: string;
+    happyImageUrl: string;
+  },
+  options: { requestKey: string; signal?: AbortSignal },
+): Promise<string> {
+  const job = await request(
+    "/api/outfit/generate",
+    {
+      method: "POST",
+      headers: tmaAuthHeaders(),
+      idempotencyKey: options.requestKey,
+      signal: options.signal,
+      body: { prompt, ...references },
+    },
+    parseGeneratePetJobResponse,
+  );
+  return job.jobId;
+}
+
+export async function resumeCompletedPetGeneration(
+  jobId: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<GeneratePetResponse> {
+  const job = await request(
+    `/api/generate-pet/jobs/${encodeURIComponent(jobId)}`,
+    { headers: tmaAuthHeaders(), signal: options.signal },
+    parseGeneratePetJobResponse,
+  );
+  return generatedPetResponseFromJob(await waitForGeneratedPet(job, options.signal, true));
 }
 
 export async function resumePetGeneration(
@@ -999,12 +1048,13 @@ export async function animateInteractiveTravelPart(
 async function waitForGeneratedPet(
   initialJob: GeneratePetJobResponse,
   signal?: AbortSignal,
+  requireComplete = false,
 ): Promise<GeneratePetJobResponse> {
   let job = initialJob;
   const deadline = Date.now() + MAX_GENERATION_POLL_MS;
 
   while (true) {
-    if (job.result) {
+    if (job.result && (!requireComplete || job.phase === "completed")) {
       return job;
     }
 

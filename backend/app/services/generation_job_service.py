@@ -95,6 +95,7 @@ class GenerationJobService:
         generate_images_for_job: GenerateImagesForJob | None = None,
         generate_comparison_images: GenerateComparisonImages | None = None,
         notify_ready: NotifyReady | None = None,
+        notify_outfit_ready: NotifyReady | None = None,
         cleanup_failed_job_assets: CleanupFailedJobAssets | None = None,
         job_ttl: timedelta = timedelta(hours=1),
         idempotency_ttl: timedelta = DEFAULT_IDEMPOTENCY_TTL,
@@ -113,6 +114,7 @@ class GenerationJobService:
         self._build_failure = build_failure
         self._generate_comparison_images = generate_comparison_images
         self._notify_ready_callback = notify_ready
+        self._notify_outfit_ready_callback = notify_outfit_ready
         self._cleanup_failed_job_assets = cleanup_failed_job_assets
         self._job_ttl = job_ttl
         self._idempotency_ttl = max(job_ttl, idempotency_ttl)
@@ -661,6 +663,20 @@ class GenerationJobService:
                 exc_info=True,
             )
 
+    def _notify_outfit_ready(self, job_id: str) -> None:
+        if self._notify_outfit_ready_callback is None:
+            return
+        owner_id = self._owner_id(job_id)
+        try:
+            self._notify_outfit_ready_callback(owner_id)
+        except Exception:
+            logger.warning(
+                "outfit_generation_notification_failed jobId=%s ownerId=%s",
+                job_id,
+                owner_id,
+                exc_info=True,
+            )
+
     def _prompt_context(self, job_id: str) -> Any:
         return set_prompt_log_context(
             {
@@ -764,10 +780,12 @@ class GenerationJobService:
         result: GeneratePetAssetResponse | None = None,
         completed_with_errors: bool = False,
     ) -> bool:
+        notify_outfit_ready = False
         with self._lock:
             record = self._jobs.get(job_id)
             if record is None:
                 return False
+            was_completed = record.response.phase == "completed"
             record.primary_complete = True
             comparison_complete = record.comparison_complete
             comparison = (
@@ -794,6 +812,13 @@ class GenerationJobService:
                     "completed_at",
                     status="completed_with_errors" if has_errors else "completed",
                 )
+                notify_outfit_ready = (
+                    not was_completed
+                    and record.response.backgroundError is None
+                    and record.description.startswith(OUTFIT_GENERATION_PREFIX)
+                )
+        if notify_outfit_ready:
+            self._notify_outfit_ready(job_id)
         return persisted
 
     def _finish_comparison_pipeline(
@@ -816,10 +841,12 @@ class GenerationJobService:
                 job_id,
                 type(error).__name__,
             )
+        notify_outfit_ready = False
         with self._lock:
             record = self._jobs.get(job_id)
             if record is None:
                 return False
+            was_completed = record.response.phase == "completed"
             record.comparison_complete = True
             primary_complete = record.primary_complete
             current_result = record.response.result
@@ -849,6 +876,13 @@ class GenerationJobService:
                         else "completed"
                     ),
                 )
+                notify_outfit_ready = (
+                    not was_completed
+                    and not has_primary_error
+                    and record.description.startswith(OUTFIT_GENERATION_PREFIX)
+                )
+        if notify_outfit_ready:
+            self._notify_outfit_ready(job_id)
         return persisted
 
     def _run_image_job(
@@ -971,7 +1005,9 @@ class GenerationJobService:
         except Exception as exc:
             if self._record_background_failure(job_id, exc, phase="generating_sad_image"):
                 self._start_happy_image_job(job_id, image_set, video_path, None, None)
-        if self._job_is_active(job_id):
+        if self._job_is_active(job_id) and not self._description(job_id).startswith(
+            OUTFIT_GENERATION_PREFIX
+        ):
             self._notify_ready(job_id)
 
     def _run_background_image_job(self, job_id: str, image_set: Any, video_path: Any) -> None:

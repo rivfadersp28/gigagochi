@@ -259,6 +259,39 @@ def test_notification_failure_does_not_fail_generation(tmp_path: Path) -> None:
         service.shutdown(wait=True)
 
 
+def test_outfit_notification_waits_for_all_assets(tmp_path: Path) -> None:
+    background_started = Event()
+    release_background = Event()
+    birth_notifications: list[int] = []
+    outfit_notifications: list[int] = []
+
+    def generate_background_image(_image_set, _image_provider):
+        background_started.set()
+        assert release_background.wait(timeout=2)
+        return Path("teen-sad.png")
+
+    service = _test_service(
+        tmp_path / "generation-jobs.sqlite3",
+        lambda _description, _provider: SimpleNamespace(asset_set_id="asset-1"),
+        generate_background_image=generate_background_image,
+        notify_ready=birth_notifications.append,
+        notify_outfit_ready=outfit_notifications.append,
+    )
+    try:
+        submitted = service.submit("__OUTFIT_V1__{}", _user())
+        assert background_started.wait(timeout=2)
+        assert birth_notifications == []
+        assert outfit_notifications == []
+
+        release_background.set()
+        _wait_for(service, submitted.jobId, lambda job: job.phase == "completed")
+        assert birth_notifications == []
+        assert outfit_notifications == [42]
+    finally:
+        release_background.set()
+        service.shutdown(wait=True)
+
+
 def test_background_failure_keeps_foreground_result(tmp_path: Path) -> None:
     service = GenerationJobService(
         store=GenerationJobStore(tmp_path / "generation-jobs.sqlite3"),

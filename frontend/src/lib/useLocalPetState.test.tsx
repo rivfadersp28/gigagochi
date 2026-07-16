@@ -486,6 +486,12 @@ describe("useLocalPetState snapshot CAS", () => {
         "pet-a",
         assetSet("assets-stale"),
       )).toBeNull();
+      expect(result.current.applyGeneratedAssets(
+        assetSet("outfit-new"),
+        "pet-a",
+        assetSet("assets-stale"),
+        true,
+      )).toBeNull();
     });
 
     expect(readLocalPetState()?.assetSet?.assetSetId).toBe("assets-current");
@@ -641,6 +647,29 @@ describe("useLocalPetState snapshot CAS", () => {
     expect(storedAssets?.sadVideoUrl).toBe("/assets-a-sad.mp4");
     expect(storedAssets?.images.teen.happy).toBe("/assets-a-happy.png");
     expect(storedAssets?.happyVideoUrl).toBe("/assets-a-happy.mp4");
+  });
+
+  it("atomically replaces an expected base asset set with a new outfit asset set", () => {
+    const baseAssets = assetSet("assets-a");
+    const outfitAssets = assetSet("outfit-assets-b");
+    writeLocalPetState({
+      ...petState("pet-a"),
+      assetSet: baseAssets,
+    });
+    const { result } = renderHook(() => useLocalPetState());
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+    act(() => {
+      result.current.applyGeneratedAssets(
+        outfitAssets,
+        "pet-a",
+        baseAssets,
+        true,
+      );
+    });
+
+    expect(readLocalPetState()?.assetSet?.assetSetId).toBe("outfit-assets-b");
   });
 
   it("does not roll back newer nested comparison assets with a stale equivalent snapshot", () => {

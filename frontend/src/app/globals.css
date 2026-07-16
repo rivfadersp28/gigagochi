@@ -588,121 +588,132 @@ body {
   --main-action-button-width: 180px;
 }
 
-.outfit-panel-backdrop {
+.outfit-flow {
   position: absolute;
   inset: 0;
   z-index: 80;
-  display: flex;
-  align-items: flex-end;
-  padding: 20px 20px max(20px, var(--tma-safe-bottom));
-  background: rgba(0, 0, 0, 0.48);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  font-family: var(--font-open-runde), ui-rounded, system-ui, sans-serif;
 }
 
-.outfit-panel {
-  display: grid;
+.outfit-flow__form,
+.outfit-flow__confirmation {
+  position: relative;
   width: 100%;
-  gap: 16px;
-  padding: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 24px;
-  background: rgba(20, 20, 20, 0.82);
-  backdrop-filter: blur(18.5px);
-  -webkit-backdrop-filter: blur(18.5px);
-  box-shadow:
-    inset 1px 2px 3px rgba(255, 255, 255, 0.1),
-    0 18px 50px rgba(0, 0, 0, 0.28);
-  color: var(--main-scene-ink);
+  height: 100%;
+  padding: max(91px, calc(var(--tma-safe-top) + 28px)) 28px max(28px, var(--tma-safe-bottom));
 }
 
-.outfit-panel__header {
+.outfit-flow h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.outfit-flow textarea {
+  display: block;
+  width: 100%;
+  height: 220px;
+  margin-top: 7px;
+  padding: 0;
+  resize: none;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  color: #fff;
+  caret-color: #fff;
+  font: 800 29.5px/1.08 var(--font-open-runde), ui-rounded, system-ui, sans-serif;
+}
+
+.outfit-flow textarea::placeholder {
+  color: rgba(255, 255, 255, 0.2);
+  opacity: 1;
+}
+
+.outfit-flow__button {
+  position: fixed;
+  right: 28px;
+  bottom: max(var(--outfit-keyboard-inset, 28px), calc(var(--tma-safe-bottom) + 12px));
+  left: 28px;
+  z-index: 2;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.outfit-panel__header h2 {
-  font-family: var(--font-open-runde), ui-rounded, system-ui, sans-serif;
-  font-size: 22px;
-  font-weight: 800;
-}
-
-.outfit-panel__eyebrow {
-  margin: 0 0 2px;
-  color: var(--main-scene-ink-muted);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.outfit-panel__header button {
-  width: 36px;
-  height: 36px;
+  justify-content: center;
+  gap: 8px;
+  height: 62px;
   border: 0;
-  border-radius: 50%;
-  background: var(--main-scene-surface-strong);
-  color: var(--main-scene-ink);
-  font-size: 28px;
-  line-height: 32px;
-}
-
-.outfit-panel__xp {
-  display: grid;
-  gap: 4px;
-  padding: 12px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  background: var(--main-scene-surface);
-  font-size: 14px;
-  line-height: 1.3;
-}
-
-.outfit-panel__xp span {
-  color: var(--main-scene-ink-muted);
-  font-weight: 600;
-}
-
-.outfit-panel__xp strong {
-  font-size: 16px;
-  font-weight: 800;
-}
-
-.outfit-panel textarea {
-  min-height: 112px;
-  resize: none;
-  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 18px;
-  background: var(--main-scene-surface);
-  color: var(--main-scene-ink);
-  padding: 14px 16px;
-  font: 500 17px/1.35 var(--font-open-runde), ui-rounded, system-ui, sans-serif;
-  outline: none;
+  background: #fff;
+  color: #000;
+  font: 800 20px/1 var(--font-open-runde), ui-rounded, system-ui, sans-serif;
 }
 
-.outfit-panel textarea:focus {
-  border-color: var(--main-focus-ring);
-  box-shadow: 0 0 0 3px var(--main-focus-ring);
+.outfit-flow__button:disabled {
+  opacity: 0.35;
 }
 
-.outfit-panel__submit {
-  width: 100%;
-  height: 58px;
-  font-size: 20px;
+.outfit-flow__error {
+  position: absolute;
+  right: 28px;
+  bottom: 104px;
+  left: 28px;
 }
 
-.outfit-panel__submit:disabled {
-  opacity: 0.48;
+.xp-amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #ffb107;
+  font-family: "SF Pro Rounded", var(--font-open-runde), ui-rounded, system-ui, sans-serif;
+  font-weight: 900;
+  line-height: normal;
+  white-space: nowrap;
 }
 
-.outfit-panel__hint {
-  margin: -4px 2px 0;
-  color: var(--main-scene-ink-muted);
-  font-size: 13px;
+.xp-amount img {
+  display: block;
+  width: 24px;
+  height: 24.174px;
+  flex: 0 0 auto;
+}
+
+.outfit-flow__xp {
+  position: absolute;
+  right: 28px;
+  bottom: calc(var(--outfit-keyboard-inset, 28px) + 84px);
+  left: 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 23.445px;
+}
+
+.outfit-flow__confirmation {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-top: 28px;
+  padding-bottom: 118px;
+}
+
+.outfit-flow__confirmation h2 {
+  font-size: 30px;
+  line-height: 1.05;
+}
+
+.outfit-flow__confirmation p {
+  max-width: 310px;
+  margin: 12px 0 0;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 18px;
   font-weight: 650;
-  line-height: 1.35;
+  line-height: 1.3;
 }
 
 .main-action-button__icon {
@@ -743,6 +754,21 @@ body {
   background: rgba(48, 235, 135, 0.25);
   box-shadow: inset 0 1px 2px rgba(19, 111, 62, 0.16);
   transform: translate3d(-50%, 0, 0);
+}
+
+.pet-experience-balance {
+  /* Figma 218:1907 — live XP balance below the level progress. */
+  position: absolute;
+  top: 162px;
+  left: 50%;
+  z-index: 40;
+  transform: translate3d(-50%, 0, 0);
+  font-size: 28.344px;
+}
+
+.pet-experience-balance img {
+  width: 21.761px;
+  height: 21.683px;
 }
 
 .pet-experience-progress {

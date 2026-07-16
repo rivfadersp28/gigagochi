@@ -76,7 +76,10 @@ from app.services.generation_job_service import (
     GenerationQueueFullError,
 )
 from app.services.generation_job_store import GenerationJobStore
-from app.services.generation_notification_service import send_generation_ready_notification
+from app.services.generation_notification_service import (
+    send_generation_ready_notification,
+    send_outfit_ready_notification,
+)
 from app.services.image_service import (
     build_pet_asset_set_response,
     comparison_asset_set_id,
@@ -873,6 +876,7 @@ def _generation_job_service() -> GenerationJobService:
                 else None
             ),
             notify_ready=send_generation_ready_notification,
+            notify_outfit_ready=send_outfit_ready_notification,
             max_queued_jobs=getattr(settings, "generation_max_queued_jobs", 40),
             stuck_after=timedelta(seconds=getattr(settings, "generation_job_stuck_seconds", 1800)),
         )
@@ -1102,7 +1106,7 @@ def simplify_outfit(
 ) -> OutfitSimplificationResponse:
     check_rate_limit("chat", user)
     try:
-        item, generation_description = simplify_outfit_request(
+        item, display_item, generation_description = simplify_outfit_request(
             payload.request,
             payload.petDescription,
         )
@@ -1121,6 +1125,7 @@ def simplify_outfit(
         ) from exc
     return OutfitSimplificationResponse(
         item=item,
+        displayItem=display_item,
         generationDescription=generation_description,
     )
 

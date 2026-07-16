@@ -1463,6 +1463,25 @@ def test_ambient_prompt_receives_one_selected_dialogue_impulse(monkeypatch) -> N
     assert "поприветствуй и прояви интерес к собеседнику" not in prompt
 
 
+def test_ambient_prompt_forbids_false_need_requests_when_stats_are_normal() -> None:
+    payload = LocalAmbientRequest.model_validate(
+        {
+            "pet": {
+                "name": "Листик",
+                "description": "лесной зверёк",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": {"hunger": 100, "happiness": 100, "energy": 100},
+            }
+        }
+    )
+
+    prompt = build_ambient_messages(payload)[0]["content"]
+
+    assert "Не проси еду, лечение или помощь с настроением" in prompt
+    assert "не утверждай, что голоден, болен или расстроен" in prompt
+
+
 @pytest.mark.parametrize(
     ("stats", "expected_state"),
     [
@@ -1812,6 +1831,40 @@ def test_ambient_generation_returns_story_context_debug() -> None:
     assert response.debug.storyLibraryDebug["injectedSpheres"] == []
     assert response.debug.contextRoutingDebug is not None
     assert "worldContext" not in response.debug.contextRoutingDebug["enabledSources"]
+
+
+def test_ambient_retry_keeps_the_system_message_first_and_unique() -> None:
+    repeated = "А ты знал, что молния греет воздух?"
+    client, completions = fake_lite_client(
+        SimpleNamespace(content=repeated, tool_calls=None),
+        SimpleNamespace(content="Хочешь узнать, почему лёд плавает?", tool_calls=None),
+    )
+    payload = LocalAmbientRequest.model_validate(
+        {
+            "pet": {
+                "name": "Листик",
+                "description": "лесной зверёк",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": {"hunger": 80, "happiness": 80, "energy": 80},
+            },
+            "recentAmbientReplies": [repeated],
+            "replyMaxChars": 120,
+        }
+    )
+
+    response = generate_ambient_pet_message(
+        payload,
+        client=client,
+        model="gpt-5.5",
+        timeout=10,
+    )
+
+    assert response.reply == "Хочешь узнать, почему лёд плавает?"
+    assert len(completions.calls) == 2
+    retry_messages = completions.calls[1]["messages"]
+    assert [message["role"] for message in retry_messages] == ["system", "user"]
+    assert "Первая версия повторила вопрос" in retry_messages[1]["content"]
 
 
 def test_lite_tools_do_not_expose_character_json() -> None:

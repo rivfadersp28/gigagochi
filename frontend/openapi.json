@@ -3312,6 +3312,12 @@
       },
       "OutfitSimplificationResponse": {
         "properties": {
+          "displayItem": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Displayitem",
+            "type": "string"
+          },
           "generationDescription": {
             "maxLength": 300,
             "minLength": 1,
@@ -3327,6 +3333,7 @@
         },
         "required": [
           "item",
+          "displayItem",
           "generationDescription"
         ],
         "title": "OutfitSimplificationResponse",

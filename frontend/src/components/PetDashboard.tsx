@@ -15,7 +15,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   generateLocalAmbientMessage,
   generateLocalProactiveMessage,
-  generateOutfitAssets,
+  queueOutfitGeneration,
+  resumeCompletedPetGeneration,
   sendLocalChatMessage,
   simplifyOutfitRequest,
 } from "@/lib/api";
@@ -26,6 +27,13 @@ import {
   readLocalPetState,
   readLocalPetSettings,
 } from "@/lib/localPetStorage";
+import {
+  clearPendingOutfitGeneration,
+  readPendingOutfitGeneration,
+  setPendingOutfitJobId,
+  writePendingOutfitGeneration,
+  type PendingOutfitGeneration,
+} from "@/lib/pendingOutfitGeneration";
 import {
   buildAmbientMemoryContext,
   buildDailyProactiveMemoryContext,
@@ -106,6 +114,7 @@ import { useTelegramCapabilities } from "@/lib/useTelegramCapabilities";
 import { DebugPanel } from "./DebugPanel";
 import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import { ErrorNotice } from "./ErrorNotice";
+import { XpAmount } from "./XpAmount";
 import { DraggableFoodToken, type FoodAsset } from "./pet-dashboard/DraggableFoodToken";
 import type { PetReplyMessage } from "./pet-dashboard/PetCharacterMessage";
 import { PetSpeechBubble } from "./pet-dashboard/PetSpeechBubble";
@@ -121,6 +130,7 @@ import { shouldReduceMotion } from "./pet-dashboard/motion";
 import { storyHistoryFromPet } from "./pet-dashboard/storyHistory";
 import { usePetTapBulge } from "./pet-dashboard/usePetTapBulge";
 import { useConversationKeyboardOffset } from "./pet-dashboard/useConversationKeyboardOffset";
+import { useOutfitKeyboardInset } from "./pet-dashboard/useOutfitKeyboardInset";
 import { usePetBackgroundAssets } from "./pet-dashboard/usePetBackgroundAssets";
 import { usePetPushSnapshotSync } from "./pet-dashboard/usePetPushSnapshotSync";
 import {
@@ -321,6 +331,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [outfitInput, setOutfitInput] = useState("");
   const [outfitError, setOutfitError] = useState<PresentedError | null>(null);
   const [isGeneratingOutfit, setIsGeneratingOutfit] = useState(false);
+  const [outfitStep, setOutfitStep] = useState<"input" | "queued">("input");
+  const [pendingOutfit, setPendingOutfit] = useState<PendingOutfitGeneration | null>(
+    () => readPendingOutfitGeneration(),
+  );
   const [chatInput, setChatInput] = useState("");
   const [chatError, setChatError] = useState<PresentedError | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
@@ -401,6 +415,58 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     };
   }, []);
   const pet = localPet.pet;
+  useEffect(() => {
+    if (!pendingOutfit || pendingOutfit.petId !== pet?.petId) return;
+    const controller = new AbortController();
+    outfitAbortRef.current?.abort();
+    outfitAbortRef.current = controller;
+
+    void (async () => {
+      try {
+        const jobId = pendingOutfit.jobId ?? await queueOutfitGeneration(
+          pendingOutfit.generationDescription,
+          pendingOutfit.references,
+          { requestKey: pendingOutfit.requestKey, signal: controller.signal },
+        );
+        if (!pendingOutfit.jobId) {
+          setPendingOutfitJobId(pendingOutfit.requestKey, jobId);
+          setPendingOutfit((current) => current?.requestKey === pendingOutfit.requestKey
+            ? { ...current, jobId }
+            : current);
+        }
+        const generated = await resumeCompletedPetGeneration(jobId, {
+          signal: controller.signal,
+        });
+        const currentPet = readLocalPetState();
+        if (currentPet?.petId !== pendingOutfit.petId) return;
+        const nextAssetSet = {
+          ...generated,
+          characterTemplate: pendingOutfit.baseAssetSet.characterTemplate,
+          characterBible: pendingOutfit.baseAssetSet.characterBible ?? generated.characterBible,
+        };
+        if (applyGeneratedAssets(
+          nextAssetSet,
+          pendingOutfit.petId,
+          pendingOutfit.baseAssetSet,
+          true,
+        )) {
+          clearPendingOutfitGeneration(pendingOutfit.requestKey);
+          setPendingOutfit(null);
+        }
+      } catch (caught) {
+        if (!controller.signal.aborted) {
+          setOutfitError(presentError(
+            caught,
+            "Не получилось подготовить наряд. Попробуйте ещё раз.",
+          ));
+        }
+      } finally {
+        if (outfitAbortRef.current === controller) outfitAbortRef.current = null;
+      }
+    })();
+
+    return () => controller.abort();
+  }, [applyGeneratedAssets, pendingOutfit, pet?.petId]);
   const [firstSession, setFirstSession] = useState<LocalPetFirstSession | null | undefined>(
     undefined,
   );
@@ -480,6 +546,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const sceneBackgroundSrc = requestedSceneBackgroundSrc;
   const sceneVideoSrc = requestedSceneVideoSrc;
   const conversationInputOffsetY = useConversationKeyboardOffset(isChatMode, sceneRef);
+  const outfitKeyboardInset = useOutfitKeyboardInset(
+    isOutfitMode && outfitStep === "input",
+    sceneRef,
+  );
   usePetBackgroundAssets({
     assetSet: pet?.assetSet,
     petId: pet?.petId,
@@ -1028,6 +1098,20 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     isStoryHistoryOpen,
   ]);
 
+  const handleOutfitDone = useCallback(() => {
+    const displayItem = pendingOutfit?.displayItem;
+    setOutfitInput("");
+    setIsOutfitMode(false);
+    setOutfitStep("input");
+    if (displayItem) {
+      showPetReplyMessage(
+        `Ого! Думаю, ${displayItem} мне отлично подойдёт. Доставка займёт около 10 минут. Я напишу, когда обновки будут готовы.`,
+        true,
+        { voiceMode: "system", autoAdvanceDelayMs: 3000 },
+      );
+    }
+  }, [pendingOutfit?.displayItem, showPetReplyMessage]);
+
   const handleTelegramBack = useCallback(() => {
     if (isStoryHistoryOpen) {
       setIsStoryHistoryOpen(false);
@@ -1039,10 +1123,30 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
 
-    closeChatMode();
-  }, [closeChatMode, closeFeedMode, isFeedMode, isStoryHistoryOpen]);
+    if (isOutfitMode) {
+      if (outfitStep === "queued") {
+        handleOutfitDone();
+      } else {
+        setIsOutfitMode(false);
+      }
+      return;
+    }
 
-  useTelegramBackButton(handleTelegramBack, isChatMode || isFeedMode || isStoryHistoryOpen);
+    closeChatMode();
+  }, [
+    closeChatMode,
+    closeFeedMode,
+    handleOutfitDone,
+    isFeedMode,
+    isOutfitMode,
+    isStoryHistoryOpen,
+    outfitStep,
+  ]);
+
+  useTelegramBackButton(
+    handleTelegramBack,
+    isChatMode || isFeedMode || isOutfitMode || isStoryHistoryOpen,
+  );
 
   useEffect(() => {
     setTelegramBackgroundColor(DASHBOARD_BACKGROUND_COLOR);
@@ -1278,6 +1382,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     cancelIdleReplyGeneration();
     setIsDebugPanelOpen(false);
     setOutfitError(null);
+    setOutfitStep("input");
     setIsOutfitMode(true);
   }
 
@@ -1288,11 +1393,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
     if (clampPetExperience(pet.experience) < PET_OUTFIT_EXPERIENCE_COST) {
-      setOutfitError({ message: "Не хватает XP, чтобы переодеть персонажа." });
+      setOutfitError({ message: "Не хватает опыта для нового наряда." });
       hapticNotification("error");
       return;
     }
-
     const requestedPetId = pet.petId;
     const currentAssetSet = pet.assetSet;
     const controller = new AbortController();
@@ -1309,36 +1413,35 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         throw new Error("OUTFIT_REFERENCE_ASSETS_MISSING");
       }
       const currentImages = currentAssetSet.images[pet.stage];
-      const generated = await generateOutfitAssets(
-        simplified.generationDescription,
-        {
-          idleImageUrl: currentImages.idle,
-          sadImageUrl: currentImages.sad,
-          happyImageUrl: currentImages.happy,
-        },
-        {
-          requestKey: createLocalId("outfit"),
-          onJobQueued: () => {
-            if (!localPet.spendExperience(PET_OUTFIT_EXPERIENCE_COST, requestedPetId)) {
-              throw new Error("OUTFIT_EXPERIENCE_SPEND_FAILED");
-            }
-          },
-          signal: controller.signal,
-        },
-      );
-      if (readLocalPetState()?.petId !== requestedPetId) {
-        return;
-      }
-      const nextAssetSet = {
-        ...generated,
-        characterTemplate: currentAssetSet?.characterTemplate,
-        characterBible: currentAssetSet?.characterBible ?? generated.characterBible,
+      const references = {
+        idleImageUrl: currentImages.idle,
+        sadImageUrl: currentImages.sad,
+        happyImageUrl: currentImages.happy,
       };
-      if (!localPet.applyGeneratedAssets(nextAssetSet, requestedPetId)) {
+      const pending: PendingOutfitGeneration = {
+        version: 1,
+        petId: requestedPetId,
+        requestKey: createLocalId("outfit"),
+        displayItem: simplified.displayItem,
+        generationDescription: simplified.generationDescription,
+        references,
+        baseAssetSet: currentAssetSet,
+        createdAt: Date.now(),
+      };
+      if (!writePendingOutfitGeneration(pending)) {
         throw new Error("OUTFIT_STORAGE_FAILED");
       }
-      setOutfitInput("");
-      setIsOutfitMode(false);
+      const jobId = await queueOutfitGeneration(
+        pending.generationDescription,
+        references,
+        { requestKey: pending.requestKey, signal: controller.signal },
+      );
+      if (!localPet.spendExperience(PET_OUTFIT_EXPERIENCE_COST, requestedPetId)) {
+        throw new Error("OUTFIT_EXPERIENCE_SPEND_FAILED");
+      }
+      setPendingOutfitJobId(pending.requestKey, jobId);
+      setPendingOutfit({ ...pending, jobId });
+      setOutfitStep("queued");
       hapticNotification("success");
     } catch (caught) {
       if (controller.signal.aborted) {
@@ -1353,7 +1456,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         outfitAbortRef.current = null;
       }
       if (mountedRef.current) {
-        setIsGeneratingOutfit(false);
+      setIsGeneratingOutfit(false);
       }
     }
   }
@@ -2050,6 +2153,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           />
         </div>
 
+        <XpAmount
+          text={`${experience}`}
+          ariaLabel={`Баланс опыта: ${experience}`}
+          className="pet-experience-balance"
+        />
+
         <div
           className="top-status-strip"
           aria-label={`Голод ${roundedHungerPercent} из 100, настроение ${roundedMoodPercent} из 100, здоровье ${roundedHealthPercent} из 100`}
@@ -2248,60 +2357,63 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         </div>
       </div>
       {isOutfitMode ? (
-        <div className="outfit-panel-backdrop" role="presentation">
-          <form
-            className="outfit-panel"
-            onSubmit={handleOutfitSubmit}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="outfit-panel-title"
-          >
-            <div className="outfit-panel__header">
-              <div>
-                <p className="outfit-panel__eyebrow">Гардероб</p>
-                <h2 id="outfit-panel-title">Нарядить персонажа</h2>
+        <div
+          className="outfit-flow"
+          style={{ "--outfit-keyboard-inset": `${outfitKeyboardInset}px` } as CSSProperties}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="outfit-flow-title"
+        >
+          {outfitStep === "input" ? (
+            <form className="outfit-flow__form" onSubmit={handleOutfitSubmit}>
+              <h2 id="outfit-flow-title">Как мне нарядиться?</h2>
+              <textarea
+                value={outfitInput}
+                onChange={(event) => setOutfitInput(event.target.value)}
+                maxLength={1000}
+                disabled={isGeneratingOutfit}
+                placeholder="В футболку Metallica"
+                aria-label="Описание наряда"
+                autoFocus
+              />
+              {outfitError ? (
+                <div className="outfit-flow__error"><ErrorNotice error={outfitError} /></div>
+              ) : null}
+              <div className="outfit-flow__xp" aria-label="Стоимость нового наряда">
+                <XpAmount
+                  text={`Баланс: ${experience}`}
+                  ariaLabel={`Баланс: ${experience} единиц опыта`}
+                />
+                <XpAmount
+                  text={`Нужно: ${PET_OUTFIT_EXPERIENCE_COST}`}
+                  ariaLabel={`Стоимость: ${PET_OUTFIT_EXPERIENCE_COST} единиц опыта`}
+                />
               </div>
               <button
-                type="button"
-                onClick={() => setIsOutfitMode(false)}
-                disabled={isGeneratingOutfit}
-                aria-label="Закрыть"
+                type="submit"
+                className="outfit-flow__button"
+                disabled={
+                  !outfitInput.trim()
+                  || isGeneratingOutfit
+                  || experience < PET_OUTFIT_EXPERIENCE_COST
+                }
               >
-                ×
+                {isGeneratingOutfit ? (
+                  <><Loader2 className="size-[20px] animate-spin" aria-hidden="true" /> Создаём…</>
+                ) : "Создать"}
               </button>
-            </div>
-            <div className="outfit-panel__xp" id="outfit-xp-description">
-              <span>Чтобы переодеть персонажа, нужно {PET_OUTFIT_EXPERIENCE_COST} XP</span>
-              <strong>Сейчас у вас: {experience} XP</strong>
-            </div>
-            <textarea
-              value={outfitInput}
-              onChange={(event) => setOutfitInput(event.target.value)}
-              maxLength={1000}
-              disabled={isGeneratingOutfit}
-              placeholder="Например: красная вязаная шапка"
-              aria-label="Описание наряда"
-              aria-describedby="outfit-xp-description"
-              autoFocus
-            />
-            {experience < PET_OUTFIT_EXPERIENCE_COST ? (
-              <p className="outfit-panel__hint">Заработайте XP за правильные ответы в историях.</p>
-            ) : null}
-            {outfitError ? <ErrorNotice error={outfitError} /> : null}
-            <button
-              type="submit"
-              className="main-action-button outfit-panel__submit"
-              disabled={
-                !outfitInput.trim()
-                || isGeneratingOutfit
-                || experience < PET_OUTFIT_EXPERIENCE_COST
-              }
-            >
-              {isGeneratingOutfit ? (
-                <><Loader2 className="size-[20px] animate-spin" aria-hidden="true" /> Наряжаем…</>
-              ) : "Нарядить"}
-            </button>
-          </form>
+            </form>
+          ) : (
+            <section className="outfit-flow__confirmation">
+              <div>
+                <h2 id="outfit-flow-title">Наряд заказан</h2>
+                <p>Я напишу, когда обновки будут готовы.</p>
+              </div>
+              <button type="button" className="outfit-flow__button" onClick={handleOutfitDone}>
+                Готово
+              </button>
+            </section>
+          )}
         </div>
       ) : null}
       {isStoryHistoryOpen ? (

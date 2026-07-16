@@ -1572,6 +1572,8 @@ export interface components {
         };
         /** OutfitSimplificationResponse */
         readonly OutfitSimplificationResponse: {
+            /** Displayitem */
+            readonly displayItem: string;
             /** Generationdescription */
             readonly generationDescription: string;
             /** Item */

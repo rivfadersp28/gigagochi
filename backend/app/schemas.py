@@ -84,6 +84,7 @@ class OutfitSimplificationRequest(BaseModel):
 
 class OutfitSimplificationResponse(BaseModel):
     item: str = Field(min_length=1, max_length=80)
+    displayItem: str = Field(min_length=1, max_length=80)
     generationDescription: str = Field(min_length=1, max_length=300)
 
 

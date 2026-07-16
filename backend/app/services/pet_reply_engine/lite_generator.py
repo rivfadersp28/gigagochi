@@ -2959,10 +2959,11 @@ def generate_ambient_pet_message(
         retry_request_kwargs = {
             **request_kwargs,
             "messages": [
-                *request_kwargs["messages"],
+                *request_kwargs["messages"][:-1],
                 {
-                    "role": "system",
+                    "role": "user",
                     "content": (
+                        f"{request_kwargs['messages'][-1]['content']}\n\n"
                         f"Первая версия {' и '.join(retry_reasons)}. "
                         "Сгенерируй реплику заново. Она должна целиком уместиться в лимит, "
                         "состоять из законченных предложений без многоточия. Если вопрос "

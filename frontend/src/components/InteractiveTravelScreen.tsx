@@ -13,6 +13,7 @@ import {
 } from "react";
 
 import { SmoothBackgroundVideo } from "@/components/SmoothBackgroundVideo";
+import { XpAmount } from "@/components/XpAmount";
 
 import {
   animateInteractiveTravelPart,
@@ -2203,9 +2204,11 @@ export function InteractiveTravelScreen({
                     {activePart.result.reaction}
                   </p>
                   {activePart.result.outcomeValence === "positive" ? (
-                    <p className={`${styles.storyOutcomeDelta} ${styles.storyOutcomePositive}`}>
-                      +{activePart.result.experienceGained ?? 0} Exp
-                    </p>
+                    <XpAmount
+                      text={`+${activePart.result.experienceGained ?? 0}`}
+                      ariaLabel={`Получено ${activePart.result.experienceGained ?? 0} единиц опыта`}
+                      className={`${styles.storyOutcomeDelta} ${styles.storyOutcomePositive}`}
+                    />
                   ) : resultImpact ? (
                     <p className={`${styles.storyOutcomeDelta} ${styles.storyOutcomeNegative}`}>
                       −{Math.abs(resultImpact.amount)} {resultImpactLabel}

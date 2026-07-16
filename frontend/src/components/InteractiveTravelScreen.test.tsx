@@ -437,7 +437,8 @@ describe("InteractiveTravelScreen", () => {
 
     fireEvent.click(correct);
 
-    expect(screen.getByText("+100 Exp")).toBeInTheDocument();
+    expect(screen.getByText("+100")).toBeInTheDocument();
+    expect(screen.getByLabelText("Получено 100 единиц опыта")).toBeInTheDocument();
     expect(document.querySelector(
       'video[src="/static/onboarding/bat-help/success.mp4"]',
     )).not.toBeNull();

@@ -30,15 +30,18 @@ def test_simplified_outfit_prompt_uses_accusative_item(monkeypatch) -> None:
     monkeypatch.setattr(
         outfit_service,
         "complete_chat",
-        lambda *_args, **_kwargs: SimpleNamespace(content='{"item":"футболку Аргентины"}'),
+        lambda *_args, **_kwargs: SimpleNamespace(
+            content='{"item":"футболку Аргентины","displayItem":"футболка Аргентины"}'
+        ),
     )
 
-    item, prompt = outfit_service.simplify_outfit_request(
+    item, display_item, prompt = outfit_service.simplify_outfit_request(
         "прикольненькая милая футболка аргентины",
         "старое описание больше не участвует",
     )
 
     assert item == "футболку Аргентины"
+    assert display_item == "футболка Аргентины"
     assert prompt == "Одень персонажа в футболку Аргентины."
 
 
@@ -76,8 +79,8 @@ def test_outfit_generation_edits_each_mood_reference(monkeypatch, tmp_path) -> N
 
     assert [call[1] for call in calls] == [
         "teen-idle.png",
-        "teen-sad.png",
-        "teen-happy.png",
+        "teen-idle.png",
+        "teen-idle.png",
     ]
     assert [call[2] for call in calls] == [
         "pet_outfit/idle_image",
@@ -85,8 +88,10 @@ def test_outfit_generation_edits_each_mood_reference(monkeypatch, tmp_path) -> N
         "pet_outfit/happy_image",
     ]
     assert all(call[3] == outfit_service.PET_SCENE_IMAGE_SIZE for call in calls)
-    assert all("Одень персонажа в футболку Аргентины." in call[0] for call in calls)
-    assert all("Сохрани абсолютно того же персонажа" in call[0] for call in calls)
+    assert "Одень персонажа в футболку Аргентины." in calls[0][0]
+    assert all("Не генерируй и не переосмысляй одежду заново" in call[0] for call in calls[1:])
+    assert "Сохрани абсолютно того же персонажа" in calls[0][0]
+    assert all("Сохрани того же персонажа" in call[0] for call in calls[1:])
     assert image_set.scene_path == output_dir / "teen-idle.png"
     assert outfit_service.generated_outfit_mood_path(image_set, "sad") == (
         output_dir / "teen-sad.png"
@@ -96,4 +101,5 @@ def test_outfit_generation_edits_each_mood_reference(monkeypatch, tmp_path) -> N
     )
     metadata = json.loads((output_dir / ".generation.json").read_text(encoding="utf-8"))
     assert metadata["mode"] == "outfit_edit_v1"
+    assert metadata["outfitPipeline"] == "idle-derived-moods-v1"
     assert outfit_service.is_outfit_image_set(image_set)

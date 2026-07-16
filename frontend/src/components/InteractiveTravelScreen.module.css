@@ -188,12 +188,12 @@
 
 .storyOutcomeDelta {
   font-size: 31.5px;
-  font-weight: 700;
+  font-weight: 900;
   line-height: normal;
 }
 
 .storyOutcomePositive {
-  color: #30eb87;
+  color: #ffb107;
 }
 
 .storyOutcomeNegative {
