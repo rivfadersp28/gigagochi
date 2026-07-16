@@ -1777,6 +1777,122 @@ def test_scheduled_interactive_story_generates_five_videos(monkeypatch, tmp_path
     assert record["lastScheduledShortStoryAt"]
 
 
+def test_scheduled_interactive_story_retries_transient_provider_job(
+    monkeypatch, tmp_path
+) -> None:
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
+    record = {
+        "telegramId": TEST_TELEGRAM_ID,
+        "chatId": TEST_TELEGRAM_ID,
+        "petId": "pet-sergey",
+        "pet": {
+            "description": "Лис",
+            "stage": "teen",
+            "mood": "idle",
+            "stats": {"hunger": 80, "happiness": 80, "energy": 80},
+        },
+        "chatReachable": True,
+    }
+    settings = SimpleNamespace(
+        bot_token="token",
+        webapp_url="https://example.com/app",
+        scheduled_short_story_interval_seconds=60,
+    )
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+
+    def update(_telegram_id, callback):
+        next_record = callback(record)
+        record.clear()
+        record.update(next_record)
+        return deepcopy(record)
+
+    monkeypatch.setattr(telegram_push_service, "_update_record", update)
+    monkeypatch.setattr(
+        telegram_push_service,
+        "generate_scheduled_interactive_episode_plan",
+        lambda: {
+            "destination": "в лес",
+            "title": "Путь",
+            "storyText": "Ситуация.",
+            "question": "Что делать?",
+            "choices": ["А", "Б"],
+            "outcomes": ["Исход А", "Исход Б"],
+            "correctChoice": "А",
+        },
+    )
+    monkeypatch.setattr(telegram_push_service, "generated_dir_for", lambda _id: tmp_path)
+    image_attempts = 0
+
+    def image(**_kwargs):
+        nonlocal image_attempts
+        image_attempts += 1
+        if image_attempts < 3:
+            raise httpx.ReadTimeout("timed out")
+        return "/image.png"
+
+    monkeypatch.setattr(telegram_push_service, "generate_interactive_travel_part_image", image)
+
+    def video(**kwargs):
+        variant = kwargs.get("variant", "situation")
+        suffix = "" if variant == "situation" else f"-{variant}"
+        path = tmp_path / f"interactive-travel-part-01{suffix}.mp4"
+        path.write_bytes(variant.encode())
+        return f"/{path.name}"
+
+    monkeypatch.setattr(telegram_push_service, "generate_interactive_travel_part_video", video)
+    monkeypatch.setattr(telegram_push_service, "send_video", lambda *_args: None)
+    delays: list[float] = []
+    monkeypatch.setattr(telegram_push_service.time, "sleep", delays.append)
+
+    result = telegram_push_service._send_scheduled_short_story(record, now=now)
+
+    assert result["sent"] is True
+    assert image_attempts == 5
+    assert delays == [15.0, 45.0]
+
+
+def test_scheduled_interactive_story_does_not_retry_permanent_provider_error(
+    monkeypatch,
+) -> None:
+    attempts = 0
+
+    def operation():
+        nonlocal attempts
+        attempts += 1
+        raise ValueError("invalid media contract")
+
+    monkeypatch.setattr(
+        telegram_push_service.time,
+        "sleep",
+        lambda _delay: pytest.fail("permanent errors must not sleep or retry"),
+    )
+
+    with pytest.raises(ValueError, match="invalid media contract"):
+        telegram_push_service._run_scheduled_short_story_provider_job("image", operation)
+
+    assert attempts == 1
+
+
+def test_scheduled_interactive_story_returns_error_after_three_transient_attempts(
+    monkeypatch,
+) -> None:
+    attempts = 0
+
+    def operation():
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ReadTimeout("timed out")
+
+    delays: list[float] = []
+    monkeypatch.setattr(telegram_push_service.time, "sleep", delays.append)
+
+    with pytest.raises(httpx.ReadTimeout, match="timed out"):
+        telegram_push_service._run_scheduled_short_story_provider_job("image", operation)
+
+    assert attempts == 3
+    assert delays == [15.0, 45.0]
+
+
 def test_interactive_story_callback_returns_selected_video(monkeypatch, tmp_path) -> None:
     record = {
         "telegramId": TEST_TELEGRAM_ID,
