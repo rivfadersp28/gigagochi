@@ -860,6 +860,33 @@ def test_generation_job_store_uses_full_sqlite_synchronous_mode(tmp_path: Path) 
     assert synchronous_mode == (2,)
 
 
+def test_generation_job_store_migrates_legacy_table_with_lease_columns(tmp_path: Path) -> None:
+    store_path = tmp_path / "generation-jobs.sqlite3"
+    with sqlite3.connect(store_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE generation_jobs (
+                job_id TEXT PRIMARY KEY,
+                owner_id INTEGER NOT NULL,
+                username TEXT,
+                first_name TEXT,
+                description TEXT NOT NULL,
+                image_provider TEXT NOT NULL DEFAULT 'openai',
+                request_key TEXT,
+                status TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                response_json TEXT NOT NULL
+            )
+            """
+        )
+
+    GenerationJobStore(store_path)
+
+    with sqlite3.connect(store_path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(generation_jobs)")}
+    assert {"lease_owner", "lease_until"} <= columns
+
+
 def test_service_cleanup_prunes_metrics_after_365_days_independently(tmp_path: Path) -> None:
     store_path = tmp_path / "generation-jobs.sqlite3"
     store = GenerationJobStore(store_path)
@@ -1065,19 +1092,19 @@ def test_durable_save_retries_once_and_fails_closed(
         lambda _description, _provider: SimpleNamespace(asset_set_id="asset-1"),
         generate_video=generate_video,
     )
-    original_save = service._store.save
+    original_save = service._store.save_claimed
     attempted_phases: list[str] = []
     failures_remaining = save_failures
 
-    def flaky_save(job):
+    def flaky_save(job, *, lease_owner, lease_until):
         nonlocal failures_remaining
         attempted_phases.append(job.response.phase)
         if job.response.phase == "generating_video" and failures_remaining > 0:
             failures_remaining -= 1
             raise OSError("synthetic save failure")
-        return original_save(job)
+        return original_save(job, lease_owner=lease_owner, lease_until=lease_until)
 
-    monkeypatch.setattr(service._store, "save", flaky_save)
+    monkeypatch.setattr(service._store, "save_claimed", flaky_save)
     try:
         submitted = service.submit("мышонок", _user())
         if save_failures == 1:
@@ -1161,9 +1188,66 @@ def test_owner_active_alias_precedes_queue_capacity(tmp_path: Path) -> None:
             ("create-pet:full-queue-alias-0001", first.jobId),
             ("create-pet:full-queue-primary-0001", first.jobId),
         ]
-        assert dormant == (None, None, None)
+        assert dormant is not None
+        assert dormant[0] is None
+        assert dormant[1] is not None
+        assert dormant[2] is not None
     finally:
         release_image.set()
+        service.shutdown(wait=True)
+
+
+def test_second_service_does_not_run_job_owned_by_live_lease(tmp_path: Path) -> None:
+    store_path = tmp_path / "generation-jobs.sqlite3"
+    started = Event()
+    release = Event()
+    duplicate_calls: list[str] = []
+
+    def blocking_images(_description: str, _provider: str):
+        started.set()
+        assert release.wait(timeout=5)
+        return SimpleNamespace(asset_set_id="asset-1")
+
+    first = _test_service(store_path, blocking_images)
+    submitted = first.submit("мышонок", _user())
+    assert started.wait(timeout=2)
+    second = _test_service(
+        store_path,
+        lambda description, _provider: duplicate_calls.append(description),
+    )
+    try:
+        time.sleep(0.05)
+        assert duplicate_calls == []
+        assert second.get(submitted.jobId, 42).status == "running"
+    finally:
+        release.set()
+        first.shutdown(wait=True)
+        second.shutdown(wait=True)
+
+
+def test_watchdog_fails_stale_job_and_releases_owner(tmp_path: Path) -> None:
+    release = Event()
+
+    def blocked_images(_description: str, _provider: str):
+        assert release.wait(timeout=5)
+        return SimpleNamespace(asset_set_id="asset-1")
+
+    service = _test_service(
+        tmp_path / "generation-jobs.sqlite3",
+        blocked_images,
+        stuck_after=timedelta(milliseconds=20),
+        lease_duration=timedelta(seconds=30),
+        watchdog_interval_seconds=0.01,
+    )
+    try:
+        submitted = service.submit("мышонок", _user())
+        failed = _wait_for(service, submitted.jobId, lambda job: job.status == "failed")
+        assert failed.phase == "watchdog_timeout"
+        assert failed.error and failed.error["phase"] == "watchdog_timeout"
+        replacement = service.submit("новый мышонок", _user())
+        assert replacement.jobId != submitted.jobId
+    finally:
+        release.set()
         service.shutdown(wait=True)
 
 

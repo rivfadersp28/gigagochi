@@ -800,6 +800,18 @@
   not an error; deploy is the explicit production apply step.
 - `/admin/speech` no longer exposes manual Telegram push status or send
   controls. Story delivery is owned by the backend background-story scheduler.
+- Durable pet-generation rows use renewable SQLite leases. A backend process must claim a row
+  before executing it, fence every state write by `lease_owner`, renew live leases from the
+  generation watchdog, and release its remaining claims after provider calls drain on shutdown.
+  The watchdog terminally fails a stage that exceeds `GENERATION_JOB_STUCK_SECONDS`; it does not
+  automatically duplicate an ambiguous paid provider call.
+- Media provider capacity uses cross-process file slots with a bounded
+  `MEDIA_ADMISSION_TIMEOUT_SECONDS` wait. Stale pre-submit provider admissions degrade `/health`;
+  operators inspect and explicitly release one with `scripts/reconcile_provider_tasks.py` only
+  after checking the provider's task and billing history.
+- Generated media remains a high-entropy capability-URL model while pet ownership is localStorage-
+  first. Generated responses are private-cache, same-origin resources and opt out of indexing;
+  owner-authenticated media delivery is deferred until the backend becomes the pet source of truth.
 - The "Копилки" matrix hides source/surface cells that have no runtime path:
   `chatHistory` is meaningful only for Chat and Story, while `recentReplies` is
   meaningful only for Idle and Story. `Параметры` (`stateParams`) validates and

@@ -74,6 +74,14 @@ class GenerationJobStore:
                     "ALTER TABLE generation_jobs ADD COLUMN "
                     "image_provider TEXT NOT NULL DEFAULT 'openai'"
                 )
+            if "lease_owner" not in columns:
+                connection.execute(
+                    "ALTER TABLE generation_jobs ADD COLUMN lease_owner TEXT"
+                )
+            if "lease_until" not in columns:
+                connection.execute(
+                    "ALTER TABLE generation_jobs ADD COLUMN lease_until TEXT"
+                )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS generation_jobs_status_idx "
                 "ON generation_jobs(status, updated_at)"
@@ -296,6 +304,113 @@ class GenerationJobStore:
                     response.model_dump_json(),
                 ),
             )
+
+    def claim(
+        self,
+        job_id: str,
+        *,
+        lease_owner: str,
+        lease_until: datetime,
+        now: datetime,
+    ) -> bool:
+        """Claim one active job when it is unowned or its previous lease expired."""
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE generation_jobs
+                SET lease_owner = ?, lease_until = ?
+                WHERE job_id = ?
+                  AND status IN ('queued', 'running')
+                  AND (
+                    lease_owner IS NULL OR lease_until IS NULL OR lease_until < ?
+                    OR lease_owner = ?
+                  )
+                """,
+                (
+                    lease_owner,
+                    lease_until.isoformat(),
+                    job_id,
+                    now.isoformat(),
+                    lease_owner,
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def save_claimed(
+        self,
+        job: StoredGenerationJob,
+        *,
+        lease_owner: str,
+        lease_until: datetime,
+    ) -> bool:
+        """Persist only while this process still owns the durable lease."""
+
+        response = job.response
+        terminal = response.status in {"succeeded", "failed"}
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE generation_jobs
+                SET owner_id = ?, username = ?, first_name = ?, description = ?,
+                    image_provider = ?, status = ?, updated_at = ?, response_json = ?,
+                    lease_owner = ?, lease_until = ?
+                WHERE job_id = ? AND lease_owner = ?
+                """,
+                (
+                    job.owner_id,
+                    job.username,
+                    job.first_name,
+                    job.description,
+                    job.image_provider,
+                    response.status,
+                    response.updatedAt.isoformat(),
+                    response.model_dump_json(),
+                    None if terminal else lease_owner,
+                    None if terminal else lease_until.isoformat(),
+                    response.jobId,
+                    lease_owner,
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def renew_claims(
+        self,
+        job_ids: list[str],
+        *,
+        lease_owner: str,
+        lease_until: datetime,
+    ) -> set[str]:
+        if not job_ids:
+            return set()
+        renewed: set[str] = set()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for job_id in job_ids:
+                cursor = connection.execute(
+                    """
+                    UPDATE generation_jobs
+                    SET lease_until = ?
+                    WHERE job_id = ? AND lease_owner = ?
+                      AND status IN ('queued', 'running')
+                    """,
+                    (lease_until.isoformat(), job_id, lease_owner),
+                )
+                if cursor.rowcount == 1:
+                    renewed.add(job_id)
+        return renewed
+
+    def release_claims(self, *, lease_owner: str) -> int:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE generation_jobs
+                SET lease_owner = NULL, lease_until = NULL
+                WHERE lease_owner = ? AND status IN ('queued', 'running')
+                """,
+                (lease_owner,),
+            )
+        return cursor.rowcount
 
     def create_or_get(
         self,

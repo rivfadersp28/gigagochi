@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -58,6 +58,26 @@ def provider_task_payload_fingerprint(payload: Any) -> str:
 
 def has_current_provider_task_scope() -> bool:
     return _CURRENT_SCOPE.get() is not None
+
+
+def provider_task_runtime_status() -> dict[str, object]:
+    settings = get_settings()
+    try:
+        store = _store_for(
+            settings.provider_task_receipt_store_path,
+            settings.provider_task_receipt_store_max_records,
+        )
+        stale = store.stale_admissions(
+            before=datetime.now(UTC)
+            - timedelta(seconds=settings.provider_task_admission_stale_seconds),
+            limit=1000,
+        )
+        return {
+            "status": "degraded" if stale else "ok",
+            "staleAdmissions": len(stale),
+        }
+    except Exception as exc:
+        return {"status": "degraded", "staleAdmissions": -1, "error": str(exc)}
 
 
 @lru_cache(maxsize=32)

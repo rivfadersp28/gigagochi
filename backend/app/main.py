@@ -18,6 +18,7 @@ from app.middleware import RequestBodyLimitMiddleware
 from app.public_media import PublicMediaStaticFiles
 from app.routers import local_admin, tma
 from app.services.ops_alert_service import notify_ops
+from app.services.provider_task_checkpoint import provider_task_runtime_status
 from app.services.storage_health_service import storage_runtime_status
 from app.services.telegram_push_service import (
     scheduler_runtime_status,
@@ -162,6 +163,9 @@ def _health_response(request: Request):
     storage = storage_runtime_status()
     if storage["status"] != "ok":
         failed.append("storage")
+    provider_tasks = provider_task_runtime_status()
+    if provider_tasks["status"] != "ok":
+        failed.append("providerTasks")
     for component in failed:
         detail = ""
         if component == "storage":

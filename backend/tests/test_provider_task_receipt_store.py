@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import multiprocessing
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -82,6 +82,33 @@ def _receipt(
         created_at=now,
         updated_at=now,
     )
+
+
+def test_stale_ambiguous_admission_requires_explicit_release(tmp_path: Path) -> None:
+    store = ProviderTaskReceiptStore(tmp_path / "provider-receipts.sqlite3")
+    created_at = datetime.now(UTC) - timedelta(hours=2)
+    identity = {
+        "scope_key": "job:stale:generating_video",
+        "provider": "openrouter",
+        "provider_origin": "https://openrouter.ai/api/v1/videos",
+        "account_namespace": TEST_ACCOUNT_NAMESPACE,
+        "operation": "video:pet_creation/scene_video",
+        "payload_fingerprint": "a" * 64,
+    }
+    assert store.reserve_identity(**identity, created_at=created_at) == "created"
+
+    stale = store.stale_admissions(before=datetime.now(UTC) - timedelta(minutes=30))
+
+    assert len(stale) == 1
+    assert stale[0].scope_key == identity["scope_key"]
+    assert store.release_stale_admission(
+        stale[0],
+        before=datetime.now(UTC) - timedelta(minutes=30),
+    )
+    assert store.reserve_identity(
+        **identity,
+        created_at=datetime.now(UTC),
+    ) == "created"
 
 
 def test_implicit_operation_lock_serializes_exact_payload_across_processes(

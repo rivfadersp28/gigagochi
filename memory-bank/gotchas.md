@@ -668,3 +668,9 @@
   delta must retain the original `assetSetId` and merge against its base snapshot; a completed
   outfit must atomically verify that same base is still current and then replace it with the new
   `assetSetId`. Requiring the generated ID to equal the base silently leaves the old outfit active.
+- Never stop generation lease renewal before an in-flight paid stage has drained during shutdown.
+  Otherwise a replacement backend can claim the expired row while the old process is still waiting
+  on the provider and submit the same paid stage twice.
+- An `admitted` provider receipt without a task ID is intentionally ambiguous and must not age into
+  an automatic retry. Let it degrade health, inspect the provider externally, then use the explicit
+  reconciliation script acknowledgement to release only the exact stale receipt.

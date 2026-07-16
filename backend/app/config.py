@@ -89,6 +89,7 @@ class Settings(BaseSettings):
         ge=100,
         le=1_000_000,
     )
+    provider_task_admission_stale_seconds: int = Field(default=1800, ge=300, le=86400)
     generation_job_stuck_seconds: int = Field(default=1800, ge=300, le=7200)
     generation_job_lease_grace_seconds: int = Field(default=300, ge=60, le=3600)
     interactive_travel_owner_store_path: str = (
@@ -179,6 +180,7 @@ class Settings(BaseSettings):
     media_concurrency_lock_dir: str = "data/push/media_provider_slots"
     media_image_concurrency: int = Field(default=4, ge=1, le=32)
     media_video_concurrency: int = Field(default=2, ge=1, le=32)
+    media_admission_timeout_seconds: float = Field(default=600, ge=1, le=3600)
     ai_provider: AIProvider = "openrouter"
     openrouter_api_key: str | None = None
     openrouter_account_namespace: str | None = None

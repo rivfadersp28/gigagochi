@@ -23,6 +23,7 @@ class FileSlotMediaAdmission:
         image_slots: int,
         video_slots: int,
         poll_interval_seconds: float = 0.05,
+        acquire_timeout_seconds: float = 600,
     ) -> None:
         self._lock_dir = Path(lock_dir).expanduser().resolve(strict=False)
         self._slot_counts = {
@@ -31,7 +32,10 @@ class FileSlotMediaAdmission:
         }
         if poll_interval_seconds <= 0:
             raise ValueError("media slot poll interval must be positive")
+        if acquire_timeout_seconds <= 0:
+            raise ValueError("media slot acquire timeout must be positive")
         self._poll_interval_seconds = poll_interval_seconds
+        self._acquire_timeout_seconds = acquire_timeout_seconds
         self._cursor_lock = Lock()
         self._next_slot = {"image": 0, "video": 0}
         self._lock_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -81,10 +85,14 @@ class FileSlotMediaAdmission:
     @contextmanager
     def acquire(self, kind: MediaKind) -> Iterator[None]:
         descriptor: int | None = None
+        deadline = time.monotonic() + self._acquire_timeout_seconds
         while descriptor is None:
             descriptor = self._try_acquire(kind)
             if descriptor is None:
-                time.sleep(self._poll_interval_seconds)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"timed out waiting for {kind} media capacity")
+                time.sleep(min(self._poll_interval_seconds, remaining))
         try:
             yield
         finally:

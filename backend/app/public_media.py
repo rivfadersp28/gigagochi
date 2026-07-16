@@ -32,4 +32,11 @@ class PublicMediaStaticFiles(StaticFiles):
             raise HTTPException(status_code=404)
         if requested_path.suffix.lower() not in PUBLIC_MEDIA_SUFFIXES:
             raise HTTPException(status_code=404)
-        return await super().get_response(path, scope)
+        response = await super().get_response(path, scope)
+        if requested_path.parts and requested_path.parts[0] == "generated":
+            # Generated URLs are high-entropy capabilities. Keep browsers from
+            # embedding or indexing a capability outside the application origin.
+            response.headers["Cache-Control"] = "private, max-age=3600"
+            response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+            response.headers["X-Robots-Tag"] = "noindex, noarchive, noimageindex"
+        return response

@@ -54,3 +54,20 @@ def test_public_media_blocks_private_directories_even_for_media_suffixes(tmp_pat
     response = TestClient(app).get("/static/.private/owner-registry.png")
 
     assert response.status_code == 404
+
+
+def test_generated_media_is_private_and_cannot_be_embedded_cross_origin(tmp_path) -> None:
+    generated = tmp_path / "generated" / "4c5633b2-10a8-4bd0-9b21-6d86d7ad2e92"
+    generated.mkdir(parents=True)
+    (generated / "poster.png").write_bytes(b"synthetic-image")
+    app = FastAPI()
+    app.mount("/static", PublicMediaStaticFiles(directory=tmp_path), name="static")
+
+    response = TestClient(app).get(
+        "/static/generated/4c5633b2-10a8-4bd0-9b21-6d86d7ad2e92/poster.png"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, max-age=3600"
+    assert response.headers["cross-origin-resource-policy"] == "same-origin"
+    assert response.headers["x-robots-tag"] == "noindex, noarchive, noimageindex"

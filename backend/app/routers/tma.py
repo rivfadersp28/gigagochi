@@ -879,6 +879,9 @@ def _generation_job_service() -> GenerationJobService:
             notify_outfit_ready=send_outfit_ready_notification,
             max_queued_jobs=getattr(settings, "generation_max_queued_jobs", 40),
             stuck_after=timedelta(seconds=getattr(settings, "generation_job_stuck_seconds", 1800)),
+            lease_duration=timedelta(
+                seconds=getattr(settings, "generation_job_lease_grace_seconds", 300)
+            ),
         )
     return generation_job_service
 

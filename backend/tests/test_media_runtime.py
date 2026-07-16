@@ -133,6 +133,7 @@ def test_media_runtime_builds_file_slot_admission_from_settings(monkeypatch, tmp
         media_concurrency_lock_dir=str(tmp_path / "slots"),
         media_image_concurrency=3,
         media_video_concurrency=1,
+        media_admission_timeout_seconds=45,
     )
     monkeypatch.setattr("app.media.runtime.get_settings", lambda: settings)
     clear_media_runtime_caches()

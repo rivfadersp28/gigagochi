@@ -155,6 +155,7 @@ def get_media_concurrency_admission() -> FileSlotMediaAdmission:
         _media_concurrency_lock_dir(settings),
         image_slots=settings.media_image_concurrency,
         video_slots=settings.media_video_concurrency,
+        acquire_timeout_seconds=settings.media_admission_timeout_seconds,
     )
 
 

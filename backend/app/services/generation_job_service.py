@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from threading import Condition, Event, Lock, RLock, Thread
+from threading import Condition, Event, Lock, RLock, Thread, current_thread
 from typing import Any
 
 from app.schemas import (
@@ -102,6 +102,8 @@ class GenerationJobService:
         metrics_ttl: timedelta = DEFAULT_GENERATION_METRICS_TTL,
         max_queued_jobs: int = 40,
         stuck_after: timedelta = timedelta(minutes=30),
+        lease_duration: timedelta = timedelta(minutes=5),
+        watchdog_interval_seconds: float | None = None,
     ) -> None:
         self._generate_images = generate_images
         self._generate_images_for_job = generate_images_for_job
@@ -121,6 +123,18 @@ class GenerationJobService:
         self._metrics_ttl = metrics_ttl
         self._max_queued_jobs = max(0, max_queued_jobs)
         self._stuck_after = stuck_after
+        if lease_duration.total_seconds() < 30:
+            raise ValueError("generation lease duration must be at least 30 seconds")
+        self._lease_duration = lease_duration
+        self._lease_owner = f"generation-{uuid.uuid4()}"
+        default_watchdog_interval = min(30.0, lease_duration.total_seconds() / 3)
+        self._watchdog_interval_seconds = (
+            default_watchdog_interval
+            if watchdog_interval_seconds is None
+            else watchdog_interval_seconds
+        )
+        if self._watchdog_interval_seconds <= 0:
+            raise ValueError("generation watchdog interval must be positive")
         self._image_workers = image_workers
         self._video_workers = video_workers
         self._image_executor = ThreadPoolExecutor(
@@ -140,8 +154,15 @@ class GenerationJobService:
         self._shutting_down = False
         self._shutdown_complete = Event()
         self._shutdown_thread: Thread | None = None
+        self._watchdog_stop = Event()
+        self._watchdog_thread = Thread(
+            target=self._watchdog_loop,
+            name="pet-generation-watchdog",
+            daemon=True,
+        )
         self._store = store
         self._recover_active_jobs()
+        self._watchdog_thread.start()
 
     @staticmethod
     def _now() -> datetime:
@@ -261,6 +282,9 @@ class GenerationJobService:
                     description=description,
                     image_provider=normalized_provider,
                 )
+            if not self._claim(job_id, now=now):
+                logger.info("generation_job_claimed_elsewhere jobId=%s", job_id)
+                return response
             with self._lock:
                 self._jobs[job_id] = GenerationJobRecord(
                     owner_id=user.telegram_id,
@@ -384,9 +408,15 @@ class GenerationJobService:
         try:
             self._image_executor.shutdown(wait=True, cancel_futures=True)
             self._video_executor.shutdown(wait=True, cancel_futures=True)
+            self._store.release_claims(lease_owner=self._lease_owner)
         except Exception:
             logger.exception("generation_executor_shutdown_failed")
         finally:
+            self._watchdog_stop.set()
+            if self._watchdog_thread is not current_thread():
+                self._watchdog_thread.join(
+                    timeout=max(1.0, self._watchdog_interval_seconds * 2)
+                )
             self._shutdown_complete.set()
 
     def _update(
@@ -402,6 +432,8 @@ class GenerationJobService:
         with self._lock:
             record = self._jobs.get(job_id)
             if record is None:
+                return False
+            if record.response.status not in {"queued", "running"}:
                 return False
             updates: dict[str, object] = {
                 "status": status_value,
@@ -429,7 +461,15 @@ class GenerationJobService:
         if stored is None:
             return False
         try:
-            self._store.save(stored)
+            saved = self._store.save_claimed(
+                stored,
+                lease_owner=self._lease_owner,
+                lease_until=self._now() + self._lease_duration,
+            )
+            if not saved:
+                logger.warning("generation_job_lease_lost jobId=%s", job_id)
+                self._jobs.pop(job_id, None)
+                return False
         except Exception:
             logger.warning(
                 "generation_job_persist_retry jobId=%s",
@@ -437,7 +477,14 @@ class GenerationJobService:
                 exc_info=True,
             )
             try:
-                self._store.save(stored)
+                saved = self._store.save_claimed(
+                    stored,
+                    lease_owner=self._lease_owner,
+                    lease_until=self._now() + self._lease_duration,
+                )
+                if not saved:
+                    self._jobs.pop(job_id, None)
+                    return False
             except Exception:
                 logger.exception("generation_job_persist_failed jobId=%s", job_id)
                 self._jobs.pop(job_id, None)
@@ -532,6 +579,8 @@ class GenerationJobService:
                 return
             recovered: list[StoredGenerationJob] = []
             for stored in self._store.active():
+                if not self._claim(stored.response.jobId):
+                    continue
                 response = stored.response.model_copy(
                     update={
                         "status": "queued",
@@ -551,7 +600,13 @@ class GenerationJobService:
                     response=response,
                 )
                 try:
-                    self._store.save(recovered_job)
+                    saved = self._store.save_claimed(
+                        recovered_job,
+                        lease_owner=self._lease_owner,
+                        lease_until=self._now() + self._lease_duration,
+                    )
+                    if not saved:
+                        continue
                 except Exception:
                     logger.exception(
                         "generation_job_recovery_persist_failed jobId=%s",
@@ -578,6 +633,53 @@ class GenerationJobService:
                     job_id,
                     stored.owner_id,
                 )
+
+    def _claim(self, job_id: str, *, now: datetime | None = None) -> bool:
+        claimed_at = now or self._now()
+        return self._store.claim(
+            job_id,
+            lease_owner=self._lease_owner,
+            lease_until=claimed_at + self._lease_duration,
+            now=claimed_at,
+        )
+
+    def _watchdog_loop(self) -> None:
+        while not self._watchdog_stop.wait(self._watchdog_interval_seconds):
+            now = self._now()
+            with self._lock:
+                active = {
+                    job_id: record.response.updatedAt
+                    for job_id, record in self._jobs.items()
+                    if record.response.status in {"queued", "running"}
+                }
+            stale = [
+                job_id
+                for job_id, updated_at in active.items()
+                if now - updated_at > self._stuck_after
+            ]
+            for job_id in stale:
+                logger.error("generation_job_watchdog_timeout jobId=%s", job_id)
+                self._fail(
+                    job_id,
+                    TimeoutError("generation stage exceeded its runtime deadline"),
+                    phase="watchdog_timeout",
+                )
+            renewable = [job_id for job_id in active if job_id not in stale]
+            try:
+                renewed = self._store.renew_claims(
+                    renewable,
+                    lease_owner=self._lease_owner,
+                    lease_until=now + self._lease_duration,
+                )
+            except Exception:
+                logger.exception("generation_job_lease_renewal_failed")
+                continue
+            lost = set(renewable) - renewed
+            if lost:
+                with self._lock:
+                    for job_id in lost:
+                        self._jobs.pop(job_id, None)
+                logger.error("generation_job_leases_lost jobIds=%s", sorted(lost))
 
     def _job_is_active(self, job_id: str) -> bool:
         with self._lock:

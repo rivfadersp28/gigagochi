@@ -112,6 +112,20 @@ def test_file_slot_admission_bounds_threads(tmp_path: Path) -> None:
     assert len(list(tmp_path.glob("image-*.lock"))) <= 2
 
 
+def test_file_slot_admission_times_out_instead_of_waiting_forever(tmp_path: Path) -> None:
+    admission = FileSlotMediaAdmission(
+        tmp_path,
+        image_slots=1,
+        video_slots=1,
+        poll_interval_seconds=0.005,
+        acquire_timeout_seconds=0.02,
+    )
+    with admission.acquire("image"):
+        with pytest.raises(TimeoutError, match="image media capacity"):
+            with admission.acquire("image"):
+                pass
+
+
 def test_file_slot_admission_bounds_processes(tmp_path: Path) -> None:
     context = multiprocessing.get_context("spawn")
     acquired = context.Queue()

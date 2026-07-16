@@ -287,6 +287,68 @@ class ProviderTaskReceiptStore:
             )
         return cursor.rowcount == 1
 
+    def stale_admissions(
+        self,
+        *,
+        before: datetime,
+        limit: int = 100,
+    ) -> list[StoredProviderTaskReceipt]:
+        if not 1 <= limit <= 10_000:
+            raise ValueError("stale admission limit must be between 1 and 10000")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT scope_key, provider, provider_origin, account_namespace,
+                       operation, payload_fingerprint, task_id, polling_url,
+                       state, created_at, updated_at
+                FROM provider_tasks
+                WHERE state = 'admitted' AND updated_at < ?
+                ORDER BY updated_at ASC
+                LIMIT ?
+                """,
+                (before.isoformat(), limit),
+            ).fetchall()
+        return [self._row(row) for row in rows]
+
+    def release_stale_admission(
+        self,
+        receipt: StoredProviderTaskReceipt,
+        *,
+        before: datetime,
+    ) -> bool:
+        """Operator-only resolution after externally checking provider billing/tasks."""
+
+        if receipt.state != "admitted" or receipt.task_id is not None:
+            raise ValueError("only ambiguous admitted receipts can be released")
+        with self.operation_lock(
+            scope_key=receipt.scope_key,
+            provider=receipt.provider,
+            provider_origin=receipt.provider_origin,
+            account_namespace=receipt.account_namespace,
+            operation=receipt.operation,
+            payload_fingerprint=receipt.payload_fingerprint,
+        ):
+            with self._connect() as connection:
+                cursor = connection.execute(
+                    """
+                    DELETE FROM provider_tasks
+                    WHERE scope_key = ? AND provider = ? AND provider_origin = ?
+                      AND account_namespace = ? AND operation = ?
+                      AND payload_fingerprint = ? AND state = 'admitted'
+                      AND task_id IS NULL AND updated_at < ?
+                    """,
+                    (
+                        receipt.scope_key,
+                        receipt.provider,
+                        receipt.provider_origin,
+                        receipt.account_namespace,
+                        receipt.operation,
+                        receipt.payload_fingerprint,
+                        before.isoformat(),
+                    ),
+                )
+        return cursor.rowcount == 1
+
     def save(self, receipt: StoredProviderTaskReceipt) -> StoredProviderTaskReceipt:
         if receipt.state != "accepted" or receipt.task_id is None:
             raise ValueError("new provider task receipt must be accepted with a task_id")
