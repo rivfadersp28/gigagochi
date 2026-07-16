@@ -1574,6 +1574,7 @@ def _reference_url_from_entry(reference: dict[str, Any]) -> str:
 
 
 REFERENCE_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+GENERATED_ASSET_ROOT = Path(__file__).resolve().parents[2] / "static" / "generated"
 
 
 def _bounded_data_image_bytes(image_url: str) -> bytes:
@@ -1619,6 +1620,37 @@ def _download_reference_image_bytes(image_url: str) -> bytes:
         return bytes(result)
 
 
+def _local_reference_image_bytes(image_url: str) -> bytes | None:
+    path = urlsplit(image_url).path
+    prefix = "/static/generated/"
+    if not path.startswith(prefix):
+        return None
+    relative_parts = Path(path.removeprefix(prefix)).parts
+    if not relative_parts or any(
+        part in {"", ".", ".."} or part.startswith(".") for part in relative_parts
+    ):
+        raise RuntimeError("REFERENCE_IMAGE_PATH_INVALID")
+
+    root = GENERATED_ASSET_ROOT.resolve()
+    candidate = root.joinpath(*relative_parts)
+    try:
+        resolved = candidate.resolve(strict=True)
+    except FileNotFoundError:
+        return None
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise RuntimeError("REFERENCE_IMAGE_PATH_INVALID") from exc
+    if not resolved.is_file():
+        raise RuntimeError("REFERENCE_IMAGE_PATH_INVALID")
+    if resolved.stat().st_size > REFERENCE_IMAGE_MAX_BYTES:
+        raise RuntimeError("REFERENCE_IMAGE_TOO_LARGE")
+    result = resolved.read_bytes()
+    if len(result) > REFERENCE_IMAGE_MAX_BYTES:
+        raise RuntimeError("REFERENCE_IMAGE_TOO_LARGE")
+    return result
+
+
 def _reference_image_bytes(image_url: str) -> bytes:
     if image_url.startswith("data:image/"):
         return _bounded_data_image_bytes(image_url)
@@ -1627,6 +1659,10 @@ def _reference_image_bytes(image_url: str) -> bytes:
     trusted_url = trusted_generated_asset_url(image_url, settings)
     if not trusted_url:
         raise RuntimeError("REFERENCE_IMAGE_URL_UNTRUSTED")
+
+    local_bytes = _local_reference_image_bytes(trusted_url)
+    if local_bytes is not None:
+        return local_bytes
 
     fetch_url = _internal_reference_image_url(trusted_url)
     try:
@@ -3292,7 +3328,7 @@ def generate_openrouter_image_bytes(
 
 
 def generated_dir_for(pet_id: uuid.UUID) -> Path:
-    return Path(__file__).resolve().parents[2] / "static" / "generated" / str(pet_id)
+    return GENERATED_ASSET_ROOT / str(pet_id)
 
 
 def normalize_single_sprite_image(image_bytes: bytes) -> bytes:

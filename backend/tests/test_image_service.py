@@ -45,6 +45,7 @@ from app.services.image_service import (
     _kandinsky_create_task,
     _kandinsky_download_result,
     _kandinsky_reference_image_b64,
+    _local_reference_image_bytes,
     _probe_generated_video,
     _reference_image_bytes,
     _submit_openrouter_video_job,
@@ -745,6 +746,59 @@ def test_internal_reference_url_rewrites_only_own_public_origin(monkeypatch) -> 
         _internal_reference_image_url("https://cdn.example.test/static/generated/pet/idle.png?v=42")
         == "https://cdn.example.test/static/generated/pet/idle.png?v=42"
     )
+
+
+def test_reference_image_reads_own_generated_asset_without_network(
+    monkeypatch, tmp_path
+) -> None:
+    generated_root = tmp_path / "generated"
+    image_path = generated_root / "pet" / "idle.png"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"local-image")
+    public_url = "https://gigagochi.serega.works/static/generated/pet/idle.png?v=42"
+    monkeypatch.setattr("app.services.image_service.GENERATED_ASSET_ROOT", generated_root)
+    monkeypatch.setattr(
+        "app.services.image_service.get_settings",
+        lambda: SimpleNamespace(
+            backend_internal_url="http://backend:8000",
+            backend_public_url="https://gigagochi.serega.works",
+            webapp_url="https://gigagochi.serega.works",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.image_service.httpx.stream",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not fetch")),
+    )
+
+    assert _reference_image_bytes(public_url) == b"local-image"
+
+
+def test_local_reference_image_rejects_symlink_escape(monkeypatch, tmp_path) -> None:
+    generated_root = tmp_path / "generated"
+    generated_root.mkdir()
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"outside")
+    (generated_root / "escape.png").symlink_to(outside)
+    monkeypatch.setattr("app.services.image_service.GENERATED_ASSET_ROOT", generated_root)
+
+    with pytest.raises(RuntimeError, match="REFERENCE_IMAGE_PATH_INVALID"):
+        _local_reference_image_bytes(
+            "https://gigagochi.serega.works/static/generated/escape.png"
+        )
+
+
+def test_local_reference_image_rejects_oversized_file(monkeypatch, tmp_path) -> None:
+    generated_root = tmp_path / "generated"
+    generated_root.mkdir()
+    image_path = generated_root / "large.png"
+    image_path.write_bytes(b"oversized")
+    monkeypatch.setattr("app.services.image_service.GENERATED_ASSET_ROOT", generated_root)
+    monkeypatch.setattr("app.services.image_service.REFERENCE_IMAGE_MAX_BYTES", 3)
+
+    with pytest.raises(RuntimeError, match="REFERENCE_IMAGE_TOO_LARGE"):
+        _local_reference_image_bytes(
+            "https://gigagochi.serega.works/static/generated/large.png"
+        )
 
 
 def test_reference_download_falls_back_to_public_url(monkeypatch) -> None:
