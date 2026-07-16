@@ -437,8 +437,8 @@ describe("InteractiveTravelScreen", () => {
 
     fireEvent.click(correct);
 
-    expect(screen.getByText("+100")).toBeInTheDocument();
-    const outcome = screen.getByLabelText("Получено 100 единиц опыта");
+    expect(screen.getByText("+200")).toBeInTheDocument();
+    const outcome = screen.getByLabelText("Получено 200 единиц опыта");
     const resultFrame = screen.getByLabelText("Результат выбора");
     const reaction = screen.getByLabelText("Получилось! Малыш снова рядом с мамой.");
     const mainCharacters = Array.from(resultFrame.children)

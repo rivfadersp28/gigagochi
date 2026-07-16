@@ -71,7 +71,7 @@ export function resolveOnboardingBatStory(
           reactionTone: "enthusiastic",
           consequence: "Малыш в безопасности рядом с мамой.",
           outcomeValence: "positive",
-          experienceGained: 100,
+          experienceGained: 200,
           statImpacts: [],
         },
       }],

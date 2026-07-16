@@ -350,7 +350,7 @@ it("finishes onboarding only after the first outfit request is queued", async ()
   };
   const onboardingPet: LocalPetState = {
     ...pet,
-    experience: 100,
+    experience: 200,
     introductionPending: true,
     assetSet: {
       assetSetId: "onboarding-assets",
@@ -386,20 +386,20 @@ it("finishes onboarding only after the first outfit request is queued", async ()
 
   fireEvent.click(outfitButton);
   expect(screen.getByLabelText("Во что мне нарядиться?")).toBeInTheDocument();
-  expect(screen.getByLabelText("Баланс опыта: 100")).toBeInTheDocument();
+  expect(screen.getByLabelText("Баланс опыта: 200")).toBeInTheDocument();
   expect(screen.queryByText("Уровень: Малыш")).not.toBeInTheDocument();
   expect(screen.queryByLabelText(/Голод 50 из 100/u)).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole("textbox", { name: "Описание наряда" }), {
     target: { value: "Зелёный походный плащ" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Создать наряд за 20 монет" }));
+  fireEvent.click(screen.getByRole("button", { name: "Создать наряд за 200 монет" }));
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
   });
 
   expect(mocks.queueOutfitGeneration).toHaveBeenCalledOnce();
-  expect(onboardingLocalPetMock.spendExperience).toHaveBeenCalledWith(20, onboardingPet.petId);
+  expect(onboardingLocalPetMock.spendExperience).toHaveBeenCalledWith(200, onboardingPet.petId);
   expect(screen.getByLabelText("Футболка Metallica?")).toBeInTheDocument();
   expect(screen.queryByRole("textbox", { name: "Описание наряда" })).not.toBeInTheDocument();
   expect(readLocalPetFirstSession(onboardingPet)?.stage).toBe("completed");
@@ -421,7 +421,7 @@ it("keeps the outfit form open and shows a visible error when queuing fails", as
   mocks.queueOutfitGeneration.mockRejectedValueOnce(new Error("queue unavailable"));
   const outfitPet: LocalPetState = {
     ...pet,
-    experience: 100,
+    experience: 200,
     assetSet: undefined,
   };
   writeLocalPetState(outfitPet);
@@ -436,7 +436,7 @@ it("keeps the outfit form open and shows a visible error when queuing fails", as
   fireEvent.change(screen.getByRole("textbox", { name: "Описание наряда" }), {
     target: { value: "В красную футболку" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Создать наряд за 20 монет" }));
+  fireEvent.click(screen.getByRole("button", { name: "Создать наряд за 200 монет" }));
 
   await act(async () => {
     await Promise.resolve();

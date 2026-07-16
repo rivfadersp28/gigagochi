@@ -29,6 +29,8 @@ from app.services.task_bank_mode import TaskBankMode, read_task_bank_mode
 
 STORY_PART_COUNT = 4
 GENERATOR_VERSION = "task-bank-location-v4"
+CORRECT_ANSWER_EXPERIENCE_MIN = 30
+CORRECT_ANSWER_EXPERIENCE_MAX = 50
 TASK_BANK_PATH = (
     Path(__file__).resolve().parents[2] / "data" / "задачи_путешественника_без_расчётов.md"
 )
@@ -84,6 +86,10 @@ MOOD_CONTEXT_WORDS = (
 )
 
 
+def _correct_answer_experience() -> int:
+    return random.randint(CORRECT_ANSWER_EXPERIENCE_MIN, CORRECT_ANSWER_EXPERIENCE_MAX)
+
+
 def _negative_travel_stat(task: InteractiveTravelTaskPlan) -> str:
     context = " ".join(
         (
@@ -121,7 +127,7 @@ def scheduled_interactive_episode_result(
             else f"Этот вариант не подходит; правильный ответ — {correct_choice}."
         ),
         outcomeValence="positive" if is_correct else "negative",
-        experienceGained=random.randint(100, 150) if is_correct else 0,
+        experienceGained=_correct_answer_experience() if is_correct else 0,
         statImpacts=[]
         if is_correct
         else [
@@ -421,7 +427,7 @@ def _deterministic_result(
         reactionTone="determined" if is_correct else "worried",
         consequence=consequence,
         outcomeValence="positive" if is_correct else "negative",
-        experienceGained=random.randint(100, 150) if is_correct else 0,
+        experienceGained=_correct_answer_experience() if is_correct else 0,
         statImpacts=[]
         if is_correct
         else [

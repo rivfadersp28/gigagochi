@@ -33,7 +33,7 @@ describe("localPetOnboardingBatStory", () => {
       backgroundVideoUrl: "/static/onboarding/bat-help/success.mp4",
       result: {
         outcomeValence: "positive",
-        experienceGained: 100,
+        experienceGained: 200,
       },
     });
   });

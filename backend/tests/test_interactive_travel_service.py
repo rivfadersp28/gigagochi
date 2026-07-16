@@ -339,6 +339,14 @@ def test_task_bank_is_valid_and_has_one_hundred_unique_tasks() -> None:
                 selected_choice=choice,
             )
             assert result.text == outcome
+            if choice == task["answer"]:
+                assert (
+                    interactive_travel_service.CORRECT_ANSWER_EXPERIENCE_MIN
+                    <= result.experienceGained
+                    <= interactive_travel_service.CORRECT_ANSWER_EXPERIENCE_MAX
+                )
+            else:
+                assert result.experienceGained == 0
 
 
 def test_easy_task_bank_is_valid_and_keeps_explanations() -> None:
@@ -367,6 +375,21 @@ def test_scheduled_episode_keeps_all_four_bank_choices(monkeypatch) -> None:
     assert plan["storyText"] == task["situation"]
     assert plan["choices"] == task["choices"]
     assert plan["outcomes"] == task["outcomes"]
+
+
+def test_scheduled_correct_answer_awards_up_to_fifty_coins(monkeypatch) -> None:
+    monkeypatch.setattr(interactive_travel_service.random, "choice", lambda values: values[0])
+    monkeypatch.setattr(interactive_travel_service.random, "randint", lambda low, high: high)
+
+    result = interactive_travel_service.scheduled_interactive_episode_result(
+        situation="На пути появилась река.",
+        question="Как перейти?",
+        outcomes=["Мост выдержал."],
+        correct_choice="Мост",
+        selected_choice="Мост",
+    )
+
+    assert result.experienceGained == 50
 
 
 def test_task_bank_rejects_answer_text_that_disagrees_with_its_letter(

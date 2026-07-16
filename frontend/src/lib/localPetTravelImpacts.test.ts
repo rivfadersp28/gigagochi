@@ -103,6 +103,21 @@ describe("local pet interactive-travel impact receipts", () => {
     expect(second.newlyAppliedResultParts).toEqual([2]);
   });
 
+  it("credits the full 200-coin onboarding reward", () => {
+    const onboardingPart = resolvedPart(1, []);
+    if (onboardingPart.result) {
+      onboardingPart.result.experienceGained = 200;
+    }
+
+    const applied = applyInteractiveTravelImpactsToPet(
+      petState({ experience: 0 }),
+      "onboarding-bat-help-v1-pet-1",
+      [onboardingPart],
+    );
+
+    expect(applied.pet.experience).toBe(200);
+  });
+
   it("migrates legacy session markers into receipts without changing stats", () => {
     const alreadyAppliedState = petState({
       stats: { hunger: 54, happiness: 50, energy: 50 },
