@@ -2496,6 +2496,27 @@ def _openrouter_video_error(response: httpx.Response) -> OpenRouterVideoHTTPErro
     return OpenRouterVideoHTTPError(response.status_code, payload)
 
 
+def _is_safe_openrouter_video_submit_response_retry(response: httpx.Response) -> bool:
+    if response.status_code == 429:
+        return True
+    if response.status_code not in {502, 503, 504}:
+        return False
+    try:
+        payload_text = json.dumps(response.json(), ensure_ascii=False, default=str)
+    except ValueError:
+        payload_text = response.text
+    normalized = payload_text.casefold()
+    return any(
+        marker in normalized
+        for marker in (
+            "upstream connect error",
+            "connection refused",
+            "failed to connect to upstream",
+            "no healthy upstream",
+        )
+    )
+
+
 def _submit_openrouter_video_job(
     settings: Any,
     payload: dict[str, Any],
@@ -2529,7 +2550,7 @@ def _submit_openrouter_video_job(
             continue
 
         is_last_attempt = attempt_index == OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS - 1
-        is_retryable = response.status_code == 429
+        is_retryable = _is_safe_openrouter_video_submit_response_retry(response)
         if response.status_code < 400 or is_last_attempt or not is_retryable:
             return response
 

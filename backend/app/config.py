@@ -186,7 +186,7 @@ class Settings(BaseSettings):
     openrouter_chat_model: str = "~openai/gpt-latest"
     openrouter_character_model: str | None = None
     openrouter_image_model: str = "bytedance-seed/seedream-4.5"
-    openrouter_video_model: str = "x-ai/grok-imagine-video"
+    openrouter_video_model: str = "bytedance/seedance-2.0"
     # Keep one resumable provider stage below Docker's 20 minute stop grace.
     openrouter_video_timeout_seconds: float = Field(default=900, ge=1, le=900)
     openrouter_video_poll_interval_seconds: float = Field(default=5, ge=0.1, le=300)

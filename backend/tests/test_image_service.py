@@ -1922,6 +1922,84 @@ def test_openrouter_video_submit_retries_pre_send_connect_failure(monkeypatch) -
     assert retry_delays == [1.0]
 
 
+@pytest.mark.parametrize("status_code", (502, 503, 504))
+def test_openrouter_video_submit_retries_explicit_upstream_connect_failure(
+    monkeypatch,
+    status_code: int,
+) -> None:
+    post_calls = 0
+    retry_delays: list[float] = []
+    success = httpx.Response(200, request=httpx.Request("POST", "https://openrouter.test"))
+
+    def fake_post(*_args, **_kwargs):
+        nonlocal post_calls
+        post_calls += 1
+        if post_calls == 1:
+            return httpx.Response(
+                status_code,
+                request=httpx.Request("POST", "https://openrouter.test"),
+                json={
+                    "error": {
+                        "message": (
+                            "upstream connect error or disconnect/reset before headers; "
+                            "remote connection failure: Connection refused"
+                        )
+                    }
+                },
+            )
+        return success
+
+    settings = SimpleNamespace(
+        openrouter_api_key="sk-or-test",
+        openai_api_key=None,
+        openrouter_base_url="https://openrouter.ai/api/v1",
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
+
+    response = _submit_openrouter_video_job(
+        settings,
+        {"model": "test/video", "prompt": "synthetic prompt"},
+        label="test/video",
+    )
+
+    assert response is success
+    assert post_calls == 2
+    assert retry_delays == [1.0]
+
+
+def test_openrouter_video_submit_does_not_retry_ambiguous_503(monkeypatch) -> None:
+    post_calls = 0
+    retry_delays: list[float] = []
+
+    def fake_post(*_args, **_kwargs):
+        nonlocal post_calls
+        post_calls += 1
+        return httpx.Response(
+            503,
+            request=httpx.Request("POST", "https://openrouter.test"),
+            json={"error": {"message": "Service temporarily unavailable"}},
+        )
+
+    settings = SimpleNamespace(
+        openrouter_api_key="sk-or-test",
+        openai_api_key=None,
+        openrouter_base_url="https://openrouter.ai/api/v1",
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
+
+    response = _submit_openrouter_video_job(
+        settings,
+        {"model": "test/video", "prompt": "synthetic prompt"},
+        label="test/video",
+    )
+
+    assert response.status_code == 503
+    assert post_calls == 1
+    assert retry_delays == []
+
+
 def test_generate_openrouter_video_bytes_retries_poll_errors(monkeypatch, tmp_path) -> None:
     source_path = tmp_path / "teen-idle.png"
     source_path.write_bytes(png_bytes(Image.new("RGB", (720, 1280), (20, 140, 70))))
