@@ -159,11 +159,11 @@
   left: 50%;
   transform: translateX(-50%) rotate(var(--tilted-glass-rotation));
   transform-origin: center;
-  animation: customNextButtonIn 300ms ease-out both;
+  animation: customNextButtonIn 300ms ease-out backwards;
 }
 
-.customNextButton:active {
-  transform: translateX(-50%) rotate(var(--tilted-glass-rotation)) scale(0.97);
+.customNextButton:enabled:active {
+  transform: translateX(-50%) rotate(var(--tilted-glass-rotation)) scale(0.9);
 }
 
 @keyframes customNextButtonIn {
@@ -252,8 +252,8 @@
   transform: translateX(-50%);
 }
 
-.retryButton:active {
-  transform: translateX(-50%) scale(0.97);
+.retryButton:enabled:active {
+  transform: translateX(-50%) scale(0.9);
 }
 
 @media (max-height: 760px) {

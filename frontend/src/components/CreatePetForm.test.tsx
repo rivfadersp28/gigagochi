@@ -16,6 +16,10 @@ const createPetFormStyles = readFileSync(
   "src/components/CreatePetForm.module.css",
   "utf8",
 );
+const tiltedGlassButtonStyles = readFileSync(
+  "src/components/TiltedGlassButton.module.css",
+  "utf8",
+);
 
 const mocks = vi.hoisted(() => {
   class MockApiError extends Error {
@@ -191,7 +195,17 @@ describe("CreatePetForm", () => {
       "--tilted-glass-rotation": "2deg",
     });
     expect(createPetFormStyles).toContain(
-      "animation: customNextButtonIn 300ms ease-out both",
+      "animation: customNextButtonIn 300ms ease-out backwards",
+    );
+    expect(createPetFormStyles).toContain(
+      "transform: translateX(-50%) rotate(var(--tilted-glass-rotation)) scale(0.9)",
+    );
+    expect(createPetFormStyles).toContain("transform: translateX(-50%) scale(0.9)");
+    expect(tiltedGlassButtonStyles).toContain(
+      "animation: tiltedGlassSpringIn 300ms cubic-bezier(0.34, 1.56, 0.64, 1) backwards",
+    );
+    expect(tiltedGlassButtonStyles).toContain(
+      "transform: rotate(var(--tilted-glass-rotation)) scale(0.9)",
     );
     expect(createPetFormStyles).toContain(
       "color: color(display-p3 0.019 0.082 0.174)",

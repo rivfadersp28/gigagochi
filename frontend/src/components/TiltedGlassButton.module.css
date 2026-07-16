@@ -30,11 +30,11 @@
 }
 
 .animated {
-  animation: tiltedGlassSpringIn 300ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation: tiltedGlassSpringIn 300ms cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
 }
 
-.button:active {
-  transform: rotate(var(--tilted-glass-rotation)) scale(0.97);
+.button:enabled:active {
+  transform: rotate(var(--tilted-glass-rotation)) scale(0.9);
 }
 
 .button:disabled {
