@@ -38,6 +38,7 @@ services:
         condition: service_completed_successfully
     environment:
       TMPDIR: /app/static/generated/.private/processing-tmp
+      ENABLE_IN_MEMORY_RATE_LIMIT: "false"
       RATE_LIMIT_STORE_PATH: /app/data/push/rate_limits.sqlite3
       MEDIA_CONCURRENCY_LOCK_DIR: /app/data/push/media_provider_slots
       MEDIA_IMAGE_CONCURRENCY: ${MEDIA_IMAGE_CONCURRENCY:-4}

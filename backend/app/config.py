@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     backend_public_url: str | None = None
     backend_internal_url: str | None = None
     allow_dev_tma_auth: bool = False
-    enable_in_memory_rate_limit: bool = True
+    enable_in_memory_rate_limit: bool = False
     rate_limit_store_path: str = "data/push/rate_limits.sqlite3"
     generation_rate_limit_per_day: int = Field(default=3, ge=0, le=100_000)
     interactive_travel_rate_limit_per_day: int = Field(default=30, ge=0, le=100_000)

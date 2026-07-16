@@ -7,13 +7,10 @@
   generation-job recovery uses SQLite on the same persistent volume, and generated assets plus
   push state use Docker volumes. Local and production Compose files therefore do not start
   PostgreSQL.
-- Sliding-window quotas are persisted in `rate_limits.sqlite3` on the shared `push_data` volume.
-  Backend API media endpoints and bot `/story`/`/full_story` consume the same per-Telegram-user
-  `generation` bucket atomically; `/push` is text-only and does not consume that bucket. The legacy
-  `ENABLE_IN_MEMORY_RATE_LIMIT` name remains the compatibility switch for the durable limiter.
-  Push snapshots use two layers: a 60/hour revision-deduplicated quota and a compact one-row
-  fixed-window attempt counter at 120/hour, so replayed revisions cannot turn into unbounded
-  registry transactions without creating hundreds of SQLite events per user.
+- The durable SQLite rate limiter remains implemented for compatibility, but local and production
+  Compose explicitly set `ENABLE_IN_MEMORY_RATE_LIMIT=false`. Per-user generation, interactive
+  travel, chat, memory, lite-fact, and push-snapshot quotas are therefore disabled in every active
+  environment. Existing rows in `rate_limits.sqlite3` are inert while the switch is off.
 - Scheduled background-story image/video submissions share one durable global fixed UTC 24-hour
   counter in the same SQLite store. Recovery of an existing file precedes charging; each new image
   or video provider submission attempt consumes one unit. The fail-closed default cap is zero, so
