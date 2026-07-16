@@ -270,7 +270,9 @@ function preloadImage(src: string) {
 
       void image.decode().then(
         () => settle(resolve),
-        () => settle(() => reject(new Error(`Failed to decode image: ${src}`))),
+        // Telegram WebView may reject decode() for an already loaded image.
+        // onload is sufficient here; decode() is only a rendering optimization.
+        () => settle(resolve),
       );
     };
     image.onerror = () => settle(() => reject(new Error(`Failed to load image: ${src}`)));
