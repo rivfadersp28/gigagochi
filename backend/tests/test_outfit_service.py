@@ -103,3 +103,16 @@ def test_outfit_generation_edits_each_mood_reference(monkeypatch, tmp_path) -> N
     assert metadata["mode"] == "outfit_edit_v1"
     assert metadata["outfitPipeline"] == "idle-derived-moods-v1"
     assert outfit_service.is_outfit_image_set(image_set)
+
+
+def test_outfit_generation_accepts_test_pet_reference(monkeypatch, tmp_path) -> None:
+    test_pet_root = tmp_path / "test-pet"
+    test_pet_root.mkdir()
+    source_path = test_pet_root / "openai-normal.png"
+    source_path.write_bytes(_png_bytes("navy"))
+
+    monkeypatch.setattr(outfit_service, "TEST_PET_ROOT", test_pet_root)
+
+    resolved = outfit_service._generated_reference_path("/test-pet/openai-normal.png?v=fixture")
+
+    assert resolved == source_path

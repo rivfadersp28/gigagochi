@@ -23,9 +23,11 @@ from app.services.image_service import (
 
 OUTFIT_GENERATION_PREFIX = "__OUTFIT_V1__"
 GENERATED_ROOT = Path(__file__).resolve().parents[2] / "static" / "generated"
+TEST_PET_ROOT = Path(__file__).resolve().parents[3] / "frontend" / "public" / "test-pet"
 _GENERATED_IMAGE_PATH = re.compile(
     r"^/static/generated/(?P<asset>[A-Za-z0-9._-]+)/(?P<name>[A-Za-z0-9._-]+)$"
 )
+_TEST_PET_IMAGE_PATH = re.compile(r"^/test-pet/(?P<name>[A-Za-z0-9._-]+)$")
 _OUTFIT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -148,10 +150,15 @@ def _generated_reference_path(image_url: object) -> Path:
         raise ValueError("outfit reference URL must be a string")
     path = unquote(urlsplit(image_url).path)
     match = _GENERATED_IMAGE_PATH.fullmatch(path)
-    if match is None:
-        raise ValueError("outfit reference must be a generated pet image")
-    root = GENERATED_ROOT.resolve()
-    candidate = (root / match.group("asset") / match.group("name")).resolve()
+    if match is not None:
+        root = GENERATED_ROOT.resolve()
+        candidate = (root / match.group("asset") / match.group("name")).resolve()
+    else:
+        test_pet_match = _TEST_PET_IMAGE_PATH.fullmatch(path)
+        if test_pet_match is None:
+            raise ValueError("outfit reference must be a generated pet image")
+        root = TEST_PET_ROOT.resolve()
+        candidate = (root / test_pet_match.group("name")).resolve()
     if root not in candidate.parents or not _is_valid_image_file(candidate):
         raise ValueError("outfit reference image is missing or invalid")
     return candidate

@@ -102,6 +102,7 @@ import {
   PET_EXPERIENCE_MAX,
   PET_OUTFIT_EXPERIENCE_COST,
 } from "@/lib/localPetExperience";
+import { assetSetForPet } from "@/lib/petAssetSet";
 import {
   refreshedTestPetAssetSet,
   TEST_PET_ASSET_SET,
@@ -130,7 +131,6 @@ import { shouldReduceMotion } from "./pet-dashboard/motion";
 import { storyHistoryFromPet } from "./pet-dashboard/storyHistory";
 import { usePetTapBulge } from "./pet-dashboard/usePetTapBulge";
 import { useConversationKeyboardOffset } from "./pet-dashboard/useConversationKeyboardOffset";
-import { useOutfitKeyboardInset } from "./pet-dashboard/useOutfitKeyboardInset";
 import { usePetBackgroundAssets } from "./pet-dashboard/usePetBackgroundAssets";
 import { usePetPushSnapshotSync } from "./pet-dashboard/usePetPushSnapshotSync";
 import {
@@ -205,6 +205,7 @@ const IDLE_REPLY_MAX_CHARS = 120;
 const IDLE_REPLY_MAX_PORTIONS = 3;
 const FOOD_REPLY_MAX_CHARS = 60;
 const REPLY_AUTO_ADVANCE_MS = 3_000;
+const OUTFIT_PROMPT = "Во что мне нарядиться?";
 const UNNAMED_STATUS_NAME = "Без имени";
 const ACTION_ICON_CACHE_VERSION = "20260714-figma-218-1907-1";
 const VIDEO_FILTER_CACHE_VERSION = "20260713-video-filter-lossless-webp-1";
@@ -223,6 +224,15 @@ const accessibleStageLabels: Record<LocalPetState["stage"], string> = {
   teen: "подросток",
   adult: "взрослый",
 };
+
+function outfitQueuedReply(displayItem: string) {
+  const normalizedItem = displayItem.trim();
+  const [firstLetter = "", ...rest] = Array.from(normalizedItem);
+  const titledItem = firstLetter
+    ? `${firstLetter.toLocaleUpperCase("ru-RU")}${rest.join("")}`
+    : "Наряд";
+  return `${titledItem}? Интересно. Я получу заказ примерно через 10 минут.`;
+}
 const accessibleMoodLabels: Record<LocalPetState["mood"], string> = {
   idle: "спокойное",
   happy: "радостное",
@@ -333,7 +343,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [outfitInput, setOutfitInput] = useState("");
   const [outfitError, setOutfitError] = useState<PresentedError | null>(null);
   const [isGeneratingOutfit, setIsGeneratingOutfit] = useState(false);
-  const [outfitStep, setOutfitStep] = useState<"input" | "queued">("input");
   const [pendingOutfit, setPendingOutfit] = useState<PendingOutfitGeneration | null>(
     () => readPendingOutfitGeneration(),
   );
@@ -547,9 +556,8 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     : null;
   const sceneBackgroundSrc = requestedSceneBackgroundSrc;
   const sceneVideoSrc = requestedSceneVideoSrc;
-  const conversationInputOffsetY = useConversationKeyboardOffset(isChatMode, sceneRef);
-  const outfitKeyboardInset = useOutfitKeyboardInset(
-    isOutfitMode && outfitStep === "input",
+  const conversationInputOffsetY = useConversationKeyboardOffset(
+    isChatMode || isOutfitMode,
     sceneRef,
   );
   usePetBackgroundAssets({
@@ -977,6 +985,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     if (
       isChatMode
       || isFeedMode
+      || isOutfitMode
       || isDebugPanelOpen
       || isStoryHistoryOpen
       || confirmationAction
@@ -1006,6 +1015,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     isChatMode,
     isDebugPanelOpen,
     isFeedMode,
+    isOutfitMode,
     isStoryHistoryOpen,
   ]);
 
@@ -1013,6 +1023,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     if (
       isChatMode
       || isFeedMode
+      || isOutfitMode
       || isDebugPanelOpen
       || isStoryHistoryOpen
       || confirmationAction
@@ -1059,6 +1070,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     isChatMode,
     isDebugPanelOpen,
     isFeedMode,
+    isOutfitMode,
     isPetDead,
     isStoryHistoryOpen,
   ]);
@@ -1067,6 +1079,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     if (
       isChatMode
       || isFeedMode
+      || isOutfitMode
       || isDebugPanelOpen
       || isStoryHistoryOpen
       || confirmationAction
@@ -1096,23 +1109,18 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     isChatMode,
     isDebugPanelOpen,
     isFeedMode,
+    isOutfitMode,
     isPetDead,
     isStoryHistoryOpen,
   ]);
 
-  const handleOutfitDone = useCallback(() => {
-    const displayItem = pendingOutfit?.displayItem;
-    setOutfitInput("");
+  const closeOutfitMode = useCallback(() => {
+    cancelReplyAutoAdvance();
     setIsOutfitMode(false);
-    setOutfitStep("input");
-    if (displayItem) {
-      showPetReplyMessage(
-        `Ого! Думаю, ${displayItem} мне отлично подойдёт. Доставка займёт около 10 минут. Я напишу, когда обновки будут готовы.`,
-        true,
-        { voiceMode: "system", autoAdvanceDelayMs: 3000 },
-      );
-    }
-  }, [pendingOutfit?.displayItem, showPetReplyMessage]);
+    setOutfitError(null);
+    setConversationReplyMessageId(null);
+    chatInputRef.current?.blur();
+  }, [cancelReplyAutoAdvance]);
 
   const handleTelegramBack = useCallback(() => {
     if (isStoryHistoryOpen) {
@@ -1126,23 +1134,18 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     }
 
     if (isOutfitMode) {
-      if (outfitStep === "queued") {
-        handleOutfitDone();
-      } else {
-        setIsOutfitMode(false);
-      }
+      closeOutfitMode();
       return;
     }
 
     closeChatMode();
   }, [
     closeChatMode,
+    closeOutfitMode,
     closeFeedMode,
-    handleOutfitDone,
     isFeedMode,
     isOutfitMode,
     isStoryHistoryOpen,
-    outfitStep,
   ]);
 
   useTelegramBackButton(
@@ -1384,12 +1387,19 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     cancelIdleReplyGeneration();
     setIsDebugPanelOpen(false);
     setOutfitError(null);
-    setOutfitStep("input");
-    setIsOutfitMode(true);
+    setConversationReplyMessageId(null);
+
+    flushSync(() => {
+      setIsOutfitMode(true);
+    });
+    showPetReplyMessage(OUTFIT_PROMPT, true, {
+      showInConversation: true,
+      voiceMode: "system",
+    });
+    focusChatInput();
   }
 
-  async function handleOutfitSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitOutfitRequest() {
     const request = outfitInput.trim();
     if (!request || !pet || isGeneratingOutfit) {
       return;
@@ -1400,12 +1410,13 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       return;
     }
     const requestedPetId = pet.petId;
-    const currentAssetSet = pet.assetSet;
+    const currentAssetSet = assetSetForPet(pet);
     const controller = new AbortController();
     outfitAbortRef.current?.abort();
     outfitAbortRef.current = controller;
     setOutfitError(null);
     setIsGeneratingOutfit(true);
+    chatInputRef.current?.blur();
 
     try {
       const simplified = await simplifyOutfitRequest(request, pet.description, {
@@ -1443,10 +1454,17 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       }
       setPendingOutfitJobId(pending.requestKey, jobId);
       setPendingOutfit({ ...pending, jobId });
-      setOutfitStep("queued");
       if (firstSession?.stage === "awaiting-completion-message") {
         setFirstSession(updateLocalPetFirstSession(firstSession, "completed"));
       }
+      setOutfitInput("");
+      setIsOutfitMode(false);
+      setConversationReplyMessageId(null);
+      chatInputRef.current?.blur();
+      showPetReplyMessage(outfitQueuedReply(pending.displayItem), true, {
+        voiceMode: "system",
+        autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
+      });
       hapticNotification("success");
     } catch (caught) {
       if (controller.signal.aborted) {
@@ -1464,6 +1482,16 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       setIsGeneratingOutfit(false);
       }
     }
+  }
+
+  function handleOutfitSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submitOutfitRequest();
+  }
+
+  function handleOutfitButtonClick(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    void submitOutfitRequest();
   }
 
   function focusChatInput() {
@@ -2012,16 +2040,16 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     hasNextPortion: false,
   };
   const shouldShowConversationReply =
-    isChatMode && conversationReplyMessageId === displayedReply.id;
+    (isChatMode || isOutfitMode) && conversationReplyMessageId === displayedReply.id;
   const shouldShowFeedReply =
     isFeedMode && feedReplyMessageId === displayedReply.id;
   const isIdleThinkingVisible =
-    !isChatMode && !isFeedMode && isGeneratingIdleReply;
+    !isChatMode && !isFeedMode && !isOutfitMode && isGeneratingIdleReply;
   const shouldShowSpeechBubble =
     !isIdleThinkingVisible
     && (isFeedMode
       ? shouldShowFeedReply
-      : isChatMode
+      : isChatMode || isOutfitMode
         ? shouldShowConversationReply
         : !isIdleSpeechBubbleDismissed);
   const displayedPetName = pet.name?.trim() || UNNAMED_STATUS_NAME;
@@ -2080,7 +2108,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       <section
         ref={sceneRef}
         className={`main-mobile-scene tma-screen relative mx-auto w-full max-w-[402px] overflow-hidden ${
-          isChatMode ? "main-mobile-scene--chat" : ""
+          isChatMode || isOutfitMode ? "main-mobile-scene--chat" : ""
+        } ${
+          isOutfitMode ? "main-mobile-scene--outfit" : ""
         } ${
           isFeedMode ? "main-mobile-scene--feed" : ""
         } ${
@@ -2125,7 +2155,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           />
         </div>
 
-        {!isChatMode && !isFeedMode ? (
+        {!isChatMode && !isFeedMode && !isOutfitMode ? (
           <button
             type="button"
             className="pet-reaction-button"
@@ -2162,9 +2192,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
         {showExperience ? (
           <>
-            <div className="pet-status-level">
-              Уровень: Малыш
-            </div>
+            {!isOutfitMode ? (
+              <div className="pet-status-level">
+                Уровень: Малыш
+              </div>
+            ) : null}
 
             <XpAmount
               text={`${experience}`}
@@ -2174,14 +2206,16 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           </>
         ) : null}
 
-        <div
-          className="top-status-strip"
-          aria-label={`Голод ${roundedHungerPercent} из 100, настроение ${roundedMoodPercent} из 100, здоровье ${roundedHealthPercent} из 100`}
-        >
-          <StatProgressRing value={hungerPercent} kind="hunger" />
-          <StatProgressRing value={moodPercent} kind="mood" />
-          <StatProgressRing value={healthPercent} kind="energy" />
-        </div>
+        {!isOutfitMode ? (
+          <div
+            className="top-status-strip"
+            aria-label={`Голод ${roundedHungerPercent} из 100, настроение ${roundedMoodPercent} из 100, здоровье ${roundedHealthPercent} из 100`}
+          >
+            <StatProgressRing value={hungerPercent} kind="hunger" />
+            <StatProgressRing value={moodPercent} kind="mood" />
+            <StatProgressRing value={healthPercent} kind="energy" />
+          </div>
+        ) : null}
 
         <div
           className={`main-speech-bubble-anchor ${
@@ -2195,39 +2229,67 @@ export function PetDashboard({ petId }: PetDashboardProps) {
             message={displayedReply}
             scaleOrigin="bottom"
             shapeSrc={speechBubbleSrc}
+            fixedWidth={isOutfitMode ? 272 : undefined}
+            fixedHeight={isOutfitMode ? 146 : undefined}
+            horizontalPadding={isOutfitMode ? 20 : undefined}
           />
         </div>
 
         <form
-          onSubmit={handleChatSubmit}
-          className="conversation-input-panel"
-          aria-hidden={!isChatMode}
-          aria-busy={isSendingChat}
+          onSubmit={isOutfitMode ? handleOutfitSubmit : handleChatSubmit}
+          className={`conversation-input-panel ${
+            isOutfitMode ? "conversation-input-panel--outfit" : ""
+          }`}
+          aria-hidden={!isChatMode && !isOutfitMode}
+          aria-busy={isSendingChat || isGeneratingOutfit}
         >
           <input
             ref={chatInputRef}
-            value={chatInput}
+            value={isOutfitMode ? outfitInput : chatInput}
             onChange={(event) => {
-              setChatInput(event.currentTarget.value);
-              if (chatError) {
-                setChatError(null);
+              if (isOutfitMode) {
+                setOutfitInput(event.currentTarget.value);
+                if (outfitError) {
+                  setOutfitError(null);
+                }
+              } else {
+                setChatInput(event.currentTarget.value);
+                if (chatError) {
+                  setChatError(null);
+                }
               }
             }}
             maxLength={1000}
-            disabled={!isChatMode || isSendingChat}
-            tabIndex={isChatMode ? 0 : -1}
+            disabled={
+              (!isChatMode && !isOutfitMode)
+              || isSendingChat
+              || isGeneratingOutfit
+            }
+            tabIndex={isChatMode || isOutfitMode ? 0 : -1}
             className="conversation-input"
-            placeholder="Расскажи о себе"
-            aria-label="Сообщение персонажу"
-            aria-describedby={chatError ? "dashboard-chat-error" : undefined}
-            aria-invalid={Boolean(chatError)}
+            placeholder={isOutfitMode ? "В футболку Metallica" : "Расскажи о себе"}
+            aria-label={isOutfitMode ? "Описание наряда" : "Сообщение персонажу"}
+            aria-describedby={
+              isOutfitMode && outfitError
+                ? "dashboard-outfit-error"
+                : chatError
+                  ? "dashboard-chat-error"
+                  : undefined
+            }
+            aria-invalid={Boolean(isOutfitMode ? outfitError : chatError)}
             autoComplete="off"
             autoCapitalize="sentences"
             enterKeyHint="send"
             inputMode="text"
           />
 
-          {chatError ? (
+          {isOutfitMode && outfitError ? (
+            <ErrorNotice
+              error={outfitError}
+              id="dashboard-outfit-error"
+              className="conversation-input-error"
+            />
+          ) : chatError ? (
             <ErrorNotice
               error={chatError}
               id="dashboard-chat-error"
@@ -2237,19 +2299,43 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
           <button
             type="button"
-            onClick={handleSendButtonClick}
-            disabled={isSendingChat}
-            tabIndex={isChatMode ? 0 : -1}
-            className="conversation-send-button"
+            onClick={isOutfitMode ? handleOutfitButtonClick : handleSendButtonClick}
+            disabled={
+              isOutfitMode
+                ? !outfitInput.trim()
+                  || isGeneratingOutfit
+                  || experience < PET_OUTFIT_EXPERIENCE_COST
+                : isSendingChat
+            }
+            tabIndex={isChatMode || isOutfitMode ? 0 : -1}
+            className={`conversation-send-button ${
+              isOutfitMode ? "conversation-send-button--outfit" : ""
+            }`}
+            aria-label={
+              isOutfitMode
+                ? `Создать наряд за ${PET_OUTFIT_EXPERIENCE_COST} монет`
+                : "Отправить"
+            }
           >
-            <img
-              src={conversationSendIconSrc}
-              alt=""
-              className="conversation-send-button__icon"
-              aria-hidden="true"
-              draggable={false}
-            />
-            <span className="sr-only">Отправить</span>
+            {isOutfitMode ? (
+              isGeneratingOutfit ? (
+                <Loader2 className="size-[20px] animate-spin" aria-hidden="true" />
+              ) : (
+                <XpAmount
+                  text={`${PET_OUTFIT_EXPERIENCE_COST}`}
+                  ariaLabel={`Стоимость: ${PET_OUTFIT_EXPERIENCE_COST} монет`}
+                  className="conversation-outfit-cost"
+                />
+              )
+            ) : (
+              <img
+                src={conversationSendIconSrc}
+                alt=""
+                className="conversation-send-button__icon"
+                aria-hidden="true"
+                draggable={false}
+              />
+            )}
           </button>
         </form>
 
@@ -2284,10 +2370,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
       <div
         className={`main-actions-scroll conversation-fade-target absolute top-[762px] z-30 ${
-          isChatMode || isFeedMode ? "conversation-fade-target--hidden" : ""
+          isChatMode || isFeedMode || isOutfitMode ? "conversation-fade-target--hidden" : ""
         } ${centerSingleFirstSessionAction ? "main-actions-scroll--single" : ""}`}
-        aria-hidden={isChatMode || isFeedMode}
-        inert={isChatMode || isFeedMode ? true : undefined}
+        aria-hidden={isChatMode || isFeedMode || isOutfitMode}
+        inert={isChatMode || isFeedMode || isOutfitMode ? true : undefined}
       >
         <div className={`main-actions-row flex gap-[19px] ${
           centerSingleFirstSessionAction
@@ -2380,66 +2466,6 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           ) : null}
         </div>
       </div>
-      {isOutfitMode ? (
-        <div
-          className="outfit-flow"
-          style={{ "--outfit-keyboard-inset": `${outfitKeyboardInset}px` } as CSSProperties}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="outfit-flow-title"
-        >
-          {outfitStep === "input" ? (
-            <form className="outfit-flow__form" onSubmit={handleOutfitSubmit}>
-              <h2 id="outfit-flow-title">Как мне нарядиться?</h2>
-              <textarea
-                value={outfitInput}
-                onChange={(event) => setOutfitInput(event.target.value)}
-                maxLength={1000}
-                disabled={isGeneratingOutfit}
-                placeholder="В футболку Metallica"
-                aria-label="Описание наряда"
-                autoFocus
-              />
-              {outfitError ? (
-                <div className="outfit-flow__error"><ErrorNotice error={outfitError} /></div>
-              ) : null}
-              <div className="outfit-flow__xp" aria-label="Стоимость нового наряда">
-                <XpAmount
-                  text={`Баланс: ${experience}`}
-                  ariaLabel={`Баланс: ${experience} единиц опыта`}
-                />
-                <XpAmount
-                  text={`Нужно: ${PET_OUTFIT_EXPERIENCE_COST}`}
-                  ariaLabel={`Стоимость: ${PET_OUTFIT_EXPERIENCE_COST} единиц опыта`}
-                />
-              </div>
-              <button
-                type="submit"
-                className="outfit-flow__button"
-                disabled={
-                  !outfitInput.trim()
-                  || isGeneratingOutfit
-                  || experience < PET_OUTFIT_EXPERIENCE_COST
-                }
-              >
-                {isGeneratingOutfit ? (
-                  <><Loader2 className="size-[20px] animate-spin" aria-hidden="true" /> Создаём…</>
-                ) : "Создать"}
-              </button>
-            </form>
-          ) : (
-            <section className="outfit-flow__confirmation">
-              <div>
-                <h2 id="outfit-flow-title">Наряд заказан</h2>
-                <p>Я напишу, когда обновки будут готовы.</p>
-              </div>
-              <button type="button" className="outfit-flow__button" onClick={handleOutfitDone}>
-                Готово
-              </button>
-            </section>
-          )}
-        </div>
-      ) : null}
       {isStoryHistoryOpen ? (
         <TravelStoryOverlay
           stories={storyHistory}

@@ -617,6 +617,12 @@
   native keyboard and make the composer jump. Keep the dashboard root on
   `overflow: clip`; `overflow: hidden` is still programmatically scrollable, so
   focus can change its `scrollTop` and shift the whole fixed scene.
+- The outfit input must reuse the dashboard conversation composer and its transform offset. A
+  separate fixed overlay plus a calculated keyboard `bottom` inset double-counts iOS visual-viewport
+  movement and lifts the submit button into the prompt.
+- In the Telegram iOS WebView, do not rely on a focused form's native submit button for the outfit
+  action. Keep an explicit button `onClick`, matching chat, and call the shared submit routine;
+  otherwise a tap with the software keyboard open can be swallowed without dispatching `submit`.
 - The interactive-travel entry MP4 must be warmed from the dashboard and keep its versioned URL
   cacheable. `preload="auto"` on the travel screen starts too late, while the generic `/figma/*`
   `no-store` header otherwise discards the warm download. Keep the scene at full viewport size;

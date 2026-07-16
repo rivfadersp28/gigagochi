@@ -333,6 +333,10 @@ it("guides the local first session through chat and both cards", async () => {
 });
 
 it("finishes onboarding only after the first outfit request is queued", async () => {
+  mocks.simplifyOutfitRequest.mockResolvedValueOnce({
+    displayItem: "футболка Metallica",
+    generationDescription: "футболка Metallica",
+  });
   const moods = {
     idle: "/outfit-idle.png",
     happy: "/outfit-happy.png",
@@ -354,7 +358,11 @@ it("finishes onboarding only after the first outfit request is queued", async ()
     },
   };
   writeLocalPetState(onboardingPet);
-  (mocks.localPet as { pet: LocalPetState }).pet = onboardingPet;
+  const onboardingLocalPetMock = mocks.localPet as {
+    pet: LocalPetState;
+    spendExperience: ReturnType<typeof vi.fn>;
+  };
+  onboardingLocalPetMock.pet = onboardingPet;
   const started = restartLocalPetFirstSession(onboardingPet.petId)!;
   updateLocalPetFirstSession(started, "awaiting-completion-message");
 
@@ -372,18 +380,70 @@ it("finishes onboarding only after the first outfit request is queued", async ()
     .toBe("awaiting-completion-message");
 
   fireEvent.click(outfitButton);
+  expect(screen.getByLabelText("Во что мне нарядиться?")).toBeInTheDocument();
+  expect(screen.getByLabelText("Баланс опыта: 100")).toBeInTheDocument();
+  expect(screen.queryByText("Уровень: Малыш")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/Голод 50 из 100/u)).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole("textbox", { name: "Описание наряда" }), {
     target: { value: "Зелёный походный плащ" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+  fireEvent.click(screen.getByRole("button", { name: "Создать наряд за 20 монет" }));
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
   });
 
   expect(mocks.queueOutfitGeneration).toHaveBeenCalledOnce();
-  expect(screen.getByRole("heading", { name: "Наряд заказан" })).toBeInTheDocument();
+  expect(onboardingLocalPetMock.spendExperience).toHaveBeenCalledWith(20, onboardingPet.petId);
+  expect(screen.getByLabelText("Футболка Metallica?")).toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "Описание наряда" })).not.toBeInTheDocument();
   expect(readLocalPetFirstSession(onboardingPet)?.stage).toBe("completed");
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3_100);
+  });
+  expect(screen.getByLabelText("Интересно")).toBeInTheDocument();
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3_100);
+  });
+  expect(screen.getByLabelText("Я получу заказ примерно через 10 минут"))
+    .toBeInTheDocument();
+});
+
+it("keeps the outfit form open and shows a visible error when queuing fails", async () => {
+  vi.stubEnv("NODE_ENV", "development");
+  mocks.queueOutfitGeneration.mockRejectedValueOnce(new Error("queue unavailable"));
+  const outfitPet: LocalPetState = {
+    ...pet,
+    experience: 100,
+    assetSet: undefined,
+  };
+  writeLocalPetState(outfitPet);
+  (mocks.localPet as { pet: LocalPetState }).pet = outfitPet;
+
+  render(<PetDashboard petId={outfitPet.petId} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "Нарядить" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Описание наряда" }), {
+    target: { value: "В красную футболку" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Создать наряд за 20 монет" }));
+
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(
+    screen.getByText("Не получилось нарядить персонажа. Попробуйте ещё раз.")
+      .closest('[role="alert"]'),
+  ).toHaveClass("conversation-input-error");
+  expect(mocks.queueOutfitGeneration).toHaveBeenCalledOnce();
+  expect(screen.getByRole("textbox", { name: "Описание наряда" })).toBeInTheDocument();
 });
 
 it("does not show a late chat error after the pet is reset", async () => {

@@ -305,7 +305,8 @@
   transaction; quota failures and observed lost races return failure/the actual winner instead of a
   false success. Travel-impact receipts remain inside that snapshot for idempotency.
 - Dashboard browser effects are isolated from `PetDashboard.tsx`:
-  `useConversationKeyboardOffset` owns Visual Viewport keyboard positioning and
+  `useConversationKeyboardOffset` owns shared Visual Viewport keyboard positioning for the chat
+  and outfit composers, and
   `usePetPushSnapshotSync` owns throttled server snapshot reconciliation. Background generation
   polling backs off through 2/4/8/15/30/60 seconds, pauses while offline or hidden, and resumes
   immediately when connectivity/visibility returns.
@@ -741,9 +742,13 @@
   `backend/static/onboarding/bat-help`. Resolving it uses the normal local travel-impact receipt path
   for EXP. The first session remains active on the result screen; pressing Finish moves it to the
   `awaiting-completion-message` stage and returns to the pet dashboard. The dashboard explains that
-  correct answers award spendable coins and exposes only the centered outfit action. The session is
-  persisted as `completed` only after an outfit-generation request is successfully queued. The fixed
-  story must not submit, illustrate, animate, cancel or capture a server travel.
+  correct answers award spendable coins and exposes only the centered outfit action. Outfit entry
+  reuses the chat scene: a fixed prompt bubble, balance-only status and a cost-bearing composer.
+  The session is persisted as `completed` only after an outfit-generation request is successfully
+  queued and its coin cost is deducted. The three-sentence confirmation starts with the normalized
+  `displayItem` (for example, `Футболка Metallica?`), then advances through the reaction and
+  ten-minute estimate using normal reply portions. The fixed story must not submit, illustrate,
+  animate, cancel or capture a server travel.
 - During the active first-session flow the dashboard renders only the action required by the current
   stage and centers that single action horizontally. The centered level label and XP balance remain
   hidden until the bat-help result is completed; the

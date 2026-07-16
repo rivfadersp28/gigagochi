@@ -24,6 +24,7 @@ const BUBBLE_RESIZE_EASING = "cubic-bezier(0.645, 0.045, 0.355, 1)";
 type PetSpeechBubbleStyle = CSSProperties & {
   "--main-speech-bubble-width": string;
   "--main-speech-bubble-height": string;
+  "--main-speech-bubble-horizontal-padding": string;
   "--main-speech-bubble-text-bottom-padding": string;
 };
 
@@ -34,6 +35,9 @@ type PetSpeechBubbleProps = {
   shapeSrc: string;
   maxLines?: number;
   minFontSize?: number;
+  fixedWidth?: number;
+  fixedHeight?: number;
+  horizontalPadding?: number;
 };
 
 function clampedBubbleHeight(contentHeight: number) {
@@ -62,6 +66,9 @@ export function PetSpeechBubble({
   shapeSrc,
   maxLines = BUBBLE_MAX_TEXT_LINES,
   minFontSize,
+  fixedWidth,
+  fixedHeight,
+  horizontalPadding = BUBBLE_HORIZONTAL_PADDING / 2,
 }: PetSpeechBubbleProps) {
   const [contentLayout, setContentLayout] = useState<PetMessageLayout>({
     width: 158,
@@ -73,11 +80,12 @@ export function PetSpeechBubble({
   const previousMessageTopRef = useRef<number | null>(null);
   const shapeAnimationRef = useRef<Animation | null>(null);
   const messageShiftAnimationRef = useRef<Animation | null>(null);
-  const bubbleWidth = clampedBubbleWidth(contentLayout.width);
-  const bubbleHeight = clampedBubbleHeight(contentLayout.height);
+  const bubbleWidth = fixedWidth ?? clampedBubbleWidth(contentLayout.width);
+  const bubbleHeight = fixedHeight ?? clampedBubbleHeight(contentLayout.height);
   const style: PetSpeechBubbleStyle = {
     "--main-speech-bubble-width": `${bubbleWidth}px`,
     "--main-speech-bubble-height": `${bubbleHeight}px`,
+    "--main-speech-bubble-horizontal-padding": `${horizontalPadding}px`,
     "--main-speech-bubble-text-bottom-padding": `${textBottomPadding(bubbleHeight)}px`,
   };
 
