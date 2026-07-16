@@ -341,7 +341,7 @@ export function CreatePetForm({ redirectExistingPet = true }: CreatePetFormProps
     }
     const timeoutId = window.setTimeout(() => {
       setDescription(pending.description);
-      setFlowStep(1);
+      setFlowStep(FINAL_FLOW_STEP);
       setBackgroundPhase("formed");
       void startPendingGeneration(pending);
     }, 0);

@@ -344,7 +344,7 @@ describe("CreatePetForm", () => {
     expect(mocks.generatePetAssets).not.toHaveBeenCalled();
   });
 
-  it("resumes a durable pending request at the first follow-up question", async () => {
+  it("resumes a durable pending request on the final waiting screen", async () => {
     writePendingPetGeneration({
       description: "мышонок",
       requestKey: "pet-request-reload-0001",
@@ -355,7 +355,8 @@ describe("CreatePetForm", () => {
       "мышонок",
       expect.objectContaining({ requestKey: "pet-request-reload-0001" }),
     ));
-    expect(screen.getByRole("heading", { name: "Как его будут звать?" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Персонаж формируется..." }))
+      .toBeInTheDocument();
     expect(container.querySelector("video source")).toHaveAttribute(
       "src",
       "/creation/clouds-creation-timeline.mp4",
@@ -378,6 +379,26 @@ describe("CreatePetForm", () => {
       "job-2",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     ));
+    expect(screen.getByRole("heading", { name: "Персонаж формируется..." }))
+      .toBeInTheDocument();
+    expect(mocks.generatePetAssets).not.toHaveBeenCalled();
+  });
+
+  it("opens a pet immediately when a resumed queued job is ready", async () => {
+    writePendingPetGeneration({
+      description: "мышонок",
+      requestKey: "pet-request-reload-ready-0003",
+      jobId: "job-ready-3",
+    });
+    mocks.resumePetGeneration.mockResolvedValue({ assetSetId: "assets-ready" });
+    render(<CreatePetForm />);
+
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(
+      "мышонок",
+      { assetSetId: "assets-ready" },
+    ));
+    expect(mocks.push).toHaveBeenCalledWith("/pet/pet-1");
+    expect(readPendingPetGeneration()).toBeNull();
     expect(mocks.generatePetAssets).not.toHaveBeenCalled();
   });
 
