@@ -250,7 +250,7 @@ it("guides the local first session through chat and both cards", async () => {
     name: "Листик",
     introductionPending: true,
   };
-  window.localStorage.setItem("tamagochi:v1:first-session-enabled", "1");
+  window.localStorage.setItem("tamagochi:v2:first-session-enabled", "1");
   writeLocalPetState(firstSessionPet);
   const localPetMock = mocks.localPet as {
     pet: LocalPetState;

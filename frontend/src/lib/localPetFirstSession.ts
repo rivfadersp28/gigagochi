@@ -1,7 +1,7 @@
 import type { LocalPetState } from "./types";
 
 const STORAGE_PREFIX = "tamagochi:v1:first-session:";
-const ENABLED_KEY = "tamagochi:v1:first-session-enabled";
+const ENABLED_KEY = "tamagochi:v2:first-session-enabled";
 
 export const FIRST_SESSION_STAGES = [
   "awaiting-chat",

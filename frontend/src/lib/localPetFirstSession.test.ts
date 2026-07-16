@@ -47,6 +47,14 @@ describe("localPetFirstSession", () => {
     expect(readLocalPetFirstSession(pet())).toBeNull();
   });
 
+  it("ignores the legacy debug opt-in after the production hotfix", () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("tamagochi:v1:first-session-enabled", "1");
+
+    expect(isLocalFirstSessionEnabled()).toBe(false);
+    expect(readLocalPetFirstSession(pet())).toBeNull();
+  });
+
   it("keeps the current stage across browser sessions", () => {
     const initial = readLocalPetFirstSession(pet());
     expect(initial?.stage).toBe("awaiting-chat");

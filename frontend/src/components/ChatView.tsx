@@ -28,6 +28,11 @@ import {
   runLocalPetChatTurn,
 } from "@/lib/localPetChatTurn";
 import {
+  isLocalFirstSessionEnabled,
+  restartLocalPetFirstSession,
+  setLocalFirstSessionEnabled,
+} from "@/lib/localPetFirstSession";
+import {
   recordMemoryContextDebug,
   recordReplyPromptDebug,
 } from "@/lib/debugPanelStorage";
@@ -62,10 +67,33 @@ export function ChatView({ petId }: ChatViewProps) {
   const proactiveDialogueHookRef = useRef<LocalChatMessage | null>(null);
   const pet = localPet.pet;
   const canShowDebugMenu = useTelegramCapabilities().debugMenu;
+  const firstSessionEnabled = isLocalFirstSessionEnabled();
 
   const goBack = useCallback(() => {
     router.push(`/pet/${petId}`);
   }, [petId, router]);
+
+  function restartFirstSessionFlow() {
+    if (!pet) {
+      return;
+    }
+    restartLocalPetFirstSession(pet.petId);
+    setIsDebugPanelOpen(false);
+    router.push(`/pet/${pet.petId}`);
+  }
+
+  function toggleFirstSessionFlow() {
+    if (!pet) {
+      return;
+    }
+    if (firstSessionEnabled) {
+      setLocalFirstSessionEnabled(false);
+    } else {
+      restartLocalPetFirstSession(pet.petId);
+    }
+    setIsDebugPanelOpen(false);
+    router.push(`/pet/${pet.petId}`);
+  }
 
   useTelegramBackButton(goBack);
 
@@ -369,6 +397,9 @@ export function ChatView({ petId }: ChatViewProps) {
           pet={pet}
           isOpen={isDebugPanelOpen}
           onClose={() => setIsDebugPanelOpen(false)}
+          firstSessionEnabled={firstSessionEnabled}
+          onToggleFirstSession={toggleFirstSessionFlow}
+          onRestartFirstSession={restartFirstSessionFlow}
         />
       ) : null}
     </main>

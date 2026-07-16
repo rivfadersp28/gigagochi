@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 /* eslint-disable react-hooks/set-state-in-effect -- effects drive the persisted travel state machine */
-import { Play, RotateCcw } from "lucide-react";
+import { FlaskConical, Play, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   type FormEvent,
@@ -57,8 +57,11 @@ import {
 import { startInteractiveTravelWithRecovery } from "@/lib/interactiveTravelStartRecovery";
 import {
   firstSessionTravelConfirmation,
+  isLocalFirstSessionEnabled,
   isLocalFirstSessionActive,
   readLocalPetFirstSession,
+  restartLocalPetFirstSession,
+  setLocalFirstSessionEnabled,
   updateLocalPetFirstSession,
   type LocalPetFirstSession,
 } from "@/lib/localPetFirstSession";
@@ -407,6 +410,28 @@ export function InteractiveTravelScreen({
   const currentPetId = pet?.petId;
   const currentPetIntroductionPending = pet?.introductionPending;
   const isOnboardingBatSession = isOnboardingBatTravelId(session?.travel.travelId);
+  const firstSessionEnabled = isLocalFirstSessionEnabled();
+
+  function restartFirstSessionFlow() {
+    if (!pet) {
+      return;
+    }
+    restartLocalPetFirstSession(pet.petId);
+    router.push(`/pet/${pet.petId}`);
+  }
+
+  function toggleFirstSessionFlow() {
+    if (!pet) {
+      return;
+    }
+    if (firstSessionEnabled) {
+      setLocalFirstSessionEnabled(false);
+      setFirstSession(null);
+    } else {
+      restartLocalPetFirstSession(pet.petId);
+    }
+    router.push(`/pet/${pet.petId}`);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -2016,9 +2041,17 @@ export function InteractiveTravelScreen({
           </>
         )}
 
-        {canShowDebugMenu && !isTravelLoading && !isStoryLayout ? (
+        {canShowDebugMenu && !isTravelLoading ? (
           <div className={styles.debugMenu} aria-label="Debug путешествия">
             <span>Debug</span>
+            <button type="button" onClick={toggleFirstSessionFlow}>
+              <FlaskConical aria-hidden="true" />
+              <span>Первая сессия: {firstSessionEnabled ? "вкл" : "выкл"}</span>
+            </button>
+            <button type="button" onClick={restartFirstSessionFlow}>
+              <RotateCcw aria-hidden="true" />
+              <span>Перезапустить первую сессию</span>
+            </button>
             {!demoTravel ? (
               <button
                 type="button"

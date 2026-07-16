@@ -659,6 +659,10 @@ describe("InteractiveTravelScreen", () => {
 
     render(<InteractiveTravelScreen petId="pet-1" />);
 
+    expect(await screen.findByRole("button", { name: "Первая сессия: выкл" }))
+      .toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Перезапустить первую сессию" }))
+      .toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Перезапустить путешествие" }));
 
     await waitFor(() =>
