@@ -11,6 +11,7 @@ import {
   updateLocalPetFirstSession,
 } from "@/lib/localPetFirstSession";
 import type { LocalPetState } from "@/lib/types";
+import { writeOutfitFailureNotice } from "@/lib/pendingOutfitGeneration";
 
 import { PetDashboard } from "./PetDashboard";
 
@@ -242,6 +243,25 @@ it("keeps the bottom actions enabled when onboarding is not opted in", async () 
   expect(screen.getByLabelText("Баланс опыта: 450")).toBeInTheDocument();
   expect(screen.queryByRole("progressbar", { name: "Опыт 450 из 3000" }))
     .not.toBeInTheDocument();
+});
+
+it("shows a stored outfit delivery failure once on the next open", async () => {
+  writeOutfitFailureNotice({
+    version: 1,
+    petId: pet.petId,
+    requestKey: "outfit-request-failed-1",
+    createdAt: Date.now(),
+  });
+
+  render(<PetDashboard petId={pet.petId} />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  expect(document.body.textContent).toContain(
+    "Кажется, тот наряд, который ты мне выбрал, потерялся в доставке",
+  );
+  expect(window.localStorage.getItem("gigagochi.outfit-failure-notice.v1")).toBeNull();
 });
 
 it("guides the local first session through chat and both cards", async () => {

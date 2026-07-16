@@ -1,6 +1,7 @@
 import type { LocalPetAssetSet } from "./types";
 
 export const PENDING_OUTFIT_STORAGE_KEY = "gigagochi.pending-outfit.v1";
+export const OUTFIT_FAILURE_NOTICE_STORAGE_KEY = "gigagochi.outfit-failure-notice.v1";
 
 export type PendingOutfitGeneration = {
   version: 1;
@@ -15,6 +16,13 @@ export type PendingOutfitGeneration = {
     happyImageUrl: string;
   };
   baseAssetSet: LocalPetAssetSet;
+  createdAt: number;
+};
+
+export type OutfitFailureNotice = {
+  version: 1;
+  petId: string;
+  requestKey: string;
   createdAt: number;
 };
 
@@ -99,5 +107,52 @@ export function clearPendingOutfitGeneration(requestKey?: string): void {
     storage.removeItem(PENDING_OUTFIT_STORAGE_KEY);
   } catch {
     // A later app open will retry cleanup.
+  }
+}
+
+export function readOutfitFailureNotice(): OutfitFailureNotice | null {
+  const storage = store();
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(OUTFIT_FAILURE_NOTICE_STORAGE_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<OutfitFailureNotice>;
+    if (
+      value.version !== 1
+      || !validText(value.petId, 128)
+      || !validText(value.requestKey, 96)
+      || typeof value.createdAt !== "number"
+      || Date.now() - value.createdAt > RETENTION_MS
+      || value.createdAt - Date.now() > 5 * 60 * 1000
+    ) {
+      storage.removeItem(OUTFIT_FAILURE_NOTICE_STORAGE_KEY);
+      return null;
+    }
+    return value as OutfitFailureNotice;
+  } catch {
+    return null;
+  }
+}
+
+export function writeOutfitFailureNotice(notice: OutfitFailureNotice): boolean {
+  const storage = store();
+  if (!storage) return false;
+  try {
+    storage.setItem(OUTFIT_FAILURE_NOTICE_STORAGE_KEY, JSON.stringify(notice));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function clearOutfitFailureNotice(requestKey?: string): void {
+  const storage = store();
+  if (!storage) return;
+  const notice = readOutfitFailureNotice();
+  if (requestKey && notice?.requestKey !== requestKey) return;
+  try {
+    storage.removeItem(OUTFIT_FAILURE_NOTICE_STORAGE_KEY);
+  } catch {
+    // The notice is harmless if it survives until the next app open.
   }
 }

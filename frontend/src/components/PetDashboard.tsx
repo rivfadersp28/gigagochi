@@ -28,10 +28,14 @@ import {
   readLocalPetSettings,
 } from "@/lib/localPetStorage";
 import {
+  clearOutfitFailureNotice,
   clearPendingOutfitGeneration,
+  readOutfitFailureNotice,
   readPendingOutfitGeneration,
   setPendingOutfitJobId,
+  writeOutfitFailureNotice,
   writePendingOutfitGeneration,
+  type OutfitFailureNotice,
   type PendingOutfitGeneration,
 } from "@/lib/pendingOutfitGeneration";
 import {
@@ -206,6 +210,8 @@ const IDLE_REPLY_MAX_PORTIONS = 3;
 const FOOD_REPLY_MAX_CHARS = 60;
 const REPLY_AUTO_ADVANCE_MS = 3_000;
 const OUTFIT_PROMPT = "Во что мне нарядиться?";
+const OUTFIT_DELIVERY_FAILED_REPLY =
+  "Кажется, тот наряд, который ты мне выбрал, потерялся в доставке. Попробуй ещё раз.";
 const UNNAMED_STATUS_NAME = "Без имени";
 const ACTION_ICON_CACHE_VERSION = "20260714-figma-218-1907-1";
 const VIDEO_FILTER_CACHE_VERSION = "20260713-video-filter-lossless-webp-1";
@@ -346,6 +352,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [pendingOutfit, setPendingOutfit] = useState<PendingOutfitGeneration | null>(
     () => readPendingOutfitGeneration(),
   );
+  const initialPendingOutfitRequestKeyRef = useRef(pendingOutfit?.requestKey ?? null);
+  const [outfitFailureNotice, setOutfitFailureNotice] = useState<OutfitFailureNotice | null>(
+    () => readOutfitFailureNotice(),
+  );
   const [chatInput, setChatInput] = useState("");
   const [chatError, setChatError] = useState<PresentedError | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
@@ -466,6 +476,25 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         }
       } catch (caught) {
         if (!controller.signal.aborted) {
+          const errorCode = typeof caught === "object" && caught !== null && "code" in caught
+            ? (caught as { code?: unknown }).code
+            : undefined;
+          if (errorCode === "OUTFIT_PROMPT_REPAIR_EXHAUSTED") {
+            const notice: OutfitFailureNotice = {
+              version: 1,
+              petId: pendingOutfit.petId,
+              requestKey: pendingOutfit.requestKey,
+              createdAt: Date.now(),
+            };
+            clearPendingOutfitGeneration(pendingOutfit.requestKey);
+            setPendingOutfit(null);
+            if (initialPendingOutfitRequestKeyRef.current === pendingOutfit.requestKey) {
+              setOutfitFailureNotice(notice);
+            } else {
+              writeOutfitFailureNotice(notice);
+            }
+            return;
+          }
           setOutfitError(presentError(
             caught,
             "Не получилось подготовить наряд. Попробуйте ещё раз.",
@@ -671,6 +700,19 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     }
     return nextMessage.id;
   }, [cancelPetTapThanksProtection, pet]);
+
+  useEffect(() => {
+    if (!outfitFailureNotice || outfitFailureNotice.petId !== pet?.petId) {
+      return;
+    }
+    clearOutfitFailureNotice(outfitFailureNotice.requestKey);
+    setOutfitFailureNotice(null);
+    showPetReplyMessage(OUTFIT_DELIVERY_FAILED_REPLY, true, {
+      dialogueHook: true,
+      voiceMode: "system",
+      autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,
+    });
+  }, [outfitFailureNotice, pet?.petId, showPetReplyMessage]);
 
   const protectPetTapThanksReply = useCallback((messageId: number) => {
     cancelPetTapThanksProtection();

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from datetime import UTC, datetime
@@ -15,13 +16,17 @@ from app.services.image_service import (
     PET_GENERATION_METADATA_FILENAME,
     PET_SCENE_IMAGE_SIZE,
     PetAssetImageSet,
+    PromptRepairExhausted,
     _atomic_write_nonempty,
     _is_valid_image_file,
     generated_dir_for,
+    generation_error_code,
     reserve_image_edit_bytes,
 )
 
 OUTFIT_GENERATION_PREFIX = "__OUTFIT_V1__"
+OUTFIT_PROMPT_REPAIR_ATTEMPTS = 2
+logger = logging.getLogger(__name__)
 GENERATED_ROOT = Path(__file__).resolve().parents[2] / "static" / "generated"
 TEST_PET_ROOT = Path(__file__).resolve().parents[3] / "frontend" / "public" / "test-pet"
 _GENERATED_IMAGE_PATH = re.compile(
@@ -49,6 +54,14 @@ _OUTFIT_SCHEMA = {
         },
     },
     "required": ["item", "displayItem"],
+    "additionalProperties": False,
+}
+_OUTFIT_REPAIR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "revisedPrompt": {"type": "string", "maxLength": 180},
+    },
+    "required": ["revisedPrompt"],
     "additionalProperties": False,
 }
 
@@ -178,6 +191,60 @@ def _outfit_edit_prompt(prompt: str) -> str:
     )
 
 
+def _repair_outfit_prompt(original_prompt: str, rejected_prompt: str, attempt: int) -> str:
+    settings = get_settings()
+    fallback_model = getattr(settings, "openai_chat_model", None)
+    model = resolve_llm_model("media_prompt_repair", fallback_model)
+    completion = complete_chat(
+        "media_prompt_repair",
+        {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты безопасно переформулируешь короткую инструкцию для генератора "
+                        "изображений после ложного срабатывания фильтра. Сохрани допустимую "
+                        "суть выбранного предмета одежды, но убери двусмысленные, тревожные, "
+                        "брендовые или конфликтные формулировки. Не маскируй запрещённый смысл, "
+                        "не добавляй людей, действия, сюжет, фон и новые детали. Верни одну "
+                        "короткую инструкцию вида «Одень персонажа в ...»."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Исходная инструкция: {original_prompt}\n"
+                        f"Отклонённая версия: {rejected_prompt}\n"
+                        f"Попытка исправления: {attempt}"
+                    ),
+                },
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "media_prompt_repair",
+                    "schema": _OUTFIT_REPAIR_SCHEMA,
+                    "strict": True,
+                },
+            },
+            "timeout": settings.openai_chat_timeout_seconds,
+        },
+    )
+    try:
+        payload = json.loads(completion.content or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("OUTFIT_PROMPT_REPAIR_INVALID_JSON") from exc
+    revised_prompt = _clean_item(
+        payload.get("revisedPrompt") if isinstance(payload, dict) else None
+    )
+    if not revised_prompt:
+        raise RuntimeError("OUTFIT_PROMPT_REPAIR_EMPTY")
+    if not revised_prompt.endswith(('.', '!', '?')):
+        revised_prompt += "."
+    return revised_prompt
+
+
 def _outfit_mood_prompt(mood: str) -> str:
     mood_rule = {
         "sad": "Сделай выражение и позу персонажа грустными.",
@@ -232,14 +299,38 @@ def generate_outfit_image_asset_set(
     prompts: dict[str, str] = {"idle": _outfit_edit_prompt(prompt)}
     if not _is_valid_image_file(paths["idle"]):
         idle_source_path = _generated_reference_path(references.get("idle"))
-        with reserve_image_edit_bytes(
-            prompts["idle"],
-            idle_source_path,
-            label="pet_outfit/idle_image",
-            size=PET_SCENE_IMAGE_SIZE,
-            provider=image_provider,
-        ) as image_bytes:
-            _atomic_write_nonempty(paths["idle"], image_bytes)
+        current_prompt = prompt
+        for provider_attempt in range(OUTFIT_PROMPT_REPAIR_ATTEMPTS + 1):
+            prompts["idle"] = _outfit_edit_prompt(current_prompt)
+            try:
+                with reserve_image_edit_bytes(
+                    prompts["idle"],
+                    idle_source_path,
+                    label="pet_outfit/idle_image",
+                    size=PET_SCENE_IMAGE_SIZE,
+                    provider=image_provider,
+                ) as image_bytes:
+                    _atomic_write_nonempty(paths["idle"], image_bytes)
+                break
+            except Exception as exc:
+                if generation_error_code(exc) != "IMAGE_PROMPT_REJECTED":
+                    raise
+                if provider_attempt >= OUTFIT_PROMPT_REPAIR_ATTEMPTS:
+                    raise PromptRepairExhausted(
+                        "outfit prompt was rejected after two repairs"
+                    ) from exc
+                repair_attempt = provider_attempt + 1
+                logger.info(
+                    "outfit_prompt_repair attempt=%s maxAttempts=%s provider=%s",
+                    repair_attempt,
+                    OUTFIT_PROMPT_REPAIR_ATTEMPTS,
+                    image_provider,
+                )
+                current_prompt = _repair_outfit_prompt(
+                    prompt,
+                    current_prompt,
+                    repair_attempt,
+                )
 
     for mood in ("sad", "happy"):
         paths[mood] = output_dir / f"teen-{mood}.png"

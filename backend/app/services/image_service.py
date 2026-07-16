@@ -117,6 +117,10 @@ class MediaResultError(RuntimeError):
         super().__init__(code)
 
 
+class PromptRepairExhausted(RuntimeError):
+    code = "OUTFIT_PROMPT_REPAIR_EXHAUSTED"
+
+
 KANDINSKY_HTTP_MAX_ATTEMPTS = 2
 KANDINSKY_HTTP_RETRY_SECONDS = (3.0,)
 KANDINSKY_RESULT_RETRY_WINDOW_SECONDS = 50.0
@@ -3747,6 +3751,8 @@ def _error_chain_contains(exc: BaseException, error_types: Any) -> bool:
 
 
 def generation_error_code(exc: Exception) -> str:
+    if isinstance(exc, PromptRepairExhausted):
+        return exc.code
     if isinstance(exc, StorageCapacityError):
         return exc.code
     if isinstance(exc, MediaResultError):
@@ -3763,6 +3769,21 @@ def generation_error_code(exc: Exception) -> str:
         return "OPENAI_RATE_LIMIT"
     if isinstance(exc, httpx.HTTPStatusError):
         status_code = exc.response.status_code
+        response_text = exc.response.text.casefold()
+        if status_code in {400, 403, 422} and any(
+            term in response_text
+            for term in (
+                "safety",
+                "policy",
+                "moderation",
+                "content filter",
+                "content_filter",
+                "censor",
+                "rejected by",
+                "prompt rejected",
+            )
+        ):
+            return "IMAGE_PROMPT_REJECTED"
         if status_code == 401:
             return "OPENAI_AUTH_FAILED"
         if status_code == 403:
@@ -3777,6 +3798,22 @@ def generation_error_code(exc: Exception) -> str:
         if any(term in message for term in ("safety", "policy", "moderation", "rejected")):
             return "IMAGE_PROMPT_REJECTED"
         return "OPENAI_BAD_REQUEST"
+    if isinstance(exc, KandinskyTaskError):
+        message = str(exc).casefold()
+        if any(
+            term in message
+            for term in (
+                "safety",
+                "policy",
+                "moderation",
+                "content filter",
+                "content_filter",
+                "censor",
+                "prompt rejected",
+            )
+        ):
+            return "IMAGE_PROMPT_REJECTED"
+        return "KANDINSKY_TASK_FAILED"
     if isinstance(exc, APIStatusError):
         return f"OPENAI_STATUS_{exc.status_code}"
     if isinstance(exc, APIConnectionError | httpx.HTTPError):

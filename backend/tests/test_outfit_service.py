@@ -116,3 +116,96 @@ def test_outfit_generation_accepts_test_pet_reference(monkeypatch, tmp_path) -> 
     resolved = outfit_service._generated_reference_path("/test-pet/openai-normal.png?v=fixture")
 
     assert resolved == source_path
+
+
+def test_outfit_generation_repairs_rejected_prompt_twice(monkeypatch, tmp_path) -> None:
+    generated_root = tmp_path / "generated"
+    source_dir = generated_root / "source-assets"
+    output_dir = generated_root / "output-assets"
+    source_dir.mkdir(parents=True)
+    (source_dir / "teen-idle.png").write_bytes(_png_bytes("navy"))
+
+    prompts: list[str] = []
+
+    @contextmanager
+    def fake_reserve(prompt, _source_path, **_kwargs):
+        prompts.append(prompt)
+        if len(prompts) <= 2:
+            raise RuntimeError("blocked")
+        yield _png_bytes("red")
+
+    monkeypatch.setattr(outfit_service, "GENERATED_ROOT", generated_root)
+    monkeypatch.setattr(outfit_service, "generated_dir_for", lambda _asset_id: output_dir)
+    monkeypatch.setattr(outfit_service, "reserve_image_edit_bytes", fake_reserve)
+    monkeypatch.setattr(
+        outfit_service,
+        "generation_error_code",
+        lambda exc: "IMAGE_PROMPT_REJECTED" if str(exc) == "blocked" else "GENERATION_FAILED",
+    )
+    monkeypatch.setattr(
+        outfit_service,
+        "_repair_outfit_prompt",
+        lambda _original, _rejected, attempt: f"Одень персонажа в безопасный плащ {attempt}.",
+    )
+
+    encoded = outfit_service.encode_outfit_generation_description(
+        "Одень персонажа в исходный плащ.",
+        idle_image_url="/static/generated/source-assets/teen-idle.png",
+        sad_image_url="/static/generated/source-assets/teen-idle.png",
+        happy_image_url="/static/generated/source-assets/teen-idle.png",
+    )
+    outfit_service.generate_outfit_image_asset_set(
+        encoded,
+        image_provider="openai",
+        asset_set_id=uuid.uuid4(),
+    )
+
+    assert len(prompts) == 5
+    assert "исходный плащ" in prompts[0]
+    assert "безопасный плащ 1" in prompts[1]
+    assert "безопасный плащ 2" in prompts[2]
+
+
+def test_outfit_generation_marks_two_failed_repairs_as_exhausted(monkeypatch, tmp_path) -> None:
+    generated_root = tmp_path / "generated"
+    source_dir = generated_root / "source-assets"
+    output_dir = generated_root / "output-assets"
+    source_dir.mkdir(parents=True)
+    (source_dir / "teen-idle.png").write_bytes(_png_bytes("navy"))
+
+    @contextmanager
+    def fake_reserve(_prompt, _source_path, **_kwargs):
+        raise RuntimeError("blocked")
+        yield b""  # pragma: no cover
+
+    monkeypatch.setattr(outfit_service, "GENERATED_ROOT", generated_root)
+    monkeypatch.setattr(outfit_service, "generated_dir_for", lambda _asset_id: output_dir)
+    monkeypatch.setattr(outfit_service, "reserve_image_edit_bytes", fake_reserve)
+    monkeypatch.setattr(
+        outfit_service,
+        "generation_error_code",
+        lambda _exc: "IMAGE_PROMPT_REJECTED",
+    )
+    monkeypatch.setattr(
+        outfit_service,
+        "_repair_outfit_prompt",
+        lambda _original, _rejected, attempt: f"Одень персонажа в безопасный плащ {attempt}.",
+    )
+
+    encoded = outfit_service.encode_outfit_generation_description(
+        "Одень персонажа в исходный плащ.",
+        idle_image_url="/static/generated/source-assets/teen-idle.png",
+        sad_image_url="/static/generated/source-assets/teen-idle.png",
+        happy_image_url="/static/generated/source-assets/teen-idle.png",
+    )
+
+    try:
+        outfit_service.generate_outfit_image_asset_set(
+            encoded,
+            image_provider="openai",
+            asset_set_id=uuid.uuid4(),
+        )
+    except outfit_service.PromptRepairExhausted as exc:
+        assert exc.code == "OUTFIT_PROMPT_REPAIR_EXHAUSTED"
+    else:
+        raise AssertionError("PromptRepairExhausted was not raised")
