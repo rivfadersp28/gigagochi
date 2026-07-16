@@ -108,6 +108,10 @@ describe("localPetFirstSession", () => {
     expect(FIRST_SESSION_COPY.afterRemedy).not.toContain("отправимся в путешествие");
   });
 
+  it("asks what the owner likes to do after learning their name", () => {
+    expect(FIRST_SESSION_COPY.afterName).toBe("А чем ты любишь заниматься?");
+  });
+
   it("explains experience and future help after the first challenge", () => {
     expect(FIRST_SESSION_COPY.afterFirstChallenge).toContain("снова будет нужна твоя помощь");
     expect(FIRST_SESSION_COPY.afterFirstChallenge).toContain("получаю опыт");

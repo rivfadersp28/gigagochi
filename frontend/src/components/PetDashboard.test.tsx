@@ -255,8 +255,12 @@ it("guides the local first session through chat and both cards", async () => {
   });
   fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(4_000);
+    await vi.advanceTimersByTimeAsync(1_100);
   });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3_100);
+  });
+  expect(screen.getByLabelText("А чем ты любишь заниматься?")).toBeInTheDocument();
 
   fireEvent.change(screen.getByRole("textbox", { name: "Сообщение персонажу" }), {
     target: { value: "Люблю ходить в походы" },
@@ -278,6 +282,11 @@ it("guides the local first session through chat and both cards", async () => {
   expect(berries).toBeEnabled();
   expect(remedy).toBeDisabled();
   fireEvent.click(berries);
+  expect(screen.getByLabelText("Хм, вкусно!")).toBeInTheDocument();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3_100);
+  });
+  expect(screen.getByLabelText("Но что-то я себя неважно чувствую")).toBeInTheDocument();
   expect(berries).toBeEnabled();
   expect(remedy).toBeEnabled();
 

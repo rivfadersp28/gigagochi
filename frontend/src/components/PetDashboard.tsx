@@ -634,6 +634,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         ? nextMessage.id
         : currentConversationMessageId,
     );
+    setFeedReplyMessageId((currentFeedMessageId) =>
+      currentFeedMessageId === currentMessage.id
+        ? nextMessage.id
+        : currentFeedMessageId,
+    );
     return true;
   }, []);
 
@@ -1453,9 +1458,11 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           "awaiting-first-food",
         ));
       }
-      const visibleReply = isFirstSessionFollowupChat
-        ? `${response.reply} ${FIRST_SESSION_COPY.afterChat}`
-        : response.reply;
+      const visibleReply = isFirstSessionInitialChat
+        ? `${response.reply} ${FIRST_SESSION_COPY.afterName}`
+        : isFirstSessionFollowupChat
+          ? `${response.reply} ${FIRST_SESSION_COPY.afterChat}`
+          : response.reply;
       showPetReplyMessage(visibleReply, true, {
         showInConversation: true,
         autoAdvanceDelayMs: REPLY_AUTO_ADVANCE_MS,

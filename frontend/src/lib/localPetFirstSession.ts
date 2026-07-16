@@ -165,6 +165,8 @@ export function firstSessionIntroduction(pet: LocalPetState) {
 }
 
 export const FIRST_SESSION_COPY = {
+  afterName:
+    "А чем ты любишь заниматься?",
   afterChat:
     "Слушай, что-то я проголодался. Может, у тебя что-нибудь завалялось?",
   afterFirstFood:
