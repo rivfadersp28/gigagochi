@@ -49,6 +49,21 @@ type UseLocalPetStateResult = {
   play: () => LocalPetState | null;
   registerPetTap: () => { pet: LocalPetState; rewarded: boolean } | null;
   spendExperience: (amount: number, expectedPetId?: string) => LocalPetState | null;
+  chargeOutfitExperience: (
+    amount: number,
+    requestKey: string,
+    expectedPetId?: string,
+  ) => LocalPetState | null;
+  adoptChargedOutfitExperience: (
+    amount: number,
+    requestKey: string,
+    expectedPetId?: string,
+  ) => LocalPetState | null;
+  refundOutfitExperience: (
+    amount: number,
+    requestKey: string,
+    expectedPetId?: string,
+  ) => LocalPetState | null;
   reset: (expectedPetId?: string) => boolean;
   resetStats: () => LocalPetState | null;
   kill: () => LocalPetState | null;
@@ -309,6 +324,33 @@ export function useLocalPetState(): UseLocalPetStateResult {
     )?.pet ?? null;
   }, [commitPetMutation]);
 
+  const chargeOutfitExperience = useCallback((
+    amount: number,
+    requestKey: string,
+    expectedPetId?: string,
+  ) => commitPetMutation(
+    { kind: "outfit-experience-charge", amount, requestKey },
+    expectedPetId ?? currentPetRef.current?.petId,
+  )?.pet ?? null, [commitPetMutation]);
+
+  const adoptChargedOutfitExperience = useCallback((
+    amount: number,
+    requestKey: string,
+    expectedPetId?: string,
+  ) => commitPetMutation(
+    { kind: "outfit-experience-adopt-charge", amount, requestKey },
+    expectedPetId ?? currentPetRef.current?.petId,
+  )?.pet ?? null, [commitPetMutation]);
+
+  const refundOutfitExperience = useCallback((
+    amount: number,
+    requestKey: string,
+    expectedPetId?: string,
+  ) => commitPetMutation(
+    { kind: "outfit-experience-refund", amount, requestKey },
+    expectedPetId ?? currentPetRef.current?.petId,
+  )?.pet ?? null, [commitPetMutation]);
+
   const reset = useCallback((expectedPetId?: string) => {
     const targetPetId = expectedPetId ?? currentPetRef.current?.petId;
     const currentPet = readPetForMutation(targetPetId);
@@ -493,6 +535,9 @@ export function useLocalPetState(): UseLocalPetStateResult {
     play,
     registerPetTap,
     spendExperience,
+    chargeOutfitExperience,
+    adoptChargedOutfitExperience,
+    refundOutfitExperience,
     reset,
     resetStats,
     kill,

@@ -24,6 +24,10 @@ const travelScreenStyles = readFileSync(
   "src/components/InteractiveTravelScreen.module.css",
   "utf8",
 );
+const tiltedGlassStyles = readFileSync(
+  "src/components/TiltedGlassButton.module.css",
+  "utf8",
+);
 
 function cssRule(className: string) {
   return travelScreenStyles.match(new RegExp(`\\.${className}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
@@ -751,7 +755,6 @@ describe("InteractiveTravelScreen", () => {
     expect(await screen.findByLabelText("История и вопрос")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Создать новую историю" }))
       .not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Debug путешествия")).not.toBeInTheDocument();
     const backHandler = mocks.useTelegramBackButton.mock.calls.at(-1)?.[0] as
       | (() => void)
       | undefined;
@@ -1051,9 +1054,7 @@ describe("InteractiveTravelScreen", () => {
       .find((match) => match[1]?.includes("z-index"))?.[1] ?? "";
     const pendingVideoRule = cssRule("storyVideoPending");
     const answersScrollRule = cssRule("storyAnswersScroll");
-    const answerRules = travelScreenStyles.match(
-      /\.storyAnswerButton,\s*\.storyResultButton\s*\{([^}]*)\}/u,
-    )?.[1] ?? "";
+    const answerRules = tiltedGlassStyles.match(/\.button\s*\{([^}]*)\}/u)?.[1] ?? "";
 
     expect(mediaRule).toContain("width: 382px");
     expect(mediaRule).toContain("height: 461px");
@@ -1067,14 +1068,17 @@ describe("InteractiveTravelScreen", () => {
     expect(textRule).toContain("gap: 13px");
     expect(textRule).toContain("text-wrap: pretty");
     expect(answerRules).toContain("height: 62px");
+    expect(answerRules).toContain("border: 0");
+    expect(answerRules).toContain("background: rgb(255 255 255 / 60%)");
+    expect(answerRules).toContain("box-shadow: 0 -5px 6px rgb(0 24 46 / 40%) inset");
+    expect(answerRules).toContain("font-size: 23px");
     expect(answerRules).toContain("white-space: nowrap");
-    expect(answerRules).toContain("backdrop-filter: blur(10px)");
+    expect(answerRules).toContain("backdrop-filter: blur(20px)");
     expect(answerRules).toContain("touch-action: manipulation");
     expect(answersScrollRule).toContain("overflow: visible");
     expect(answersScrollRule).toContain("padding: 0 20px 59px");
     expect(cssRule("storyAnswersRow")).toContain("flex-direction: column");
-    expect(cssRule("storyAnswerButton")).toContain("--story-answer-rotation: -2deg");
-    expect(travelScreenStyles).toContain("--story-answer-rotation: 2deg");
+    expect(answerRules).toContain("--tilted-glass-rotation: -2deg");
   });
 
   it("applies a resolved impact once and preloads the next illustration", async () => {
@@ -1231,6 +1235,36 @@ describe("InteractiveTravelScreen", () => {
           }),
         }),
       ),
+    );
+  });
+
+  it("retries a transient animation failure before giving up", async () => {
+    vi.useFakeTimers();
+    mocks.animateInteractiveTravelPart
+      .mockRejectedValueOnce(new Error("temporary provider failure"))
+      .mockResolvedValueOnce({ partNumber: 1, videoUrl: "/retried-story-1.mp4" });
+    mocks.readLocalInteractiveTravel.mockReturnValue(
+      restoredSession(travel([pendingPart(1)]), "story"),
+    );
+
+    render(<InteractiveTravelScreen petId="pet-1" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(mocks.animateInteractiveTravelPart).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+
+    expect(mocks.animateInteractiveTravelPart).toHaveBeenCalledTimes(2);
+    expect(mocks.writeLocalInteractiveTravelDurably).toHaveBeenCalledWith(
+      "pet-1",
+      expect.objectContaining({
+        travel: expect.objectContaining({
+          parts: [expect.objectContaining({ backgroundVideoUrl: "/retried-story-1.mp4" })],
+        }),
+      }),
     );
   });
 

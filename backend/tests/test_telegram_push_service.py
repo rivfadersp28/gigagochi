@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from app.bot import TelegramAPIError
 from app.config import Settings
-from app.schemas import LocalPetPushSnapshotRequest, LocalProactiveResponse
+from app.schemas import DebugSavedPetBundle, LocalPetPushSnapshotRequest, LocalProactiveResponse
 from app.services import telegram_push_service
 from app.services.telegram_auth_service import TelegramUserContext
 from app.services.telegram_push_store import (
@@ -101,6 +101,35 @@ def _snapshot_payload() -> LocalPetPushSnapshotRequest:
                     "text": "Пользователь любит короткие сообщения.",
                 }
             ]
+        },
+    )
+
+
+def _debug_saved_pet_bundle(pet_id: str = "pet-1") -> DebugSavedPetBundle:
+    timestamp = "2026-07-07T12:00:00Z"
+    return DebugSavedPetBundle(
+        petId=pet_id,
+        pet={
+            "version": 2,
+            "petId": pet_id,
+            "description": "гигантский земляной великан",
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+            "lastInteractionAt": timestamp,
+            "lastStatsTickAt": timestamp,
+            "lastStatTickAt": {key: timestamp for key in ("hunger", "happiness", "energy")},
+            "stage": "adult",
+            "mood": "idle",
+            "stats": {"hunger": 80, "happiness": 70, "energy": 60},
+        },
+        chatHistory={"version": 1, "messages": []},
+        memory={
+            "version": 2,
+            "petId": pet_id,
+            "userProfile": {},
+            "memories": [],
+            "learnings": [],
+            "proactiveLog": [],
         },
     )
 
@@ -619,6 +648,62 @@ def test_pet_reset_deletes_server_data_and_resets_only_matching_local_pet(
     store = json.loads((tmp_path / "push.json").read_text(encoding="utf-8"))
     assert store["records"][str(TEST_TELEGRAM_ID)]["petId"] == "pet-2"
     assert "petResetRequest" not in store["records"][str(TEST_TELEGRAM_ID)]
+
+
+def test_debug_saved_pet_slot_survives_reset_and_fences_replaced_pet(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+    telegram_push_service.register_push_snapshot(_user(), _snapshot_payload())
+
+    created, saved = telegram_push_service.save_debug_pet_slot(
+        TEST_TELEGRAM_ID,
+        _debug_saved_pet_bundle(),
+    )
+    assert created is True
+    assert saved.petId == "pet-1"
+
+    replacement = _snapshot_payload().model_copy(update={"petId": "pet-2"})
+    telegram_push_service.register_push_snapshot(_user(), replacement)
+    restored = telegram_push_service.activate_debug_pet_slot(TEST_TELEGRAM_ID)
+
+    assert restored.petId == "pet-1"
+    record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert record["petId"] == "pet-1"
+    assert record["debugSavedPetSlot"]["petId"] == "pet-1"
+    assert any(item["petId"] == "pet-2" for item in record["petResetTombstones"])
+
+    late_replacement = telegram_push_service.register_push_snapshot(_user(), replacement)
+    assert late_replacement.resetPet is True
+    assert telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]["petId"] == (
+        "pet-1"
+    )
+
+    telegram_push_service.request_pet_reset(TEST_TELEGRAM_ID)
+    reset_record = telegram_push_service._read_store()["records"][str(TEST_TELEGRAM_ID)]
+    assert "pet" not in reset_record
+    assert reset_record["debugSavedPetSlot"]["petId"] == "pet-1"
+    assert telegram_push_service.activate_debug_pet_slot(TEST_TELEGRAM_ID).petId == "pet-1"
+
+
+def test_debug_saved_pet_slot_is_immutable(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(telegram_push_store_path=str(tmp_path / "push.json"))
+    monkeypatch.setattr(telegram_push_service, "get_settings", lambda: settings)
+
+    first_created, _ = telegram_push_service.save_debug_pet_slot(
+        TEST_TELEGRAM_ID,
+        _debug_saved_pet_bundle("pet-1"),
+    )
+    second_created, saved = telegram_push_service.save_debug_pet_slot(
+        TEST_TELEGRAM_ID,
+        _debug_saved_pet_bundle("pet-2"),
+    )
+
+    assert first_created is True
+    assert second_created is False
+    assert saved.petId == "pet-1"
 
 
 def test_unregister_snapshot_fences_late_writes_without_blocking_a_new_pet(

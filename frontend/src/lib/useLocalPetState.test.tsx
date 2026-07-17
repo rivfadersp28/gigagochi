@@ -113,6 +113,30 @@ describe("useLocalPetState snapshot CAS", () => {
     expect(readLocalPetState()).toEqual(petB);
   });
 
+  it("charges and refunds an outfit request exactly once", () => {
+    writeLocalPetState({ ...petState("pet-a"), experience: 500 });
+    const { result } = renderHook(() => useLocalPetState());
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
+    act(() => {
+      expect(result.current.chargeOutfitExperience(200, "outfit-request-0001", "pet-a"))
+        .not.toBeNull();
+      expect(result.current.chargeOutfitExperience(200, "outfit-request-0001", "pet-a"))
+        .not.toBeNull();
+    });
+    expect(readLocalPetState()?.experience).toBe(300);
+
+    act(() => {
+      expect(result.current.refundOutfitExperience(200, "outfit-request-0001", "pet-a"))
+        .not.toBeNull();
+      expect(result.current.refundOutfitExperience(200, "outfit-request-0001", "pet-a"))
+        .not.toBeNull();
+    });
+    expect(readLocalPetState()?.experience).toBe(500);
+  });
+
   it("durably unregisters a reset pet from push snapshots", async () => {
     writeLocalPetState(petState("pet-a"));
     const { result } = renderHook(() => useLocalPetState());

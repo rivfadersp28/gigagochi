@@ -51,6 +51,22 @@ function generatedAssetSet(
 }
 
 describe("DebugPanel visual mode selector", () => {
+  it("switches to the immutable saved pet", async () => {
+    const onSwitchToSavedPet = vi.fn().mockResolvedValue(undefined);
+    render(
+      <DebugPanel
+        pet={pet()}
+        isOpen
+        onClose={() => undefined}
+        onSwitchToSavedPet={onSwitchToSavedPet}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Переключиться на сохранённого" }));
+
+    await waitFor(() => expect(onSwitchToSavedPet).toHaveBeenCalledOnce());
+  });
+
   it("offers a first-session restart even while onboarding is disabled", () => {
     const onRestartFirstSession = vi.fn();
     render(

@@ -3,9 +3,9 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AIProvider = Literal["openai", "openrouter"]
@@ -18,6 +18,18 @@ class Settings(BaseSettings):
     webapp_url: str | None = None
     backend_public_url: str | None = None
     backend_internal_url: str | None = None
+    google_auth_web_client_id: str | None = Field(default=None, max_length=512)
+    auth_session_store_path: str = Field(
+        default="data/push/google_auth_sessions.sqlite3",
+        min_length=1,
+        max_length=4_096,
+    )
+    auth_access_token_ttl_seconds: int = Field(default=15 * 60, ge=60, le=60 * 60)
+    auth_refresh_token_ttl_seconds: int = Field(
+        default=30 * 24 * 60 * 60,
+        ge=60 * 60,
+        le=365 * 24 * 60 * 60,
+    )
     allow_dev_tma_auth: bool = False
     enable_in_memory_rate_limit: bool = False
     rate_limit_store_path: str = "data/push/rate_limits.sqlite3"
@@ -79,6 +91,7 @@ class Settings(BaseSettings):
     generation_video_workers: int = Field(default=2, ge=1, le=32)
     generation_max_queued_jobs: int = Field(default=40, ge=0, le=500)
     generation_job_store_path: str = "data/push/generation_jobs.sqlite3"
+    android_feature_store_path: str = "data/push/android_feature_jobs.sqlite3"
     provider_task_receipt_store_path: str = Field(
         default="data/push/provider_task_receipts.sqlite3",
         min_length=1,
@@ -260,6 +273,31 @@ class Settings(BaseSettings):
         }:
             raise ValueError("provider task receipt store must be a SQLite file path")
         return cleaned
+
+    @field_validator("auth_session_store_path")
+    @classmethod
+    def require_durable_auth_session_store_path(cls, value: str) -> str:
+        cleaned = value.strip()
+        if "\x00" in cleaned or Path(cleaned).suffix.lower() not in {
+            ".db",
+            ".sqlite",
+            ".sqlite3",
+        }:
+            raise ValueError("auth session store must be a SQLite file path")
+        return cleaned
+
+    @field_validator("google_auth_web_client_id", mode="before")
+    @classmethod
+    def normalize_google_auth_web_client_id(cls, value: object) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        return str(value).strip()
+
+    @model_validator(mode="after")
+    def require_refresh_lifetime_longer_than_access(self) -> Self:
+        if self.auth_refresh_token_ttl_seconds <= self.auth_access_token_ttl_seconds:
+            raise ValueError("refresh token lifetime must be longer than access token lifetime")
+        return self
 
     @field_validator(
         "openrouter_account_namespace",

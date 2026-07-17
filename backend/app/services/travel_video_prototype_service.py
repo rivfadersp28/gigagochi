@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import hashlib
 import json
@@ -24,6 +25,7 @@ from app.services.background_story_service import (
     generate_background_story_image_bytes,
     generate_background_story_video_bytes,
 )
+from app.services.feature_owner import FeatureOwner, TelegramNotificationTarget
 from app.services.generation_notification_service import send_travel_ready_video
 from app.services.openai_service import chat_reasoning_effort_kwargs, get_chat_model
 from app.services.prompt_debug import log_chat_completion_prompt, log_chat_completion_response
@@ -55,10 +57,16 @@ TRAVEL_VIDEO_PROTOTYPE_VIDEO_PROMPT = (
     "secondary movement. No redesign, morphing, new character, new prop, lip sync, scene cut or "
     "dramatic physics change."
 )
+TRAVEL_VIDEO_PROTOTYPE_RECOVERY_INTERVAL_SECONDS = 30
+TRAVEL_VIDEO_PROTOTYPE_RECOVERY_BATCH_SIZE = 20
 logger = logging.getLogger(__name__)
 
 
 class TravelVideoPrototypeNotFoundError(RuntimeError):
+    pass
+
+
+class TravelVideoPrototypeIdempotencyConflictError(RuntimeError):
     pass
 
 
@@ -190,6 +198,48 @@ def create_travel_video_prototype(
         return _public_record(record)
 
 
+def create_travel_video_prototype_for_owner(
+    *,
+    owner: FeatureOwner,
+    prompt: str,
+    request_key: str,
+    pet: LocalPetChatContext,
+) -> TravelVideoPrototypeResponse:
+    job_id = travel_video_job_id_for_owner(owner, request_key)
+    with _job_lock(job_id, blocking=True):
+        try:
+            record = _read_record(job_id)
+        except TravelVideoPrototypeNotFoundError:
+            created_at = _now_iso()
+            record = {
+                "jobId": job_id,
+                "ownerNamespace": owner.namespace,
+                "ownerKey": owner.storage_key,
+                "notificationChatId": (
+                    owner.notification_target.chat_id if owner.notification_target else None
+                ),
+                "requestKey": request_key,
+                "status": "queued",
+                "prompt": prompt.strip(),
+                "pet": pet.model_dump(mode="json"),
+                "createdAt": created_at,
+                "updatedAt": created_at,
+            }
+            _write_record(job_id, record)
+        if not _record_matches_owner(record, owner):
+            raise TravelVideoPrototypeNotFoundError(job_id)
+        if record.get("prompt") != prompt.strip() or record.get("pet") != pet.model_dump(
+            mode="json"
+        ):
+            raise TravelVideoPrototypeIdempotencyConflictError(request_key)
+        return _public_record(record)
+
+
+def travel_video_job_id_for_owner(owner: FeatureOwner, request_key: str) -> str:
+    job_digest = hashlib.sha256(f"{owner.storage_key}\0{request_key}".encode()).hexdigest()[:32]
+    return f"travel-video-prototype-{job_digest}"
+
+
 def read_travel_video_prototype(
     job_id: str,
     *,
@@ -209,6 +259,69 @@ def should_resume_travel_video_prototype(job_id: str, *, telegram_id: int) -> bo
     return record_status not in {"failed", "ready"} or (
         record_status == "ready" and not record.get("notificationSentAt")
     )
+
+
+def _record_owner(record: dict[str, Any]) -> FeatureOwner | None:
+    namespace = record.get("ownerNamespace")
+    owner_key = record.get("ownerKey")
+    if namespace in {"telegram", "google"} and isinstance(owner_key, (int, str)):
+        notification_chat_id = record.get("notificationChatId")
+        target = (
+            TelegramNotificationTarget(notification_chat_id)
+            if namespace == "telegram"
+            and isinstance(notification_chat_id, int)
+            and not isinstance(notification_chat_id, bool)
+            else None
+        )
+        try:
+            return FeatureOwner(namespace, owner_key, target)
+        except ValueError:
+            return None
+    telegram_id = record.get("ownerTelegramId")
+    if isinstance(telegram_id, int) and not isinstance(telegram_id, bool):
+        return FeatureOwner(
+            "telegram",
+            telegram_id,
+            TelegramNotificationTarget(telegram_id),
+        )
+    return None
+
+
+def _record_matches_owner(record: dict[str, Any], owner: FeatureOwner) -> bool:
+    stored = _record_owner(record)
+    return stored is not None and (
+        stored.namespace,
+        stored.storage_key,
+    ) == (owner.namespace, owner.storage_key)
+
+
+def read_travel_video_prototype_for_owner(
+    job_id: str,
+    *,
+    owner: FeatureOwner,
+) -> TravelVideoPrototypeResponse:
+    record = _read_record(job_id)
+    if not _record_matches_owner(record, owner):
+        raise TravelVideoPrototypeNotFoundError(job_id)
+    return _public_record(record)
+
+
+def should_resume_travel_video_prototype_for_owner(
+    job_id: str,
+    *,
+    owner: FeatureOwner,
+) -> bool:
+    record = _read_record(job_id)
+    if not _record_matches_owner(record, owner):
+        raise TravelVideoPrototypeNotFoundError(job_id)
+    status_value = record.get("status")
+    if status_value in {"failed", "ready"}:
+        return bool(
+            status_value == "ready"
+            and owner.notification_target is not None
+            and not record.get("notificationSentAt")
+        )
+    return True
 
 
 def _character_context(pet: LocalPetChatContext) -> str:
@@ -422,8 +535,7 @@ def _send_ready_video_best_effort(
     video: bytes,
 ) -> bool:
     try:
-        send_travel_ready_video(telegram_id, video)
-        return True
+        return send_travel_ready_video(telegram_id, video) is not False
     except Exception:
         logger.exception(
             "travel video Telegram delivery failed",
@@ -466,11 +578,26 @@ def generate_travel_video_prototype(
     job_id: str,
     telegram_id: int,
 ) -> None:
+    generate_travel_video_prototype_for_owner(
+        job_id=job_id,
+        owner=FeatureOwner(
+            "telegram",
+            telegram_id,
+            TelegramNotificationTarget(telegram_id),
+        ),
+    )
+
+
+def generate_travel_video_prototype_for_owner(
+    *,
+    job_id: str,
+    owner: FeatureOwner,
+) -> None:
     with _job_lock(job_id, blocking=False) as acquired:
         if not acquired:
             return
         record = _read_record(job_id)
-        if record.get("ownerTelegramId") != telegram_id:
+        if not _record_matches_owner(record, owner):
             raise TravelVideoPrototypeNotFoundError(job_id)
         if record.get("status") == "failed":
             return
@@ -479,10 +606,14 @@ def generate_travel_video_prototype(
             video_path = _job_dir(job_id) / VIDEO_FILE_NAME
             video_bytes = _read_nonempty(video_path)
             if record.get("status") == "ready" and video_bytes:
-                if not record.get("notificationSentAt") and _send_ready_video_best_effort(
-                    job_id=job_id,
-                    telegram_id=telegram_id,
-                    video=video_bytes,
+                if (
+                    owner.notification_target is not None
+                    and not record.get("notificationSentAt")
+                    and _send_ready_video_best_effort(
+                        job_id=job_id,
+                        telegram_id=owner.notification_target.chat_id,
+                        video=video_bytes,
+                    )
                 ):
                     _update_record(job_id, notificationSentAt=_now_iso())
                 return
@@ -560,9 +691,9 @@ def generate_travel_video_prototype(
                 status="ready",
                 videoUrl=_asset_url(job_id, VIDEO_FILE_NAME),
             )
-            if _send_ready_video_best_effort(
+            if owner.notification_target is not None and _send_ready_video_best_effort(
                 job_id=job_id,
-                telegram_id=telegram_id,
+                telegram_id=owner.notification_target.chat_id,
                 video=video_bytes,
             ):
                 _update_record(job_id, notificationSentAt=_now_iso())
@@ -573,3 +704,68 @@ def generate_travel_video_prototype(
                 status="failed",
                 error="Не удалось собрать видео. Попробуйте ещё раз.",
             )
+
+
+def resume_pending_travel_video_prototypes(
+    *,
+    limit: int = TRAVEL_VIDEO_PROTOTYPE_RECOVERY_BATCH_SIZE,
+) -> int:
+    """Resume interrupted jobs and retry delivery for ready, undelivered videos."""
+
+    if limit < 1:
+        raise ValueError("travel video recovery limit must be positive")
+    try:
+        directories = sorted(
+            (
+                path
+                for path in GENERATED_ROOT.iterdir()
+                if path.is_dir() and JOB_ID_PATTERN.fullmatch(path.name)
+            ),
+            key=lambda path: path.stat().st_mtime,
+        )
+    except FileNotFoundError:
+        return 0
+    resumed = 0
+    for directory in directories:
+        if resumed >= limit:
+            break
+        try:
+            record = _read_record(directory.name)
+            status = record.get("status")
+            if status == "failed" or (status == "ready" and record.get("notificationSentAt")):
+                continue
+            owner = _record_owner(record)
+            if owner is None:
+                continue
+            if status == "ready" and owner.notification_target is None:
+                continue
+            generate_travel_video_prototype_for_owner(
+                job_id=directory.name,
+                owner=owner,
+            )
+            resumed += 1
+        except (OSError, ValueError, TravelVideoPrototypeNotFoundError):
+            logger.warning(
+                "travel video recovery skipped invalid job",
+                extra={"job_id": directory.name},
+                exc_info=True,
+            )
+    return resumed
+
+
+async def _travel_video_prototype_recovery_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(resume_pending_travel_video_prototypes)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("travel video recovery batch failed")
+        await asyncio.sleep(TRAVEL_VIDEO_PROTOTYPE_RECOVERY_INTERVAL_SECONDS)
+
+
+def start_travel_video_prototype_recovery_scheduler() -> asyncio.Task[None]:
+    return asyncio.create_task(
+        _travel_video_prototype_recovery_loop(),
+        name="travel-video-prototype-recovery",
+    )

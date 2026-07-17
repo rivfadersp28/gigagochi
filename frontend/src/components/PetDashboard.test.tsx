@@ -17,6 +17,7 @@ import { PetDashboard } from "./PetDashboard";
 
 const mocks = vi.hoisted(() => ({
   generateLocalAmbientMessage: vi.fn(),
+  getTravelVideoPrototype: vi.fn(),
   hapticNotification: vi.fn(),
   introduction: "Привет" as string | null,
   interactiveTravel: false,
@@ -61,6 +62,8 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/api")>(),
   generateLocalAmbientMessage: (...args: unknown[]) =>
     mocks.generateLocalAmbientMessage(...args),
+  getTravelVideoPrototype: (...args: unknown[]) =>
+    mocks.getTravelVideoPrototype(...args),
   queueOutfitGeneration: (...args: unknown[]) => mocks.queueOutfitGeneration(...args),
   resumeCompletedPetGeneration: (...args: unknown[]) =>
     mocks.resumeCompletedPetGeneration(...args),
@@ -201,6 +204,17 @@ beforeEach(() => {
     createdAt: "2026-07-16T10:00:00.000Z",
     updatedAt: "2026-07-16T10:00:00.000Z",
   });
+  mocks.getTravelVideoPrototype.mockResolvedValue({
+    jobId: "travel-video-prototype-0123456789abcdef0123456789abcdef",
+    status: "ready",
+    prompt: "На ночной рынок духов",
+    title: "Ночной рынок духов",
+    scenario: "Короткое путешествие",
+    imageUrl: "/generated/travel-video-prototype/image.png",
+    videoUrl: "/generated/travel-video-prototype/video.mp4",
+    createdAt: "2026-07-16T10:00:00.000Z",
+    updatedAt: "2026-07-16T10:01:00.000Z",
+  });
   window.localStorage.clear();
   window.sessionStorage.clear();
   writeLocalPetState(pet);
@@ -223,6 +237,9 @@ beforeEach(() => {
     applyStoryLibraryPatch: vi.fn(),
     applyRecentStoryEventsPatch: vi.fn(),
     applyStatsPatch: vi.fn(),
+    chargeOutfitExperience: vi.fn(() => pet),
+    adoptChargedOutfitExperience: vi.fn(() => pet),
+    refundOutfitExperience: vi.fn(() => pet),
     spendExperience: vi.fn(() => true),
   };
 });
@@ -438,7 +455,7 @@ it("finishes onboarding only after the first outfit request is queued", async ()
   writeLocalPetState(onboardingPet);
   const onboardingLocalPetMock = mocks.localPet as {
     pet: LocalPetState;
-    spendExperience: ReturnType<typeof vi.fn>;
+    chargeOutfitExperience: ReturnType<typeof vi.fn>;
   };
   onboardingLocalPetMock.pet = onboardingPet;
   const started = restartLocalPetFirstSession(onboardingPet.petId)!;
@@ -472,7 +489,11 @@ it("finishes onboarding only after the first outfit request is queued", async ()
   });
 
   expect(mocks.queueOutfitGeneration).toHaveBeenCalledOnce();
-  expect(onboardingLocalPetMock.spendExperience).toHaveBeenCalledWith(200, onboardingPet.petId);
+  expect(onboardingLocalPetMock.chargeOutfitExperience).toHaveBeenCalledWith(
+    200,
+    expect.any(String),
+    onboardingPet.petId,
+  );
   expect(screen.getByLabelText("Футболка Metallica?")).toBeInTheDocument();
   expect(screen.queryByRole("textbox", { name: "Описание наряда" })).not.toBeInTheDocument();
   expect(readLocalPetFirstSession(onboardingPet)?.stage).toBe("completed");

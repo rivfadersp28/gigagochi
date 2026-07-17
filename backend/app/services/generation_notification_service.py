@@ -22,14 +22,14 @@ def send_outfit_ready_notification(telegram_id: int) -> None:
     _send_generation_notification(telegram_id, OUTFIT_READY_MESSAGE)
 
 
-def send_travel_ready_video(telegram_id: int, video: bytes) -> None:
+def send_travel_ready_video(telegram_id: int, video: bytes) -> bool:
     settings = get_settings()
     if not settings.bot_token or not settings.webapp_url:
         logger.info(
             "travel_video_notification_skipped ownerId=%s reason=telegram_not_configured",
             telegram_id,
         )
-        return
+        return False
 
     with httpx.Client() as client:
         send_video(
@@ -39,6 +39,7 @@ def send_travel_ready_video(telegram_id: int, video: bytes) -> None:
             TRAVEL_READY_CAPTION,
             mini_app_keyboard(settings.webapp_url),
         )
+    return True
 
 
 def _send_generation_notification(telegram_id: int, message: str) -> None:

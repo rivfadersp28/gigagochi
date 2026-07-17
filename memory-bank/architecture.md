@@ -2,6 +2,10 @@
 
 ## Persistence
 
+- Android Google auth — отдельная additive boundary и не меняет Telegram identity/routes. `/api/auth/google` использует инъецируемый verifier вокруг `google-auth`, identity key `(provider='google', sub)` и выдаёт opaque access/refresh tokens. Hidden Bearer `/api/auth/me` возвращает стабильный случайный non-secret `accountId`, привязанный к этой identity; `/api/auth/refresh` атомарно ротирует оба token. SQLite на `data/push` хранит только token SHA-256 digests, canonical account ID, metadata пользователя и expiry/revocation timestamps. Auth endpoints намеренно исключены из frontend-owned OpenAPI schema.
+- Google auth settings fail closed без `GOOGLE_AUTH_WEB_CLIENT_ID`. Access TTL по умолчанию 15 минут, refresh TTL 30 дней; revoke/access-auth boundaries существуют в service, но TMA dependencies и logout UI к ним не подключены.
+- Android feature API живёт в скрытом `/api/android` router и принимает только Bearer Google identity. Canonical `accountId` на этой границе превращается в `google:<sha256(accountId)>`; raw account ID не попадает в job rows, provider metadata или public URLs. `FeatureOwner` сохраняет Telegram как integer owner с notification capability, а Google owner всегда не имеет Telegram capability.
+- Android sync mutations резервируют `(opaque owner, operation, raw UUIDv4 requestKey, payload fingerprint)` в отдельном SQLite store. Completed replay возвращает точный response; recent concurrent reservation даёт retryable busy, stale ambiguous reservation — terminal `OUTCOME_UNKNOWN` без повторного provider call. Generation/travel submissions дополнительно reconciliate underlying durable job by exact owner/key/payload after a process interruption.
 - The active MVP has no external relational database dependency. Pet/chat/memory state is
   local to the frontend origin, Telegram delivery state uses a SQLite WAL registry,
   generation-job recovery uses SQLite on the same persistent volume, and generated assets plus
@@ -34,7 +38,9 @@
   or running jobs are claimed with expiring leases and requeued after a backend restart. The API
   remains a single Uvicorn process, while generation uses dedicated image and video thread pools.
   Heartbeats return the exact renewed job IDs and immediately fence local records missing from that
-  set. Each paid job stage also holds a bounded-bucket lifetime `flock`; a recovered owner waits for
+  set. The watchdog periodically re-scans durable active rows, so a job skipped at startup because
+  an old process lease had not expired is claimed later without another restart. Each paid job
+  stage also holds a bounded-bucket lifetime `flock`; a recovered owner waits for
   the previous provider call to leave that stage, then rechecks its SQLite lease before dispatch.
   Every durable job uses a job-derived asset-set ID. Its character bible metadata is atomically
   persisted before the first paid media call, and completed base, sad, happy, video and deterministic
@@ -52,7 +58,8 @@
   pipeline before replacing the active asset set. The frontend persists the request key, job ID,
   source asset set and grammatical display item in a separate localStorage recovery marker; a
   reopened Mini App resumes the same idempotent job and applies it only if the source pet/assets
-  still match. Birth notifications remain tied to the foreground result, while outfit notifications
+  still match. A bounded per-request ledger in the pet snapshot makes the 200-XP charge and terminal
+  failure refund idempotent across reloads. Birth notifications remain tied to the foreground result, while outfit notifications
   are sent only after the job reaches `completed`. The image chain first edits the previous idle
   scene into the new outfit; sad and happy are then derived from that new idle image, preserving one
   clothing design while changing only expression and pose.
@@ -168,11 +175,10 @@
 
 ## Production Routing
 
-- Solo release workflow uses `scripts/publish.sh`: it runs the fast static/contract checks by
-  default, commits all current changes, pushes `main` with ordinary `git`, deploys the same branch
-  to Hetzner and checks production health. It does not require `gh` or a pull request. Passing
-  `full` runs all backend and frontend tests before publication. GitHub Actions keeps the full
-  post-push suite; the default fast path intentionally does not wait for it before deploy.
+- Solo release workflow uses `scripts/publish.sh`: it requires an intentionally prepared Git index
+  with no unstaged/untracked files, runs the full backend/frontend suite by default, commits only
+  staged changes, pushes `main`, waits for Compose health and checks both backend and frontend.
+  Explicit `fast` mode is reserved for emergency publication; the script never runs `git add`.
 - Local checks have two tiers. `make check-fast` covers dependency locks, Ruff lint/format,
   OpenAPI drift, frontend contracts, ESLint and TypeScript. `make check` adds backend pytest and
   frontend Vitest. Use the full tier for risky/final changes instead of ritual use after every
@@ -193,7 +199,10 @@
 - Volume backup/restore stops backend and bot before copying SQLite/WAL state, validates every
   database with `PRAGMA quick_check`, fsyncs bundle metadata and verifies strict SHA-256 manifests.
   Restore verifies before stopping writers, stages both volumes, and rolls both back or leaves the
-  writers stopped when an atomic cross-volume apply cannot complete.
+  writers stopped when an atomic cross-volume apply cannot complete. A systemd timer runs the same
+  consistent bundle nightly, uploads it to an independently configured rclone destination and
+  verifies it with `rclone check`; local retention removes only bundles whose exact remote copy
+  passes verification.
 - Production application settings have one source: `backend/.env`. Compose env is limited to
   topology, container security and explicitly documented resource knobs, so app settings cannot be
   silently shadowed by a second default. Paid-media kill switches and all provider/profile settings
@@ -237,6 +246,19 @@
 
 ## Media Routing
 
+- The ordinary dashboard `В путешествие` action starts the video prototype inline in the pet
+  conversation scene without an XP cost. The stable four-choice `InteractiveTravelScreen` remains
+  mounted at `/pet/[id]/travel`; the standalone prototype inspector is isolated at
+  `/pet/[id]/travel/prototype`. The prototype uses owner-bound POST/status endpoints and a persisted
+  client request key, so an ambiguous POST retry resolves to the same deterministic job. The job
+  stores its pet context, JSON status, scenario, 9:16 keyframes, clips and final MP4 together under
+  `static/generated/travel-video-prototype-*`. A per-job `flock` prevents concurrent workers; status
+  polling resumes interrupted work from existing assets. Once ready, Telegram `sendVideo` delivery
+  is retried best-effort without changing a completed job to failed.
+- Prototype travel media follows `user prompt -> structured three-shot scenario -> three standard
+  background-story 1152x2048 image edits with the same isolated character asset -> three 5-second
+  9:16 i2v clips -> local ffmpeg concat into one 15-second MP4`. This keeps character identity and the existing
+  handcrafted stop-motion story frame while allowing distinct setup, complication and resolution.
 - Completed interactive travels are snapshotted as `finale.json` beside their generated assets.
   The normal final continuation saves the snapshot best-effort, and reopening a completed client
   session uploads its localStorage copy so journeys completed before this persistence path can be
@@ -305,8 +327,8 @@
   transaction; quota failures and observed lost races return failure/the actual winner instead of a
   false success. Travel-impact receipts remain inside that snapshot for idempotency.
 - Dashboard browser effects are isolated from `PetDashboard.tsx`:
-  `useConversationKeyboardOffset` owns shared Visual Viewport keyboard positioning for the chat
-  and outfit composers, and
+  `useConversationKeyboardOffset` owns shared Visual Viewport keyboard positioning for the chat,
+  outfit and travel composers, and
   `usePetPushSnapshotSync` owns throttled server snapshot reconciliation. Background generation
   polling backs off through 2/4/8/15/30/60 seconds, pauses while offline or hidden, and resumes
   immediately when connectivity/visibility returns.
@@ -752,9 +774,19 @@
 - During the active first-session flow the dashboard renders only the action required by the current
   stage and centers that single action horizontally. The centered level label and XP balance remain
   hidden until the bat-help result is completed; the
-  fixed result awards exactly 100 XP. The two introductory generated reactions are normalized to
+  fixed result awards exactly 200 XP. A new pet starts at 0 XP and an outfit generation costs 200;
+  later correct story answers award a random 30–50 XP (mean 40), targeting about five correct
+  stories per outfit. The two introductory generated reactions are normalized to
   declarative sentences before they are persisted, because the scripted next question/message owns
   the conversational transition.
+- First-session onboarding remains debug opt-in. Its enabled flag is versioned independently from
+  the per-pet progress record so a release can invalidate stale debug opt-ins without deleting the
+  saved stage. Diagnostic users can restart or disable the flow from dashboard, chat and travel;
+  those controls remain reachable while an onboarding sub-mode is active.
+- The two generated first-session chat turns run with isolated conversational context: they use only
+  messages from the current onboarding attempt, an empty user-memory context and a character bible
+  without mutable chat/story overlays. Newly stated onboarding facts are still extracted and merged
+  into durable memory after the reply, so later normal chat can use them.
 
 ## Local Admin
 

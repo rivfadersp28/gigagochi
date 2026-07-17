@@ -133,8 +133,26 @@ The script validates Compose without printing secrets, records whether `backend`
 running, stops both writers, and restarts only the services that were running before the snapshot.
 It atomically publishes a directory containing `generated_assets.tar.gz`, `push_data.tar.gz`,
 `manifest.txt`, and `SHA256SUMS`. An incomplete archive is never published. Copy the whole backup
-directory to independent storage; do not copy only one archive. Retention is intentionally manual
-so that an automation cannot delete the last recovery point.
+directory to independent storage; do not copy only one archive.
+
+For nightly off-site backups, install and configure `rclone`, then install the included units:
+
+```bash
+apt-get update && apt-get install -y rclone
+rclone config
+install -m 0600 deploy/backup.env.example /etc/gigagochi-backup.env
+install -m 0755 deploy/backup-nightly.sh /opt/gigagochi/deploy/backup-nightly.sh
+install -m 0644 deploy/gigagochi-backup.service deploy/gigagochi-backup.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now gigagochi-backup.timer
+systemctl start gigagochi-backup.service
+journalctl -u gigagochi-backup.service --no-pager -n 100
+```
+
+Edit `/etc/gigagochi-backup.env` before the first run so `BACKUP_OFFSITE_REMOTE` points to storage
+outside this host. The job verifies every upload with `rclone check`. A local bundle is deleted by
+retention only after that exact bundle has also passed an off-site check; remote retention stays
+provider-controlled. Check the schedule with `systemctl list-timers gigagochi-backup.timer`.
 
 Restore requires the production env file and the backend image because an isolated, networkless
 Compose helper mounts the named volumes. On a new disaster-recovery host, prepare them first:

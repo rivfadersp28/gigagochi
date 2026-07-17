@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   generateLocalAmbientMessage,
   generateLocalProactiveMessage,
+  getTravelVideoPrototype,
   queueOutfitGeneration,
   resumeCompletedPetGeneration,
   sendLocalChatMessage,
@@ -22,6 +23,7 @@ import {
   startTravelVideoPrototype,
 } from "@/lib/api";
 import { presentError, type PresentedError } from "@/lib/errorPresentation";
+import { ApiError } from "@/lib/apiTransport";
 import {
   createLocalId,
   readLocalChatHistory,
@@ -29,8 +31,15 @@ import {
   readLocalPetSettings,
 } from "@/lib/localPetStorage";
 import {
+  activateAndRestoreDebugPet,
+  ensureCurrentDebugPetSaved,
+} from "@/lib/debugSavedPet";
+import {
   clearTravelVideoPrototypeRequest,
   prepareTravelVideoPrototypeRequest,
+  readPendingTravelVideoPrototype,
+  setPendingTravelVideoPrototypeJobId,
+  type PendingTravelVideoPrototype,
 } from "@/lib/pendingTravelVideoPrototype";
 import {
   clearOutfitFailureNotice,
@@ -349,6 +358,9 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     triggerPetTapBulge,
   } = usePetTapBulge();
   const applyGeneratedAssets = localPet.applyGeneratedAssets;
+  const chargeOutfitExperience = localPet.chargeOutfitExperience;
+  const adoptChargedOutfitExperience = localPet.adoptChargedOutfitExperience;
+  const refundOutfitExperience = localPet.refundOutfitExperience;
   const [isFeeding, setIsFeeding] = useState(false);
   const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false);
   const [visualModeOverride, setVisualModeOverride] = useState<PetVisualMode | null>(null);
@@ -364,6 +376,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const [travelInput, setTravelInput] = useState("");
   const [travelError, setTravelError] = useState<PresentedError | null>(null);
   const [isStartingTravel, setIsStartingTravel] = useState(false);
+  const [pendingTravelVideo, setPendingTravelVideo] =
+    useState<PendingTravelVideoPrototype | null>(() => (
+      readPendingTravelVideoPrototype(petId)
+    ));
   const [pendingOutfit, setPendingOutfit] = useState<PendingOutfitGeneration | null>(
     () => readPendingOutfitGeneration(),
   );
@@ -404,6 +420,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     expiresAt: number;
     timeoutId: number;
   } | null>(null);
+  const debugSavedPetAttemptRef = useRef<string | null>(null);
   const activeDialogueHookRef = useRef<string | null>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const sceneRef = useRef<HTMLElement>(null);
@@ -455,6 +472,75 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   }, []);
   const pet = localPet.pet;
   useEffect(() => {
+    let cancelled = false;
+    window.queueMicrotask(() => {
+      if (!cancelled) {
+        setPendingTravelVideo(readPendingTravelVideoPrototype(petId));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [petId]);
+
+  useEffect(() => {
+    if (!pet || !pendingTravelVideo || pendingTravelVideo.petId !== pet.petId) {
+      return;
+    }
+    const controller = new AbortController();
+    let retryTimeout: number | null = null;
+
+    const poll = async () => {
+      try {
+        const job = pendingTravelVideo.jobId
+          ? await getTravelVideoPrototype(pendingTravelVideo.jobId, {
+              signal: controller.signal,
+            })
+          : await startTravelVideoPrototype(
+              pendingTravelVideo.prompt,
+              pet,
+              pendingTravelVideo.requestKey,
+              { signal: controller.signal },
+            );
+        if (!pendingTravelVideo.jobId) {
+          const persisted = setPendingTravelVideoPrototypeJobId(
+            pet.petId,
+            pendingTravelVideo.requestKey,
+            job.jobId,
+          );
+          if (!persisted) {
+            throw new Error("TRAVEL_VIDEO_JOB_STORAGE_FAILED");
+          }
+          setPendingTravelVideo(persisted);
+        }
+        if (job.status === "ready" || job.status === "failed") {
+          clearTravelVideoPrototypeRequest(pet.petId, pendingTravelVideo.requestKey);
+          setPendingTravelVideo(null);
+          if (job.status === "failed") {
+            setTravelError({
+              message: job.error ?? "Не удалось собрать видео путешествия. Попробуйте ещё раз.",
+            });
+          }
+          return;
+        }
+        retryTimeout = window.setTimeout(() => void poll(), 5_000);
+      } catch {
+        if (!controller.signal.aborted) {
+          retryTimeout = window.setTimeout(() => void poll(), 10_000);
+        }
+      }
+    };
+
+    void poll();
+    return () => {
+      controller.abort();
+      if (retryTimeout !== null) {
+        window.clearTimeout(retryTimeout);
+      }
+    };
+  }, [pendingTravelVideo, pet]);
+
+  useEffect(() => {
     if (!pendingOutfit || pendingOutfit.petId !== pet?.petId) return;
     const controller = new AbortController();
     outfitAbortRef.current?.abort();
@@ -468,10 +554,39 @@ export function PetDashboard({ petId }: PetDashboardProps) {
           { requestKey: pendingOutfit.requestKey, signal: controller.signal },
         );
         if (!pendingOutfit.jobId) {
-          setPendingOutfitJobId(pendingOutfit.requestKey, jobId);
+          if (!setPendingOutfitJobId(pendingOutfit.requestKey, jobId)) {
+            throw new Error("OUTFIT_JOB_STORAGE_FAILED");
+          }
           setPendingOutfit((current) => current?.requestKey === pendingOutfit.requestKey
             ? { ...current, jobId }
             : current);
+        }
+        const charged = pendingOutfit.experienceLedger === true
+          ? chargeOutfitExperience(
+              PET_OUTFIT_EXPERIENCE_COST,
+              pendingOutfit.requestKey,
+              pendingOutfit.petId,
+            )
+          : pendingOutfit.jobId
+            ? adoptChargedOutfitExperience(
+                PET_OUTFIT_EXPERIENCE_COST,
+                pendingOutfit.requestKey,
+                pendingOutfit.petId,
+              )
+            : chargeOutfitExperience(
+                PET_OUTFIT_EXPERIENCE_COST,
+                pendingOutfit.requestKey,
+                pendingOutfit.petId,
+              );
+        if (!charged) {
+          throw new Error("OUTFIT_EXPERIENCE_CHARGE_FAILED");
+        }
+        if (pendingOutfit.experienceLedger !== true) {
+          const upgraded = { ...pendingOutfit, jobId, experienceLedger: true as const };
+          if (!writePendingOutfitGeneration(upgraded)) {
+            throw new Error("OUTFIT_STORAGE_FAILED");
+          }
+          setPendingOutfit(upgraded);
         }
         const generated = await resumeCompletedPetGeneration(jobId, {
           signal: controller.signal,
@@ -494,10 +609,18 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         }
       } catch (caught) {
         if (!controller.signal.aborted) {
-          const errorCode = typeof caught === "object" && caught !== null && "code" in caught
-            ? (caught as { code?: unknown }).code
-            : undefined;
-          if (errorCode === "OUTFIT_PROMPT_REPAIR_EXHAUSTED") {
+          const terminalFailure = caught instanceof ApiError && caught.generationTerminal;
+          if (terminalFailure) {
+            if (!refundOutfitExperience(
+              PET_OUTFIT_EXPERIENCE_COST,
+              pendingOutfit.requestKey,
+              pendingOutfit.petId,
+            )) {
+              setOutfitError({
+                message: "Не удалось вернуть опыт за несостоявшийся наряд. Обновите приложение.",
+              });
+              return;
+            }
             const notice: OutfitFailureNotice = {
               version: 1,
               petId: pendingOutfit.petId,
@@ -524,7 +647,14 @@ export function PetDashboard({ petId }: PetDashboardProps) {
     })();
 
     return () => controller.abort();
-  }, [applyGeneratedAssets, pendingOutfit, pet?.petId]);
+  }, [
+    adoptChargedOutfitExperience,
+    applyGeneratedAssets,
+    chargeOutfitExperience,
+    pendingOutfit,
+    pet?.petId,
+    refundOutfitExperience,
+  ]);
   const [firstSession, setFirstSession] = useState<LocalPetFirstSession | null | undefined>(
     undefined,
   );
@@ -582,6 +712,18 @@ export function PetDashboard({ petId }: PetDashboardProps) {
   const capabilities = useTelegramCapabilities();
   const canShowDebugMenu = capabilities.debugMenu;
   const canShowInteractiveTravel = capabilities.interactiveTravel;
+  useEffect(() => {
+    if (!canShowDebugMenu || !pet || pet.petId !== petId) {
+      return;
+    }
+    if (debugSavedPetAttemptRef.current === pet.petId) {
+      return;
+    }
+    debugSavedPetAttemptRef.current = pet.petId;
+    void ensureCurrentDebugPetSaved(pet).catch(() => {
+      debugSavedPetAttemptRef.current = null;
+    });
+  }, [canShowDebugMenu, pet, petId]);
   const derivedAssetsEnabled = true;
   const hasSadAssets = derivedAssetsEnabled && visualPet
     ? hasGeneratedSadAssets(visualPet)
@@ -1492,8 +1634,12 @@ export function PetDashboard({ petId }: PetDashboardProps) {
 
     try {
       const requestKey = prepareTravelVideoPrototypeRequest(pet.petId, request);
-      await startTravelVideoPrototype(request, pet, requestKey);
-      clearTravelVideoPrototypeRequest(pet.petId, requestKey);
+      const job = await startTravelVideoPrototype(request, pet, requestKey);
+      const pending = setPendingTravelVideoPrototypeJobId(pet.petId, requestKey, job.jobId);
+      if (!pending) {
+        throw new Error("TRAVEL_VIDEO_JOB_STORAGE_FAILED");
+      }
+      setPendingTravelVideo(pending);
       setTravelInput("");
       setIsTravelMode(false);
       setConversationReplyMessageId(null);
@@ -1577,6 +1723,7 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         version: 1,
         petId: requestedPetId,
         requestKey: createLocalId("outfit"),
+        experienceLedger: true,
         displayItem: simplified.displayItem,
         generationDescription: simplified.generationDescription,
         references,
@@ -1591,11 +1738,18 @@ export function PetDashboard({ petId }: PetDashboardProps) {
         references,
         { requestKey: pending.requestKey, signal: controller.signal },
       );
-      if (!localPet.spendExperience(PET_OUTFIT_EXPERIENCE_COST, requestedPetId)) {
-        throw new Error("OUTFIT_EXPERIENCE_SPEND_FAILED");
+      if (!setPendingOutfitJobId(pending.requestKey, jobId)) {
+        throw new Error("OUTFIT_JOB_STORAGE_FAILED");
       }
-      setPendingOutfitJobId(pending.requestKey, jobId);
-      setPendingOutfit({ ...pending, jobId });
+      const acceptedPending = { ...pending, jobId };
+      setPendingOutfit(acceptedPending);
+      if (!chargeOutfitExperience(
+        PET_OUTFIT_EXPERIENCE_COST,
+        pending.requestKey,
+        requestedPetId,
+      )) {
+        throw new Error("OUTFIT_EXPERIENCE_CHARGE_FAILED");
+      }
       if (firstSession?.stage === "awaiting-completion-message") {
         setFirstSession(updateLocalPetFirstSession(firstSession, "completed"));
       }
@@ -2116,6 +2270,10 @@ export function PetDashboard({ petId }: PetDashboardProps) {
       onKillPet={handleKillPet}
       onRevivePet={handleRevivePet}
       onOpenTestPet={handleOpenTestPet}
+      onSwitchToSavedPet={async () => {
+        const restoredPet = await activateAndRestoreDebugPet();
+        window.location.replace(`/pet/${restoredPet.petId}`);
+      }}
       onOpenTravelDemo={() => {
         setIsDebugPanelOpen(false);
         router.push(`/pet/${pet.petId}/travel?demo=1`);

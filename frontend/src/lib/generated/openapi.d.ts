@@ -260,6 +260,40 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/debug/saved-pet": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Save Debug Pet */
+        readonly post: operations["save_debug_pet_api_debug_saved_pet_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/debug/saved-pet/activate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Activate Debug Pet */
+        readonly post: operations["activate_debug_pet_api_debug_saved_pet_activate_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/generate-pet": {
         readonly parameters: {
             readonly query?: never;
@@ -803,6 +837,46 @@ export interface components {
             readonly includeDebug: boolean;
             readonly pet: components["schemas"]["LocalPetChatContext"];
             readonly travel: components["schemas"]["InteractiveTravelState"];
+        };
+        /** DebugSavedPetActivateResponse */
+        readonly DebugSavedPetActivateResponse: {
+            /**
+             * Activated
+             * @default true
+             */
+            readonly activated: boolean;
+            readonly bundle: components["schemas"]["DebugSavedPetBundle"];
+            /** Petid */
+            readonly petId: string;
+        };
+        /** DebugSavedPetBundle */
+        readonly DebugSavedPetBundle: {
+            /** Chathistory */
+            readonly chatHistory: {
+                readonly [key: string]: unknown;
+            };
+            /** Memory */
+            readonly memory: {
+                readonly [key: string]: unknown;
+            };
+            /** Pet */
+            readonly pet: {
+                readonly [key: string]: unknown;
+            };
+            /** Petid */
+            readonly petId: string;
+        };
+        /** DebugSavedPetSaveResponse */
+        readonly DebugSavedPetSaveResponse: {
+            /** Created */
+            readonly created: boolean;
+            /** Petid */
+            readonly petId: string;
+            /**
+             * Saved
+             * @default true
+             */
+            readonly saved: boolean;
         };
         /** GenerateOutfitRequest */
         readonly GenerateOutfitRequest: {
@@ -2222,6 +2296,59 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly save_debug_pet_api_debug_saved_pet_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DebugSavedPetBundle"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DebugSavedPetSaveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly activate_debug_pet_api_debug_saved_pet_activate_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DebugSavedPetActivateResponse"];
                 };
             };
         };

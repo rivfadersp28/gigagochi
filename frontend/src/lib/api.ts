@@ -8,6 +8,7 @@ import type {
   InteractiveTravelState,
   InteractiveTravelSuggestionsResponse,
   LocalPetAssetSet,
+  LocalChatHistoryV1,
   LiteFactExtractionResponse,
   LocalChatMessage,
   LocalChatResponse,
@@ -85,6 +86,25 @@ export type TelegramCapabilities = {
   telegramUserId: number;
   debugMenu: boolean;
   interactiveTravel: boolean;
+};
+
+export type DebugSavedPetBundle = {
+  petId: string;
+  pet: LocalPetState;
+  chatHistory: LocalChatHistoryV1;
+  memory: LocalPetMemoryStateV1;
+};
+
+export type DebugSavedPetSaveResponse = {
+  saved: true;
+  created: boolean;
+  petId: string;
+};
+
+export type DebugSavedPetActivateResponse = {
+  activated: true;
+  petId: string;
+  bundle: DebugSavedPetBundle;
 };
 
 export type OutfitSimplification = {
@@ -531,6 +551,54 @@ export async function fetchTelegramCapabilities(): Promise<TelegramCapabilities>
   );
 }
 
+function parseDebugSavedPetSaveResponse(value: unknown): DebugSavedPetSaveResponse {
+  if (
+    !isRecord(value)
+    || value.saved !== true
+    || typeof value.created !== "boolean"
+    || typeof value.petId !== "string"
+  ) {
+    throw new ApiContractError("invalid saved debug pet response");
+  }
+  return { saved: true, created: value.created, petId: value.petId };
+}
+
+function parseDebugSavedPetActivateResponse(value: unknown): DebugSavedPetActivateResponse {
+  if (
+    !isRecord(value)
+    || value.activated !== true
+    || typeof value.petId !== "string"
+    || !isRecord(value.bundle)
+    || value.bundle.petId !== value.petId
+    || !isRecord(value.bundle.pet)
+    || !isRecord(value.bundle.chatHistory)
+    || !isRecord(value.bundle.memory)
+  ) {
+    throw new ApiContractError("invalid activated debug pet response");
+  }
+  return {
+    activated: true,
+    petId: value.petId,
+    bundle: value.bundle as DebugSavedPetBundle,
+  };
+}
+
+export function saveDebugPet(bundle: DebugSavedPetBundle): Promise<DebugSavedPetSaveResponse> {
+  return request(
+    "/api/debug/saved-pet",
+    { method: "POST", headers: tmaAuthHeaders(), body: bundle },
+    parseDebugSavedPetSaveResponse,
+  );
+}
+
+export function activateDebugSavedPet(): Promise<DebugSavedPetActivateResponse> {
+  return request(
+    "/api/debug/saved-pet/activate",
+    { method: "POST", headers: tmaAuthHeaders() },
+    parseDebugSavedPetActivateResponse,
+  );
+}
+
 export function getAutomaticInteractiveStory(token: string): Promise<AutomaticInteractiveStory> {
   return request(
     `/api/travel/automatic/${encodeURIComponent(token)}`,
@@ -965,12 +1033,14 @@ export async function startTravelVideoPrototype(
   prompt: string,
   pet: LocalPetState,
   requestKey: string,
+  options: { signal?: AbortSignal } = {},
 ): Promise<TravelVideoPrototype> {
   const response = await request(
     "/api/travel/video-prototype",
     {
       method: "POST",
       headers: tmaAuthHeaders(),
+      signal: options.signal,
       body: {
         prompt: prompt.trim().slice(0, 1000),
         requestKey,
@@ -984,10 +1054,16 @@ export async function startTravelVideoPrototype(
 
 export async function getTravelVideoPrototype(
   jobId: string,
+  options: { signal?: AbortSignal } = {},
 ): Promise<TravelVideoPrototype> {
   const response = await request(
     `/api/travel/video-prototype/${encodeURIComponent(jobId)}`,
-    { method: "GET", headers: tmaAuthHeaders(), timeoutMs: 15_000 },
+    {
+      method: "GET",
+      headers: tmaAuthHeaders(),
+      signal: options.signal,
+      timeoutMs: 15_000,
+    },
     parseTravelVideoPrototype,
   );
   return withPublicTravelVideoPrototypeAssets(response);

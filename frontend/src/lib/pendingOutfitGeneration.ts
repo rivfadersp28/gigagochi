@@ -7,6 +7,7 @@ export type PendingOutfitGeneration = {
   version: 1;
   petId: string;
   requestKey: string;
+  experienceLedger?: true;
   jobId?: string;
   displayItem: string;
   generationDescription: string;
@@ -50,6 +51,7 @@ function parse(value: unknown): PendingOutfitGeneration | null {
     record.version !== 1
     || !validText(record.petId, 128)
     || !validText(record.requestKey, 96)
+    || (record.experienceLedger !== undefined && record.experienceLedger !== true)
     || !validText(record.displayItem, 80)
     || !validText(record.generationDescription, 300)
     || !refs

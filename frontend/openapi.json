@@ -498,6 +498,89 @@
         "title": "ContinueInteractiveTravelRequest",
         "type": "object"
       },
+      "DebugSavedPetActivateResponse": {
+        "properties": {
+          "activated": {
+            "default": true,
+            "title": "Activated",
+            "type": "boolean"
+          },
+          "bundle": {
+            "$ref": "#/components/schemas/DebugSavedPetBundle"
+          },
+          "petId": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Petid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "petId",
+          "bundle"
+        ],
+        "title": "DebugSavedPetActivateResponse",
+        "type": "object"
+      },
+      "DebugSavedPetBundle": {
+        "properties": {
+          "chatHistory": {
+            "additionalProperties": true,
+            "title": "Chathistory",
+            "type": "object"
+          },
+          "memory": {
+            "additionalProperties": true,
+            "title": "Memory",
+            "type": "object"
+          },
+          "pet": {
+            "additionalProperties": true,
+            "title": "Pet",
+            "type": "object"
+          },
+          "petId": {
+            "maxLength": 120,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Petid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "petId",
+          "pet",
+          "chatHistory",
+          "memory"
+        ],
+        "title": "DebugSavedPetBundle",
+        "type": "object"
+      },
+      "DebugSavedPetSaveResponse": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "petId": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Petid",
+            "type": "string"
+          },
+          "saved": {
+            "default": true,
+            "title": "Saved",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "created",
+          "petId"
+        ],
+        "title": "DebugSavedPetSaveResponse",
+        "type": "object"
+      },
       "GenerateOutfitRequest": {
         "properties": {
           "happyImageUrl": {
@@ -4310,6 +4393,68 @@
           }
         },
         "summary": "Proactive Chat",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/debug/saved-pet": {
+      "post": {
+        "operationId": "save_debug_pet_api_debug_saved_pet_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DebugSavedPetBundle"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DebugSavedPetSaveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Debug Pet",
+        "tags": [
+          "telegram-mini-app"
+        ]
+      }
+    },
+    "/api/debug/saved-pet/activate": {
+      "post": {
+        "operationId": "activate_debug_pet_api_debug_saved_pet_activate_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DebugSavedPetActivateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Activate Debug Pet",
         "tags": [
           "telegram-mini-app"
         ]

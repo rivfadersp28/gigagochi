@@ -26,9 +26,7 @@ def main() -> int:
         settings.provider_task_receipt_store_path,
         max_records=settings.provider_task_receipt_store_max_records,
     )
-    before = datetime.now(UTC) - timedelta(
-        seconds=settings.provider_task_admission_stale_seconds
-    )
+    before = datetime.now(UTC) - timedelta(seconds=settings.provider_task_admission_stale_seconds)
     stale = store.stale_admissions(before=before, limit=1000)
 
     releasing = any((args.release_scope, args.operation, args.fingerprint))

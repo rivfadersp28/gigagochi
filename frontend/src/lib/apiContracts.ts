@@ -495,6 +495,20 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
       return fail(`${partPath}.partNumber`, `${index + 1}`);
     }
     const transitionValue = optionalRecord(part.transition, `${partPath}.transition`);
+    const departureHook = transitionValue
+      ? optionalBoundedString(
+          transitionValue.departureHook,
+          `${partPath}.transition.departureHook`,
+          { max: 280 },
+        )
+      : undefined;
+    const continuityAnchor = transitionValue
+      ? optionalBoundedString(
+          transitionValue.continuityAnchor,
+          `${partPath}.transition.continuityAnchor`,
+          { max: 60 },
+        )
+      : undefined;
     const transition = transitionValue
       ? {
           elapsedHours: integerInRange(
@@ -506,16 +520,8 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
           summary: boundedString(transitionValue.summary, `${partPath}.transition.summary`, {
             max: 240,
           }),
-          departureHook: optionalBoundedString(
-            transitionValue.departureHook,
-            `${partPath}.transition.departureHook`,
-            { max: 280 },
-          ),
-          continuityAnchor: optionalBoundedString(
-            transitionValue.continuityAnchor,
-            `${partPath}.transition.continuityAnchor`,
-            { max: 60 },
-          ),
+          ...(departureHook ? { departureHook } : {}),
+          ...(continuityAnchor ? { continuityAnchor } : {}),
         }
       : undefined;
     if (index === 0 && transition) {
@@ -570,6 +576,15 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
               reason: boundedString(impact.reason, `${impactPath}.reason`, { max: 280 }),
             };
           });
+          const experienceGained = resultValue.experienceGained === undefined
+            || resultValue.experienceGained === null
+            ? undefined
+            : integerInRange(
+                resultValue.experienceGained,
+                `${resultPath}.experienceGained`,
+                0,
+                150,
+              );
           return {
             text: boundedString(resultValue.text, `${resultPath}.text`, { max: 700 }),
             adviceAssessment: enumValue(
@@ -593,12 +608,7 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
               INTERACTIVE_TRAVEL_VALENCES,
               `${resultPath}.outcomeValence`,
             ),
-            experienceGained: integerInRange(
-              resultValue.experienceGained ?? 0,
-              `${resultPath}.experienceGained`,
-              0,
-              150,
-            ),
+            ...(experienceGained !== undefined ? { experienceGained } : {}),
             statImpacts,
           };
         })()
@@ -607,13 +617,13 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
       partNumber,
       title: boundedString(part.title, `${partPath}.title`, { max: 120 }),
       storyText: boundedString(part.storyText, `${partPath}.storyText`, { max: 700 }),
-      transition,
+      ...(transition ? { transition } : {}),
       challenge: boundedString(part.challenge, `${partPath}.challenge`, { max: 280 }),
       actionSuggestions,
-      backgroundImageUrl,
-      backgroundVideoUrl,
-      answer,
-      result,
+      ...(backgroundImageUrl ? { backgroundImageUrl } : {}),
+      ...(backgroundVideoUrl ? { backgroundVideoUrl } : {}),
+      ...(answer ? { answer } : {}),
+      ...(result ? { result } : {}),
     };
   });
   const completed = boolean(travel.completed, "interactiveTravelResponse.travel.completed");
@@ -824,14 +834,14 @@ export function parseInteractiveTravelResponse(value: unknown): InteractiveTrave
         "interactiveTravelResponse.travel.overallTitle",
         { max: 120 },
       ),
-      introReaction,
+      ...(introReaction ? { introReaction } : {}),
       ...(generationStatus ? { generationStatus } : {}),
       ...(generationError ? { generationError } : {}),
       plan,
       parts,
       completed,
-      outcomeValence,
-      statImpact,
+      ...(outcomeValence ? { outcomeValence } : {}),
+      ...(statImpact ? { statImpact } : {}),
     },
     debug: parseDebug(payload.debug, "interactiveTravelResponse.debug"),
   };

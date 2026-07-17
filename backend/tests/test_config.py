@@ -27,6 +27,9 @@ from app.config import Settings
         ("gigachat_chat_timeout_seconds", 0),
         ("provider_task_receipt_store_path", "not-a-sqlite-path"),
         ("provider_task_receipt_store_max_records", 0),
+        ("auth_session_store_path", "not-a-sqlite-path"),
+        ("auth_access_token_ttl_seconds", 59),
+        ("auth_refresh_token_ttl_seconds", 3599),
         ("openrouter_account_namespace", "sk-secret-must-not-be-stored"),
     ],
 )
@@ -68,6 +71,21 @@ def test_zero_rate_limit_remains_an_explicit_disable_switch() -> None:
     assert settings.generation_rate_limit_per_day == 0
     assert settings.interactive_travel_rate_limit_per_day == 0
     assert settings.chat_rate_limit_per_hour == 0
+
+
+def test_google_auth_is_unconfigured_by_default_and_refresh_outlives_access() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.google_auth_web_client_id is None
+    assert settings.auth_session_store_path.endswith("google_auth_sessions.sqlite3")
+    assert settings.auth_refresh_token_ttl_seconds > settings.auth_access_token_ttl_seconds
+
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            auth_access_token_ttl_seconds=3_600,
+            auth_refresh_token_ttl_seconds=3_600,
+        )
 
 
 @pytest.mark.parametrize(

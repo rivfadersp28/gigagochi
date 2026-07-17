@@ -17,6 +17,7 @@ from app.schemas import (
     GeneratePetJobResponse,
     GeneratePetStaticAssetResponse,
 )
+from app.services.feature_owner import FeatureOwner, stored_owner_audit_label
 from app.services.generation_job_store import GenerationJobStore, StoredGenerationJob
 from app.services.prompt_debug import reset_prompt_log_context, set_prompt_log_context
 from app.services.provider_task_checkpoint import generation_provider_task_scope
@@ -67,12 +68,14 @@ class GenerationOwnerActiveError(RuntimeError):
 
 @dataclass
 class GenerationJobRecord:
-    owner_id: int
+    owner_id: int | str
     username: str | None
     first_name: str | None
     description: str
     image_provider: str
     response: GeneratePetJobResponse
+    owner_namespace: str = "telegram"
+    notification_chat_id: int | None = None
     primary_complete: bool = False
     comparison_complete: bool = False
 
@@ -231,6 +234,20 @@ class GenerationJobService:
         image_provider: str = "openai",
         request_key: str | None = None,
     ) -> GeneratePetJobResponse:
+        return self.submit_for_owner(
+            description,
+            FeatureOwner.from_telegram(user),
+            image_provider,
+            request_key=request_key,
+        )
+
+    def submit_for_owner(
+        self,
+        description: str,
+        owner: FeatureOwner,
+        image_provider: str = "openai",
+        request_key: str | None = None,
+    ) -> GeneratePetJobResponse:
         description = description.strip()
         if not description:
             raise ValueError("generation description must not be empty")
@@ -253,12 +270,16 @@ class GenerationJobService:
                 updatedAt=now,
             )
             stored = StoredGenerationJob(
-                owner_id=user.telegram_id,
-                username=user.username,
-                first_name=user.first_name,
+                owner_id=owner.storage_key,
+                username=owner.username,
+                first_name=owner.first_name,
                 description=description,
                 image_provider=normalized_provider,
                 response=response,
+                owner_namespace=owner.namespace,
+                notification_chat_id=(
+                    owner.notification_target.chat_id if owner.notification_target else None
+                ),
             )
             try:
                 creation = self._store.create_or_get(
@@ -287,12 +308,16 @@ class GenerationJobService:
                 return response
             with self._lock:
                 self._jobs[job_id] = GenerationJobRecord(
-                    owner_id=user.telegram_id,
-                    username=user.username,
-                    first_name=user.first_name,
+                    owner_id=owner.storage_key,
+                    username=owner.username,
+                    first_name=owner.first_name,
                     description=description,
                     image_provider=normalized_provider,
                     response=response,
+                    owner_namespace=owner.namespace,
+                    notification_chat_id=(
+                        owner.notification_target.chat_id if owner.notification_target else None
+                    ),
                     comparison_complete=(
                         self._generate_comparison_images is None
                         or description.startswith(OUTFIT_GENERATION_PREFIX)
@@ -303,9 +328,9 @@ class GenerationJobService:
             "pet_generation_queued jobId=%s ownerId=%s username=%s firstName=%s "
             "imageWorkers=%s videoWorkers=%s",
             job_id,
-            user.telegram_id,
-            user.username,
-            user.first_name,
+            owner.audit_label,
+            owner.username,
+            owner.first_name,
             self._image_workers,
             self._video_workers,
         )
@@ -315,7 +340,7 @@ class GenerationJobService:
             self._fail(job_id, exc, phase="generating_images")
         return response
 
-    def get(self, job_id: str, owner_id: int) -> GeneratePetJobResponse:
+    def get(self, job_id: str, owner_id: int | str) -> GeneratePetJobResponse:
         self.cleanup()
         with self._lock:
             record = self._jobs.get(job_id)
@@ -328,10 +353,13 @@ class GenerationJobService:
             raise GenerationJobNotFoundError(job_id)
         return stored.response
 
+    def get_for_owner(self, job_id: str, owner: FeatureOwner) -> GeneratePetJobResponse:
+        return self.get(job_id, owner.storage_key)
+
     def find_by_request_key(
         self,
         request_key: str,
-        owner_id: int,
+        owner_id: int | str,
         description: str | None = None,
         image_provider: str | None = None,
     ) -> GeneratePetJobResponse | None:
@@ -349,6 +377,20 @@ class GenerationJobService:
             image_provider=normalized_provider,
         )
 
+    def find_by_request_key_for_owner(
+        self,
+        request_key: str,
+        owner: FeatureOwner,
+        description: str | None = None,
+        image_provider: str | None = None,
+    ) -> GeneratePetJobResponse | None:
+        return self.find_by_request_key(
+            request_key,
+            owner.storage_key,
+            description,
+            image_provider,
+        )
+
     @staticmethod
     def _stored_from_record(record: GenerationJobRecord) -> StoredGenerationJob:
         return StoredGenerationJob(
@@ -358,6 +400,8 @@ class GenerationJobService:
             description=record.description,
             image_provider=record.image_provider,
             response=record.response,
+            owner_namespace=record.owner_namespace,
+            notification_chat_id=record.notification_chat_id,
         )
 
     @staticmethod
@@ -414,9 +458,7 @@ class GenerationJobService:
         finally:
             self._watchdog_stop.set()
             if self._watchdog_thread is not current_thread():
-                self._watchdog_thread.join(
-                    timeout=max(1.0, self._watchdog_interval_seconds * 2)
-                )
+                self._watchdog_thread.join(timeout=max(1.0, self._watchdog_interval_seconds * 2))
             self._shutdown_complete.set()
 
     def _update(
@@ -503,6 +545,8 @@ class GenerationJobService:
                 description=record.description,
                 image_provider=record.image_provider,
                 response=record.response,
+                owner_namespace=record.owner_namespace,
+                notification_chat_id=record.notification_chat_id,
             )
         try:
             self._store.record_queued(stored)
@@ -529,6 +573,8 @@ class GenerationJobService:
             description=stored.description,
             image_provider=stored.image_provider,
             response=stored.response,
+            owner_namespace=stored.owner_namespace,
+            notification_chat_id=stored.notification_chat_id,
             primary_complete=stored.response.status == "succeeded",
             comparison_complete=(
                 self._generate_comparison_images is None
@@ -579,6 +625,9 @@ class GenerationJobService:
                 return
             recovered: list[StoredGenerationJob] = []
             for stored in self._store.active():
+                with self._lock:
+                    if stored.response.jobId in self._jobs:
+                        continue
                 if not self._claim(stored.response.jobId):
                     continue
                 response = stored.response.model_copy(
@@ -598,6 +647,8 @@ class GenerationJobService:
                     description=stored.description,
                     image_provider=stored.image_provider,
                     response=response,
+                    owner_namespace=stored.owner_namespace,
+                    notification_chat_id=stored.notification_chat_id,
                 )
                 try:
                     saved = self._store.save_claimed(
@@ -631,7 +682,7 @@ class GenerationJobService:
                 logger.warning(
                     "pet_generation_recovered jobId=%s ownerId=%s",
                     job_id,
-                    stored.owner_id,
+                    stored_owner_audit_label(stored.owner_namespace, stored.owner_id),
                 )
 
     def _claim(self, job_id: str, *, now: datetime | None = None) -> bool:
@@ -680,6 +731,11 @@ class GenerationJobService:
                     for job_id in lost:
                         self._jobs.pop(job_id, None)
                 logger.error("generation_job_leases_lost jobIds=%s", sorted(lost))
+            # Recovery at process start can legitimately skip rows whose old
+            # process lease has not expired yet. Re-scan here so those jobs, and
+            # jobs dropped from memory after a transient persistence failure,
+            # are reclaimed without requiring another server restart.
+            self._recover_active_jobs()
 
     def _job_is_active(self, job_id: str) -> bool:
         with self._lock:
@@ -744,7 +800,12 @@ class GenerationJobService:
     def _owner_id(self, job_id: str) -> int:
         with self._lock:
             record = self._jobs.get(job_id)
-            return record.owner_id if record is not None else 0
+            return record.notification_chat_id if record is not None else 0
+
+    def _notification_chat_id(self, job_id: str) -> int | None:
+        with self._lock:
+            record = self._jobs.get(job_id)
+            return record.notification_chat_id if record is not None else None
 
     def _image_provider(self, job_id: str) -> str:
         with self._lock:
@@ -754,7 +815,9 @@ class GenerationJobService:
     def _notify_ready(self, job_id: str) -> None:
         if self._notify_ready_callback is None:
             return
-        owner_id = self._owner_id(job_id)
+        owner_id = self._notification_chat_id(job_id)
+        if owner_id is None:
+            return
         try:
             self._notify_ready_callback(owner_id)
         except Exception:
@@ -768,7 +831,9 @@ class GenerationJobService:
     def _notify_outfit_ready(self, job_id: str) -> None:
         if self._notify_outfit_ready_callback is None:
             return
-        owner_id = self._owner_id(job_id)
+        owner_id = self._notification_chat_id(job_id)
+        if owner_id is None:
+            return
         try:
             self._notify_outfit_ready_callback(owner_id)
         except Exception:

@@ -105,10 +105,13 @@ def test_stale_ambiguous_admission_requires_explicit_release(tmp_path: Path) -> 
         stale[0],
         before=datetime.now(UTC) - timedelta(minutes=30),
     )
-    assert store.reserve_identity(
-        **identity,
-        created_at=datetime.now(UTC),
-    ) == "created"
+    assert (
+        store.reserve_identity(
+            **identity,
+            created_at=datetime.now(UTC),
+        )
+        == "created"
+    )
 
 
 def test_implicit_operation_lock_serializes_exact_payload_across_processes(

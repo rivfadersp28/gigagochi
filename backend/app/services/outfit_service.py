@@ -240,7 +240,7 @@ def _repair_outfit_prompt(original_prompt: str, rejected_prompt: str, attempt: i
     )
     if not revised_prompt:
         raise RuntimeError("OUTFIT_PROMPT_REPAIR_EMPTY")
-    if not revised_prompt.endswith(('.', '!', '?')):
+    if not revised_prompt.endswith((".", "!", "?")):
         revised_prompt += "."
     return revised_prompt
 

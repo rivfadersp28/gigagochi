@@ -23,6 +23,44 @@ def sample_pet() -> LocalPetChatContext:
     )
 
 
+def test_google_recovery_ignores_corrupt_notification_field(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(service, "GENERATED_ROOT", tmp_path)
+    job_id = "travel-video-prototype-" + "b" * 32
+    owner_key = "google:" + "a" * 64
+    job_dir = service._job_dir(job_id)
+    job_dir.mkdir(parents=True)
+    (job_dir / service.VIDEO_FILE_NAME).write_bytes(b"ready-video")
+    service._write_record(
+        job_id,
+        {
+            "jobId": job_id,
+            "ownerNamespace": "google",
+            "ownerKey": owner_key,
+            "notificationChatId": 62943754,
+            "status": "ready",
+            "prompt": "Луна",
+            "pet": sample_pet().model_dump(mode="json"),
+            "createdAt": "2026-07-17T00:00:00+00:00",
+            "updatedAt": "2026-07-17T00:00:00+00:00",
+        },
+    )
+    delivered: list[int] = []
+    monkeypatch.setattr(
+        service,
+        "send_travel_ready_video",
+        lambda telegram_id, _video: delivered.append(telegram_id),
+    )
+    recovered_owner = service._record_owner(service._read_record(job_id))
+
+    assert recovered_owner is not None
+    assert recovered_owner.notification_target is None
+    service.generate_travel_video_prototype_for_owner(
+        job_id=job_id,
+        owner=recovered_owner,
+    )
+    assert delivered == []
+
+
 def test_prototype_job_runs_full_media_pipeline(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(service, "GENERATED_ROOT", tmp_path)
     shots = (
@@ -243,3 +281,32 @@ def test_ready_video_delivery_failure_is_best_effort(monkeypatch, caplog) -> Non
 
     assert delivered is False
     assert "travel video Telegram delivery failed" in caplog.text
+
+
+def test_recovery_retries_ready_video_delivery(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(service, "GENERATED_ROOT", tmp_path)
+    started = service.create_travel_video_prototype(
+        telegram_id=62943754,
+        prompt="К морю",
+        request_key="01234567-89ab-4cde-8fab-0123456789ab",
+        pet=sample_pet(),
+    )
+    video_path = tmp_path / started.jobId / service.VIDEO_FILE_NAME
+    service._atomic_write(video_path, b"joined-video")
+    service._update_record(
+        started.jobId,
+        status="ready",
+        videoUrl=service._asset_url(started.jobId, service.VIDEO_FILE_NAME),
+    )
+    delivered: list[tuple[int, bytes]] = []
+    monkeypatch.setattr(
+        service,
+        "send_travel_ready_video",
+        lambda telegram_id, video: delivered.append((telegram_id, video)),
+    )
+
+    assert service.resume_pending_travel_video_prototypes() == 1
+    assert delivered == [(62943754, b"joined-video")]
+    record = service._read_record(started.jobId)
+    assert record.get("notificationSentAt")
+    assert service.resume_pending_travel_video_prototypes() == 0

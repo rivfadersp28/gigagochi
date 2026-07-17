@@ -43,6 +43,7 @@ type DebugPanelProps = {
   onRevivePet?: () => void;
   isPetDead?: boolean;
   onOpenTestPet?: () => void;
+  onSwitchToSavedPet?: () => Promise<void>;
   onOpenTravelDemo?: () => void;
   firstSessionEnabled?: boolean;
   onToggleFirstSession?: () => void;
@@ -407,6 +408,7 @@ export function DebugPanel({
   onRevivePet,
   isPetDead = false,
   onOpenTestPet,
+  onSwitchToSavedPet,
   onOpenTravelDemo,
   firstSessionEnabled = false,
   onToggleFirstSession,
@@ -427,6 +429,8 @@ export function DebugPanel({
   const [generationStatsLoading, setGenerationStatsLoading] = useState(false);
   const [generationStatsError, setGenerationStatsError] = useState<string | null>(null);
   const generationStatsRequestRef = useRef(0);
+  const [isSwitchingSavedPet, setIsSwitchingSavedPet] = useState(false);
+  const [savedPetActionError, setSavedPetActionError] = useState<string | null>(null);
 
   useEffect(() => {
     function handleChange() {
@@ -543,7 +547,7 @@ export function DebugPanel({
             </div>
           </div>
 
-          {onResetPetStats || onKillPet || onRevivePet || onOpenTestPet || onOpenTravelDemo || onToggleFirstSession || onRestartFirstSession || onVisualModeOverrideChange || onVisualProviderChange ? (
+          {onResetPetStats || onKillPet || onRevivePet || onOpenTestPet || onSwitchToSavedPet || onOpenTravelDemo || onToggleFirstSession || onRestartFirstSession || onVisualModeOverrideChange || onVisualProviderChange ? (
             <div className="mt-4 grid gap-2">
               {onToggleFirstSession ? (
                 <button
@@ -585,6 +589,34 @@ export function DebugPanel({
                   <FlaskConical className="size-3.5" aria-hidden="true" />
                   <span>Открыть тестового персонажа</span>
                 </button>
+              ) : null}
+              {onSwitchToSavedPet ? (
+                <button
+                  type="button"
+                  disabled={isSwitchingSavedPet}
+                  onClick={() => {
+                    setIsSwitchingSavedPet(true);
+                    setSavedPetActionError(null);
+                    void onSwitchToSavedPet()
+                      .catch((caught) => {
+                        setSavedPetActionError(
+                          caught instanceof Error
+                            ? caught.message
+                            : "Не получилось переключить персонажа.",
+                        );
+                      })
+                      .finally(() => setIsSwitchingSavedPet(false));
+                  }}
+                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-[8px] bg-black/[0.055] px-3 text-[12px] font-medium leading-none text-black/62 transition-colors hover:bg-black/[0.085] hover:text-black/78 focus:outline-none focus:ring-2 focus:ring-black/10 disabled:cursor-wait disabled:opacity-50"
+                >
+                  <RotateCcw className="size-3.5" aria-hidden="true" />
+                  <span>{isSwitchingSavedPet ? "Переключаем…" : "Переключиться на сохранённого"}</span>
+                </button>
+              ) : null}
+              {savedPetActionError ? (
+                <p className="text-pretty text-[11px] leading-[15px] text-red-700" role="alert">
+                  {savedPetActionError}
+                </p>
               ) : null}
               {onKillPet ? (
                 <button

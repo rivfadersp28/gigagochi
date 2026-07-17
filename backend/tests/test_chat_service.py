@@ -288,7 +288,6 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert "используй update_pet_name" in system_message
     assert "Коротко ответь на последнее сообщение от первого лица." in system_message
     assert "При необходимости задай один естественный уточняющий вопрос" in system_message
-    assert "Не изображай особую манеру речи, характер или роль" in system_message
     assert "Верни только JSON" not in system_message
     assert request["response_format"]["json_schema"]["name"] == "visible_pet_reply"
     assert (

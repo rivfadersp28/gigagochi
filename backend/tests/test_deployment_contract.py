@@ -398,3 +398,37 @@ def test_volume_backup_helper_uses_exact_prod_named_volume_mounts() -> None:
         "generated_assets:/app/static/generated",
         "push_data:/app/data/push",
     } <= helper_volumes
+
+
+def test_publish_requires_prepared_index_and_full_checks_by_default() -> None:
+    repository_root = BACKEND_ROOT.parent
+    script = (repository_root / "scripts/publish.sh").read_text(encoding="utf-8")
+
+    subprocess.run(["bash", "-n", str(repository_root / "scripts/publish.sh")], check=True)
+    assert 'CHECK_MODE="${2:-full}"' in script
+    assert "git add -A" not in script
+    assert "git diff --cached --check" in script
+    assert "git ls-files --others --exclude-standard" in script
+    assert "up -d --build --wait --wait-timeout 1200" in script
+    assert 'wait_for_url "Backend health" "$HEALTH_URL"' in script
+    assert 'wait_for_url "Frontend" "$FRONTEND_URL"' in script
+
+
+def test_nightly_backup_uploads_and_verifies_before_local_retention() -> None:
+    repository_root = BACKEND_ROOT.parent
+    deploy_root = repository_root / "deploy"
+    script_path = deploy_root / "backup-nightly.sh"
+    script = script_path.read_text(encoding="utf-8")
+    service = (deploy_root / "gigagochi-backup.service").read_text(encoding="utf-8")
+    timer = (deploy_root / "gigagochi-backup.timer").read_text(encoding="utf-8")
+
+    subprocess.run(["sh", "-n", str(script_path)], check=True)
+    assert script_path.stat().st_mode & stat.S_IXUSR
+    assert "offsite_remote=${BACKUP_OFFSITE_REMOTE:-}" in script
+    assert 'rclone copy "$backup_dir" "$remote_dir" --immutable' in script
+    assert 'rclone check "$backup_dir" "$remote_dir" --one-way' in script
+    assert script.index('rclone check "$candidate"') < script.index('rm -rf -- "$candidate"')
+    assert "EnvironmentFile=/etc/gigagochi-backup.env" in service
+    assert "ExecStart=/opt/gigagochi/deploy/backup-nightly.sh" in service
+    assert "OnCalendar=*-*-* 03:30:00 Europe/Moscow" in timer
+    assert "Persistent=true" in timer

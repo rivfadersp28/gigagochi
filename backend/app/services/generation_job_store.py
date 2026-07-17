@@ -16,12 +16,14 @@ SQLITE_BUSY_TIMEOUT_SECONDS = 30
 
 @dataclass(frozen=True)
 class StoredGenerationJob:
-    owner_id: int
+    owner_id: int | str
     username: str | None
     first_name: str | None
     description: str
     response: GeneratePetJobResponse
     image_provider: str = "openai"
+    owner_namespace: str = "telegram"
+    notification_chat_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -75,12 +77,21 @@ class GenerationJobStore:
                     "image_provider TEXT NOT NULL DEFAULT 'openai'"
                 )
             if "lease_owner" not in columns:
-                connection.execute(
-                    "ALTER TABLE generation_jobs ADD COLUMN lease_owner TEXT"
-                )
+                connection.execute("ALTER TABLE generation_jobs ADD COLUMN lease_owner TEXT")
             if "lease_until" not in columns:
+                connection.execute("ALTER TABLE generation_jobs ADD COLUMN lease_until TEXT")
+            if "owner_namespace" not in columns:
                 connection.execute(
-                    "ALTER TABLE generation_jobs ADD COLUMN lease_until TEXT"
+                    "ALTER TABLE generation_jobs ADD COLUMN "
+                    "owner_namespace TEXT NOT NULL DEFAULT 'telegram'"
+                )
+            if "notification_chat_id" not in columns:
+                connection.execute(
+                    "ALTER TABLE generation_jobs ADD COLUMN notification_chat_id INTEGER"
+                )
+                connection.execute(
+                    "UPDATE generation_jobs SET notification_chat_id = owner_id "
+                    "WHERE owner_namespace = 'telegram'"
                 )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS generation_jobs_status_idx "
@@ -280,8 +291,9 @@ class GenerationJobStore:
                 """
                 INSERT INTO generation_jobs (
                     job_id, owner_id, username, first_name, description,
-                    image_provider, status, updated_at, response_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    image_provider, status, updated_at, response_json,
+                    owner_namespace, notification_chat_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id) DO UPDATE SET
                     owner_id=excluded.owner_id,
                     username=excluded.username,
@@ -290,7 +302,9 @@ class GenerationJobStore:
                     image_provider=excluded.image_provider,
                     status=excluded.status,
                     updated_at=excluded.updated_at,
-                    response_json=excluded.response_json
+                    response_json=excluded.response_json,
+                    owner_namespace=excluded.owner_namespace,
+                    notification_chat_id=excluded.notification_chat_id
                 """,
                 (
                     response.jobId,
@@ -302,6 +316,8 @@ class GenerationJobStore:
                     response.status,
                     response.updatedAt.isoformat(),
                     response.model_dump_json(),
+                    job.owner_namespace,
+                    job.notification_chat_id,
                 ),
             )
 
@@ -354,6 +370,7 @@ class GenerationJobStore:
                 UPDATE generation_jobs
                 SET owner_id = ?, username = ?, first_name = ?, description = ?,
                     image_provider = ?, status = ?, updated_at = ?, response_json = ?,
+                    owner_namespace = ?, notification_chat_id = ?,
                     lease_owner = ?, lease_until = ?
                 WHERE job_id = ? AND lease_owner = ?
                 """,
@@ -366,6 +383,8 @@ class GenerationJobStore:
                     response.status,
                     response.updatedAt.isoformat(),
                     response.model_dump_json(),
+                    job.owner_namespace,
+                    job.notification_chat_id,
                     None if terminal else lease_owner,
                     None if terminal else lease_until.isoformat(),
                     response.jobId,
@@ -440,7 +459,7 @@ class GenerationJobStore:
             active_owner_row = connection.execute(
                 """
                 SELECT job_id, owner_id, username, first_name, description,
-                       image_provider, response_json
+                       image_provider, response_json, owner_namespace, notification_chat_id
                 FROM generation_jobs
                 WHERE owner_id = ? AND status IN ('queued', 'running')
                 ORDER BY updated_at DESC
@@ -484,8 +503,9 @@ class GenerationJobStore:
                 """
                 INSERT OR IGNORE INTO generation_jobs (
                     job_id, owner_id, username, first_name, description,
-                    image_provider, status, updated_at, response_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    image_provider, status, updated_at, response_json,
+                    owner_namespace, notification_chat_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     response.jobId,
@@ -497,6 +517,8 @@ class GenerationJobStore:
                     response.status,
                     response.updatedAt.isoformat(),
                     response.model_dump_json(),
+                    job.owner_namespace,
+                    job.notification_chat_id,
                 ),
             )
             if cursor.rowcount == 1:
@@ -512,7 +534,7 @@ class GenerationJobStore:
             existing = connection.execute(
                 """
                 SELECT owner_id, username, first_name, description,
-                       image_provider, response_json
+                       image_provider, response_json, owner_namespace, notification_chat_id
                 FROM generation_jobs WHERE job_id = ?
                 """,
                 (response.jobId,),
@@ -529,7 +551,7 @@ class GenerationJobStore:
     def _bind_request_key(
         connection: sqlite3.Connection,
         *,
-        owner_id: int,
+        owner_id: int | str,
         request_key: str,
         job_id: str,
         created_at: datetime,
@@ -548,14 +570,16 @@ class GenerationJobStore:
             row = connection.execute(
                 """
                 SELECT owner_id, username, first_name, description,
-                       image_provider, response_json
+                       image_provider, response_json, owner_namespace, notification_chat_id
                 FROM generation_jobs WHERE job_id = ?
                 """,
                 (job_id,),
             ).fetchone()
         return self._row(row) if row is not None else None
 
-    def get_by_request_key(self, owner_id: int, request_key: str) -> StoredGenerationJob | None:
+    def get_by_request_key(
+        self, owner_id: int | str, request_key: str
+    ) -> StoredGenerationJob | None:
         with self._connect() as connection:
             row = self._request_key_row(
                 connection,
@@ -568,13 +592,14 @@ class GenerationJobStore:
     def _request_key_row(
         connection: sqlite3.Connection,
         *,
-        owner_id: int,
+        owner_id: int | str,
         request_key: str,
     ) -> tuple[object, ...] | None:
         return connection.execute(
             """
             SELECT jobs.owner_id, jobs.username, jobs.first_name,
-                   jobs.description, jobs.image_provider, jobs.response_json
+                   jobs.description, jobs.image_provider, jobs.response_json,
+                   jobs.owner_namespace, jobs.notification_chat_id
             FROM generation_job_request_keys AS keys
             JOIN generation_jobs AS jobs
               ON jobs.job_id = keys.job_id AND jobs.owner_id = keys.owner_id
@@ -588,7 +613,7 @@ class GenerationJobStore:
             rows = connection.execute(
                 """
                 SELECT owner_id, username, first_name, description,
-                       image_provider, response_json
+                       image_provider, response_json, owner_namespace, notification_chat_id
                 FROM generation_jobs
                 WHERE status IN ('queued', 'running')
                 ORDER BY updated_at ASC
@@ -628,7 +653,7 @@ class GenerationJobStore:
             rows = connection.execute(
                 f"""
                 SELECT owner_id, username, first_name, description,
-                       image_provider, response_json
+                       image_provider, response_json, owner_namespace, notification_chat_id
                 FROM generation_jobs
                 WHERE {predicate}
                 """,
@@ -650,10 +675,16 @@ class GenerationJobStore:
     @staticmethod
     def _row(row: tuple[object, ...]) -> StoredGenerationJob:
         return StoredGenerationJob(
-            owner_id=int(row[0]),
+            owner_id=row[0] if isinstance(row[0], int) else str(row[0]),
             username=str(row[1]) if row[1] is not None else None,
             first_name=str(row[2]) if row[2] is not None else None,
             description=str(row[3]),
             image_provider=str(row[4] or "openai"),
             response=GeneratePetJobResponse.model_validate_json(str(row[5])),
+            owner_namespace=str(row[6] or "telegram"),
+            notification_chat_id=(
+                int(row[7])
+                if str(row[6] or "telegram") == "telegram" and row[7] is not None
+                else None
+            ),
         )

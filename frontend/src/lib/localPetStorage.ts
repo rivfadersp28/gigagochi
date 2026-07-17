@@ -43,6 +43,12 @@ import {
   type TravelImpactApplication,
 } from "./localPetTravelImpacts";
 import { isSafePublicAssetUrl } from "./publicAssetUrl";
+import {
+  adoptChargedOutfitExperience,
+  chargeOutfitExperience,
+  normalizeOutfitExperienceReceipts,
+  refundOutfitExperience,
+} from "./localPetOutfitExperience";
 import { serializedJsonBytes } from "./pushSnapshotPayload";
 import { isSafeJsonRecord, safeJsonClone } from "./safeJsonValue";
 
@@ -826,6 +832,9 @@ export type LocalPetStateMutationOperation =
   | { kind: "play" }
   | { kind: "tap" }
   | { kind: "spend-experience"; amount: number }
+  | { kind: "outfit-experience-charge"; requestKey: string; amount: number }
+  | { kind: "outfit-experience-adopt-charge"; requestKey: string; amount: number }
+  | { kind: "outfit-experience-refund"; requestKey: string; amount: number }
   | { kind: "reset-stats" }
   | { kind: "kill" }
   | { kind: "revive" }
@@ -995,6 +1004,9 @@ function normalizePetState(value: unknown): LocalPetStateV2 | null {
   const zeroStatSinceAt = normalizeZeroStatSinceMap(value.zeroStatSinceAt, stats, lastStatTickAt);
   const assetSet = normalizeAssetSet(value.assetSet);
   const travelImpactReceipts = normalizeTravelImpactReceipts(value.travelImpactReceipts);
+  const outfitExperienceReceipts = normalizeOutfitExperienceReceipts(
+    value.outfitExperienceReceipts,
+  );
 
   return {
     version: 2,
@@ -1021,6 +1033,7 @@ function normalizePetState(value: unknown): LocalPetStateV2 | null {
     mood: normalizeMood(value.mood ?? calculatePetMood(stats)),
     stats,
     ...(travelImpactReceipts ? { travelImpactReceipts } : {}),
+    ...(outfitExperienceReceipts ? { outfitExperienceReceipts } : {}),
     assetSet,
   };
 }
@@ -1087,6 +1100,27 @@ function applyMutationOperation(
           },
         };
       }
+      case "outfit-experience-charge":
+        return chargeOutfitExperience(
+          progressed(),
+          operation.requestKey,
+          operation.amount,
+          now,
+        );
+      case "outfit-experience-adopt-charge":
+        return adoptChargedOutfitExperience(
+          progressed(),
+          operation.requestKey,
+          operation.amount,
+          now,
+        );
+      case "outfit-experience-refund":
+        return refundOutfitExperience(
+          progressed(),
+          operation.requestKey,
+          operation.amount,
+          now,
+        );
       case "reset-stats": {
         const currentPet = progressed();
         const stats = { hunger: 0, happiness: 0, energy: 0 };

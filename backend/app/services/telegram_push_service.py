@@ -24,6 +24,7 @@ import httpx
 
 from app.config import get_settings
 from app.schemas import (
+    DebugSavedPetBundle,
     LocalChatHistoryItem,
     LocalPetChatContext,
     LocalPetMemoryContext,
@@ -107,6 +108,31 @@ SNAPSHOT_EPOCH_REVISION_FLOOR = 1_000_000_000_000
 STORY_STAT_MAX_ITEMS = 2
 STORY_STAT_MAX_SINGLE_DAMAGE = 25
 STORY_STAT_MAX_TOTAL_DAMAGE = 35
+DEBUG_SAVED_PET_SLOT_KEY = "debugSavedPetSlot"
+_DEBUG_SAVED_SERVER_RECORD_KEYS = (
+    "telegramId",
+    "chatId",
+    "username",
+    "firstName",
+    "languageCode",
+    "petId",
+    "pet",
+    "history",
+    "recentAmbientReplies",
+    "memoryContext",
+    "createdAt",
+    "updatedAt",
+    "lastStatsTickAt",
+    "lastStatTickAt",
+    "zeroStatSinceAt",
+    "diedAt",
+    "deathTrackingEnabled",
+    "timezone",
+    "registeredAt",
+    "snapshotWriterId",
+    "snapshotRevision",
+    "recentStoryEvents",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -404,6 +430,7 @@ def request_pet_reset(telegram_id: int) -> dict[str, Any]:
             "chatStartedAt",
             "lastChatSeenAt",
             "chatReachable",
+            DEBUG_SAVED_PET_SLOT_KEY,
         )
         record = {key: deepcopy(existing.get(key)) for key in retained_keys if key in existing}
         record["petResetRequest"] = {"petId": pet_id, "requestedAt": now_iso}
@@ -444,6 +471,107 @@ def _pet_reset_tombstones(record: dict[str, Any] | None) -> list[dict[str, str]]
         seen.add(pet_id)
         result.append({"petId": pet_id, "requestedAt": requested_at[:80]})
     return result
+
+
+def save_debug_pet_slot(
+    telegram_id: int,
+    bundle: DebugSavedPetBundle,
+) -> tuple[bool, DebugSavedPetBundle]:
+    """Persist one immutable diagnostic pet slot beside the active snapshot."""
+
+    created = False
+    saved_bundle = bundle
+
+    def save(existing: dict[str, Any] | None) -> dict[str, Any]:
+        nonlocal created, saved_bundle
+        record = deepcopy(existing) if isinstance(existing, dict) else {"telegramId": telegram_id}
+        existing_slot = record.get(DEBUG_SAVED_PET_SLOT_KEY)
+        if isinstance(existing_slot, dict):
+            try:
+                saved_bundle = DebugSavedPetBundle.model_validate(existing_slot.get("bundle"))
+                return record
+            except ValueError:
+                pass
+
+        server_record = {
+            key: deepcopy(record.get(key))
+            for key in _DEBUG_SAVED_SERVER_RECORD_KEYS
+            if key in record
+        }
+        record[DEBUG_SAVED_PET_SLOT_KEY] = {
+            "savedAt": _iso(),
+            "petId": bundle.petId,
+            "bundle": bundle.model_dump(mode="json"),
+            "serverRecord": server_record,
+        }
+        created = True
+        saved_bundle = bundle
+        return record
+
+    _update_record(telegram_id, save)
+    return created, saved_bundle
+
+
+def activate_debug_pet_slot(telegram_id: int) -> DebugSavedPetBundle:
+    """Make the immutable diagnostic slot authoritative and fence the replaced pet."""
+
+    activated_bundle: DebugSavedPetBundle | None = None
+
+    def activate(existing: dict[str, Any] | None) -> dict[str, Any]:
+        nonlocal activated_bundle
+        if not isinstance(existing, dict):
+            raise TelegramPushError("SAVED_PET_NOT_FOUND", "Сохранённый персонаж не найден.")
+        slot = existing.get(DEBUG_SAVED_PET_SLOT_KEY)
+        if not isinstance(slot, dict):
+            raise TelegramPushError("SAVED_PET_NOT_FOUND", "Сохранённый персонаж не найден.")
+        try:
+            activated_bundle = DebugSavedPetBundle.model_validate(slot.get("bundle"))
+        except ValueError as exc:
+            raise TelegramPushError(
+                "SAVED_PET_INVALID",
+                "Сохранённый персонаж повреждён.",
+            ) from exc
+
+        raw_server_record = slot.get("serverRecord")
+        record = deepcopy(raw_server_record) if isinstance(raw_server_record, dict) else {}
+        for key in (
+            "telegramId",
+            "chatId",
+            "username",
+            "firstName",
+            "languageCode",
+            "chatStartedAt",
+            "lastChatSeenAt",
+            "chatReachable",
+        ):
+            if key in existing:
+                record[key] = deepcopy(existing.get(key))
+
+        restored_pet_id = activated_bundle.petId
+        current_pet_id = existing.get("petId")
+        tombstones = [
+            item for item in _pet_reset_tombstones(existing) if item["petId"] != restored_pet_id
+        ]
+        if (
+            isinstance(current_pet_id, str)
+            and current_pet_id.strip()
+            and current_pet_id.strip() != restored_pet_id
+            and not any(item["petId"] == current_pet_id.strip() for item in tombstones)
+        ):
+            tombstones.append({"petId": current_pet_id.strip(), "requestedAt": _iso()})
+        if tombstones:
+            record["petResetTombstones"] = tombstones
+        else:
+            record.pop("petResetTombstones", None)
+        record.pop("petResetRequest", None)
+        record[DEBUG_SAVED_PET_SLOT_KEY] = deepcopy(slot)
+        record["registeredAt"] = _iso()
+        return record
+
+    _update_record(telegram_id, activate)
+    if activated_bundle is None:
+        raise TelegramPushError("SAVED_PET_NOT_FOUND", "Сохранённый персонаж не найден.")
+    return activated_bundle
 
 
 def unregister_push_snapshot(telegram_id: int, pet_id: str) -> bool:
@@ -489,6 +617,7 @@ def unregister_push_snapshot(telegram_id: int, pet_id: str) -> bool:
             "chatStartedAt",
             "lastChatSeenAt",
             "chatReachable",
+            DEBUG_SAVED_PET_SLOT_KEY,
         )
         record = {
             key: deepcopy(existing.get(key))
@@ -1632,6 +1761,9 @@ def register_push_snapshot(
                 record["snapshotRevision"] = existing_revision
         stats_patch = _merge_snapshot_stats(record, existing, now=now) if same_pet else None
         if isinstance(existing, dict):
+            saved_pet_slot = existing.get(DEBUG_SAVED_PET_SLOT_KEY)
+            if isinstance(saved_pet_slot, dict):
+                record[DEBUG_SAVED_PET_SLOT_KEY] = deepcopy(saved_pet_slot)
             if reset_tombstones:
                 record["petResetTombstones"] = reset_tombstones
             for key in (

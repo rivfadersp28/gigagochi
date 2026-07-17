@@ -13,6 +13,7 @@ import {
 } from "react";
 
 import { SmoothBackgroundVideo } from "@/components/SmoothBackgroundVideo";
+import { TiltedGlassButton } from "@/components/TiltedGlassButton";
 import { XpAmount } from "@/components/XpAmount";
 
 import {
@@ -26,6 +27,7 @@ import {
   type AutomaticInteractiveStory,
 } from "@/lib/api";
 import { presentError, type PresentedError } from "@/lib/errorPresentation";
+import { ApiError } from "@/lib/apiTransport";
 import {
   currentPendingPart,
   interactiveTravelCharacterImageUrl,
@@ -97,6 +99,7 @@ const MINIMUM_WAIT_DURATION_MS = 1_600;
 const DEMO_WAIT_DURATION_MS = 5_000;
 const MAXIMUM_DEPARTURE_WAIT_DURATION_MS = 90_000;
 const MEDIA_PATCH_LOCK_ACQUIRE_TIMEOUT_MS = 5 * 60_000 + 10_000;
+const MEDIA_RETRY_DELAYS_MS = [2_000, 5_000] as const;
 const STORY_CHARACTER_RISE_DURATION_MS = 300;
 const STORY_CHARACTER_RISE_STAGGER_MS = 12;
 const ENTRY_BACKGROUND_VIDEO = "/figma/travel-entry-bg.mp4?ping_pong_v=20260714-2";
@@ -122,6 +125,20 @@ type InteractiveTravelScreenProps = {
   petId: string;
   automaticStoryToken?: string;
 };
+
+function interactiveMediaErrorIsRetryable(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status === undefined) {
+    return true;
+  }
+  return error.status === 408
+    || error.status === 409
+    || error.status === 429
+    || error.status >= 500;
+}
+
+function waitForInteractiveMediaRetry(delayMs: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, delayMs));
+}
 
 function automaticStorySession(story: AutomaticInteractiveStory): LocalInteractiveTravel {
   const selectedIndex = story.selectedChoice
@@ -202,6 +219,7 @@ function AnimatedTravelParagraph({
     tokens.slice(0, index).reduce((total, token) => total + Array.from(token).length, 0));
   return (
     <p className={className} aria-label={text}>
+      <span className={styles.screenReaderText}>{text}</span>
       {tokens.map((token, tokenIndex) => {
         const isWhitespace = /^\s+$/u.test(token);
         if (isWhitespace) {
@@ -391,7 +409,6 @@ export function InteractiveTravelScreen({
   const [isCharacterEntranceComplete, setIsCharacterEntranceComplete] = useState(false);
   const [exitingCharacterTravelId, setExitingCharacterTravelId] = useState<string | null>(null);
   const [isResettingTravel, setIsResettingTravel] = useState(false);
-  const [completedStoryRevealKey, setCompletedStoryRevealKey] = useState<string | null>(null);
   const travelResetInFlightRef = useRef(false);
   const demoAutoStartAttemptedRef = useRef(false);
   const submittingRef = useRef(false);
@@ -1057,17 +1074,31 @@ export function InteractiveTravelScreen({
       }
       animationRequestsRef.current.add(key);
       try {
-        const response = await animateInteractiveTravelPart(travelSession.travel, part);
-        if (activeTravelIdRef.current !== travelId) {
-          return;
+        for (let attempt = 0; attempt <= MEDIA_RETRY_DELAYS_MS.length; attempt += 1) {
+          try {
+            const response = await animateInteractiveTravelPart(travelSession.travel, part);
+            if (activeTravelIdRef.current !== travelId) {
+              return;
+            }
+            if (response.partNumber !== part.partNumber) {
+              throw new Error("Animation part mismatch");
+            }
+            await patchLatestMedia(travelId, part.partNumber, {
+              videoUrl: response.videoUrl,
+            });
+            return;
+          } catch (error) {
+            const retryDelay = MEDIA_RETRY_DELAYS_MS[attempt];
+            if (
+              retryDelay === undefined
+              || !interactiveMediaErrorIsRetryable(error)
+              || activeTravelIdRef.current !== travelId
+            ) {
+              break;
+            }
+            await waitForInteractiveMediaRetry(retryDelay);
+          }
         }
-        if (response.partNumber !== part.partNumber) {
-          throw new Error("Animation part mismatch");
-        }
-        await patchLatestMedia(travelId, part.partNumber, {
-          videoUrl: response.videoUrl,
-        });
-      } catch {
         if (activeTravelIdRef.current === travelId) {
           failedAnimationsRef.current.add(key);
           setFailedAnimations((current) => [...new Set([...current, key])]);
@@ -1100,27 +1131,41 @@ export function InteractiveTravelScreen({
       }
       illustrationRequestsRef.current.add(key);
       try {
-        const response = await illustrateInteractiveTravelPart(
-          travelSession.travel,
-          part,
-          pet,
-        );
-        if (activeTravelIdRef.current !== travelId) {
-          return;
+        for (let attempt = 0; attempt <= MEDIA_RETRY_DELAYS_MS.length; attempt += 1) {
+          try {
+            const response = await illustrateInteractiveTravelPart(
+              travelSession.travel,
+              part,
+              pet,
+            );
+            if (activeTravelIdRef.current !== travelId) {
+              return;
+            }
+            if (response.partNumber !== part.partNumber) {
+              throw new Error("Illustration part mismatch");
+            }
+            const patched = await patchLatestMedia(travelId, part.partNumber, {
+              imageUrl: response.imageUrl,
+            });
+            const illustratedPart = patched
+              ? partByNumber(patched.travel.parts, part.partNumber)
+              : null;
+            if (patched && illustratedPart) {
+              void ensureAnimation(patched, illustratedPart);
+            }
+            return;
+          } catch (error) {
+            const retryDelay = MEDIA_RETRY_DELAYS_MS[attempt];
+            if (
+              retryDelay === undefined
+              || !interactiveMediaErrorIsRetryable(error)
+              || activeTravelIdRef.current !== travelId
+            ) {
+              break;
+            }
+            await waitForInteractiveMediaRetry(retryDelay);
+          }
         }
-        if (response.partNumber !== part.partNumber) {
-          throw new Error("Illustration part mismatch");
-        }
-        const patched = await patchLatestMedia(travelId, part.partNumber, {
-          imageUrl: response.imageUrl,
-        });
-        const illustratedPart = patched
-          ? partByNumber(patched.travel.parts, part.partNumber)
-          : null;
-        if (patched && illustratedPart) {
-          void ensureAnimation(patched, illustratedPart);
-        }
-      } catch {
         if (activeTravelIdRef.current === travelId) {
           failedIllustrationsRef.current.add(key);
           setFailedIllustrations((current) => [...new Set([...current, key])]);
@@ -1951,21 +1996,6 @@ export function InteractiveTravelScreen({
     : STORY_CHARACTER_RISE_DURATION_MS
       + (resultReactionCharacterCount - 1) * STORY_CHARACTER_RISE_STAGGER_MS;
   const resultOutcomeDelay = storyRevealDuration + resultReactionDuration;
-  const isStoryTextRevealComplete = Boolean(
-    storyRevealKey && completedStoryRevealKey === storyRevealKey,
-  );
-  useEffect(() => {
-    if (!storyRevealKey) {
-      return;
-    }
-    const reducedMotion = typeof window.matchMedia === "function"
-      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const revealDuration = reducedMotion ? 0 : storyRevealDuration;
-    const timeoutId = window.setTimeout(() => {
-      setCompletedStoryRevealKey(storyRevealKey);
-    }, revealDuration);
-    return () => window.clearTimeout(timeoutId);
-  }, [storyRevealDuration, storyRevealKey]);
   const animatedStoryParagraphs = visibleStoryParagraphs.map((paragraph, index) => {
     const startIndex = visibleStoryParagraphs
       .slice(0, index)
@@ -2278,7 +2308,7 @@ export function InteractiveTravelScreen({
               ) : null}
             </div>
 
-            {isStoryQuestionPhase && isStoryTextRevealComplete ? (
+            {isStoryQuestionPhase ? (
               <div
                 className={styles.storyAnswersScroll}
                 role="group"
@@ -2286,11 +2316,10 @@ export function InteractiveTravelScreen({
               >
                 <div className={styles.storyAnswersRow}>
                   {activePart.actionSuggestions.slice(0, 4).map((suggestion, index) => (
-                    <button
+                    <TiltedGlassButton
                       key={suggestion}
-                      type="button"
-                      className={styles.storyAnswerButton}
-                      style={{ animationDelay: `${index * 200}ms` }}
+                      index={index}
+                      delayMs={index * 200}
                       disabled={
                         isSubmitting
                         || (isOnboardingBatSession
@@ -2299,20 +2328,20 @@ export function InteractiveTravelScreen({
                       onClick={() => void submitAdvice(suggestion)}
                     >
                       {suggestion}
-                    </button>
+                    </TiltedGlassButton>
                   ))}
                 </div>
               </div>
             ) : (
               <div className={styles.storyResultActions}>
-                <button
-                  type="button"
+                <TiltedGlassButton
+                  animate={false}
                   onClick={handleNext}
                   className={styles.storyResultButton}
                   disabled={isSubmitting}
                 >
                   {session.travel.completed ? "Завершить" : "Далее"}
-                </button>
+                </TiltedGlassButton>
               </div>
             )}
           </div>

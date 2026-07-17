@@ -80,6 +80,24 @@
 - Finale reference-to-video needs public HTTPS asset URLs. A localhost static URL is not fetchable
   by OpenRouter; keep the production asset origin in the snapshot or supply it as the lab's
   reference base URL.
+- A travel-video POST must persist its browser request key before starting. Reuse that key after an
+  ambiguous network failure: the backend derives one owner-scoped job ID from it and returns the
+  existing job. Persist the returned job ID for browser polling; an independent backend recovery
+  scheduler must resume interrupted jobs. Keep the saved pet context, per-job `flock`, atomic files
+  and reuse of completed keyframes/clips, or a backend restart can duplicate paid media stages.
+- Keep travel-video Telegram delivery outside the generation-success transaction. A failed
+  `sendVideo` call must be logged without replacing the completed job's `ready` status with
+  `failed`; absence of `notificationSentAt` lets the backend recovery scheduler retry delivery.
+- Keep the prototype's isolated-character keyframes between scenario and video. A single keyframe
+  plus a locked-camera i2v prompt cannot reliably produce several distinct scenes; the prototype
+  therefore pays for three images and three 5-second clips before concatenation. Direct text-to-video
+  loses the strongest identity anchor. Even with the anchors, secondary story objects are not exact:
+  the first two real runs preserved the hero well, while one generated northern star became a small
+  dragon-like companion.
+- OpenRouter currently advertises 4 through 15 seconds for `bytedance/seedance-2.0`; the travel-video
+  prototype requests three 5-second clips and concatenates them to 15 seconds. Keep ordinary
+  background stories on their existing 4-second default and do not turn this prototype duration
+  into a global story-video duration.
 - Backend and bot must mount the same `push_data` volume and use the same
   `RATE_LIMIT_STORE_PATH`/`GENERATION_RATE_LIMIT_PER_DAY`; otherwise bot media commands bypass the
   API quota. `/full_story` is one user generation action, while `/push` stays outside the paid
@@ -602,6 +620,8 @@
   loop. `app.bot` submits both to the bounded `telegram-command` executor;
   worker tasks create their own `httpx.Client` rather than sharing the polling
   client.
+- `/easy` and `/hard` mutate one global task-bank mode. Keep both execution and `/help` discovery
+  behind the diagnostic/pilot Telegram allowlists; chat membership alone is not authorization.
 - Telegram `/story` and `/full_story` durable progress is append-only: add a new
   top-level stage key and increment the checkpoint revision; never rewrite an
   existing nested value or list. Preserve bounded `botGenerationReceipts` when
@@ -623,6 +643,18 @@
 - In the Telegram iOS WebView, do not rely on a focused form's native submit button for the outfit
   action. Keep an explicit button `onClick`, matching chat, and call the shared submit routine;
   otherwise a tap with the software keyboard open can be swallowed without dispatching `submit`.
+- Do not reuse an unversioned first-session debug opt-in forever. A stale production localStorage
+  flag can reactivate a saved mid-flow stage after an unrelated release. Bump only the enabled key
+  when invalidating opt-in; retain per-pet progress so an explicit debug restart can overwrite it.
+- Production debug UI requires `DIAGNOSTIC_TELEGRAM_IDS`; frontend controls alone are insufficient
+  because `/api/capabilities` is authoritative for Telegram clients. Keep the allowlist scoped to
+  explicit diagnostic accounts rather than enabling debug for all production users.
+- Passing `history: []` to `runLocalPetChatTurn` does not isolate a turn by itself: the helper normally
+  merges supplied messages with durable history and builds recall from durable user memory. First-session
+  chat must use `isolatePriorContext`, which also removes mutable character-bible overlays and compliments.
+- Keep the frontend per-story credit cap at least as high as the fixed onboarding reward. Otherwise the
+  bat story can display `+200` while persistence silently credits less. The current economy is 0 initial,
+  200 onboarding, 200 per outfit, and 30–50 for later correct story answers.
 - The interactive-travel entry MP4 must be warmed from the dashboard and keep its versioned URL
   cacheable. `preload="auto"` on the travel screen starts too late, while the generic `/figma/*`
   `no-store` header otherwise discards the warm download. Keep the scene at full viewport size;
@@ -674,3 +706,14 @@
 - An `admitted` provider receipt without a task ID is intentionally ambiguous and must not age into
   an automatic retry. Let it degrade health, inspect the provider externally, then use the explicit
   reconciliation script acknowledgement to release only the exact stale receipt.
+- Reopening character creation with a durable pending job must resume on the final waiting stage,
+  not the first follow-up question. Backend readiness notifications arrive before the browser has
+  persisted the local pet; gating finalization on the non-persisted questionnaire otherwise leaves
+  a ready job stranded behind the creation flow.
+- Google ID token нельзя принимать по декодированному payload: backend использует `google-auth` для signature/audience/issuer/expiry, затем отдельно fail-closed проверяет `aud`/`iss`/`exp`/`sub` и constant-time `nonce`. Email/name остаются metadata, identity — только immutable Google `sub`.
+- Android owner scope нельзя строить из email, access token или раскрытого Google `sub`. Backend один раз назначает случайный canonical `accountId` записи `(provider, sub)` и возвращает его только через authenticated hidden `/api/auth/me`; endpoint обязан быть `no-store`, fail-closed 401 и не входить в TMA OpenAPI.
+- Bearer token нельзя хранить в SQLite даже в WAL как plaintext. Auth store пишет только SHA-256 digest; refresh lookup+rotation выполняются в одной `BEGIN IMMEDIATE` транзакции, поэтому старый refresh после commit считается replay и получает 401.
+- Для Android mutation нельзя использовать prefixed/sequence key: контракт принимает только canonical lowercase UUIDv4. Rate-limit request key обязан дополнительно включать operation (`android:<operation>:<uuid>`), иначе одинаковый UUID разных mutations ошибочно дедупит quota event.
+- Не удалять Android idempotency reservation после возможного provider dispatch. До dispatch точный validation/rate/admission отказ удаляет reservation и refund-ит только созданное quota event; после dispatch CAS/network failure становится `OUTCOME_UNKNOWN`. Sync `OUTCOME_UNKNOWN` не имеет `Retry-After` и никогда автоматически не повторяет provider.
+- Persisted notification metadata не является достаточной capability: `owner_namespace=google` всегда декодируется с `notification_chat_id=None`, даже если SQLite/JSON повреждён и содержит chat ID. Старые rows без namespace строго мигрируют как Telegram и сохраняют прежний callback.
+- `AndroidFeatureStore` пока не имеет retention/capacity pruning для completed request rows. Для MVP до 100 пользователей это отложено; при добавлении pruning нельзя удалять active/ambiguous reservations или ослаблять owner/idempotency fences.

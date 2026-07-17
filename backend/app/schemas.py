@@ -22,6 +22,7 @@ InteractiveTravelId = Annotated[
     ),
 ]
 SNAPSHOT_MAX_SERIALIZED_BYTES = 262_144
+DEBUG_SAVED_PET_MAX_SERIALIZED_BYTES = 700_000
 CHARACTER_BIBLE_MAX_SERIALIZED_BYTES = 262_144
 CHARACTER_BIBLE_MAX_DEPTH = 20
 CHARACTER_BIBLE_MAX_NODES = 10_000
@@ -718,3 +719,30 @@ class LocalPetPushSnapshotResponse(BaseModel):
 class LocalPetPushSnapshotDeleteResponse(BaseModel):
     unregistered: bool
     petId: str = Field(min_length=1, max_length=120)
+
+
+class DebugSavedPetBundle(BaseModel):
+    petId: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    pet: dict[str, Any]
+    chatHistory: dict[str, Any]
+    memory: dict[str, Any]
+
+    @model_validator(mode="after")
+    def validate_bundle(self) -> DebugSavedPetBundle:
+        if self.pet.get("petId") != self.petId or self.memory.get("petId") != self.petId:
+            raise ValueError("saved pet bundle ids must match")
+        if len(self.model_dump_json().encode("utf-8")) > DEBUG_SAVED_PET_MAX_SERIALIZED_BYTES:
+            raise ValueError("saved pet bundle exceeds the persisted size limit")
+        return self
+
+
+class DebugSavedPetSaveResponse(BaseModel):
+    saved: bool = True
+    created: bool
+    petId: str = Field(min_length=1, max_length=120)
+
+
+class DebugSavedPetActivateResponse(BaseModel):
+    activated: bool = True
+    petId: str = Field(min_length=1, max_length=120)
+    bundle: DebugSavedPetBundle

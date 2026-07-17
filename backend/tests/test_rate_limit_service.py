@@ -7,6 +7,7 @@ from threading import Barrier
 
 import pytest
 
+from app.services.feature_owner import FeatureOwner
 from app.services.rate_limit_service import RateLimitExceeded, SQLiteRateLimiter
 
 
@@ -191,6 +192,36 @@ def test_request_key_replay_does_not_consume_another_event_or_refund_original(
             "SELECT COUNT(*) FROM rate_limit_events WHERE bucket = 'generation'"
         ).fetchone()[0]
     assert count == 1
+
+
+def test_google_and_telegram_rate_limit_namespaces_do_not_share_quota(tmp_path) -> None:
+    limiter = SQLiteRateLimiter(tmp_path / "rate-limits.sqlite3")
+    google_owner = FeatureOwner("google", "google:" + "a" * 64)
+
+    limiter.check(
+        "generation",
+        42,
+        limit=1,
+        window=timedelta(days=1),
+        request_key="telegram:shared",
+    )
+    limiter.check(
+        "generation",
+        google_owner.storage_key,
+        limit=1,
+        window=timedelta(days=1),
+        request_key="android:create:shared",
+    )
+
+    with pytest.raises(RateLimitExceeded):
+        limiter.check("generation", 42, limit=1, window=timedelta(days=1))
+    with pytest.raises(RateLimitExceeded):
+        limiter.check(
+            "generation",
+            google_owner.storage_key,
+            limit=1,
+            window=timedelta(days=1),
+        )
 
 
 def test_concurrent_same_request_key_creates_one_event(tmp_path) -> None:

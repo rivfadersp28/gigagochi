@@ -16,7 +16,7 @@ from app.llm.runtime import llm_runtime_status
 from app.media.runtime import media_runtime_status
 from app.middleware import RequestBodyLimitMiddleware
 from app.public_media import PublicMediaStaticFiles
-from app.routers import local_admin, tma
+from app.routers import android, auth, local_admin, tma
 from app.services.ops_alert_service import notify_ops
 from app.services.provider_task_checkpoint import provider_task_runtime_status
 from app.services.storage_health_service import storage_runtime_status
@@ -26,6 +26,9 @@ from app.services.telegram_push_service import (
     start_daily_push_scheduler,
     start_generated_media_cleanup_scheduler,
     start_scheduled_short_story_scheduler,
+)
+from app.services.travel_video_prototype_service import (
+    start_travel_video_prototype_recovery_scheduler,
 )
 
 settings = get_settings()
@@ -39,18 +42,26 @@ async def lifespan(app: FastAPI):
     story_task = start_background_story_scheduler()
     short_story_task = start_scheduled_short_story_scheduler()
     cleanup_task = start_generated_media_cleanup_scheduler()
+    travel_video_recovery_task = start_travel_video_prototype_recovery_scheduler()
     app.state.scheduler_tasks = {
         "dailyPush": push_task,
         "backgroundStory": story_task,
         "scheduledShortStory": short_story_task,
         "generatedMediaCleanup": cleanup_task,
+        "travelVideoRecovery": travel_video_recovery_task,
     }
     try:
         yield
     finally:
         scheduler_tasks = [
             task
-            for task in (push_task, story_task, short_story_task, cleanup_task)
+            for task in (
+                push_task,
+                story_task,
+                short_story_task,
+                cleanup_task,
+                travel_video_recovery_task,
+            )
             if task is not None
         ]
         for task in scheduler_tasks:
@@ -83,6 +94,9 @@ async def request_id_middleware(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    if request.url.path.startswith("/api/android/"):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
     return response
 
 
@@ -137,6 +151,8 @@ static_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static", PublicMediaStaticFiles(directory=static_dir), name="static")
 
 app.include_router(local_admin.router)
+app.include_router(auth.router)
+app.include_router(android.router)
 app.include_router(tma.router)
 
 

@@ -22,6 +22,9 @@ from app.schemas import (
     AnimateInteractiveTravelPartRequest,
     AutomaticInteractiveStoryChoiceRequest,
     ContinueInteractiveTravelRequest,
+    DebugSavedPetActivateResponse,
+    DebugSavedPetBundle,
+    DebugSavedPetSaveResponse,
     GenerateOutfitRequest,
     GeneratePetJobResponse,
     GeneratePetRequest,
@@ -167,8 +170,10 @@ from app.services.request_admission_service import (
 from app.services.telegram_auth_service import TelegramUserContext
 from app.services.telegram_push_service import (
     TelegramPushError,
+    activate_debug_pet_slot,
     automatic_interactive_story,
     register_push_snapshot,
+    save_debug_pet_slot,
     select_automatic_interactive_story,
     unregister_push_snapshot,
 )
@@ -457,6 +462,15 @@ def _is_diagnostic_user(user_id: int) -> bool:
     return user_id in getattr(get_settings(), "diagnostic_telegram_ids", set())
 
 
+def _require_diagnostic_user(user: TelegramUser) -> None:
+    if _is_diagnostic_user(user.telegram_id):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"code": "DEBUG_NOT_AVAILABLE", "message": "Debug-функция недоступна."},
+    )
+
+
 def _interactive_travel_allowed(user: TelegramUserContext) -> bool:
     settings = get_settings()
     return bool(
@@ -485,6 +499,53 @@ def tma_capabilities(user: TelegramUser) -> TmaCapabilitiesResponse:
         debugMenu=_is_diagnostic_user(user.telegram_id),
         interactiveTravel=_interactive_travel_allowed(user),
     )
+
+
+@router.post("/debug/saved-pet", response_model=DebugSavedPetSaveResponse)
+def save_debug_pet(
+    payload: DebugSavedPetBundle,
+    user: TelegramUser,
+) -> DebugSavedPetSaveResponse:
+    _require_diagnostic_user(user)
+    try:
+        created, saved_bundle = save_debug_pet_slot(user.telegram_id, payload)
+    except TelegramPushRecordTooLargeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "code": "SAVED_PET_TOO_LARGE",
+                "message": "Сохранённый персонаж не помещается в debug-хранилище.",
+                "maxBytes": exc.max_bytes,
+            },
+        ) from None
+    except TelegramPushStoreCapacityError:
+        raise HTTPException(
+            status_code=status.HTTP_507_INSUFFICIENT_STORAGE,
+            detail={"code": "PUSH_STORE_CAPACITY", "message": "Debug-хранилище переполнено."},
+        ) from None
+    return DebugSavedPetSaveResponse(created=created, petId=saved_bundle.petId)
+
+
+@router.post("/debug/saved-pet/activate", response_model=DebugSavedPetActivateResponse)
+def activate_debug_pet(user: TelegramUser) -> DebugSavedPetActivateResponse:
+    _require_diagnostic_user(user)
+    try:
+        bundle = activate_debug_pet_slot(user.telegram_id)
+    except TelegramPushError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": exc.code, "message": exc.message},
+        ) from None
+    except TelegramPushRecordTooLargeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "code": "SAVED_PET_TOO_LARGE",
+                "message": "Не удалось активировать сохранённого персонажа.",
+                "maxBytes": exc.max_bytes,
+            },
+        ) from None
+    return DebugSavedPetActivateResponse(petId=bundle.petId, bundle=bundle)
 
 
 def _interactive_travel_session_store():
@@ -1417,7 +1478,11 @@ def start_travel_video_prototype(
     user: TelegramUser,
 ) -> TravelVideoPrototypeResponse:
     _require_interactive_travel_pilot(user)
-    check_rate_limit("interactive_travel", user)
+    check_rate_limit(
+        "interactive_travel",
+        user,
+        request_key=f"travel-video:{payload.requestKey}",
+    )
     response = create_travel_video_prototype(
         telegram_id=user.telegram_id,
         prompt=payload.prompt,

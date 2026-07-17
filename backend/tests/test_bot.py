@@ -299,7 +299,8 @@ def test_durable_command_completes_only_after_worker_callback_and_shutdown_drain
         started.set()
         release.wait(timeout=2)
 
-    monkeypatch.setattr(bot, "_story_worker", worker)
+    monkeypatch.setattr(bot, "_interactive_story_worker", worker)
+    monkeypatch.setattr(bot, "send_message", lambda *_args, **_kwargs: None)
     inbox = SQLiteBotCommandInbox(tmp_path / "bot-command-inbox.sqlite3")
     command = normalize_bot_command_update(_durable_story_update())
     assert command is not None
@@ -372,9 +373,10 @@ def test_run_bot_recovers_durable_lifecycle_and_drains_on_sigterm(
     worker_calls: list[int] = []
     monkeypatch.setattr(
         bot,
-        "_story_worker",
+        "_interactive_story_worker",
         lambda chat_id, _keyboard: worker_calls.append(chat_id),
     )
+    monkeypatch.setattr(bot, "send_message", lambda *_args, **_kwargs: None)
     handlers: dict[int, object] = {}
 
     def fake_signal(signum: int, handler: object) -> object:
@@ -571,7 +573,8 @@ def test_two_dispatchers_cannot_process_same_chat_concurrently(
         started.set()
         release.wait(timeout=2)
 
-    monkeypatch.setattr(bot, "_story_worker", worker)
+    monkeypatch.setattr(bot, "_interactive_story_worker", worker)
+    monkeypatch.setattr(bot, "send_message", lambda *_args, **_kwargs: None)
     first_dispatcher = BoundedBotCommandDispatcher(max_workers=1, max_queued_commands=0)
     second_dispatcher = BoundedBotCommandDispatcher(max_workers=1, max_queued_commands=0)
     first_keeper = BotCommandLeaseKeeper(
@@ -723,6 +726,7 @@ def test_takeover_during_story_text_fences_next_paid_stage_and_delivery(
         "generate_story_for_telegram_user",
         generate_story,
     )
+    monkeypatch.setattr(bot, "_interactive_story_worker", bot._DEFAULT_STORY_WORKER)
     monkeypatch.setattr(bot, "send_message", lambda *_args, **_kwargs: deliveries.append("text"))
     monkeypatch.setattr(bot, "send_video", lambda *_args, **_kwargs: deliveries.append("video"))
 
@@ -749,7 +753,7 @@ def test_takeover_during_story_text_fences_next_paid_stage_and_delivery(
         dispatcher.shutdown()
 
     assert not paid_stage_started.is_set()
-    assert deliveries == []
+    assert deliveries == ["text"]
     assert keeper.snapshot() == set()
     assert takeover.status(command.update_id) == "processing"
 
@@ -1565,12 +1569,16 @@ def test_push_command_generates_for_requesting_user(monkeypatch) -> None:
     ("command", "expected_mode", "expected_label"),
     (("/easy", "easy", "простой"), ("/hard", "hard", "сложный")),
 )
-def test_task_bank_commands_are_available_to_any_user(
+def test_task_bank_commands_are_available_to_diagnostic_user(
     monkeypatch, tmp_path, command, expected_mode, expected_label
 ) -> None:
     mode_path = tmp_path / "task-bank-mode.txt"
     sent: list[str] = []
-    monkeypatch.setattr(bot, "get_settings", lambda: _bot_settings())
+    monkeypatch.setattr(
+        bot,
+        "get_settings",
+        lambda: _bot_settings(diagnostic_telegram_ids={123456}),
+    )
     monkeypatch.setattr(
         task_bank_mode,
         "get_settings",
@@ -1589,6 +1597,27 @@ def test_task_bank_commands_are_available_to_any_user(
     assert sent == [
         f"Включён {expected_label} банк задач для всех. Он применится к следующей истории."
     ]
+
+
+def test_task_bank_command_is_rejected_for_regular_user(monkeypatch, tmp_path) -> None:
+    mode_path = tmp_path / "task-bank-mode.txt"
+    sent: list[str] = []
+    monkeypatch.setattr(bot, "get_settings", lambda: _bot_settings())
+    monkeypatch.setattr(
+        task_bank_mode,
+        "get_settings",
+        lambda: SimpleNamespace(interactive_travel_task_bank_mode_path=str(mode_path)),
+    )
+    monkeypatch.setattr(
+        bot,
+        "send_message",
+        lambda _client, _chat_id, text, _keyboard: sent.append(text),
+    )
+
+    bot.handle_update(httpx.Client(), _durable_command_update(1, "/easy", chat_id=123456))
+
+    assert not mode_path.exists()
+    assert sent == ["Команда недоступна."]
 
 
 @pytest.mark.parametrize("command", ("/easy", "/hard", "/story"))
@@ -1655,7 +1684,7 @@ def test_story_command_sends_generated_video(monkeypatch) -> None:
     monkeypatch.setattr(bot, "send_video", fake_send_video)
     monkeypatch.setattr(bot, "send_message", lambda *args, **kwargs: sent.setdefault("text", True))
 
-    bot.handle_update(httpx.Client(), _story_update())
+    bot._send_story_response(httpx.Client(), TEST_TELEGRAM_ID, {})
 
     assert sent["method"] == "video"
     assert sent["chat_id"] == TEST_TELEGRAM_ID
@@ -1736,8 +1765,8 @@ def test_story_command_can_be_submitted_without_blocking_polling(monkeypatch) ->
 
     bot.handle_update(
         httpx.Client(),
-        _story_update(),
-        submit_story=lambda chat_id, keyboard: submitted.append((chat_id, keyboard)),
+        _full_story_update(),
+        submit_full_story=lambda chat_id, keyboard: submitted.append((chat_id, keyboard)),
     )
 
     assert submitted[0][0] == TEST_TELEGRAM_ID
@@ -1759,8 +1788,8 @@ def test_story_command_reports_bounded_queue_rejection(monkeypatch) -> None:
 
     bot.handle_update(
         httpx.Client(),
-        _story_update(),
-        submit_story=lambda _chat_id, _keyboard: False,
+        _full_story_update(),
+        submit_full_story=lambda _chat_id, _keyboard: False,
     )
 
     assert sent == {"chat_id": TEST_TELEGRAM_ID, "text": bot.BOT_COMMAND_BUSY_MESSAGE}
@@ -1791,8 +1820,8 @@ def test_api_generation_quota_blocks_bot_before_story_callback(monkeypatch, tmp_
 
     bot.handle_update(
         httpx.Client(),
-        _story_update(),
-        submit_story=lambda chat_id, _keyboard: generation_callbacks.append(chat_id),
+        _full_story_update(),
+        submit_full_story=lambda chat_id, _keyboard: generation_callbacks.append(chat_id),
     )
 
     assert generation_callbacks == []
@@ -1819,8 +1848,8 @@ def test_full_story_consumes_one_generation_action(monkeypatch, tmp_path) -> Non
 
     bot.handle_update(
         httpx.Client(),
-        _story_update(),
-        submit_story=lambda _chat_id, _keyboard: submitted.append("story"),
+        _full_story_update(),
+        submit_full_story=lambda _chat_id, _keyboard: submitted.append("story"),
     )
     bot.handle_update(
         httpx.Client(),
@@ -1829,8 +1858,8 @@ def test_full_story_consumes_one_generation_action(monkeypatch, tmp_path) -> Non
     )
     bot.handle_update(
         httpx.Client(),
-        _story_update(),
-        submit_story=lambda _chat_id, _keyboard: submitted.append("unexpected"),
+        _full_story_update(),
+        submit_full_story=lambda _chat_id, _keyboard: submitted.append("unexpected"),
     )
 
     assert submitted == ["story", "full_story"]
@@ -1856,8 +1885,8 @@ def test_push_command_does_not_consume_generation_quota(monkeypatch, tmp_path) -
     )
     bot.handle_update(
         httpx.Client(),
-        _story_update(),
-        submit_story=lambda _chat_id, _keyboard: submitted.append("story"),
+        _full_story_update(),
+        submit_full_story=lambda _chat_id, _keyboard: submitted.append("story"),
     )
 
     assert submitted == ["push", "story"]
@@ -1888,8 +1917,8 @@ def test_bot_commits_quota_before_generation_callback(monkeypatch, tmp_path) -> 
 
     bot.handle_update(
         httpx.Client(),
-        _story_update(),
-        submit_story=generation_callback,
+        _full_story_update(),
+        submit_full_story=generation_callback,
     )
 
     assert event_counts_seen_by_callback == [1]
@@ -1909,13 +1938,13 @@ def test_rejected_bot_queue_submission_refunds_quota(monkeypatch, tmp_path) -> N
 
     bot.handle_update(
         httpx.Client(),
-        _story_update(),
-        submit_story=lambda _chat_id, _keyboard: False,
+        _full_story_update(),
+        submit_full_story=lambda _chat_id, _keyboard: False,
     )
     bot.handle_update(
         httpx.Client(),
-        _story_update(),
-        submit_story=lambda chat_id, _keyboard: accepted.append(chat_id),
+        _full_story_update(),
+        submit_full_story=lambda chat_id, _keyboard: accepted.append(chat_id),
     )
 
     assert accepted == [TEST_TELEGRAM_ID]
@@ -1937,13 +1966,13 @@ def test_replayed_telegram_update_consumes_exactly_one_generation_action(
 
     bot.handle_update(
         httpx.Client(),
-        update,
-        submit_story=lambda chat_id, _keyboard: submitted.append(chat_id),
+        {**update, "message": {**update["message"], "text": "/full_story"}},
+        submit_full_story=lambda chat_id, _keyboard: submitted.append(chat_id),
     )
     bot.handle_update(
         httpx.Client(),
-        update,
-        submit_story=lambda chat_id, _keyboard: submitted.append(chat_id),
+        {**update, "message": {**update["message"], "text": "/full_story"}},
+        submit_full_story=lambda chat_id, _keyboard: submitted.append(chat_id),
     )
 
     with sqlite3.connect(store_path) as connection:
@@ -1971,22 +2000,22 @@ def test_queue_rejection_on_replay_does_not_refund_original_quota_event(
     monkeypatch.setattr(bot, "get_settings", lambda: settings)
     monkeypatch.setattr(bot, "send_message", lambda *_args, **_kwargs: None)
     accepted: list[int] = []
-    replayed_update = _durable_story_update(77)
+    replayed_update = _durable_command_update(77, "/full_story", chat_id=TEST_TELEGRAM_ID)
 
     bot.handle_update(
         httpx.Client(),
         replayed_update,
-        submit_story=lambda chat_id, _keyboard: accepted.append(chat_id),
+        submit_full_story=lambda chat_id, _keyboard: accepted.append(chat_id),
     )
     bot.handle_update(
         httpx.Client(),
         replayed_update,
-        submit_story=lambda _chat_id, _keyboard: False,
+        submit_full_story=lambda _chat_id, _keyboard: False,
     )
     bot.handle_update(
         httpx.Client(),
-        _durable_story_update(78),
-        submit_story=lambda chat_id, _keyboard: accepted.append(chat_id),
+        _durable_command_update(78, "/full_story", chat_id=TEST_TELEGRAM_ID),
+        submit_full_story=lambda chat_id, _keyboard: accepted.append(chat_id),
     )
 
     with sqlite3.connect(store_path) as connection:
@@ -2192,7 +2221,7 @@ def test_story_command_falls_back_to_message_without_video(monkeypatch) -> None:
 
     monkeypatch.setattr(bot, "send_message", fake_send_message)
 
-    bot.handle_update(httpx.Client(), _story_update())
+    bot._send_story_response(httpx.Client(), TEST_TELEGRAM_ID, {})
 
     assert sent["method"] == "message"
     assert sent["chat_id"] == TEST_TELEGRAM_ID

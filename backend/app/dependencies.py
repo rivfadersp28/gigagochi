@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from functools import lru_cache
+from typing import Annotated
 
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 
 from app.config import get_settings
+from app.services.google_auth_service import GoogleAuthService, OfficialGoogleTokenVerifier
+from app.services.google_auth_session_store import GoogleAuthSessionStore, GoogleUserIdentity
 from app.services.telegram_auth_service import (
     TelegramAuthError,
     TelegramUserContext,
@@ -12,6 +16,39 @@ from app.services.telegram_auth_service import (
 )
 
 DEV_TMA_AUTH_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "testclient"})
+
+
+@lru_cache
+def get_google_auth_service() -> GoogleAuthService:
+    settings = get_settings()
+    return GoogleAuthService(
+        web_client_id=settings.google_auth_web_client_id,
+        store=GoogleAuthSessionStore(settings.auth_session_store_path),
+        verifier=OfficialGoogleTokenVerifier(),
+        access_ttl_seconds=settings.auth_access_token_ttl_seconds,
+        refresh_ttl_seconds=settings.auth_refresh_token_ttl_seconds,
+    )
+
+
+def get_google_account_identity(
+    request: Request,
+    service: Annotated[GoogleAuthService, Depends(get_google_auth_service)],
+) -> GoogleUserIdentity:
+    authorization = request.headers.get("authorization", "")
+    scheme, separator, token = authorization.partition(" ")
+    if separator != " " or scheme.lower() != "bearer" or not token or token != token.strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "AUTH_INVALID", "message": "Не удалось подтвердить сессию."},
+        )
+    identity = service.authenticate_access_token(token)
+    if identity is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "AUTH_INVALID", "message": "Не удалось подтвердить сессию."},
+        )
+    request.state.google_account_identity = identity
+    return identity
 
 
 def _init_data_from_request(request: Request) -> str:

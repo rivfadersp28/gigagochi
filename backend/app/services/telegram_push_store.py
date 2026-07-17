@@ -119,6 +119,8 @@ def _record_activity_timestamp(record: dict[str, Any]) -> float | None:
 def _record_has_reset_fence(record: Any) -> bool:
     if not isinstance(record, dict):
         return False
+    if isinstance(record.get("debugSavedPetSlot"), dict):
+        return True
     reset_request = record.get("petResetRequest")
     if isinstance(reset_request, dict) and reset_request.get("petId"):
         return True

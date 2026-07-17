@@ -67,6 +67,12 @@ export type LocalPetStateV1 = {
   assetSet?: LocalPetAssetSet;
 };
 
+export type OutfitExperienceReceipt = {
+  requestKey: string;
+  status: "charged" | "refunded";
+  amount: number;
+};
+
 export type LocalPetStateV2 = {
   version: 2;
   petId: string;
@@ -91,6 +97,8 @@ export type LocalPetStateV2 = {
   };
   /** Local-only idempotency receipts; intentionally excluded from push snapshots. */
   travelImpactReceipts?: string[];
+  /** Local-only charge/refund ledger for accepted outfit generation jobs. */
+  outfitExperienceReceipts?: OutfitExperienceReceipt[];
   assetSet?: LocalPetAssetSet;
 };
 

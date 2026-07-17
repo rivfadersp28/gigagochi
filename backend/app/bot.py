@@ -76,6 +76,12 @@ def _diagnostic_message(chat_id: int, public_message: str, diagnostic: str) -> s
     return f"{public_message}\n\nТехнические детали: {diagnostic[:1200]}"
 
 
+def _can_manage_task_bank(settings: Any, user_id: int) -> bool:
+    allowed_ids = set(getattr(settings, "diagnostic_telegram_ids", set()))
+    allowed_ids.update(getattr(settings, "interactive_travel_pilot_telegram_ids", set()))
+    return user_id in allowed_ids
+
+
 def _message_command(text: str) -> str:
     first = text.strip().split(maxsplit=1)[0] if text.strip() else ""
     return first.split("@", 1)[0].lower()
@@ -803,20 +809,28 @@ def handle_update(
         f"telegram-update:{update_id}" if type(update_id) is int and update_id >= 0 else None
     )
     if command == "/help":
+        task_bank_commands = ""
+        if _can_manage_task_bank(settings, quota_user_id):
+            task_bank_commands = (
+                "\n/easy — включить простой банк задач для всех"
+                "\n/hard — включить сложный банк задач для всех"
+            )
         send_message(
             client,
             chat_id,
             (
                 "Открой Mini App, создай AI-питомца и общайся с ним внутри Telegram.\n\n"
-                "/easy — включить простой банк задач для всех\n"
-                "/hard — включить сложный банк задач для всех\n"
                 "/story — создать интерактивную историю сейчас"
+                f"{task_bank_commands}"
             ),
             keyboard,
         )
         return
 
     if command in {"/easy", "/hard"}:
+        if not _can_manage_task_bank(settings, quota_user_id):
+            send_message(client, chat_id, "Команда недоступна.", keyboard)
+            return
         from app.services.task_bank_mode import write_task_bank_mode
 
         mode = "easy" if command == "/easy" else "hard"

@@ -91,6 +91,25 @@ NEXT_PUBLIC_API_URL=
 В production `ALLOW_DEV_TMA_AUTH` и `NEXT_PUBLIC_ENABLE_TMA_DEV_FALLBACK`
 должны быть `false`.
 
+## Android Google session
+
+Android auth добавлен отдельно от Telegram Mini App и не меняет TMA endpoints. Backend
+fail-closed: пока Web OAuth client ID не задан, `POST /api/auth/google` возвращает 503.
+
+```env
+# backend/.env — только Web application OAuth client ID, не Android client ID.
+GOOGLE_AUTH_WEB_CLIENT_ID=
+AUTH_SESSION_STORE_PATH=data/push/google_auth_sessions.sqlite3
+AUTH_ACCESS_TOKEN_TTL_SECONDS=900
+AUTH_REFRESH_TOKEN_TTL_SECONDS=2592000
+```
+
+`POST /api/auth/google` принимает `{idToken, nonce}`, проверяет Google signature, issuer,
+audience, expiry и nonce, затем возвращает opaque `accessToken`, `refreshToken` и
+`expiresAt` в epoch milliseconds. `POST /api/auth/refresh` атомарно ротирует оба token.
+SQLite хранит только SHA-256 digests token; Google `sub` является immutable identity key,
+email/name — только обновляемые metadata. Реальные Google credentials в репозиторий не входят.
+
 Для создания питомца `OPENAI_API_KEY` обязателен: primary-набор изображений всегда
 строится через OpenAI. Дополнительно заполните ключи активных text/media-профилей
 (например, `OPENROUTER_API_KEY` для видео профиля `legacy`), а также `BOT_TOKEN`,
@@ -235,7 +254,8 @@ Production-конфигурация: `docker-compose.prod.yml`, `deploy/Caddyfil
 `deploy/HETZNER.md`. Persistent volumes: `generated_assets`, `push_data`,
 `backend_logs`; backend и frontend подключаются к внешней сети reverse proxy. `push_data` и
 `generated_assets` резервируются и восстанавливаются только вместе через
-`deploy/backup-volumes.sh` / `deploy/restore-volumes.sh`; runbook — в `deploy/HETZNER.md`.
+`deploy/backup-volumes.sh` / `deploy/restore-volumes.sh`; ночная выгрузка в независимое хранилище —
+`deploy/backup-nightly.sh`; runbook — в `deploy/HETZNER.md`.
 
 ## Проверки
 
@@ -258,12 +278,13 @@ backend tests и Vitest; используйте её перед рискован
 ./scripts/publish.sh "Короткое описание изменения"
 ```
 
-Скрипт выполняет быстрые проверки, создаёт commit из текущих изменений, отправляет `main`,
-обновляет Hetzner через `git pull --ff-only`, пересобирает контейнеры и проверяет production
-health. Pull request и `gh` для этого не нужны.
+Сначала добавьте только нужные файлы в index (`git add ...`) и убедитесь, что нет unstaged и
+untracked файлов. Скрипт по умолчанию выполняет полный набор проверок, создаёт commit только из
+подготовленного index, отправляет `main`, обновляет Hetzner через `git pull --ff-only`, ждёт
+готовности контейнеров и проверяет backend и frontend. Pull request и `gh` для этого не нужны.
 
-Для рискованного изменения запустите полный набор тестов перед публикацией:
+Fast-режим оставлен только для осознанной аварийной публикации:
 
 ```bash
-./scripts/publish.sh "Короткое описание изменения" full
+./scripts/publish.sh "Короткое описание изменения" fast
 ```

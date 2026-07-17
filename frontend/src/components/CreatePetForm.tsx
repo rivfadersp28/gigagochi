@@ -15,6 +15,7 @@ import {
 import { ApiError, generatePetAssets, resumePetGeneration } from "@/lib/api";
 import { presentError, type PresentedError } from "@/lib/errorPresentation";
 import { readLocalPetState } from "@/lib/localPetStorage";
+import { activateAndRestoreDebugPet } from "@/lib/debugSavedPet";
 import {
   adoptPendingPetGenerationJob,
   clearPendingPetGeneration,
@@ -166,6 +167,7 @@ export function CreatePetForm({ redirectExistingPet = true }: CreatePetFormProps
   const [customValue, setCustomValue] = useState("");
   const [error, setError] = useState<PresentedError | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSwitchingSavedPet, setIsSwitchingSavedPet] = useState(false);
   const [generationResult, setGenerationResult] = useState<ReadyGeneration | null>(null);
   const isMounted = useSyncExternalStore(
     subscribeToHydration,
@@ -691,13 +693,35 @@ export function CreatePetForm({ redirectExistingPet = true }: CreatePetFormProps
             <header className="border-b border-white/10 px-4 py-3">
               <h2 className="text-[15px] font-semibold leading-none text-white">Debug</h2>
             </header>
-            <div className="p-3">
+            <div className="grid gap-2 p-3">
               <button
                 type="button"
                 onClick={handleCreateTestPet}
                 className="flex h-11 w-full items-center justify-center rounded-[8px] bg-white px-4 text-[14px] font-medium leading-none text-black transition-colors hover:bg-[rgba(255,255,255,0.86)] focus:outline-none focus:ring-2 focus:ring-white/20 focus:ring-offset-2 focus:ring-offset-[#121212]"
               >
                 Тестовый персонаж
+              </button>
+              <button
+                type="button"
+                disabled={isSwitchingSavedPet}
+                onClick={() => {
+                  setIsSwitchingSavedPet(true);
+                  setError(null);
+                  void activateAndRestoreDebugPet()
+                    .then((restoredPet) => {
+                      window.location.replace(`/pet/${restoredPet.petId}`);
+                    })
+                    .catch((caught) => {
+                      setError(presentError(
+                        caught,
+                        "Не получилось переключиться на сохранённого персонажа.",
+                      ));
+                      setIsSwitchingSavedPet(false);
+                    });
+                }}
+                className="flex h-11 w-full items-center justify-center rounded-[8px] bg-white/10 px-4 text-[14px] font-medium leading-none text-white transition-colors hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-white/20 disabled:cursor-wait disabled:opacity-50"
+              >
+                {isSwitchingSavedPet ? "Переключаем…" : "Сохранённый персонаж"}
               </button>
             </div>
           </aside>

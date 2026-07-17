@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.schemas import GeneratePetJobResponse
+from app.services.feature_owner import FeatureOwner
 from app.services.generation_job_service import (
     GenerationIdempotencyConflictError,
     GenerationJobService,
@@ -880,11 +881,184 @@ def test_generation_job_store_migrates_legacy_table_with_lease_columns(tmp_path:
             """
         )
 
-    GenerationJobStore(store_path)
+        now = datetime.now(UTC)
+        legacy_response = GeneratePetJobResponse(
+            jobId="legacy-job",
+            status="queued",
+            phase="queued",
+            createdAt=now,
+            updatedAt=now,
+        )
+        connection.execute(
+            """
+            INSERT INTO generation_jobs (
+                job_id, owner_id, username, first_name, description,
+                image_provider, request_key, status, updated_at, response_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-job",
+                42,
+                "legacy",
+                "Legacy",
+                "мышонок",
+                "openai",
+                None,
+                "queued",
+                now.isoformat(),
+                legacy_response.model_dump_json(),
+            ),
+        )
+
+    store = GenerationJobStore(store_path)
 
     with sqlite3.connect(store_path) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(generation_jobs)")}
     assert {"lease_owner", "lease_until"} <= columns
+    legacy = store.get("legacy-job")
+    assert legacy is not None
+    assert legacy.owner_namespace == "telegram"
+    assert legacy.notification_chat_id == 42
+
+
+def test_google_generation_row_ignores_corrupt_telegram_notification_target(
+    tmp_path: Path,
+) -> None:
+    store = GenerationJobStore(tmp_path / "generation-jobs.sqlite3")
+    now = datetime.now(UTC)
+    store.save(
+        StoredGenerationJob(
+            owner_id="google:" + "a" * 64,
+            username=None,
+            first_name=None,
+            description="мышонок",
+            response=GeneratePetJobResponse(
+                jobId="google-corrupt-notification",
+                status="queued",
+                phase="queued",
+                createdAt=now,
+                updatedAt=now,
+            ),
+            owner_namespace="google",
+            notification_chat_id=62943754,
+        )
+    )
+
+    restored = store.get("google-corrupt-notification")
+
+    assert restored is not None
+    assert restored.owner_namespace == "google"
+    assert restored.notification_chat_id is None
+
+
+def test_recovered_google_generation_never_calls_telegram_notification(
+    tmp_path: Path,
+) -> None:
+    store_path = tmp_path / "generation-jobs.sqlite3"
+    store = GenerationJobStore(store_path)
+    now = datetime.now(UTC)
+    owner = FeatureOwner("google", "google:" + "a" * 64)
+    store.save(
+        StoredGenerationJob(
+            owner_id=owner.storage_key,
+            username=None,
+            first_name=None,
+            description="мышонок",
+            response=GeneratePetJobResponse(
+                jobId="recovered-google-job",
+                status="queued",
+                phase="queued",
+                createdAt=now,
+                updatedAt=now,
+            ),
+            owner_namespace="google",
+            notification_chat_id=62943754,
+        )
+    )
+    notifications: list[int] = []
+    service = _test_service(
+        store_path,
+        lambda _description, _provider: SimpleNamespace(asset_set_id="asset-1"),
+        notify_ready=notifications.append,
+        notify_outfit_ready=notifications.append,
+    )
+    try:
+        for _ in range(200):
+            recovered = service.get_for_owner("recovered-google-job", owner)
+            if recovered.status == "succeeded":
+                break
+            time.sleep(0.005)
+        else:
+            raise AssertionError("recovered Google generation did not complete")
+    finally:
+        service.shutdown(wait=True)
+    assert notifications == []
+
+
+def test_migrated_legacy_telegram_job_keeps_recovery_callback(tmp_path: Path) -> None:
+    store_path = tmp_path / "generation-jobs.sqlite3"
+    now = datetime.now(UTC)
+    response = GeneratePetJobResponse(
+        jobId="legacy-recovered-job",
+        status="queued",
+        phase="queued",
+        createdAt=now,
+        updatedAt=now,
+    )
+    with sqlite3.connect(store_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE generation_jobs (
+                job_id TEXT PRIMARY KEY,
+                owner_id INTEGER NOT NULL,
+                username TEXT,
+                first_name TEXT,
+                description TEXT NOT NULL,
+                image_provider TEXT NOT NULL DEFAULT 'openai',
+                request_key TEXT,
+                status TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                response_json TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO generation_jobs (
+                job_id, owner_id, username, first_name, description,
+                image_provider, request_key, status, updated_at, response_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                response.jobId,
+                42,
+                "legacy",
+                "Legacy",
+                "мышонок",
+                "openai",
+                None,
+                "queued",
+                now.isoformat(),
+                response.model_dump_json(),
+            ),
+        )
+    notifications: list[int] = []
+    service = _test_service(
+        store_path,
+        lambda _description, _provider: SimpleNamespace(asset_set_id="asset-1"),
+        notify_ready=notifications.append,
+        notify_outfit_ready=notifications.append,
+    )
+    try:
+        completed = _wait_for(
+            service,
+            response.jobId,
+            lambda job: job.status == "succeeded",
+        )
+        assert completed.status == "succeeded"
+    finally:
+        service.shutdown(wait=True)
+    assert notifications == [42]
 
 
 def test_service_cleanup_prunes_metrics_after_365_days_independently(tmp_path: Path) -> None:
@@ -1223,6 +1397,41 @@ def test_second_service_does_not_run_job_owned_by_live_lease(tmp_path: Path) -> 
         release.set()
         first.shutdown(wait=True)
         second.shutdown(wait=True)
+
+
+def test_watchdog_recovers_job_after_previous_process_lease_expires(tmp_path: Path) -> None:
+    store_path = tmp_path / "generation-jobs.sqlite3"
+    _seed_active_job(store_path)
+    store = GenerationJobStore(store_path)
+    assert store.claim(
+        "recovered-job",
+        lease_owner="dead-process",
+        lease_until=datetime.now(UTC) + timedelta(minutes=5),
+        now=datetime.now(UTC),
+    )
+    recovered = Event()
+
+    service = _test_service(
+        store_path,
+        lambda _description, _provider: recovered.set() or SimpleNamespace(asset_set_id="asset-1"),
+        watchdog_interval_seconds=0.01,
+    )
+    try:
+        assert not recovered.wait(timeout=0.05)
+        with sqlite3.connect(store_path) as connection:
+            connection.execute(
+                "UPDATE generation_jobs SET lease_until = ? WHERE job_id = ?",
+                ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), "recovered-job"),
+            )
+        assert recovered.wait(timeout=2)
+        completed = _wait_for(
+            service,
+            "recovered-job",
+            lambda job: job.status == "succeeded",
+        )
+        assert completed.phase == "completed"
+    finally:
+        service.shutdown(wait=True)
 
 
 def test_watchdog_fails_stale_job_and_releases_owner(tmp_path: Path) -> None:

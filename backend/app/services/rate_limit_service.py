@@ -25,7 +25,7 @@ class RateLimitExceeded(Exception):
 class RateLimitReservation:
     event_id: int
     bucket: str
-    user_id: int
+    user_id: int | str
     created: bool = True
 
 
@@ -158,7 +158,7 @@ class SQLiteRateLimiter:
     def check(
         self,
         bucket: str,
-        user_id: int,
+        user_id: int | str,
         limit: int,
         window: timedelta,
         request_key: str | None = None,
@@ -264,7 +264,7 @@ class SQLiteRateLimiter:
     def check_fixed_window(
         self,
         bucket: str,
-        user_id: int,
+        user_id: int | str,
         limit: int,
         window: timedelta,
         request_key: str | None = None,
@@ -354,7 +354,7 @@ class SQLiteRateLimiter:
         if retry_after_seconds is not None:
             raise RateLimitExceeded(retry_after_seconds)
 
-    def clear(self, bucket: str, user_id: int) -> None:
+    def clear(self, bucket: str, user_id: int | str) -> None:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
