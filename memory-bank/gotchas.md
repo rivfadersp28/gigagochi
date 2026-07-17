@@ -717,3 +717,10 @@
 - Не удалять Android idempotency reservation после возможного provider dispatch. До dispatch точный validation/rate/admission отказ удаляет reservation и refund-ит только созданное quota event; после dispatch CAS/network failure становится `OUTCOME_UNKNOWN`. Sync `OUTCOME_UNKNOWN` не имеет `Retry-After` и никогда автоматически не повторяет provider.
 - Persisted notification metadata не является достаточной capability: `owner_namespace=google` всегда декодируется с `notification_chat_id=None`, даже если SQLite/JSON повреждён и содержит chat ID. Старые rows без namespace строго мигрируют как Telegram и сохраняют прежний callback.
 - `AndroidFeatureStore` пока не имеет retention/capacity pruning для completed request rows. Для MVP до 100 пользователей это отложено; при добавлении pruning нельзя удалять active/ambiguous reservations или ослаблять owner/idempotency fences.
+- Scheduled Android episode generation must claim `(opaque owner, pet, slot)` before the first
+  provider call. A stale/failed generating claim is outcome-unknown and must not regenerate; the
+  foreground due endpoint may return no story until explicit reconciliation.
+- FastAPI `BackgroundTasks` is intentionally only an MVP latency boundary, not a durable queue.
+  Backend process death after claim fail-closes the slot; never turn that stale claim into automatic
+  paid regeneration. Current 12 configured hours × 10 media calls per episode require an explicit
+  cadence/budget decision before enabling scheduled stories in deployment.

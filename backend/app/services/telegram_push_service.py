@@ -9,7 +9,6 @@ import logging
 import os
 import re
 import sqlite3
-import time
 import uuid
 from collections.abc import Callable
 from copy import deepcopy
@@ -50,13 +49,8 @@ from app.services.generated_media_cleanup import (
     cleanup_unreferenced_background_story_media,
     generated_media_cleanup_is_enabled,
 )
-from app.services.image_service import generated_dir_for, generation_error_code
-from app.services.interactive_travel_media_service import (
-    generate_interactive_travel_part_image,
-    generate_interactive_travel_part_video,
-)
+from app.services.image_service import generated_dir_for
 from app.services.interactive_travel_service import (
-    generate_scheduled_interactive_episode_plan,
     scheduled_interactive_episode_correct_choice,
     scheduled_interactive_episode_result,
 )
@@ -66,6 +60,11 @@ from app.services.rate_limit_service import (
     DEFAULT_RATE_LIMIT_STORE_PATH,
     RateLimitExceeded,
     get_rate_limiter,
+)
+from app.services.scheduled_short_story_service import (
+    generate_scheduled_short_story_episode,
+    run_scheduled_short_story_provider_job,
+    scheduled_short_story_provider_error_is_retryable,
 )
 from app.services.story_delivery_format import (
     format_full_story_part_message,
@@ -4122,49 +4121,14 @@ def _mark_scheduled_short_story_attempt(record: dict[str, Any], *, now: datetime
 
 
 def _scheduled_short_story_provider_error_is_retryable(exc: Exception) -> bool:
-    code = generation_error_code(exc)
-    if code in {
-        "OPENAI_TIMEOUT",
-        "OPENAI_RATE_LIMIT",
-        "OPENAI_CONNECTION_FAILED",
-        "LLM_TIMEOUT",
-        "LLM_RATE_LIMIT",
-        "LLM_CONNECTION_FAILED",
-        "LLM_FAILED",
-        "KANDINSKY_TASK_FAILED",
-    }:
-        return True
-    if code.startswith(("OPENAI_STATUS_5", "LLM_STATUS_5")):
-        return True
-    compact_error = str(exc).casefold()
-    return "timed out" in compact_error or "timeout" in compact_error
+    return scheduled_short_story_provider_error_is_retryable(exc)
 
 
 def _run_scheduled_short_story_provider_job(
     label: str,
     operation: Callable[[], Any],
 ) -> Any:
-    for attempt in range(1, SCHEDULED_SHORT_STORY_PROVIDER_MAX_ATTEMPTS + 1):
-        try:
-            return operation()
-        except Exception as exc:
-            retryable = _scheduled_short_story_provider_error_is_retryable(exc)
-            if not retryable or attempt >= SCHEDULED_SHORT_STORY_PROVIDER_MAX_ATTEMPTS:
-                raise
-            delay = SCHEDULED_SHORT_STORY_PROVIDER_RETRY_DELAYS_SECONDS[attempt - 1]
-            logger.warning(
-                "scheduled_short_story_provider_job_retry label=%s attempt=%s "
-                "maxAttempts=%s retryDelaySeconds=%s code=%s errorType=%s error=%s",
-                label,
-                attempt,
-                SCHEDULED_SHORT_STORY_PROVIDER_MAX_ATTEMPTS,
-                delay,
-                generation_error_code(exc),
-                type(exc).__name__,
-                _safe_error_message(exc),
-            )
-            time.sleep(delay)
-    raise RuntimeError("unreachable scheduled short story provider retry state")
+    return run_scheduled_short_story_provider_job(label, operation)
 
 
 def _send_scheduled_short_story(record: dict[str, Any], *, now: datetime) -> dict[str, Any]:
@@ -4176,50 +4140,13 @@ def _send_scheduled_short_story(record: dict[str, Any], *, now: datetime) -> dic
     record = _mark_scheduled_short_story_attempt(record, now=now)
     telegram_id = _telegram_id_from_record(record)
     payload = _build_push_payload(record, reason="Интерактивная история.", include_debug=False)
-    plan = generate_scheduled_interactive_episode_plan()
     travel_id = f"interactive-travel-auto-{uuid.uuid4().hex}"
-    _run_scheduled_short_story_provider_job(
-        "situation:image",
-        lambda: generate_interactive_travel_part_image(
-            pet=payload.pet,
-            travel_id=travel_id,
-            destination=plan["destination"],
-            part_number=1,
-            title=plan["title"],
-            story_text=plan["storyText"],
-        ),
+    generated_episode = generate_scheduled_short_story_episode(
+        pet=payload.pet,
+        story_id=travel_id,
+        run_provider_job=_run_scheduled_short_story_provider_job,
     )
-    _run_scheduled_short_story_provider_job(
-        "situation:video",
-        lambda: generate_interactive_travel_part_video(
-            travel_id=travel_id,
-            part_number=1,
-        ),
-    )
-    outcome_files: list[str] = []
-    for index, outcome in enumerate(plan["outcomes"]):
-        variant = f"outcome-{index}"
-        _run_scheduled_short_story_provider_job(
-            f"{variant}:image",
-            lambda outcome=outcome, variant=variant: generate_interactive_travel_part_image(
-                pet=payload.pet,
-                travel_id=travel_id,
-                destination=plan["destination"],
-                part_number=1,
-                title=f"{plan['title']}: исход",
-                story_text=outcome,
-                variant=variant,
-            ),
-        )
-        _run_scheduled_short_story_provider_job(
-            f"{variant}:video",
-            lambda variant=variant: generate_interactive_travel_part_video(
-                travel_id=travel_id,
-                part_number=1,
-                variant=variant,
-            ),
-        )
-        outcome_files.append(f"interactive-travel-part-01-{variant}.mp4")
+    plan = generated_episode.plan
     video_bytes = (generated_dir_for(travel_id) / "interactive-travel-part-01.mp4").read_bytes()
     chat_id = record.get("chatId")
     if not isinstance(chat_id, int):
@@ -4265,14 +4192,11 @@ def _send_scheduled_short_story(record: dict[str, Any], *, now: datetime) -> dic
             "choices": plan["choices"],
             "outcomes": plan["outcomes"],
             "correctChoice": plan["correctChoice"],
-            "situationImageUrl": (f"/static/generated/{travel_id}/interactive-travel-part-01.png"),
-            "situationVideoUrl": (f"/static/generated/{travel_id}/interactive-travel-part-01.mp4"),
-            "outcomeImageUrls": [
-                f"/static/generated/{travel_id}/interactive-travel-part-01-outcome-{index}.png"
-                for index in range(len(plan["outcomes"]))
-            ],
-            "outcomeVideoUrls": [f"/static/generated/{travel_id}/{name}" for name in outcome_files],
-            "outcomeFiles": outcome_files,
+            "situationImageUrl": generated_episode.situation_image_url,
+            "situationVideoUrl": generated_episode.situation_video_url,
+            "outcomeImageUrls": list(generated_episode.outcome_image_urls),
+            "outcomeVideoUrls": list(generated_episode.outcome_video_urls),
+            "outcomeFiles": list(generated_episode.outcome_files),
             "createdAt": delivered_at,
         }
         history = source.get("automaticInteractiveStories")

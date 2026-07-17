@@ -848,3 +848,9 @@
   `chatHistory` is meaningful only for Chat and Story, while `recentReplies` is
   meaningful only for Idle and Story. `Параметры` (`stateParams`) validates and
   displays only `выкл` / `вкл`, because `auto` has no runtime routing signal.
+- Hidden Google-authenticated Android scheduled stories reuse the Telegram one-part episode
+  generator through a delivery-neutral helper. Android persistence is one SQLite row per opaque
+  owner + pet + schedule slot: an immutable situation/four choices/media plus at most one selected
+  outcome. `/api/android/stories/due` claims before paid generation, schedules one FastAPI in-process
+  background callback and immediately returns no story; the separate choice route is idempotent.
+  Telegram delivery and its stored payload remain on the existing path.

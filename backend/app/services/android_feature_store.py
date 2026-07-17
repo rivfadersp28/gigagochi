@@ -38,6 +38,26 @@ class AndroidFeatureRequestAttempt:
         return self.state == "created"
 
 
+@dataclass(frozen=True, slots=True)
+class AndroidScheduledStoryRecord:
+    owner_key: str
+    pet_id: str
+    slot_utc: str
+    story_id: str
+    state: Literal["generating", "ready", "outcome_unknown"]
+    episode_json: str | None
+    selected_request_key: str | None
+    selected_choice: str | None
+    result_json: str | None
+    created_at: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AndroidScheduledStoryClaim:
+    state: Literal["created", "in_progress", "outcome_unknown", "ready"]
+    record: AndroidScheduledStoryRecord
+
+
 def canonical_payload_fingerprint(payload: Any) -> str:
     encoded = json.dumps(
         payload,
@@ -105,6 +125,25 @@ class AndroidFeatureStore:
                         "UPDATE android_feature_requests SET state = 'completed' "
                         "WHERE response_json IS NOT NULL"
                     )
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS android_scheduled_stories (
+                        owner_key TEXT NOT NULL,
+                        pet_id TEXT NOT NULL,
+                        slot_utc TEXT NOT NULL,
+                        story_id TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        episode_json TEXT,
+                        selected_request_key TEXT,
+                        selected_choice TEXT,
+                        result_json TEXT,
+                        created_at TEXT,
+                        updated_at_ms INTEGER NOT NULL,
+                        PRIMARY KEY (owner_key, pet_id, slot_utc),
+                        UNIQUE (owner_key, story_id)
+                    ) WITHOUT ROWID
+                    """
+                )
                 connection.commit()
             except BaseException:
                 connection.rollback()
@@ -226,3 +265,211 @@ class AndroidFeatureStore:
                 """,
                 (self._owner_key(owner), operation, request_key),
             )
+
+    def claim_scheduled_story(
+        self,
+        *,
+        owner: FeatureOwner,
+        pet_id: str,
+        slot_utc: str,
+        story_id: str,
+    ) -> AndroidScheduledStoryClaim:
+        now = int(time.time() * 1_000)
+        owner_key = self._owner_key(owner)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = connection.execute(
+                    """
+                    SELECT owner_key, pet_id, slot_utc, story_id, state, episode_json,
+                           selected_request_key, selected_choice, result_json, created_at,
+                           updated_at_ms
+                    FROM android_scheduled_stories
+                    WHERE owner_key = ? AND pet_id = ? AND slot_utc = ?
+                    """,
+                    (owner_key, pet_id, slot_utc),
+                ).fetchone()
+                if row is None:
+                    connection.execute(
+                        """
+                        INSERT INTO android_scheduled_stories (
+                            owner_key, pet_id, slot_utc, story_id, state, updated_at_ms
+                        ) VALUES (?, ?, ?, ?, 'generating', ?)
+                        """,
+                        (owner_key, pet_id, slot_utc, story_id, now),
+                    )
+                    row = (
+                        owner_key,
+                        pet_id,
+                        slot_utc,
+                        story_id,
+                        "generating",
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        now,
+                    )
+                    claim_state: Literal[
+                        "created", "in_progress", "outcome_unknown", "ready"
+                    ] = "created"
+                elif str(row[4]) == "ready" and row[5] is not None:
+                    claim_state = "ready"
+                elif (
+                    str(row[4]) == "outcome_unknown"
+                    or now - int(row[10]) > REQUEST_IN_PROGRESS_MAX_AGE_MS
+                ):
+                    claim_state = "outcome_unknown"
+                else:
+                    claim_state = "in_progress"
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
+        return AndroidScheduledStoryClaim(claim_state, self._story_record(row))
+
+    def commit_scheduled_story(
+        self,
+        *,
+        owner: FeatureOwner,
+        pet_id: str,
+        slot_utc: str,
+        story_id: str,
+        episode_json: str,
+        created_at: str,
+    ) -> AndroidScheduledStoryRecord:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE android_scheduled_stories
+                SET state = 'ready', episode_json = ?, created_at = ?, updated_at_ms = ?
+                WHERE owner_key = ? AND pet_id = ? AND slot_utc = ?
+                  AND story_id = ? AND state = 'generating' AND episode_json IS NULL
+                """,
+                (
+                    episode_json,
+                    created_at,
+                    int(time.time() * 1_000),
+                    self._owner_key(owner),
+                    pet_id,
+                    slot_utc,
+                    story_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("scheduled story claim disappeared before commit")
+        return self.read_scheduled_story(owner=owner, story_id=story_id)
+
+    def mark_scheduled_story_outcome_unknown(
+        self,
+        *,
+        owner: FeatureOwner,
+        pet_id: str,
+        slot_utc: str,
+        story_id: str,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE android_scheduled_stories
+                SET state = 'outcome_unknown', updated_at_ms = ?
+                WHERE owner_key = ? AND pet_id = ? AND slot_utc = ? AND story_id = ?
+                  AND state = 'generating'
+                """,
+                (
+                    int(time.time() * 1_000),
+                    self._owner_key(owner),
+                    pet_id,
+                    slot_utc,
+                    story_id,
+                ),
+            )
+
+    def read_scheduled_story(
+        self,
+        *,
+        owner: FeatureOwner,
+        story_id: str,
+    ) -> AndroidScheduledStoryRecord:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT owner_key, pet_id, slot_utc, story_id, state, episode_json,
+                       selected_request_key, selected_choice, result_json, created_at,
+                       updated_at_ms
+                FROM android_scheduled_stories
+                WHERE owner_key = ? AND story_id = ?
+                """,
+                (self._owner_key(owner), story_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(story_id)
+        return self._story_record(row)
+
+    def choose_scheduled_story(
+        self,
+        *,
+        owner: FeatureOwner,
+        story_id: str,
+        request_key: str,
+        selected_choice: str,
+        result_json: str,
+    ) -> AndroidScheduledStoryRecord:
+        owner_key = self._owner_key(owner)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = connection.execute(
+                    """
+                    SELECT owner_key, pet_id, slot_utc, story_id, state, episode_json,
+                           selected_request_key, selected_choice, result_json, created_at,
+                           updated_at_ms
+                    FROM android_scheduled_stories
+                    WHERE owner_key = ? AND story_id = ?
+                    """,
+                    (owner_key, story_id),
+                ).fetchone()
+                if row is None or str(row[4]) != "ready" or row[5] is None:
+                    raise KeyError(story_id)
+                if row[7] is not None:
+                    if str(row[7]) != selected_choice:
+                        raise AndroidFeatureIdempotencyConflictError(story_id)
+                    connection.commit()
+                    return self._story_record(row)
+                connection.execute(
+                    """
+                    UPDATE android_scheduled_stories
+                    SET selected_request_key = ?, selected_choice = ?, result_json = ?,
+                        updated_at_ms = ?
+                    WHERE owner_key = ? AND story_id = ? AND selected_choice IS NULL
+                    """,
+                    (
+                        request_key,
+                        selected_choice,
+                        result_json,
+                        int(time.time() * 1_000),
+                        owner_key,
+                        story_id,
+                    ),
+                )
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
+        return self.read_scheduled_story(owner=owner, story_id=story_id)
+
+    @staticmethod
+    def _story_record(row: sqlite3.Row | tuple[Any, ...]) -> AndroidScheduledStoryRecord:
+        return AndroidScheduledStoryRecord(
+            owner_key=str(row[0]),
+            pet_id=str(row[1]),
+            slot_utc=str(row[2]),
+            story_id=str(row[3]),
+            state=str(row[4]),  # type: ignore[arg-type]
+            episode_json=str(row[5]) if row[5] is not None else None,
+            selected_request_key=str(row[6]) if row[6] is not None else None,
+            selected_choice=str(row[7]) if row[7] is not None else None,
+            result_json=str(row[8]) if row[8] is not None else None,
+            created_at=str(row[9]) if row[9] is not None else None,
+        )

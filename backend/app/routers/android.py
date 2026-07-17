@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Annotated, Any, Literal, TypeVar
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.config import get_settings
 from app.dependencies import get_google_account_identity
 from app.schemas import (
     GeneratePetJobResponse,
+    InteractiveTravelResult,
     LocalChatRequest,
     LocalChatResponse,
     LocalPetChatContext,
@@ -22,6 +26,7 @@ from app.services.android_feature_store import (
     AndroidFeatureSessionBusyError,
     AndroidFeatureSessionOutcomeUnknownError,
     AndroidFeatureStore,
+    AndroidScheduledStoryRecord,
 )
 from app.services.chat_service import chat_with_local_pet
 from app.services.feature_owner import FeatureOwner
@@ -33,6 +38,7 @@ from app.services.generation_job_service import (
     GenerationQueueFullError,
 )
 from app.services.google_auth_session_store import GoogleUserIdentity
+from app.services.interactive_travel_service import scheduled_interactive_episode_result
 from app.services.outfit_service import (
     encode_outfit_generation_description,
     simplify_outfit_request,
@@ -41,6 +47,11 @@ from app.services.rate_limit_service import (
     RateLimitExceeded,
     RateLimitReservation,
     get_rate_limiter,
+)
+from app.services.scheduled_short_story_service import (
+    generate_scheduled_short_story_episode,
+    run_scheduled_short_story_provider_job,
+    scheduled_short_story_slot,
 )
 from app.services.travel_video_prototype_service import (
     TravelVideoPrototypeIdempotencyConflictError,
@@ -102,6 +113,76 @@ class AndroidTravelVideoJobRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=1000)
 
 
+StoryId = Annotated[
+    str,
+    Field(min_length=46, max_length=46, pattern=r"^android-story-[a-f0-9]{32}$"),
+]
+StoryMediaUrl = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=1000,
+        pattern=r"^/static/[A-Za-z0-9_./-]+(?:\?v=[A-Za-z0-9_-]{1,64})?$",
+    ),
+]
+
+
+class AndroidDueStoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    pet: LocalPetChatContext
+
+    @model_validator(mode="after")
+    def require_pet_id(self) -> AndroidDueStoryRequest:
+        if self.pet.petId is None:
+            raise ValueError("petId is required")
+        return self
+
+
+class AndroidScheduledStoryChoiceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    requestKey: RequestKey
+    choice: str = Field(min_length=1, max_length=280)
+
+
+StoryChoice = Annotated[str, Field(min_length=1, max_length=280)]
+
+
+class AndroidScheduledStory(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    storyId: StoryId
+    petId: PetId
+    title: str = Field(min_length=1, max_length=120)
+    text: str = Field(min_length=1, max_length=700)
+    question: str = Field(min_length=1, max_length=280)
+    choices: list[StoryChoice] = Field(min_length=4, max_length=4)
+    createdAt: datetime
+    imageUrl: StoryMediaUrl | None = None
+    videoUrl: StoryMediaUrl | None = None
+    selectedChoice: str | None = Field(default=None, min_length=1, max_length=280)
+    result: InteractiveTravelResult | None = None
+    resultImageUrl: StoryMediaUrl | None = None
+    resultVideoUrl: StoryMediaUrl | None = None
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> AndroidScheduledStory:
+        if len(set(self.choices)) != len(self.choices):
+            raise ValueError("story choices must be unique")
+        if (self.selectedChoice is None) != (self.result is None):
+            raise ValueError("story selection and result must appear together")
+        if self.selectedChoice is not None and self.selectedChoice not in self.choices:
+            raise ValueError("selected story choice is invalid")
+        if self.selectedChoice is None and (
+            self.resultImageUrl is not None or self.resultVideoUrl is not None
+        ):
+            raise ValueError("story result media requires a selection")
+        return self
+
+
+class AndroidDueStoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    story: AndroidScheduledStory | None = None
+
+
 
 
 @lru_cache(maxsize=1)
@@ -122,6 +203,134 @@ GenerationService = Annotated[GenerationJobService, Depends(get_android_generati
 
 def _owner(identity: GoogleUserIdentity) -> FeatureOwner:
     return FeatureOwner.from_google(identity)
+
+
+def _scheduled_story_id(owner: FeatureOwner, pet_id: str, slot_utc: str) -> str:
+    digest = hashlib.sha256(
+        f"{owner.storage_key}\0{pet_id}\0{slot_utc}".encode()
+    ).hexdigest()[:32]
+    return f"android-story-{digest}"
+
+
+def _story_episode(record: AndroidScheduledStoryRecord) -> dict[str, Any]:
+    if record.episode_json is None:
+        raise ValueError("scheduled story is not ready")
+    value = json.loads(record.episode_json)
+    if not isinstance(value, dict):
+        raise ValueError("scheduled story episode is invalid")
+    return value
+
+
+def _scheduled_story_model(record: AndroidScheduledStoryRecord) -> AndroidScheduledStory:
+    episode = _story_episode(record)
+    choices = episode.get("choices")
+    if (
+        not isinstance(choices, list)
+        or len(choices) != 4
+        or any(not isinstance(choice, str) or not choice.strip() for choice in choices)
+        or len(set(choices)) != 4
+    ):
+        raise ValueError("scheduled story choices are invalid")
+    selected = record.selected_choice
+    if selected is not None and selected not in choices:
+        raise ValueError("scheduled story selected choice is invalid")
+    result = (
+        InteractiveTravelResult.model_validate_json(record.result_json)
+        if record.result_json is not None
+        else None
+    )
+    selected_index = choices.index(selected) if selected is not None else None
+    outcome_images = episode.get("outcomeImageUrls")
+    outcome_videos = episode.get("outcomeVideoUrls")
+    outcomes = episode.get("outcomes")
+    if (
+        not isinstance(outcomes, list)
+        or len(outcomes) != 4
+        or any(not isinstance(value, str) or not value.strip() for value in outcomes)
+        or not isinstance(outcome_images, list)
+        or len(outcome_images) != 4
+        or not isinstance(outcome_videos, list)
+        or len(outcome_videos) != 4
+    ):
+        raise ValueError("scheduled story outcomes are invalid")
+    return AndroidScheduledStory(
+        storyId=record.story_id,
+        petId=record.pet_id,
+        title=episode["title"],
+        text=episode["storyText"],
+        question=episode["question"],
+        choices=choices,
+        createdAt=record.created_at,
+        imageUrl=episode.get("situationImageUrl"),
+        videoUrl=episode.get("situationVideoUrl"),
+        selectedChoice=selected,
+        result=result,
+        resultImageUrl=(
+            outcome_images[selected_index]
+            if selected_index is not None and isinstance(outcome_images, list)
+            else None
+        ),
+        resultVideoUrl=(
+            outcome_videos[selected_index]
+            if selected_index is not None and isinstance(outcome_videos, list)
+            else None
+        ),
+    )
+
+
+def _story_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _generate_scheduled_story_background(
+    *,
+    store: AndroidFeatureStore,
+    owner: FeatureOwner,
+    pet: LocalPetChatContext,
+    pet_id: str,
+    slot_utc: str,
+    story_id: str,
+    created_at: str,
+) -> None:
+    try:
+        episode = generate_scheduled_short_story_episode(
+            pet=pet,
+            story_id=story_id,
+            run_provider_job=run_scheduled_short_story_provider_job,
+        )
+        plan = episode.plan
+        episode_json = json.dumps(
+            {
+                "title": plan["title"],
+                "storyText": plan["storyText"],
+                "question": plan["question"],
+                "choices": plan["choices"],
+                "outcomes": plan["outcomes"],
+                "correctChoice": plan["correctChoice"],
+                "situationImageUrl": episode.situation_image_url,
+                "situationVideoUrl": episode.situation_video_url,
+                "outcomeImageUrls": list(episode.outcome_image_urls),
+                "outcomeVideoUrls": list(episode.outcome_video_urls),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        store.commit_scheduled_story(
+            owner=owner,
+            pet_id=pet_id,
+            slot_utc=slot_utc,
+            story_id=story_id,
+            episode_json=episode_json,
+            created_at=created_at,
+        )
+    except Exception:
+        store.mark_scheduled_story_outcome_unknown(
+            owner=owner,
+            pet_id=pet_id,
+            slot_utc=slot_utc,
+            story_id=story_id,
+        )
 
 
 def _no_store(response: Response) -> None:
@@ -718,3 +927,116 @@ def travel_video_status(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "JOB_NOT_FOUND", "message": "Job not found."},
         ) from None
+
+
+@router.post(
+    "/stories/due",
+    response_model=AndroidDueStoryResponse,
+    include_in_schema=False,
+)
+def due_scheduled_story(
+    payload: AndroidDueStoryRequest,
+    response: Response,
+    background_tasks: BackgroundTasks,
+    identity: GoogleIdentity,
+    store: FeatureStore,
+) -> AndroidDueStoryResponse:
+    _no_store(response)
+    settings = get_settings()
+    if not getattr(settings, "scheduled_short_story_enabled", False):
+        return AndroidDueStoryResponse()
+    now = _story_now()
+    slot = scheduled_short_story_slot(settings, now)
+    if slot is None:
+        return AndroidDueStoryResponse()
+    owner = _owner(identity)
+    pet_id = str(payload.pet.petId)
+    slot_utc = slot.isoformat().replace("+00:00", "Z")
+    story_id = _scheduled_story_id(owner, pet_id, slot_utc)
+    claim = store.claim_scheduled_story(
+        owner=owner,
+        pet_id=pet_id,
+        slot_utc=slot_utc,
+        story_id=story_id,
+    )
+    if claim.state == "ready":
+        return AndroidDueStoryResponse(story=_scheduled_story_model(claim.record))
+    if claim.state != "created":
+        return AndroidDueStoryResponse()
+    background_tasks.add_task(
+        _generate_scheduled_story_background,
+        store=store,
+        owner=owner,
+        pet=payload.pet,
+        pet_id=pet_id,
+        slot_utc=slot_utc,
+        story_id=story_id,
+        created_at=now.isoformat().replace("+00:00", "Z"),
+    )
+    return AndroidDueStoryResponse()
+
+
+@router.post(
+    "/stories/{story_id}/choice",
+    response_model=AndroidScheduledStory,
+    include_in_schema=False,
+)
+def choose_scheduled_story(
+    story_id: StoryId,
+    payload: AndroidScheduledStoryChoiceRequest,
+    response: Response,
+    identity: GoogleIdentity,
+    store: FeatureStore,
+) -> AndroidScheduledStory:
+    _no_store(response)
+    owner = _owner(identity)
+    try:
+        existing = store.read_scheduled_story(owner=owner, story_id=story_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "STORY_NOT_FOUND", "message": "История не найдена."},
+        ) from None
+    episode = _story_episode(existing)
+    choices = episode.get("choices")
+    outcomes = episode.get("outcomes")
+    if (
+        not isinstance(choices, list)
+        or payload.choice not in choices
+        or not isinstance(outcomes, list)
+        or len(outcomes) != len(choices)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "STORY_CHOICE_INVALID", "message": "Вариант недоступен."},
+        )
+    if existing.selected_choice is not None:
+        if existing.selected_choice != payload.choice:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "STORY_ALREADY_CHOSEN", "message": "Выбор уже сохранён."},
+            )
+        return _scheduled_story_model(existing)
+    selected_index = choices.index(payload.choice)
+    result = scheduled_interactive_episode_result(
+        situation=str(episode.get("storyText") or ""),
+        question=str(episode.get("question") or ""),
+        outcomes=[str(value) for value in outcomes],
+        correct_choice=str(episode.get("correctChoice") or ""),
+        selected_choice=payload.choice,
+    )
+    result.text = str(outcomes[selected_index])
+    try:
+        selected = store.choose_scheduled_story(
+            owner=owner,
+            story_id=story_id,
+            request_key=payload.requestKey,
+            selected_choice=payload.choice,
+            result_json=result.model_dump_json(),
+        )
+    except AndroidFeatureIdempotencyConflictError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "STORY_ALREADY_CHOSEN", "message": "Выбор уже сохранён."},
+        ) from None
+    return _scheduled_story_model(selected)

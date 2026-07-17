@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from app.bot import TelegramAPIError
 from app.config import Settings
 from app.schemas import DebugSavedPetBundle, LocalPetPushSnapshotRequest, LocalProactiveResponse
-from app.services import telegram_push_service
+from app.services import scheduled_short_story_service, telegram_push_service
 from app.services.telegram_auth_service import TelegramUserContext
 from app.services.telegram_push_store import (
     JsonTelegramPushStore,
@@ -1818,11 +1818,11 @@ def test_scheduled_interactive_story_generates_five_videos(monkeypatch, tmp_path
         "correctChoice": "А",
     }
     monkeypatch.setattr(
-        telegram_push_service, "generate_scheduled_interactive_episode_plan", lambda: plan
+        scheduled_short_story_service, "generate_scheduled_interactive_episode_plan", lambda: plan
     )
     monkeypatch.setattr(telegram_push_service, "generated_dir_for", lambda _travel_id: tmp_path)
     monkeypatch.setattr(
-        telegram_push_service,
+        scheduled_short_story_service,
         "generate_interactive_travel_part_image",
         lambda **_kwargs: "/image.png",
     )
@@ -1834,7 +1834,11 @@ def test_scheduled_interactive_story_generates_five_videos(monkeypatch, tmp_path
         path.write_bytes(variant.encode())
         return f"/{path.name}"
 
-    monkeypatch.setattr(telegram_push_service, "generate_interactive_travel_part_video", video)
+    monkeypatch.setattr(
+        scheduled_short_story_service,
+        "generate_interactive_travel_part_video",
+        video,
+    )
     sent: list[tuple[int, bytes, str, dict]] = []
     monkeypatch.setattr(
         telegram_push_service,
@@ -1893,7 +1897,7 @@ def test_scheduled_interactive_story_retries_transient_provider_job(
 
     monkeypatch.setattr(telegram_push_service, "_update_record", update)
     monkeypatch.setattr(
-        telegram_push_service,
+        scheduled_short_story_service,
         "generate_scheduled_interactive_episode_plan",
         lambda: {
             "destination": "в лес",
@@ -1915,7 +1919,11 @@ def test_scheduled_interactive_story_retries_transient_provider_job(
             raise httpx.ReadTimeout("timed out")
         return "/image.png"
 
-    monkeypatch.setattr(telegram_push_service, "generate_interactive_travel_part_image", image)
+    monkeypatch.setattr(
+        scheduled_short_story_service,
+        "generate_interactive_travel_part_image",
+        image,
+    )
 
     def video(**kwargs):
         variant = kwargs.get("variant", "situation")
@@ -1924,10 +1932,14 @@ def test_scheduled_interactive_story_retries_transient_provider_job(
         path.write_bytes(variant.encode())
         return f"/{path.name}"
 
-    monkeypatch.setattr(telegram_push_service, "generate_interactive_travel_part_video", video)
+    monkeypatch.setattr(
+        scheduled_short_story_service,
+        "generate_interactive_travel_part_video",
+        video,
+    )
     monkeypatch.setattr(telegram_push_service, "send_video", lambda *_args: None)
     delays: list[float] = []
-    monkeypatch.setattr(telegram_push_service.time, "sleep", delays.append)
+    monkeypatch.setattr(scheduled_short_story_service.time, "sleep", delays.append)
 
     result = telegram_push_service._send_scheduled_short_story(record, now=now)
 
@@ -1947,7 +1959,7 @@ def test_scheduled_interactive_story_does_not_retry_permanent_provider_error(
         raise ValueError("invalid media contract")
 
     monkeypatch.setattr(
-        telegram_push_service.time,
+        scheduled_short_story_service.time,
         "sleep",
         lambda _delay: pytest.fail("permanent errors must not sleep or retry"),
     )
@@ -1969,7 +1981,7 @@ def test_scheduled_interactive_story_returns_error_after_three_transient_attempt
         raise httpx.ReadTimeout("timed out")
 
     delays: list[float] = []
-    monkeypatch.setattr(telegram_push_service.time, "sleep", delays.append)
+    monkeypatch.setattr(scheduled_short_story_service.time, "sleep", delays.append)
 
     with pytest.raises(httpx.ReadTimeout, match="timed out"):
         telegram_push_service._run_scheduled_short_story_provider_job("image", operation)
