@@ -48,6 +48,9 @@ def test_settings_reject_runtime_values_that_cannot_work(field: str, value: obje
         ("background_story_hours", [9, 13, 17]),
         ("background_story_hours", [9, 13, 17, 24]),
         ("background_story_hours", [9, 9, 17, 21]),
+        ("android_scheduled_story_hours", []),
+        ("android_scheduled_story_hours", [24]),
+        ("android_scheduled_story_hours", [18, 18]),
     ],
 )
 def test_settings_reject_schedules_that_would_be_silently_ignored(
@@ -86,6 +89,33 @@ def test_google_auth_is_unconfigured_by_default_and_refresh_outlives_access() ->
             auth_access_token_ttl_seconds=3_600,
             auth_refresh_token_ttl_seconds=3_600,
         )
+
+
+def test_android_story_schedule_defaults_are_independent_and_once_daily() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.android_scheduled_story_enabled is True
+    assert settings.android_scheduled_story_hours == [18]
+    assert settings.android_scheduled_story_timezone == "Europe/Moscow"
+    assert settings.scheduled_short_story_enabled is False
+    assert settings.scheduled_short_story_hours == list(range(10, 22))
+    assert settings.scheduled_short_story_timezone == "Europe/Moscow"
+
+    custom = Settings(
+        _env_file=None,
+        android_scheduled_story_enabled=False,
+        android_scheduled_story_hours=[7],
+        android_scheduled_story_timezone="UTC",
+        scheduled_short_story_enabled=True,
+        scheduled_short_story_hours=[10, 11],
+        scheduled_short_story_timezone="Asia/Tokyo",
+    )
+    assert custom.android_scheduled_story_enabled is False
+    assert custom.android_scheduled_story_hours == [7]
+    assert custom.android_scheduled_story_timezone == "UTC"
+    assert custom.scheduled_short_story_enabled is True
+    assert custom.scheduled_short_story_hours == [10, 11]
+    assert custom.scheduled_short_story_timezone == "Asia/Tokyo"
 
 
 @pytest.mark.parametrize(

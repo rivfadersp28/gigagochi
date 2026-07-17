@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Annotated, Any, Literal, TypeVar
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -27,6 +29,9 @@ from app.services.android_feature_store import (
     AndroidFeatureSessionOutcomeUnknownError,
     AndroidFeatureStore,
     AndroidScheduledStoryRecord,
+)
+from app.services.background_story_paid_media_budget import (
+    consume_background_story_paid_media_budget,
 )
 from app.services.chat_service import chat_with_local_pet
 from app.services.feature_owner import FeatureOwner
@@ -51,7 +56,6 @@ from app.services.rate_limit_service import (
 from app.services.scheduled_short_story_service import (
     generate_scheduled_short_story_episode,
     run_scheduled_short_story_provider_job,
-    scheduled_short_story_slot,
 )
 from app.services.travel_video_prototype_service import (
     TravelVideoPrototypeIdempotencyConflictError,
@@ -69,6 +73,46 @@ UUID4_PATTERN = r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-
 RequestKey = Annotated[str, Field(min_length=36, max_length=36, pattern=UUID4_PATTERN)]
 PetId = Annotated[str, Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")]
 T = TypeVar("T", bound=BaseModel)
+DEFAULT_ANDROID_SCHEDULED_STORY_HOUR = 18
+DEFAULT_ANDROID_SCHEDULED_STORY_TIMEZONE = "Europe/Moscow"
+
+
+def _android_scheduled_story_slot(settings: Any, now: datetime) -> datetime | None:
+    raw_hours = getattr(
+        settings,
+        "android_scheduled_story_hours",
+        [DEFAULT_ANDROID_SCHEDULED_STORY_HOUR],
+    )
+    if not isinstance(raw_hours, (list, tuple, set)):
+        raw_hours = []
+    hours = {
+        value
+        for value in raw_hours
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 23
+    }
+    if not hours:
+        hours = {DEFAULT_ANDROID_SCHEDULED_STORY_HOUR}
+    timezone_name = str(
+        getattr(
+            settings,
+            "android_scheduled_story_timezone",
+            DEFAULT_ANDROID_SCHEDULED_STORY_TIMEZONE,
+        )
+    )
+    try:
+        timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        timezone = ZoneInfo(DEFAULT_ANDROID_SCHEDULED_STORY_TIMEZONE)
+    local_now = now.astimezone(timezone)
+    due_hours = [hour for hour in hours if hour <= local_now.hour]
+    if not due_hours:
+        return None
+    return local_now.replace(
+        hour=max(due_hours),
+        minute=0,
+        second=0,
+        microsecond=0,
+    ).astimezone(UTC)
 
 
 class AndroidCreateJobRequest(BaseModel):
@@ -183,8 +227,6 @@ class AndroidDueStoryResponse(BaseModel):
     story: AndroidScheduledStory | None = None
 
 
-
-
 @lru_cache(maxsize=1)
 def get_android_feature_store() -> AndroidFeatureStore:
     return AndroidFeatureStore(get_settings().android_feature_store_path)
@@ -206,9 +248,7 @@ def _owner(identity: GoogleUserIdentity) -> FeatureOwner:
 
 
 def _scheduled_story_id(owner: FeatureOwner, pet_id: str, slot_utc: str) -> str:
-    digest = hashlib.sha256(
-        f"{owner.storage_key}\0{pet_id}\0{slot_utc}".encode()
-    ).hexdigest()[:32]
+    digest = hashlib.sha256(f"{owner.storage_key}\0{pet_id}\0{slot_utc}".encode()).hexdigest()[:32]
     return f"android-story-{digest}"
 
 
@@ -293,10 +333,19 @@ def _generate_scheduled_story_background(
     created_at: str,
 ) -> None:
     try:
+        settings = get_settings()
+
+        def run_provider_job(label: str, operation: Callable[[], Any]) -> Any:
+            def admitted_operation() -> Any:
+                consume_background_story_paid_media_budget(settings, stage=label)
+                return operation()
+
+            return run_scheduled_short_story_provider_job(label, admitted_operation)
+
         episode = generate_scheduled_short_story_episode(
             pet=pet,
             story_id=story_id,
-            run_provider_job=run_scheduled_short_story_provider_job,
+            run_provider_job=run_provider_job,
         )
         plan = episode.plan
         episode_json = json.dumps(
@@ -943,10 +992,10 @@ def due_scheduled_story(
 ) -> AndroidDueStoryResponse:
     _no_store(response)
     settings = get_settings()
-    if not getattr(settings, "scheduled_short_story_enabled", False):
+    if not getattr(settings, "android_scheduled_story_enabled", True):
         return AndroidDueStoryResponse()
     now = _story_now()
-    slot = scheduled_short_story_slot(settings, now)
+    slot = _android_scheduled_story_slot(settings, now)
     if slot is None:
         return AndroidDueStoryResponse()
     owner = _owner(identity)

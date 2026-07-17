@@ -151,6 +151,13 @@ class Settings(BaseSettings):
     )
     scheduled_short_story_timezone: str = "Europe/Moscow"
     scheduled_short_story_telegram_ids: set[int] = Field(default_factory=set)
+    android_scheduled_story_enabled: bool = True
+    android_scheduled_story_hours: list[ScheduleHour] = Field(
+        default_factory=lambda: [18],
+        min_length=1,
+        max_length=24,
+    )
+    android_scheduled_story_timezone: str = "Europe/Moscow"
     interactive_travel_task_bank_mode_path: str = "data/push/interactive_travel_task_bank_mode.txt"
     scheduled_background_story_paid_media_daily_cap: int = Field(
         default=0,
@@ -255,7 +262,11 @@ class Settings(BaseSettings):
         default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
     )
 
-    @field_validator("telegram_daily_push_hours", "background_story_hours")
+    @field_validator(
+        "telegram_daily_push_hours",
+        "background_story_hours",
+        "android_scheduled_story_hours",
+    )
     @classmethod
     def require_unique_schedule_hours(cls, value: list[int]) -> list[int]:
         if len(set(value)) != len(value):

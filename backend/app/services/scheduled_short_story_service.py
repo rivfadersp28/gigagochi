@@ -8,6 +8,9 @@ from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from app.services.background_story_paid_media_budget import (
+    BackgroundStoryPaidMediaBudgetError,
+)
 from app.services.image_service import generation_error_code
 from app.services.interactive_travel_media_service import (
     generate_interactive_travel_part_image,
@@ -28,11 +31,11 @@ logger = logging.getLogger(__name__)
 class ScheduledShortStoryEpisode:
     story_id: str
     plan: dict[str, Any]
-    situation_image_url: str
-    situation_video_url: str
-    outcome_image_urls: tuple[str, ...]
-    outcome_video_urls: tuple[str, ...]
-    outcome_files: tuple[str, ...]
+    situation_image_url: str | None
+    situation_video_url: str | None
+    outcome_image_urls: tuple[str | None, ...]
+    outcome_video_urls: tuple[str | None, ...]
+    outcome_files: tuple[str | None, ...]
 
 
 def scheduled_short_story_provider_error_is_retryable(exc: Exception) -> bool:
@@ -127,7 +130,20 @@ def generate_scheduled_short_story_episode(
     run_provider_job: Callable[[str, Callable[[], Any]], Any],
 ) -> ScheduledShortStoryEpisode:
     plan = generate_scheduled_interactive_episode_plan()
-    run_provider_job(
+    media_available = True
+
+    def run_media(label: str, operation: Callable[[], Any]) -> bool:
+        nonlocal media_available
+        if not media_available:
+            return False
+        try:
+            run_provider_job(label, operation)
+        except BackgroundStoryPaidMediaBudgetError:
+            media_available = False
+            return False
+        return True
+
+    situation_image_ready = run_media(
         "situation:image",
         lambda: generate_interactive_travel_part_image(
             pet=pet,
@@ -138,17 +154,20 @@ def generate_scheduled_short_story_episode(
             story_text=plan["storyText"],
         ),
     )
-    run_provider_job(
+    situation_video_ready = run_media(
         "situation:video",
         lambda: generate_interactive_travel_part_video(
             travel_id=story_id,
             part_number=1,
         ),
     )
-    outcome_files: list[str] = []
+    outcome_image_urls: list[str | None] = []
+    outcome_video_urls: list[str | None] = []
+    outcome_files: list[str | None] = []
+    root = f"/static/generated/{story_id}"
     for index, outcome in enumerate(plan["outcomes"]):
         variant = f"outcome-{index}"
-        run_provider_job(
+        image_ready = run_media(
             f"{variant}:image",
             lambda outcome=outcome, variant=variant: generate_interactive_travel_part_image(
                 pet=pet,
@@ -160,7 +179,7 @@ def generate_scheduled_short_story_episode(
                 variant=variant,
             ),
         )
-        run_provider_job(
+        video_ready = run_media(
             f"{variant}:video",
             lambda variant=variant: generate_interactive_travel_part_video(
                 travel_id=story_id,
@@ -168,17 +187,22 @@ def generate_scheduled_short_story_episode(
                 variant=variant,
             ),
         )
-        outcome_files.append(f"interactive-travel-part-01-{variant}.mp4")
-    root = f"/static/generated/{story_id}"
+        filename = f"interactive-travel-part-01-{variant}.mp4"
+        outcome_image_urls.append(
+            f"{root}/interactive-travel-part-01-{variant}.png" if image_ready else None
+        )
+        outcome_video_urls.append(f"{root}/{filename}" if video_ready else None)
+        outcome_files.append(filename if video_ready else None)
     return ScheduledShortStoryEpisode(
         story_id=story_id,
         plan=plan,
-        situation_image_url=f"{root}/interactive-travel-part-01.png",
-        situation_video_url=f"{root}/interactive-travel-part-01.mp4",
-        outcome_image_urls=tuple(
-            f"{root}/interactive-travel-part-01-outcome-{index}.png"
-            for index in range(len(plan["outcomes"]))
+        situation_image_url=(
+            f"{root}/interactive-travel-part-01.png" if situation_image_ready else None
         ),
-        outcome_video_urls=tuple(f"{root}/{name}" for name in outcome_files),
+        situation_video_url=(
+            f"{root}/interactive-travel-part-01.mp4" if situation_video_ready else None
+        ),
+        outcome_image_urls=tuple(outcome_image_urls),
+        outcome_video_urls=tuple(outcome_video_urls),
         outcome_files=tuple(outcome_files),
     )

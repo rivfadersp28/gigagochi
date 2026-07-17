@@ -17,7 +17,11 @@ from pydantic import ValidationError
 from app.bot import TelegramAPIError
 from app.config import Settings
 from app.schemas import DebugSavedPetBundle, LocalPetPushSnapshotRequest, LocalProactiveResponse
-from app.services import scheduled_short_story_service, telegram_push_service
+from app.services import (
+    background_story_paid_media_budget,
+    scheduled_short_story_service,
+    telegram_push_service,
+)
 from app.services.telegram_auth_service import TelegramUserContext
 from app.services.telegram_push_store import (
     JsonTelegramPushStore,
@@ -2053,7 +2057,9 @@ def test_background_story_paid_media_budget_uses_durable_global_counter(
         telegram_push_service._consume_background_story_paid_media_budget(stage="image")
 
     assert disabled.value.status == "disabled"
-    assert disabled.value.code == telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED
+    assert disabled.value.code == (
+        background_story_paid_media_budget.BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED
+    )
     assert not rate_limit_path.exists()
 
     settings.scheduled_background_story_paid_media_daily_cap = 2
@@ -2064,7 +2070,7 @@ def test_background_story_paid_media_budget_uses_durable_global_counter(
 
     assert exhausted.value.status == "exhausted"
     assert exhausted.value.code == (
-        telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_EXHAUSTED
+        background_story_paid_media_budget.BACKGROUND_STORY_PAID_MEDIA_BUDGET_EXHAUSTED
     )
     assert exhausted.value.retry_after_seconds >= 1
     with sqlite3.connect(rate_limit_path) as connection:
@@ -2075,8 +2081,8 @@ def test_background_story_paid_media_budget_uses_durable_global_counter(
             WHERE bucket = ? AND user_id = ?
             """,
             (
-                telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_BUCKET,
-                telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_USER_ID,
+                background_story_paid_media_budget.BACKGROUND_STORY_PAID_MEDIA_BUDGET_BUCKET,
+                background_story_paid_media_budget.BACKGROUND_STORY_PAID_MEDIA_BUDGET_USER_ID,
             ),
         ).fetchone()
     assert counter == (2, "[]")
@@ -2211,7 +2217,7 @@ def test_disabled_paid_media_delivers_text_without_degrading_or_retrying(
     assert len(batch.results) == 1
     assert batch.results[0]["storyMediaStatus"] == "budget_disabled"
     assert batch.results[0]["storyMediaErrorCode"] == (
-        telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED
+        background_story_paid_media_budget.BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED
     )
     assert sent_text and "Синтетическая история дня" in sent_text[0]
     assert not rate_limit_path.exists()
@@ -2223,7 +2229,7 @@ def test_disabled_paid_media_delivers_text_without_degrading_or_retrying(
     assert part["mediaBudgetStage"] == "image"
     assert stored["lastStoryStatus"] == "delivered_media_budget_disabled"
     assert stored["lastStoryErrorCode"] == (
-        telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED
+        background_story_paid_media_budget.BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED
     )
 
     second_batch = telegram_push_service._run_due_background_stories()
@@ -2316,7 +2322,7 @@ def test_global_exhausted_video_budget_delivers_one_photo_then_text(
     assert part["mediaBudgetStage"] == "video"
     assert stored["lastStoryStatus"] == "delivered_media_budget_exhausted"
     assert stored["lastStoryErrorCode"] == (
-        telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_EXHAUSTED
+        background_story_paid_media_budget.BACKGROUND_STORY_PAID_MEDIA_BUDGET_EXHAUSTED
     )
     second_stored = telegram_push_service._read_store()["records"][str(second_telegram_id)]
     second_part = second_stored["dailyFullStory"]["parts"][0]
@@ -2333,8 +2339,8 @@ def test_global_exhausted_video_budget_delivers_one_photo_then_text(
             WHERE bucket = ? AND user_id = ?
             """,
             (
-                telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_BUCKET,
-                telegram_push_service.BACKGROUND_STORY_PAID_MEDIA_BUDGET_USER_ID,
+                background_story_paid_media_budget.BACKGROUND_STORY_PAID_MEDIA_BUDGET_BUCKET,
+                background_story_paid_media_budget.BACKGROUND_STORY_PAID_MEDIA_BUDGET_USER_ID,
             ),
         ).fetchone()
     assert counter == (1,)

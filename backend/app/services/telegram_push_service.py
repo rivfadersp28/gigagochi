@@ -32,6 +32,11 @@ from app.schemas import (
     LocalPetStatsPatch,
     LocalPushRequest,
 )
+from app.services.background_story_paid_media_budget import (
+    BACKGROUND_STORY_PAID_MEDIA_BUDGET_BUCKET,
+    BackgroundStoryPaidMediaBudgetError,
+    consume_background_story_paid_media_budget,
+)
 from app.services.background_story_service import (
     BackgroundStoryResult,
     generate_background_story,
@@ -56,11 +61,6 @@ from app.services.interactive_travel_service import (
 )
 from app.services.lite_overlay import merge_lite_overlay_patch, normalize_lite_overlay_patch
 from app.services.pet_reply_engine.lite_generator import generate_push_pet_message
-from app.services.rate_limit_service import (
-    DEFAULT_RATE_LIMIT_STORE_PATH,
-    RateLimitExceeded,
-    get_rate_limiter,
-)
 from app.services.scheduled_short_story_service import (
     generate_scheduled_short_story_episode,
     run_scheduled_short_story_provider_job,
@@ -142,11 +142,7 @@ DEFAULT_BACKGROUND_STORY_HOURS = (9, 13, 17, 21)
 DEFAULT_BACKGROUND_STORY_WINDOW_MINUTES = 120
 DAILY_FULL_STORY_RETRY_DELAY = timedelta(minutes=15)
 DAILY_FULL_STORY_MAX_ATTEMPTS = 2
-BACKGROUND_STORY_PAID_MEDIA_BUDGET_BUCKET = "background-story-paid-media"
-BACKGROUND_STORY_PAID_MEDIA_BUDGET_USER_ID = 0
-BACKGROUND_STORY_PAID_MEDIA_BUDGET_WINDOW = timedelta(days=1)
-BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED = "BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED"
-BACKGROUND_STORY_PAID_MEDIA_BUDGET_EXHAUSTED = "BACKGROUND_STORY_PAID_MEDIA_BUDGET_EXHAUSTED"
+_BackgroundStoryPaidMediaBudgetError = BackgroundStoryPaidMediaBudgetError
 BACKGROUND_STORY_MEDIA_GC_MIN_AGE = timedelta(days=8)
 GENERATED_MEDIA_CLEANUP_LOOP_INTERVAL_SECONDS = 6 * 60 * 60
 SCHEDULER_LEADERSHIP_RETRY_SECONDS = 5.0
@@ -171,24 +167,6 @@ def _safe_error_message(value: object) -> str:
     redacted = redact_telegram_token(value, getattr(settings, "bot_token", None))
     compact = " ".join(redacted.split())
     return compact[:MAX_PERSISTED_ERROR_CHARS]
-
-
-class _BackgroundStoryPaidMediaBudgetError(RuntimeError):
-    def __init__(
-        self,
-        *,
-        stage: str,
-        status: str,
-        code: str,
-        message: str,
-        retry_after_seconds: int | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.stage = stage
-        self.status = status
-        self.code = code
-        self.message = message
-        self.retry_after_seconds = retry_after_seconds
 
 
 @dataclass(frozen=True, slots=True)
@@ -3584,32 +3562,7 @@ def _checkpoint_daily_full_story_media(
 
 
 def _consume_background_story_paid_media_budget(*, stage: str) -> None:
-    settings = get_settings()
-    limit = int(getattr(settings, "scheduled_background_story_paid_media_daily_cap", 0) or 0)
-    if limit <= 0:
-        raise _BackgroundStoryPaidMediaBudgetError(
-            stage=stage,
-            status="disabled",
-            code=BACKGROUND_STORY_PAID_MEDIA_BUDGET_DISABLED,
-            message="Платные медиа фоновых историй отключены суточным лимитом.",
-        )
-
-    store_path = getattr(settings, "rate_limit_store_path", DEFAULT_RATE_LIMIT_STORE_PATH)
-    try:
-        get_rate_limiter(store_path).check_fixed_window(
-            BACKGROUND_STORY_PAID_MEDIA_BUDGET_BUCKET,
-            BACKGROUND_STORY_PAID_MEDIA_BUDGET_USER_ID,
-            limit,
-            BACKGROUND_STORY_PAID_MEDIA_BUDGET_WINDOW,
-        )
-    except RateLimitExceeded as exc:
-        raise _BackgroundStoryPaidMediaBudgetError(
-            stage=stage,
-            status="exhausted",
-            code=BACKGROUND_STORY_PAID_MEDIA_BUDGET_EXHAUSTED,
-            message="Суточный лимит платных медиа фоновых историй исчерпан.",
-            retry_after_seconds=exc.retry_after_seconds,
-        ) from exc
+    consume_background_story_paid_media_budget(get_settings(), stage=stage)
 
 
 def _send_daily_full_story_part(

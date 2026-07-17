@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from app.main import app
 from app.routers import android
+from app.services import scheduled_short_story_service
 from app.services.android_feature_store import AndroidFeatureStore
 from app.services.google_auth_session_store import GoogleUserIdentity
 from app.services.scheduled_short_story_service import ScheduledShortStoryEpisode
@@ -64,9 +65,9 @@ def enable_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
         android,
         "get_settings",
         lambda: SimpleNamespace(
-            scheduled_short_story_enabled=True,
-            scheduled_short_story_hours=[15],
-            scheduled_short_story_timezone="Europe/Moscow",
+            android_scheduled_story_enabled=True,
+            android_scheduled_story_hours=[15],
+            android_scheduled_story_timezone="Europe/Moscow",
         ),
     )
     monkeypatch.setattr(android, "_story_now", lambda: NOW)
@@ -122,6 +123,175 @@ def test_due_not_due_first_replay_and_owner_isolation(monkeypatch, tmp_path) -> 
     not_due, _ = fetch_due(store, "raw-account-a")
     assert not_due.story is None
     assert len(calls) == 2
+
+
+def test_android_schedule_is_independent_from_telegram_settings(monkeypatch, tmp_path) -> None:
+    store = AndroidFeatureStore(tmp_path / "android.sqlite3")
+    monkeypatch.setattr(
+        android,
+        "get_settings",
+        lambda: SimpleNamespace(
+            android_scheduled_story_enabled=True,
+            android_scheduled_story_hours=[15],
+            android_scheduled_story_timezone="Europe/Moscow",
+            scheduled_short_story_enabled=False,
+            scheduled_short_story_hours=[10],
+            scheduled_short_story_timezone="UTC",
+        ),
+    )
+    monkeypatch.setattr(android, "_story_now", lambda: NOW)
+
+    due, background = fetch_due(store, "account-a")
+
+    assert due.story is None
+    assert len(background.tasks) == 1
+
+
+def test_disabled_android_schedule_does_not_claim_slot(monkeypatch, tmp_path) -> None:
+    store = AndroidFeatureStore(tmp_path / "android.sqlite3")
+    monkeypatch.setattr(
+        android,
+        "get_settings",
+        lambda: SimpleNamespace(
+            android_scheduled_story_enabled=False,
+            android_scheduled_story_hours=[15],
+            android_scheduled_story_timezone="Europe/Moscow",
+            scheduled_short_story_enabled=True,
+        ),
+    )
+    monkeypatch.setattr(android, "_story_now", lambda: NOW)
+
+    due, background = fetch_due(store, "account-a")
+
+    assert due.story is None
+    assert background.tasks == []
+    with sqlite3.connect(store.path) as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM android_scheduled_stories").fetchone()[0] == 0
+        )
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    (
+        (datetime(2026, 7, 17, 14, 59, tzinfo=UTC), None),
+        (
+            datetime(2026, 7, 17, 15, 0, tzinfo=UTC),
+            datetime(2026, 7, 17, 15, 0, tzinfo=UTC),
+        ),
+        (
+            datetime(2026, 7, 17, 20, 45, tzinfo=UTC),
+            datetime(2026, 7, 17, 15, 0, tzinfo=UTC),
+        ),
+        (datetime(2026, 7, 18, 14, 0, tzinfo=UTC), None),
+    ),
+)
+def test_android_schedule_catches_up_only_after_today_slot(now, expected) -> None:
+    settings = SimpleNamespace(
+        android_scheduled_story_hours=[18],
+        android_scheduled_story_timezone="Europe/Moscow",
+    )
+
+    assert android._android_scheduled_story_slot(settings, now) == expected
+
+
+@pytest.mark.parametrize("cap", (0, 2))
+def test_android_story_media_respects_shared_daily_cap(
+    monkeypatch,
+    tmp_path,
+    cap,
+) -> None:
+    store = AndroidFeatureStore(tmp_path / "android.sqlite3")
+    settings = SimpleNamespace(
+        android_scheduled_story_enabled=True,
+        android_scheduled_story_hours=[15],
+        android_scheduled_story_timezone="Europe/Moscow",
+        scheduled_background_story_paid_media_daily_cap=cap,
+        rate_limit_store_path=str(tmp_path / "rate-limits.sqlite3"),
+    )
+    monkeypatch.setattr(android, "get_settings", lambda: settings)
+    monkeypatch.setattr(android, "_story_now", lambda: NOW)
+    monkeypatch.setattr(
+        scheduled_short_story_service,
+        "generate_scheduled_interactive_episode_plan",
+        lambda: episode("plan-only").plan,
+    )
+    provider_calls: list[str] = []
+
+    def image(**_kwargs):
+        provider_calls.append("image")
+
+    def video(**_kwargs):
+        provider_calls.append("video")
+
+    monkeypatch.setattr(
+        scheduled_short_story_service,
+        "generate_interactive_travel_part_image",
+        image,
+    )
+    monkeypatch.setattr(
+        scheduled_short_story_service,
+        "generate_interactive_travel_part_video",
+        video,
+    )
+
+    initial, background = fetch_due(store, "account-a")
+    assert initial.story is None
+    run_background(background)
+    ready, _ = fetch_due(store, "account-a")
+
+    assert ready.story is not None
+    assert len(provider_calls) == cap
+    if cap == 0:
+        assert ready.story.imageUrl is None
+        assert ready.story.videoUrl is None
+    else:
+        assert ready.story.imageUrl is not None
+        assert ready.story.videoUrl is not None
+
+
+def test_android_story_provider_retries_cannot_exceed_media_cap(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    store = AndroidFeatureStore(tmp_path / "android.sqlite3")
+    settings = SimpleNamespace(
+        android_scheduled_story_enabled=True,
+        android_scheduled_story_hours=[15],
+        android_scheduled_story_timezone="Europe/Moscow",
+        scheduled_background_story_paid_media_daily_cap=2,
+        rate_limit_store_path=str(tmp_path / "rate-limits.sqlite3"),
+    )
+    monkeypatch.setattr(android, "get_settings", lambda: settings)
+    monkeypatch.setattr(android, "_story_now", lambda: NOW)
+    monkeypatch.setattr(
+        scheduled_short_story_service,
+        "generate_scheduled_interactive_episode_plan",
+        lambda: episode("plan-only").plan,
+    )
+    monkeypatch.setattr(scheduled_short_story_service.time, "sleep", lambda _delay: None)
+    provider_calls = 0
+
+    def timeout(**_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        raise TimeoutError("provider timeout")
+
+    monkeypatch.setattr(
+        scheduled_short_story_service,
+        "generate_interactive_travel_part_image",
+        timeout,
+    )
+
+    initial, background = fetch_due(store, "account-a")
+    assert initial.story is None
+    run_background(background)
+    ready, _ = fetch_due(store, "account-a")
+
+    assert ready.story is not None
+    assert ready.story.imageUrl is None
+    assert ready.story.videoUrl is None
+    assert provider_calls == 2
 
 
 def test_choice_is_exact_idempotent_and_owner_fenced(monkeypatch, tmp_path) -> None:

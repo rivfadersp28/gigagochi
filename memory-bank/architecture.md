@@ -19,6 +19,11 @@
   counter in the same SQLite store. Recovery of an existing file precedes charging; each new image
   or video provider submission attempt consumes one unit. The fail-closed default cap is zero, so
   text or recovered media is delivered without a paid call until production explicitly sets a cap.
+- Android one-part scheduled stories use their own enable/hours/timezone settings (enabled by
+  default for one 18:00 Europe/Moscow slot) at the hidden due endpoint. Legacy Telegram scheduled
+  stories retain their separate fail-closed enable, allowlist and 10:00-21:00 settings. Android
+  media submissions consume the same durable paid-media daily cap as existing background-story
+  media and degrade to a usable text-only episode when that cap is disabled or exhausted.
 - Telegram push rows retain the former per-record, logical-total-byte and record-count limits. Each
   ordinary update writes one record plus O(1) capacity metadata; a partial index supports
   capacity-triggered cleanup of only explicitly unreachable records whose latest activity is older

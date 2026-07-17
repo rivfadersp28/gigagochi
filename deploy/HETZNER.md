@@ -62,6 +62,11 @@ Fill `backend/.env` with real secrets:
 - `OPENROUTER_API_KEY` — нужен default `legacy` media profile для video
 - `KANDINSKY_API_KEY` — только если включён Kandinsky route или `PET_COMPARISON_ENABLED=true`
 
+Android one-part stories use `ANDROID_SCHEDULED_STORY_*` independently from the legacy
+Telegram `SCHEDULED_SHORT_STORY_*` settings. The production example enables Android polling for
+one slot at 18:00 `Europe/Moscow`; keep the shared paid-media daily cap at an explicitly reviewed
+value because it remains the kill switch for both delivery paths.
+
 For a confirmed clean install that has no restored `push_data` volume and no
 `telegram_push_state.json`, set `TELEGRAM_PUSH_LEGACY_JSON_REQUIRED=false` before the first start.
 Keep it `true` for every upgrade or restore where a legacy registry is expected: a missing file
