@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from app.dependencies import get_google_account_identity, get_google_auth_service
 from app.services.google_auth_service import (
@@ -12,6 +12,7 @@ from app.services.google_auth_service import (
     GoogleAuthService,
     GoogleCredentialRejectedError,
     GoogleRefreshRejectedError,
+    GuestInstallationRejectedError,
 )
 from app.services.google_auth_session_store import GoogleUserIdentity, IssuedAuthSession
 
@@ -34,6 +35,12 @@ class RefreshSessionRequest(BaseModel):
     refresh_token: SecretStr = Field(alias="refreshToken", min_length=1, max_length=1_024)
 
 
+class GuestAuthRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    installation_id: str = Field(alias="installationId", min_length=36, max_length=36)
+
+
 class AuthSessionResponse(BaseModel):
     accessToken: str
     refreshToken: str
@@ -41,6 +48,10 @@ class AuthSessionResponse(BaseModel):
 
 
 class AccountIdentityResponse(BaseModel):
+    accountId: str
+
+
+class GuestAuthSessionResponse(AuthSessionResponse):
     accountId: str
 
 
@@ -58,6 +69,43 @@ def _unauthorized() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail={"code": "AUTH_INVALID", "message": "Не удалось подтвердить сессию."},
+    )
+
+
+def _invalid_guest_request() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={
+            "code": "AUTH_GUEST_INVALID",
+            "message": "Не удалось создать локальную сессию.",
+        },
+    )
+
+
+@router.post("/guest", response_model=GuestAuthSessionResponse, include_in_schema=False)
+def create_guest_session(
+    response: Response,
+    service: AuthService,
+    raw_payload: Annotated[object, Body()],
+) -> GuestAuthSessionResponse:
+    try:
+        payload = GuestAuthRequest.model_validate(raw_payload)
+        identity, session = service.exchange_guest_installation(payload.installation_id)
+    except (ValidationError, GuestInstallationRejectedError) as exc:
+        raise _invalid_guest_request() from exc
+    except Exception as exc:
+        logger.exception("guest_auth_exchange_failed exception=%s", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "AUTH_UNAVAILABLE", "message": "Сервис временно недоступен."},
+        ) from exc
+
+    session_response = _response(session, response)
+    return GuestAuthSessionResponse(
+        accountId=identity.account_id,
+        accessToken=session_response.accessToken,
+        refreshToken=session_response.refreshToken,
+        expiresAt=session_response.expiresAt,
     )
 
 

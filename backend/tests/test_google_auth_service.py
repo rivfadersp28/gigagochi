@@ -155,6 +155,38 @@ def test_duplicate_google_login_reuses_identity_key_not_email(tmp_path: Path) ->
     assert first.access_token.reveal() != second.access_token.reveal()
 
 
+def test_guest_installation_stores_only_digest_and_no_personal_metadata(
+    tmp_path: Path,
+) -> None:
+    service, store, verifier = auth_service(tmp_path)
+    installation_id = "123e4567-e89b-42d3-a456-426614174000"
+
+    identity, session = service.exchange_guest_installation(installation_id)
+
+    assert verifier.requests == []
+    assert identity.account_id.startswith("acct_")
+    assert identity.provider_subject.startswith("guest:")
+    assert identity.email is None
+    assert identity.display_name is None
+    assert service.authenticate_access_token(session.access_token.reveal()) == identity
+    with sqlite3.connect(store.path) as connection:
+        provider, subject, email, display_name = connection.execute(
+            "SELECT provider, provider_subject, email, display_name "
+            "FROM google_auth_users WHERE account_id = ?",
+            (identity.account_id,),
+        ).fetchone()
+    assert provider == "google"
+    assert subject == identity.provider_subject
+    assert email is None
+    assert display_name is None
+    stored_bytes = b"".join(
+        path.read_bytes()
+        for path in store.path.parent.glob(f"{store.path.name}*")
+        if path.is_file()
+    )
+    assert installation_id.encode() not in stored_bytes
+
+
 def test_refresh_rotation_is_atomic_and_replay_is_rejected(tmp_path: Path) -> None:
     service, _, _ = auth_service(tmp_path)
     initial = service.exchange_google_credential(id_token="signed-token", nonce=NONCE)

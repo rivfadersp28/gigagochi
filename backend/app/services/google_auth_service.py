@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 import re
 import time
+import uuid
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
@@ -53,6 +55,10 @@ class GoogleCredentialRejectedError(GoogleAuthError):
 
 
 class GoogleRefreshRejectedError(GoogleAuthError):
+    pass
+
+
+class GuestInstallationRejectedError(GoogleAuthError):
     pass
 
 
@@ -116,6 +122,27 @@ class GoogleAuthService:
             )
         except InvalidRefreshTokenError as exc:
             raise GoogleRefreshRejectedError("refresh token was rejected") from exc
+
+    def exchange_guest_installation(
+        self,
+        installation_id: str,
+    ) -> tuple[GoogleUserIdentity, IssuedAuthSession]:
+        try:
+            parsed = uuid.UUID(installation_id)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise GuestInstallationRejectedError("installation id was rejected") from exc
+        if parsed.version != 4 or str(parsed) != installation_id:
+            raise GuestInstallationRejectedError("installation id was rejected")
+
+        installation_subject = "guest:" + hashlib.sha256(parsed.bytes).hexdigest()
+        return self._store.issue_for_google_user(
+            provider_subject=installation_subject,
+            email=None,
+            display_name=None,
+            now_ms=self._now_ms(),
+            access_ttl_seconds=self._access_ttl_seconds,
+            refresh_ttl_seconds=self._refresh_ttl_seconds,
+        )
 
     def authenticate_access_token(self, access_token: str) -> GoogleUserIdentity | None:
         if not access_token or len(access_token) > 1_024:

@@ -19,6 +19,9 @@ from tests.test_google_auth_service import (
     valid_claims,
 )
 
+INSTALLATION_ID = "123e4567-e89b-42d3-a456-426614174000"
+OTHER_INSTALLATION_ID = "123e4567-e89b-42d3-a456-426614174001"
+
 
 @pytest.fixture(autouse=True)
 def clear_dependency_overrides() -> Iterator[None]:
@@ -74,6 +77,60 @@ def test_google_and_refresh_endpoints_match_android_contract(tmp_path: Path) -> 
     replay = client.post("/api/auth/refresh", json={"refreshToken": old_refresh})
     assert replay.status_code == 401
     assert replay.json()["detail"]["code"] == "AUTH_INVALID"
+
+
+def test_guest_endpoint_issues_session_and_returns_stable_account_id(tmp_path: Path) -> None:
+    service = configured_service(tmp_path, client_id=None)
+    app.dependency_overrides[get_google_auth_service] = lambda: service
+    client = TestClient(app)
+
+    first = client.post("/api/auth/guest", json={"installationId": INSTALLATION_ID})
+    second = client.post("/api/auth/guest", json={"installationId": INSTALLATION_ID})
+    other = client.post(
+        "/api/auth/guest",
+        json={"installationId": OTHER_INSTALLATION_ID},
+    )
+
+    assert first.status_code == 200
+    assert set(first.json()) == {"accountId", "accessToken", "refreshToken", "expiresAt"}
+    assert first.json()["accountId"].startswith("acct_")
+    assert first.json()["accountId"] == second.json()["accountId"]
+    assert first.json()["accountId"] != other.json()["accountId"]
+    assert first.json()["accessToken"] != second.json()["accessToken"]
+    assert first.headers["cache-control"] == "no-store"
+    assert first.headers["pragma"] == "no-cache"
+
+    identity = client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {first.json()['accessToken']}"},
+    )
+    assert identity.status_code == 200
+    assert identity.json() == {"accountId": first.json()["accountId"]}
+    assert service._verifier.requests == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"installationId": None},
+        {"installationId": 42},
+        {"installationId": "not-a-uuid"},
+        {"installationId": "123e4567-e89b-12d3-a456-426614174000"},
+        {"installationId": INSTALLATION_ID.upper()},
+        {"installationId": INSTALLATION_ID, "unexpected": True},
+    ],
+)
+def test_guest_endpoint_returns_typed_bad_request_for_invalid_payload(
+    tmp_path: Path,
+    payload: object,
+) -> None:
+    app.dependency_overrides[get_google_auth_service] = lambda: configured_service(tmp_path)
+
+    response = TestClient(app).post("/api/auth/guest", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "AUTH_GUEST_INVALID"
 
 
 @pytest.mark.parametrize(
@@ -172,6 +229,7 @@ def test_auth_router_is_additive_and_tma_route_remains_registered() -> None:
     # Android auth stays outside the frontend-owned generated OpenAPI contract.
     # The endpoint tests above prove both hidden routes are registered.
     assert "/api/auth/google" not in paths
+    assert "/api/auth/guest" not in paths
     assert "/api/auth/refresh" not in paths
     assert "/api/auth/me" not in paths
     assert "/api/capabilities" in paths
