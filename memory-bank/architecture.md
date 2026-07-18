@@ -154,10 +154,10 @@
   job's persisted description; the frontend adopts both values and resumes with one GET/poll rather
   than issuing another paid POST. Missing or malformed recovery identity is rejected.
 - Pet creation always uses OpenAI for the primary normal/sad/happy images and
-  keeps the existing OpenRouter video path. After the primary normal image and video are ready, the same job
-  starts a best-effort Kandinsky branch for normal/sad/happy images plus a normal-state video.
-  The nested Kandinsky asset set is persisted with the job response; its failure
-  is reported separately and never invalidates the usable OpenAI result.
+  keeps the existing OpenRouter video path. The diagnostic Kandinsky comparison branch is opt-in via
+  `PET_COMPARISON_ENABLED`; production MVP keeps it disabled to avoid a second paid asset lineage and
+  extra completion latency. When explicitly enabled, its nested asset set is persisted with the job
+  response; its failure is reported separately and never invalidates the usable OpenAI result.
 
 ## Generated Media Retention
 
