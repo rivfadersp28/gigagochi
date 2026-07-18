@@ -37,6 +37,7 @@ BuildResponse = Callable[
     [Any, Any, Any | None, Any | None, Any | None, Any | None],
     dict[str, Any],
 ]
+BuildStaticOutfitResponse = Callable[[Any], dict[str, Any]]
 BuildFailure = Callable[[str, str, Exception, int], dict[str, object]]
 NotifyReady = Callable[[int], None]
 CleanupFailedJobAssets = Callable[[str], None]
@@ -95,6 +96,7 @@ class GenerationJobService:
         generate_happy_video: GenerateHappyVideo,
         build_response: BuildResponse,
         build_failure: BuildFailure,
+        build_static_outfit_response: BuildStaticOutfitResponse | None = None,
         generate_images_for_job: GenerateImagesForJob | None = None,
         generate_comparison_images: GenerateComparisonImages | None = None,
         notify_ready: NotifyReady | None = None,
@@ -116,6 +118,7 @@ class GenerationJobService:
         self._generate_happy_image = generate_happy_image
         self._generate_happy_video = generate_happy_video
         self._build_response = build_response
+        self._build_static_outfit_response = build_static_outfit_response
         self._build_failure = build_failure
         self._generate_comparison_images = generate_comparison_images
         self._notify_ready_callback = notify_ready
@@ -1097,6 +1100,20 @@ class GenerationJobService:
             time.monotonic() - started_at,
             image_set.asset_set_id,
         )
+        if description.startswith(OUTFIT_GENERATION_PREFIX) and (
+            self._build_static_outfit_response is not None
+        ):
+            try:
+                result = GeneratePetAssetResponse.model_validate(
+                    self._build_static_outfit_response(image_set)
+                )
+            except Exception as exc:
+                self._fail(job_id, exc, phase="generating_images")
+                return
+            self._mark_metric(job_id, "images_ready_at", status="running")
+            self._mark_metric(job_id, "foreground_ready_at", status="running")
+            self._finish_primary_pipeline(job_id, result=result)
+            return
         if not self._update(job_id, status_value="running", phase="generating_video"):
             return
         self._mark_metric(job_id, "images_ready_at", status="running")

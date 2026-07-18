@@ -179,6 +179,7 @@ def test_foreground_result_is_available_before_background_assets(tmp_path: Path)
     release_background = Event()
     notification_sent = Event()
     notifications: list[int] = []
+    video_calls: list[str] = []
 
     def notify_ready(owner_id: int) -> None:
         notifications.append(owner_id)
@@ -194,12 +195,15 @@ def test_foreground_result_is_available_before_background_assets(tmp_path: Path)
         image_workers=1,
         video_workers=1,
         generate_images=lambda _description, _provider: SimpleNamespace(asset_set_id="asset-1"),
-        generate_video=lambda _image_set: Path("teen-idle.mp4"),
+        generate_video=lambda _image_set: video_calls.append("idle-video") or Path("teen-idle.mp4"),
         generate_background_image=generate_background_image,
         generate_background_video=lambda _image_set, _sad_path: Path("teen-sad.mp4"),
         generate_happy_image=lambda _image_set, _provider: Path("teen-happy.png"),
         generate_happy_video=lambda _image_set, _happy_path: Path("teen-happy.mp4"),
         build_response=_build_response,
+        build_static_outfit_response=lambda _image_set: (_ for _ in ()).throw(
+            AssertionError("regular generation must not use the static outfit builder")
+        ),
         build_failure=lambda _job_id, phase, exc, _owner_id: {
             "code": "GENERATION_FAILED",
             "message": str(exc),
@@ -219,6 +223,7 @@ def test_foreground_result_is_available_before_background_assets(tmp_path: Path)
         assert ready.result.sadVideoUrl is None
         assert notification_sent.wait(timeout=2)
         assert notifications == [42]
+        assert video_calls == ["idle-video"]
 
         release_background.set()
         completed = _wait_for(service, submitted.jobId, lambda job: job.status == "succeeded")
@@ -260,36 +265,57 @@ def test_notification_failure_does_not_fail_generation(tmp_path: Path) -> None:
         service.shutdown(wait=True)
 
 
-def test_outfit_notification_waits_for_all_assets(tmp_path: Path) -> None:
-    background_started = Event()
-    release_background = Event()
+def test_outfit_completes_from_images_without_video_or_background_tasks(tmp_path: Path) -> None:
     birth_notifications: list[int] = []
     outfit_notifications: list[int] = []
+    downstream_calls: list[str] = []
 
-    def generate_background_image(_image_set, _image_provider):
-        background_started.set()
-        assert release_background.wait(timeout=2)
-        return Path("teen-sad.png")
+    def unexpected(stage: str):
+        def call(*_args, **_kwargs):
+            downstream_calls.append(stage)
+            raise AssertionError(f"outfit must not start {stage}")
+
+        return call
+
+    def build_static(_image_set):
+        response = _response(
+            Path("teen-sad.png"),
+            None,
+            Path("teen-happy.png"),
+            None,
+        )
+        response["videoUrl"] = None
+        return response
 
     service = _test_service(
         tmp_path / "generation-jobs.sqlite3",
         lambda _description, _provider: SimpleNamespace(asset_set_id="asset-1"),
-        generate_background_image=generate_background_image,
+        generate_video=unexpected("idle-video"),
+        generate_background_image=unexpected("sad-image"),
+        generate_background_video=unexpected("sad-video"),
+        generate_happy_image=unexpected("happy-image"),
+        generate_happy_video=unexpected("happy-video"),
+        generate_comparison_images=unexpected("comparison"),
+        build_static_outfit_response=build_static,
         notify_ready=birth_notifications.append,
         notify_outfit_ready=outfit_notifications.append,
     )
     try:
         submitted = service.submit("__OUTFIT_V1__{}", _user())
-        assert background_started.wait(timeout=2)
-        assert birth_notifications == []
-        assert outfit_notifications == []
+        completed = _wait_for(service, submitted.jobId, lambda job: job.phase == "completed")
 
-        release_background.set()
-        _wait_for(service, submitted.jobId, lambda job: job.phase == "completed")
+        assert completed.status == "succeeded"
+        assert completed.result is not None
+        assert completed.result.videoUrl is None
+        assert completed.result.sadVideoUrl is None
+        assert completed.result.happyVideoUrl is None
+        assert completed.result.images.teen["idle"].endswith("teen-idle.png")
+        assert completed.result.images.teen["sad"].endswith("teen-sad.png")
+        assert completed.result.images.teen["happy"].endswith("teen-happy.png")
         assert birth_notifications == []
         assert outfit_notifications == [42]
+        assert downstream_calls == []
     finally:
-        release_background.set()
         service.shutdown(wait=True)
 
 

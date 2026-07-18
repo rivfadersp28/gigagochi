@@ -59,8 +59,9 @@
   the background; the dashboard polls the same job and atomically applies newer URLs. Until those
   assets are ready, mood rendering uses the normal asset fallback, which is safe because new-pet
   stats start at 100.
-- Outfit generation is also asynchronous, but waits for the full normal/sad/happy image and video
-  pipeline before replacing the active asset set. The frontend persists the request key, job ID,
+- Outfit generation completes from the normal/sad/happy static images produced by its image stage;
+  it does not submit video, background or comparison work, and its video URLs are null. The
+  frontend persists the request key, job ID,
   source asset set and grammatical display item in a separate localStorage recovery marker; a
   reopened Mini App resumes the same idempotent job and applies it only if the source pet/assets
   still match. A bounded per-request ledger in the pet snapshot makes the 200-XP charge and terminal

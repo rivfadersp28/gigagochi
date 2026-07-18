@@ -87,6 +87,7 @@ from app.services.generation_notification_service import (
 )
 from app.services.image_service import (
     build_pet_asset_set_response,
+    build_pet_static_asset_set_response,
     comparison_asset_set_id,
     generate_kandinsky_pet_comparison_assets,
     generate_pet_happy_scene_path,
@@ -932,6 +933,18 @@ def _generation_job_service() -> GenerationJobService:
                 generate_pet_happy_video_for_image_asset_set(image_set, happy_scene_path)
             ),
             build_response=build_pet_asset_set_response,
+            build_static_outfit_response=lambda image_set: {
+                **build_pet_static_asset_set_response(
+                    image_set,
+                    generated_outfit_mood_path(image_set, "sad"),
+                    generated_outfit_mood_path(image_set, "happy"),
+                ),
+                "sadVideoUrl": None,
+                "happyVideoUrl": None,
+                "blinkImageUrl": None,
+                "spriteSheetUrl": None,
+                "characterBible": image_set.character_bible,
+            },
             build_failure=_build_generation_failure,
             cleanup_failed_job_assets=_cleanup_failed_generation_job_assets,
             generate_comparison_images=(
