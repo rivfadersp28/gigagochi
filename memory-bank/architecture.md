@@ -864,3 +864,4 @@
   outcome. `/api/android/stories/due` claims before paid generation, schedules one FastAPI in-process
   background callback and immediately returns no story; the separate choice route is idempotent.
   Telegram delivery and its stored payload remain on the existing path.
+- Android keeps public `android-story-*` IDs while its one-part media uses the isolated valid `interactive-travel-android-story-*` directory/URL namespace.

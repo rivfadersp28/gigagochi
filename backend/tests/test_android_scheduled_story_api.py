@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from datetime import UTC, datetime
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException, Response
 from fastapi.testclient import TestClient
+from PIL import Image
 from pydantic import ValidationError
 
 from app.main import app
 from app.routers import android
-from app.services import scheduled_short_story_service
+from app.services import interactive_travel_media_service, scheduled_short_story_service
 from app.services.android_feature_store import AndroidFeatureStore
 from app.services.google_auth_session_store import GoogleUserIdentity
 from app.services.scheduled_short_story_service import ScheduledShortStoryEpisode
@@ -84,6 +87,13 @@ def fetch_due(store: AndroidFeatureStore, account_id: str):
 def run_background(background: BackgroundTasks) -> None:
     for task in background.tasks:
         task.func(*task.args, **task.kwargs)
+
+
+def sample_media_png() -> bytes:
+    image = Image.new("RGB", (90, 120), (94, 131, 87))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def test_due_not_due_first_replay_and_owner_isolation(monkeypatch, tmp_path) -> None:
@@ -217,22 +227,31 @@ def test_android_story_media_respects_shared_daily_cap(
         lambda: episode("plan-only").plan,
     )
     provider_calls: list[str] = []
+    monkeypatch.setattr(
+        interactive_travel_media_service,
+        "generated_dir_for",
+        lambda travel_id: tmp_path / travel_id,
+    )
 
-    def image(**_kwargs):
+    @contextmanager
+    def reserve_image(*_args, **_kwargs):
         provider_calls.append("image")
+        yield sample_media_png()
 
-    def video(**_kwargs):
+    @contextmanager
+    def reserve_video(*_args, **_kwargs):
         provider_calls.append("video")
+        yield b"synthetic-video"
 
     monkeypatch.setattr(
-        scheduled_short_story_service,
-        "generate_interactive_travel_part_image",
-        image,
+        interactive_travel_media_service,
+        "reserve_background_story_image_bytes",
+        reserve_image,
     )
     monkeypatch.setattr(
-        scheduled_short_story_service,
-        "generate_interactive_travel_part_video",
-        video,
+        interactive_travel_media_service,
+        "reserve_background_story_video_bytes",
+        reserve_video,
     )
 
     initial, background = fetch_due(store, "account-a")
@@ -241,13 +260,22 @@ def test_android_story_media_respects_shared_daily_cap(
     ready, _ = fetch_due(store, "account-a")
 
     assert ready.story is not None
+    assert ready.story.storyId.startswith("android-story-")
     assert len(provider_calls) == cap
+    media_dir = tmp_path / f"interactive-travel-{ready.story.storyId}"
     if cap == 0:
         assert ready.story.imageUrl is None
         assert ready.story.videoUrl is None
+        assert not media_dir.exists()
     else:
+        media_root = f"/static/generated/interactive-travel-{ready.story.storyId}/"
         assert ready.story.imageUrl is not None
+        assert ready.story.imageUrl.startswith(media_root)
         assert ready.story.videoUrl is not None
+        assert ready.story.videoUrl.startswith(media_root)
+        assert (media_dir / "interactive-travel-part-01.png").is_file()
+        assert (media_dir / "interactive-travel-part-01.mp4").is_file()
+        assert not (tmp_path / ready.story.storyId).exists()
 
 
 def test_android_story_provider_retries_cannot_exceed_media_cap(

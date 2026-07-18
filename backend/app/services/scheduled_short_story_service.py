@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ DEFAULT_SCHEDULED_SHORT_STORY_TIMEZONE = "Europe/Moscow"
 SCHEDULED_SHORT_STORY_PROVIDER_MAX_ATTEMPTS = 3
 SCHEDULED_SHORT_STORY_PROVIDER_RETRY_DELAYS_SECONDS = (15.0, 45.0)
 logger = logging.getLogger(__name__)
+ANDROID_SCHEDULED_STORY_ID_PATTERN = re.compile(r"android-story-[0-9a-f]{32}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +132,11 @@ def generate_scheduled_short_story_episode(
     run_provider_job: Callable[[str, Callable[[], Any]], Any],
 ) -> ScheduledShortStoryEpisode:
     plan = generate_scheduled_interactive_episode_plan()
+    media_id = (
+        f"interactive-travel-{story_id}"
+        if ANDROID_SCHEDULED_STORY_ID_PATTERN.fullmatch(story_id)
+        else story_id
+    )
     media_available = True
 
     def run_media(label: str, operation: Callable[[], Any]) -> bool:
@@ -147,7 +154,7 @@ def generate_scheduled_short_story_episode(
         "situation:image",
         lambda: generate_interactive_travel_part_image(
             pet=pet,
-            travel_id=story_id,
+            travel_id=media_id,
             destination=plan["destination"],
             part_number=1,
             title=plan["title"],
@@ -157,21 +164,21 @@ def generate_scheduled_short_story_episode(
     situation_video_ready = run_media(
         "situation:video",
         lambda: generate_interactive_travel_part_video(
-            travel_id=story_id,
+            travel_id=media_id,
             part_number=1,
         ),
     )
     outcome_image_urls: list[str | None] = []
     outcome_video_urls: list[str | None] = []
     outcome_files: list[str | None] = []
-    root = f"/static/generated/{story_id}"
+    root = f"/static/generated/{media_id}"
     for index, outcome in enumerate(plan["outcomes"]):
         variant = f"outcome-{index}"
         image_ready = run_media(
             f"{variant}:image",
             lambda outcome=outcome, variant=variant: generate_interactive_travel_part_image(
                 pet=pet,
-                travel_id=story_id,
+                travel_id=media_id,
                 destination=plan["destination"],
                 part_number=1,
                 title=f"{plan['title']}: исход",
@@ -182,7 +189,7 @@ def generate_scheduled_short_story_episode(
         video_ready = run_media(
             f"{variant}:video",
             lambda variant=variant: generate_interactive_travel_part_video(
-                travel_id=story_id,
+                travel_id=media_id,
                 part_number=1,
                 variant=variant,
             ),
