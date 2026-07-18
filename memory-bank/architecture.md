@@ -201,6 +201,10 @@
   application containers use read-only root filesystems, dropped capabilities, `no-new-privileges`
   and bounded tmpfs/cache mounts. Python installs umask `077`; writable private files/directories are
   repaired to `0600`/`0700` semantics.
+- Outfit generation may use the repository-owned `/test-pet` fixture as its reference image. The
+  backend container alone receives `frontend/public/test-pet` at the service-computed
+  `/frontend/public/test-pet` path through an exact read-only bind mount; the bot does not execute
+  generation jobs and does not receive this mount.
 - Volume backup/restore stops backend and bot before copying SQLite/WAL state, validates every
   database with `PRAGMA quick_check`, fsyncs bundle metadata and verifies strict SHA-256 manifests.
   Restore verifies before stopping writers, stages both volumes, and rolls both back or leaves the

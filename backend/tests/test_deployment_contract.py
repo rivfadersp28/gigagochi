@@ -10,6 +10,29 @@ from app.config import Settings
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_backend_mounts_existing_test_pet_references_read_only() -> None:
+    repository_root = BACKEND_ROOT.parent
+    source = repository_root / "frontend/public/test-pet"
+    expected_mount = "./frontend/public/test-pet:/frontend/public/test-pet:ro"
+    required_references = {
+        "openai-normal.png",
+        "openai-sad.png",
+        "openai-happy.png",
+    }
+
+    assert source.is_dir()
+    assert required_references <= {path.name for path in source.iterdir() if path.is_file()}
+    assert all((source / name).stat().st_size > 0 for name in required_references)
+
+    for compose_name in ("docker-compose.yml", "docker-compose.prod.yml"):
+        compose = yaml.safe_load((repository_root / compose_name).read_text(encoding="utf-8"))
+        services = compose["services"]
+        assert expected_mount in services["backend"]["volumes"]
+        for service_name, service in services.items():
+            if service_name != "backend":
+                assert expected_mount not in service.get("volumes", [])
+
+
 def test_docker_context_excludes_runtime_user_data() -> None:
     entries = {
         line.strip().rstrip("/")

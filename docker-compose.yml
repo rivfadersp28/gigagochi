@@ -51,6 +51,7 @@ services:
       - generated_assets:/app/static/generated
       - backend_logs:/app/logs
       - push_data:/app/data/push
+      - ./frontend/public/test-pet:/frontend/public/test-pet:ro
 
   frontend:
     build:

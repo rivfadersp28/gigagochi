@@ -80,6 +80,7 @@ services:
       - ./backend/data/world_descriptions:/app/data/world_descriptions:ro
       - ./deploy/ca:/app/ca:ro
       - push_data:/app/data/push
+      - ./frontend/public/test-pet:/frontend/public/test-pet:ro
     healthcheck:
       test:
         [

@@ -724,3 +724,7 @@
   Backend process death after claim fail-closes the slot; never turn that stale claim into automatic
   paid regeneration. Current 12 configured hours × 10 media calls per episode require an explicit
   cadence/budget decision before enabling scheduled stories in deployment.
+- `outfit_service.TEST_PET_ROOT` resolves to `/frontend/public/test-pet` inside the backend image,
+  but the backend Docker build context is only `./backend`. Keep the exact frontend fixture directory
+  bind-mounted read-only into the backend service; mounting it only in frontend or bot leaves outfit
+  reference validation broken at runtime.
