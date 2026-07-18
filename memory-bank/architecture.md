@@ -445,9 +445,10 @@
   relevant memory items plus older dialogue episodes; backend
   `_memory_context_block` includes selected `relevantMemories`, summary/profile
   and episodes when the shared context matrix enables `userMemory`.
-- The legacy background-story scheduler and `/story` bot command are disabled.
-  A dedicated automatic interactive-story scheduler targets the configured Telegram IDs (currently
-  Sergey only) every 10 minutes. Each episode chooses a random destination, has two temporary
+- All automatic Telegram story schedulers are disabled in production. The dedicated one-part
+  implementation remains behind `SCHEDULED_SHORT_STORY_ENABLED=false` and creates no provider jobs
+  or Telegram deliveries while disabled; Android scheduled stories remain independently enabled.
+  If explicitly re-enabled, it targets configured Telegram IDs. Each episode chooses a random destination, has two temporary
   hardcoded answer slots, and pre-generates three videos: the situation and one outcome per answer.
   Telegram sends the situation video with one owner-bound `Открыть приложение` web-app button to
   `/auto-story/{token}`. The backend keeps the newest 12 episode records so earlier buttons remain
