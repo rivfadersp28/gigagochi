@@ -27,9 +27,7 @@ from app.services.image_service import (
     CHARACTER_BIBLE_SCHEMA,
     IMAGE_RESULT_MAX_BYTES,
     KANDINSKY_PET_SCENE_VIDEO_PROMPT,
-    PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT,
     PET_HAPPY_SCENE_IMAGE_PROMPT,
-    PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT,
     PET_SAD_SCENE_IMAGE_PROMPT,
     PET_SAD_SCENE_VIDEO_PROMPT,
     PET_SCENE_VIDEO_PROMPT,
@@ -2317,7 +2315,7 @@ def test_generate_pet_asset_set_generates_idle_scene(monkeypatch, tmp_path) -> N
         assert "/teen-idle.png" in images[stage]["idle"]
 
 
-def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, tmp_path) -> None:
+def test_generate_sad_assets_use_single_full_scene_edit(monkeypatch, tmp_path) -> None:
     asset_id = uuid.uuid4()
     output_dir = tmp_path / str(asset_id)
     output_dir.mkdir()
@@ -2332,7 +2330,6 @@ def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, t
         generated_at=datetime.now(UTC),
     )
     image_calls: list[tuple[str, str, str]] = []
-    refinement_calls: list[tuple[str, list[str], str, str]] = []
     video_calls: list[tuple[str, str, str]] = []
 
     monkeypatch.setattr(
@@ -2348,17 +2345,9 @@ def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, t
         video_calls.append((scene_path.name, prompt, label))
         return b"sad-video"
 
-    def fake_multi_image_edit(prompt, source_paths, *, label, size, **_kwargs):
-        refinement_calls.append((prompt, [path.name for path in source_paths], label, size))
-        return png_bytes(Image.new("RGB", (1024, 1536), (70, 80, 90)))
-
     monkeypatch.setattr(
         "app.services.image_service.reserve_image_edit_bytes",
         _reserved(fake_image_edit),
-    )
-    monkeypatch.setattr(
-        "app.services.image_service.reserve_multi_image_edit_bytes",
-        _reserved(fake_multi_image_edit),
     )
     monkeypatch.setattr(
         "app.services.image_service.reserve_pet_scene_video_bytes",
@@ -2368,16 +2357,13 @@ def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, t
     sad_scene_path = generate_pet_sad_scene_path(image_set)
     sad_video_path = generate_pet_sad_video_for_image_asset_set(image_set, sad_scene_path)
 
-    assert image_calls == [(PET_SAD_SCENE_IMAGE_PROMPT, "teen-idle.png", "pet_creation/sad_pose")]
-    assert refinement_calls == [
+    assert image_calls == [
         (
-            PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT,
-            ["teen-idle.png", "teen-sad-pose.png"],
+            PET_SAD_SCENE_IMAGE_PROMPT,
+            "teen-idle.png",
             "pet_creation/sad_scene",
-            "1024x1536",
         )
     ]
-    assert not (output_dir / "teen-sad-pose.png").exists()
     assert video_calls == [
         ("teen-sad.png", PET_SAD_SCENE_VIDEO_PROMPT, "pet_creation/sad_scene_video")
     ]
@@ -2385,7 +2371,7 @@ def test_generate_sad_assets_use_composed_scene_and_exact_prompts(monkeypatch, t
     assert sad_video_path.read_bytes() == b"sad-video"
 
 
-def test_generate_happy_assets_preserve_scene_and_reuse_normal_blink_prompt(
+def test_generate_happy_assets_use_single_full_scene_edit_and_normal_blink_prompt(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -2403,7 +2389,6 @@ def test_generate_happy_assets_preserve_scene_and_reuse_normal_blink_prompt(
         generated_at=datetime.now(UTC),
     )
     image_calls: list[tuple[str, str, str]] = []
-    refinement_calls: list[tuple[str, list[str], str, str]] = []
     video_calls: list[tuple[str, str, str]] = []
 
     monkeypatch.setattr(
@@ -2419,17 +2404,9 @@ def test_generate_happy_assets_preserve_scene_and_reuse_normal_blink_prompt(
         video_calls.append((scene_path.name, prompt, label))
         return b"happy-video"
 
-    def fake_multi_image_edit(prompt, source_paths, *, label, size, **_kwargs):
-        refinement_calls.append((prompt, [path.name for path in source_paths], label, size))
-        return png_bytes(Image.new("RGB", (1024, 1536), (70, 80, 90)))
-
     monkeypatch.setattr(
         "app.services.image_service.reserve_image_edit_bytes",
         _reserved(fake_image_edit),
-    )
-    monkeypatch.setattr(
-        "app.services.image_service.reserve_multi_image_edit_bytes",
-        _reserved(fake_multi_image_edit),
     )
     monkeypatch.setattr(
         "app.services.image_service.reserve_pet_scene_video_bytes",
@@ -2445,20 +2422,10 @@ def test_generate_happy_assets_preserve_scene_and_reuse_normal_blink_prompt(
     assert image_calls == [
         (
             PET_HAPPY_SCENE_IMAGE_PROMPT,
-            "teen-happy-source-region.png",
-            "pet_creation/happy_pose",
-        )
-    ]
-    assert refinement_calls == [
-        (
-            PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT,
-            ["teen-happy-source-region.png", "teen-happy-pose.png"],
+            "teen-idle.png",
             "pet_creation/happy_scene",
-            "1024x1536",
         )
     ]
-    assert not (output_dir / "teen-happy-pose.png").exists()
-    assert not (output_dir / "teen-happy-source-region.png").exists()
     assert video_calls == [
         ("teen-happy.png", PET_SCENE_VIDEO_PROMPT, "pet_creation/happy_scene_video")
     ]

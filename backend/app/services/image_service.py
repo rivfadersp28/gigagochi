@@ -352,37 +352,15 @@ PET_SAD_SCENE_IMAGE_PROMPT = (
     "Измени только позу персонажа на сидящую на земле и добавь грустный плач. "
     "Не рисуй слёзы, капли, влагу, мокрые дорожки на щеках или любую другую жидкость."
 )
-PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT = (
-    "Первая картинка — единственный обязательный эталон композиции и масштаба. "
-    "Сохрани из первой картинки точную камеру, кадрирование, перспективу, фон, "
-    "положение персонажа, размер головы в пикселях и общий размер персонажа в кадре. "
-    "Вторая картинка используется только как референс сидящей плачущей позы.\n\n"
-    "Верни сцену в композиции первой картинки: персонаж должен находиться на той же "
-    "дистанции от камеры и занимать не больше места, чем персонаж на первой картинке. "
-    "Не приближай, не увеличивай, не делай крупный план. Персонаж сидит на земле и "
-    "грустно плачет, как на второй картинке, но без видимых слёз. Не рисуй слёзы, "
-    "капли, влагу, мокрые дорожки на щеках или любую другую жидкость. Сохрани дизайн, "
-    "одежду, посох, книгу, флаконы, освещение и окружение первой картинки. Больше "
-    "ничего не меняй."
-)
 PET_HAPPY_SCENE_IMAGE_PROMPT = (
-    "Это фиксированный crop области персонажа. Сохрани его точные границы и координаты: "
-    "не центрируй, не сдвигай, не масштабируй и не приближай персонажа внутри crop. "
-    "Положение тела, ног, головы, головного убора, одежды и всех предметов должно остаться "
-    "на тех же пиксельных координатах. Пусть персонаж лишь слегка приподнимет подбородок, "
-    "чуть более жизнерадостно посмотрит и слегка естественно улыбнётся закрытым ртом. "
-    "Сделай глаза немного более открытыми и живыми, сохранив их исходную форму. Не меняй "
-    "фон внутри crop, дизайн, пропорции, освещение и цвета. Не открывай рот, не показывай "
-    "зубы и не превращай эмоцию в широкую или мультяшную."
-)
-PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT = (
-    "Обе картинки имеют одинаковые фиксированные границы области персонажа. Первая картинка — "
-    "обязательный эталон всех пиксельных координат, масштаба, фона, дизайна и предметов. Вторая "
-    "картинка используется только как референс эмоции. Верни crop с персонажем точно в положении "
-    "первой картинки: не центрируй, не сдвигай, не масштабируй и не меняй позу тела. Перенеси "
-    "со второй картинки только чуть приподнятый подбородок, немного более открытые и живые глаза "
-    "и лёгкую естественную закрытую улыбку. Не изменяй размер головы или глаз, не открывай рот, "
-    "не показывай зубы и не меняй ничего больше."
+    "Это точечное редактирование существующего полного кадра, а не создание новой иллюстрации. "
+    "Камера полностью статична и зафиксирована. Сохрани исходное изображение, фон, кадрирование, "
+    "перспективу, фокус, освещение и каждый объект на прежних пиксельных координатах. "
+    "Персонаж остаётся в точности в той же позе, на том же месте и в том же масштабе. "
+    "Не двигай и не перерисовывай тело, голову, одежду и предметы. Измени только выражение лица: "
+    "слегка приподними подбородок, сделай глаза немного более открытыми и живыми и добавь лёгкую "
+    "естественную улыбку закрытым ртом. Не меняй форму и размер головы или глаз, не открывай рот, "
+    "не показывай зубы и не превращай эмоцию в широкую или мультяшную. Больше ничего не меняй."
 )
 PET_SAD_SCENE_VIDEO_PROMPT = (
     "Static locked camera. The character remains perfectly still in the exact same pose, "
@@ -3657,22 +3635,9 @@ def generate_pet_sad_scene_path(
     if _is_valid_image_file(sad_scene_path):
         return sad_scene_path
 
-    sad_pose_path = output_dir / f"{FAST_GENERATION_STAGE}-sad-pose.png"
-    if not _is_valid_image_file(sad_pose_path):
-        with reserve_image_edit_bytes(
-            PET_SAD_SCENE_IMAGE_PROMPT,
-            image_set.scene_path,
-            label="pet_creation/sad_pose",
-            provider=image_provider,
-        ) as sad_pose_bytes:
-            _atomic_write_nonempty(
-                sad_pose_path,
-                normalize_pet_scene_video_frame_bytes(sad_pose_bytes),
-            )
-
-    with reserve_multi_image_edit_bytes(
-        PET_SAD_SCENE_COMPOSITION_REFINEMENT_PROMPT,
-        [image_set.scene_path, sad_pose_path],
+    with reserve_image_edit_bytes(
+        PET_SAD_SCENE_IMAGE_PROMPT,
+        image_set.scene_path,
         label="pet_creation/sad_scene",
         size=PET_SCENE_IMAGE_SIZE,
         provider=image_provider,
@@ -3681,7 +3646,6 @@ def generate_pet_sad_scene_path(
             sad_scene_path,
             normalize_pet_scene_video_frame_bytes(sad_scene_bytes),
         )
-    sad_pose_path.unlink(missing_ok=True)
     return sad_scene_path
 
 
@@ -3711,41 +3675,17 @@ def generate_pet_happy_scene_path(
     if _is_valid_image_file(happy_scene_path):
         return happy_scene_path
 
-    source_region_path = output_dir / f"{FAST_GENERATION_STAGE}-happy-source-region.png"
-    if not _is_valid_image_file(source_region_path):
-        _atomic_write_nonempty(
-            source_region_path,
-            extract_pet_character_region_bytes(image_set.scene_path),
-        )
-    with Image.open(source_region_path) as source_region:
-        region_size = source_region.size
-
-    happy_pose_path = output_dir / f"{FAST_GENERATION_STAGE}-happy-pose.png"
-    if not _is_valid_image_file(happy_pose_path):
-        with reserve_image_edit_bytes(
-            PET_HAPPY_SCENE_IMAGE_PROMPT,
-            source_region_path,
-            label="pet_creation/happy_pose",
-            provider=image_provider,
-        ) as happy_pose_bytes:
-            _atomic_write_nonempty(
-                happy_pose_path,
-                normalize_pet_character_region_bytes(happy_pose_bytes, region_size),
-            )
-
-    with reserve_multi_image_edit_bytes(
-        PET_HAPPY_SCENE_COMPOSITION_REFINEMENT_PROMPT,
-        [source_region_path, happy_pose_path],
+    with reserve_image_edit_bytes(
+        PET_HAPPY_SCENE_IMAGE_PROMPT,
+        image_set.scene_path,
         label="pet_creation/happy_scene",
         size=PET_SCENE_IMAGE_SIZE,
         provider=image_provider,
     ) as happy_scene_bytes:
         _atomic_write_nonempty(
             happy_scene_path,
-            composite_pet_character_region_bytes(image_set.scene_path, happy_scene_bytes),
+            normalize_pet_scene_video_frame_bytes(happy_scene_bytes),
         )
-    happy_pose_path.unlink(missing_ok=True)
-    source_region_path.unlink(missing_ok=True)
     return happy_scene_path
 
 

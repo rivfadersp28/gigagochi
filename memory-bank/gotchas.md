@@ -181,6 +181,10 @@
   normalization. Hard numeric head/feet coordinates make the image model recompose and zoom the
   background to satisfy them. Keep placement constraints qualitative (upper clearing, full body,
   preserve vertical composition) when the supplied background framing matters.
+- Mood scenes intentionally use one full-frame image edit from the completed idle scene. Do not
+  restore the former pose-plus-refinement or fixed-character-crop stages: characters vary in size,
+  and the extra generative pass caused additional camera drift. The selected full-frame edit can
+  still redraw the background slightly; this is an accepted limitation of the chosen pipeline.
 - Kandinsky interprets toy, figurine, miniature, resin and macro wording as a small object. The
   active pet-creation direction now intentionally accepts that collectible-art-toy character,
   superseding the earlier full-size-creature experiment. Compensate with explicit full-body framing,
