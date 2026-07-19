@@ -14,6 +14,15 @@ const ONBOARDING_BAT_SITUATION_VIDEO = "/static/onboarding/bat-help/situation.mp
 const ONBOARDING_BAT_SUCCESS_IMAGE = "/static/onboarding/bat-help/success.png";
 const ONBOARDING_BAT_SUCCESS_VIDEO = "/static/onboarding/bat-help/success.mp4";
 
+const ONBOARDING_BAT_INCORRECT_RESULTS: Record<string, string> = {
+  "Птицы":
+    "Крылья есть и у птиц, и у летучих мышей, но летучие мыши не птицы. Их малыши рождаются живыми и пьют материнское молоко.",
+  "Насекомые":
+    "Летучая мышь гораздо ближе к зверям, чем к насекомым. У неё есть позвоночник, шерсть, а детёныша мама кормит молоком.",
+  "Пресмыкающиеся":
+    "Летучая мышь не пресмыкающееся. Она теплокровная, покрыта шерстью и кормит своего малыша молоком.",
+};
+
 export function isOnboardingBatTravelId(travelId: string | null | undefined) {
   return Boolean(travelId?.startsWith(ONBOARDING_BAT_TRAVEL_ID_PREFIX));
 }
@@ -49,9 +58,15 @@ export function createOnboardingBatStorySession(
 
 export function resolveOnboardingBatStory(
   session: LocalInteractiveTravel,
+  selectedChoice: string,
 ): LocalInteractiveTravel {
   const part = session.travel.parts[0];
   if (!part || !isOnboardingBatTravelId(session.travel.travelId)) {
+    return session;
+  }
+  const isCorrect = selectedChoice === ONBOARDING_BAT_CORRECT_CHOICE;
+  const incorrectResult = ONBOARDING_BAT_INCORRECT_RESULTS[selectedChoice];
+  if (!isCorrect && !incorrectResult) {
     return session;
   }
   return {
@@ -60,24 +75,61 @@ export function resolveOnboardingBatStory(
       ...session.travel,
       parts: [{
         ...part,
-        answer: ONBOARDING_BAT_CORRECT_CHOICE,
-        backgroundImageUrl: ONBOARDING_BAT_SUCCESS_IMAGE,
-        backgroundVideoUrl: ONBOARDING_BAT_SUCCESS_VIDEO,
+        answer: selectedChoice,
+        backgroundImageUrl: isCorrect
+          ? ONBOARDING_BAT_SUCCESS_IMAGE
+          : ONBOARDING_BAT_SITUATION_IMAGE,
+        backgroundVideoUrl: isCorrect
+          ? ONBOARDING_BAT_SUCCESS_VIDEO
+          : ONBOARDING_BAT_SITUATION_VIDEO,
         result: {
-          text:
-            "Летучая мышь относится к млекопитающим. Мама добралась до малыша, согрела его и накормила молоком.",
-          adviceAssessment: "helpful",
-          reaction: "Получилось! Малыш снова рядом с мамой.",
-          reactionTone: "enthusiastic",
-          consequence: "Малыш в безопасности рядом с мамой.",
-          outcomeValence: "positive",
-          experienceGained: 200,
+          text: isCorrect
+            ? "Летучая мышь относится к млекопитающим. Мама добралась до малыша, согрела его и накормила молоком."
+            : incorrectResult,
+          adviceAssessment: isCorrect ? "helpful" : "harmful",
+          reaction: isCorrect
+            ? "Получилось! Малыш снова рядом с мамой."
+            : "Похоже, этот ответ не подходит. Давай попробуем ещё раз.",
+          reactionTone: isCorrect ? "enthusiastic" : "worried",
+          consequence: isCorrect
+            ? "Малыш в безопасности рядом с мамой."
+            : "Нужно выбрать другой ответ.",
+          outcomeValence: isCorrect ? "positive" : "negative",
+          experienceGained: isCorrect ? 200 : 0,
           statImpacts: [],
         },
       }],
-      completed: true,
-      outcomeValence: "positive",
+      completed: isCorrect,
+      outcomeValence: isCorrect ? "positive" : undefined,
     },
     presentation: { phase: "result", partNumber: 1, portionIndex: 0 },
+  };
+}
+
+export function retryOnboardingBatStory(
+  session: LocalInteractiveTravel,
+): LocalInteractiveTravel {
+  const part = session.travel.parts[0];
+  if (
+    !part
+    || session.travel.completed
+    || !isOnboardingBatTravelId(session.travel.travelId)
+  ) {
+    return session;
+  }
+  const pendingPart = { ...part };
+  delete pendingPart.answer;
+  delete pendingPart.result;
+  pendingPart.backgroundImageUrl = ONBOARDING_BAT_SITUATION_IMAGE;
+  pendingPart.backgroundVideoUrl = ONBOARDING_BAT_SITUATION_VIDEO;
+  return {
+    ...session,
+    travel: {
+      ...session.travel,
+      parts: [pendingPart],
+      completed: false,
+      outcomeValence: undefined,
+    },
+    presentation: { phase: "story", partNumber: 1, portionIndex: 0 },
   };
 }

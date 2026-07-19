@@ -1866,6 +1866,71 @@ def test_ambient_retry_keeps_the_system_message_first_and_unique() -> None:
     assert "Первая версия повторила вопрос" in retry_messages[1]["content"]
 
 
+def test_ambient_regenerates_reply_that_mentions_json_contract() -> None:
+    client, completions = fake_lite_client(
+        SimpleNamespace(
+            content="Ого, строгий формат! Что мы будем делать в этом JSON?",
+            tool_calls=None,
+        ),
+        SimpleNamespace(content="Пойдём искать следы у ручья?", tool_calls=None),
+    )
+    payload = LocalAmbientRequest.model_validate(
+        {
+            "pet": {
+                "name": "Тото",
+                "description": "лесной зверёк",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": {"hunger": 80, "happiness": 80, "energy": 80},
+            },
+            "replyMaxChars": 120,
+        }
+    )
+
+    response = generate_ambient_pet_message(
+        payload,
+        client=client,
+        model="gpt-5.5",
+        timeout=10,
+    )
+
+    assert response.reply == "Пойдём искать следы у ручья?"
+    assert len(completions.calls) == 2
+    assert "упомянула служебный формат ответа" in completions.calls[1]["messages"][1]["content"]
+
+
+def test_ambient_uses_fallback_when_json_contract_leaks_twice() -> None:
+    client, completions = fake_lite_client(
+        SimpleNamespace(content="Нужно соблюдать JSON schema.", tool_calls=None),
+        SimpleNamespace(content="Снова обсуждаем формат ответа JSON.", tool_calls=None),
+    )
+    payload = LocalAmbientRequest.model_validate(
+        {
+            "pet": {
+                "name": "Тото",
+                "description": "лесной зверёк",
+                "stage": "baby",
+                "mood": "idle",
+                "stats": {"hunger": 80, "happiness": 80, "energy": 80},
+            },
+            "includeDebug": True,
+            "replyMaxChars": 120,
+        }
+    )
+
+    response = generate_ambient_pet_message(
+        payload,
+        client=client,
+        model="gpt-5.5",
+        timeout=10,
+    )
+
+    assert "JSON" not in response.reply.upper()
+    assert response.debug is not None
+    assert response.debug.usedFallback is True
+    assert "ambient_response_contract_leak_after_regeneration" in response.debug.validationFlags
+
+
 def test_lite_tools_do_not_expose_character_json() -> None:
     client, completions = fake_lite_client(
         SimpleNamespace(content="Я ем мокрую глину после дождя.", tool_calls=None),

@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 import styles from "./CreatePetForm.module.css";
 import { ErrorNotice } from "./ErrorNotice";
 import { PetThinkingIndicator } from "./pet-dashboard/PetThinkingIndicator";
+import { ScreenAppBar } from "./ScreenAppBar";
 import { TiltedGlassButton } from "./TiltedGlassButton";
 
 const MAX_PROMPT_LENGTH = 300;
@@ -570,6 +571,15 @@ export function CreatePetForm({ redirectExistingPet = true }: CreatePetFormProps
 
         {isCustomInputOpen ? (
           <form className={styles.customForm} onSubmit={handleCustomSubmit}>
+            <ScreenAppBar
+              className={styles.customAppBar}
+              overlay
+              onBack={() => {
+                setCustomInputStep(null);
+                setCustomValue("");
+                setError(null);
+              }}
+            />
             <h1 className={styles.customTitle}>{questionTitle}</h1>
             <label className="sr-only" htmlFor="creation-custom-value">
               {flowStep === 0 ? "Свой вариант персонажа" : `Свой вариант: ${questionTitle}`}
@@ -639,7 +649,12 @@ export function CreatePetForm({ redirectExistingPet = true }: CreatePetFormProps
         ) : (
           <div className={styles.questionPanel}>
             <h1 className={styles.title}>{questionTitle}</h1>
-            <div className={styles.options} role="group" aria-label={questionTitle}>
+            <div
+              key={`creation-options-${flowStep}`}
+              className={styles.options}
+              role="group"
+              aria-label={questionTitle}
+            >
               {questionOptions.map((option, index) => (
                 <TiltedGlassButton
                   key={option}

@@ -43,7 +43,19 @@ export function markAmbientReplyShownInSession(petId: string) {
 }
 
 function normalize(value: unknown): string {
-  return typeof value === "string" ? value.trim().replace(/\s+/g, " ").slice(0, 260) : "";
+  if (typeof value !== "string") {
+    return "";
+  }
+  const text = value.trim().replace(/\s+/g, " ").slice(0, 260);
+  if (
+    /\bjson\b/i.test(text)
+    || /json\s*schema|json[- ]?схем/i.test(text)
+    || /строг(?:ий|ого|ому|им|ом|ая|ой|ую|ое|ие|их|ими)?\s+формат/i.test(text)
+    || /формат\s+(?:ответа|вывода)|схем(?:а|е|у|ой|ы)\s+ответа/i.test(text)
+  ) {
+    return "";
+  }
+  return text;
 }
 
 function storage(): Storage | null {

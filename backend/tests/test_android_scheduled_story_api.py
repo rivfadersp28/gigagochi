@@ -259,23 +259,22 @@ def test_android_story_media_respects_shared_daily_cap(
     run_background(background)
     ready, _ = fetch_due(store, "account-a")
 
-    assert ready.story is not None
-    assert ready.story.storyId.startswith("android-story-")
+    assert ready.story is None
     assert len(provider_calls) == cap
-    media_dir = tmp_path / f"interactive-travel-{ready.story.storyId}"
+    slot = android._android_scheduled_story_slot(settings, NOW)
+    assert slot is not None
+    story_id = android._scheduled_story_id(
+        android._owner(identity("account-a")),
+        str(request().pet.petId),
+        slot.isoformat().replace("+00:00", "Z"),
+    )
+    media_dir = tmp_path / f"interactive-travel-{story_id}"
     if cap == 0:
-        assert ready.story.imageUrl is None
-        assert ready.story.videoUrl is None
         assert not media_dir.exists()
     else:
-        media_root = f"/static/generated/interactive-travel-{ready.story.storyId}/"
-        assert ready.story.imageUrl is not None
-        assert ready.story.imageUrl.startswith(media_root)
-        assert ready.story.videoUrl is not None
-        assert ready.story.videoUrl.startswith(media_root)
         assert (media_dir / "interactive-travel-part-01.png").is_file()
         assert (media_dir / "interactive-travel-part-01.mp4").is_file()
-        assert not (tmp_path / ready.story.storyId).exists()
+        assert not (tmp_path / story_id).exists()
 
 
 def test_android_story_provider_retries_cannot_exceed_media_cap(
@@ -316,9 +315,7 @@ def test_android_story_provider_retries_cannot_exceed_media_cap(
     run_background(background)
     ready, _ = fetch_due(store, "account-a")
 
-    assert ready.story is not None
-    assert ready.story.imageUrl is None
-    assert ready.story.videoUrl is None
+    assert ready.story is None
     assert provider_calls == 2
 
 
@@ -362,9 +359,7 @@ def test_choice_is_exact_idempotent_and_owner_fenced(monkeypatch, tmp_path) -> N
         )
     assert conflict.value.detail["code"] == "STORY_ALREADY_CHOSEN"
     with pytest.raises(HTTPException) as fenced:
-        android.choose_scheduled_story(
-            story_id, choice, Response(), identity("account-b"), store
-        )
+        android.choose_scheduled_story(story_id, choice, Response(), identity("account-b"), store)
     assert fenced.value.detail["code"] == "STORY_NOT_FOUND"
 
 
@@ -449,7 +444,5 @@ def test_story_table_owner_scope_allows_same_pet_and_slot(tmp_path) -> None:
     assert first.state == "created"
     assert second.state == "created"
     with sqlite3.connect(store.path) as connection:
-        count = connection.execute(
-            "SELECT COUNT(*) FROM android_scheduled_stories"
-        ).fetchone()[0]
+        count = connection.execute("SELECT COUNT(*) FROM android_scheduled_stories").fetchone()[0]
     assert count == 2

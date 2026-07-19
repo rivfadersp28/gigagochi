@@ -374,7 +374,7 @@ def test_structured_output_with_system_only_prompt_adds_user_anchor() -> None:
     }
 
 
-def test_gigachat_35_structured_output_uses_prompt_json_contract_without_functions() -> None:
+def test_gigachat_35_structured_output_uses_system_json_contract_without_functions() -> None:
     payloads: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -413,8 +413,9 @@ def test_gigachat_35_structured_output_uses_prompt_json_contract_without_functio
 
     assert "functions" not in payloads[0]
     assert "function_call" not in payloads[0]
-    assert payloads[0]["messages"][-1]["role"] == "user"
-    assert "JSON schema:" in payloads[0]["messages"][-1]["content"]
+    assert [message["role"] for message in payloads[0]["messages"]] == ["system", "user"]
+    assert "JSON schema:" in payloads[0]["messages"][0]["content"]
+    assert payloads[0]["messages"][-1] == {"role": "user", "content": "кто я"}
     assert json.loads(response.content or "") == {
         "reply": "Ты Серега.",
         "faceHint": "happy",

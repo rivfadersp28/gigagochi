@@ -5,6 +5,7 @@ import {
   isOnboardingBatTravelId,
   ONBOARDING_BAT_CORRECT_CHOICE,
   resolveOnboardingBatStory,
+  retryOnboardingBatStory,
 } from "./localPetOnboardingBatStory";
 
 describe("localPetOnboardingBatStory", () => {
@@ -23,6 +24,7 @@ describe("localPetOnboardingBatStory", () => {
   it("resolves only to the fixed positive outcome and grants standard story EXP", () => {
     const resolved = resolveOnboardingBatStory(
       createOnboardingBatStorySession("pet-1", "2026-07-16T10:00:00Z"),
+      ONBOARDING_BAT_CORRECT_CHOICE,
     );
 
     expect(resolved.travel.completed).toBe(true);
@@ -36,5 +38,35 @@ describe("localPetOnboardingBatStory", () => {
         experienceGained: 200,
       },
     });
+  });
+
+  it.each([
+    ["Птицы", "летучие мыши не птицы"],
+    ["Насекомые", "У неё есть позвоночник"],
+    ["Пресмыкающиеся", "не пресмыкающееся"],
+  ])("returns retryable feedback for the incorrect choice %s", (choice, feedback) => {
+    const resolved = resolveOnboardingBatStory(
+      createOnboardingBatStorySession("pet-1", "2026-07-16T10:00:00Z"),
+      choice,
+    );
+
+    expect(resolved.travel.completed).toBe(false);
+    expect(resolved.presentation.phase).toBe("result");
+    expect(resolved.travel.parts[0]).toMatchObject({
+      answer: choice,
+      backgroundImageUrl: "/static/onboarding/bat-help/situation.png",
+      backgroundVideoUrl: "/static/onboarding/bat-help/situation.mp4",
+      result: {
+        text: expect.stringContaining(feedback),
+        outcomeValence: "negative",
+        experienceGained: 0,
+        statImpacts: [],
+      },
+    });
+
+    const retry = retryOnboardingBatStory(resolved);
+    expect(retry.presentation.phase).toBe("story");
+    expect(retry.travel.parts[0]?.answer).toBeUndefined();
+    expect(retry.travel.parts[0]?.result).toBeUndefined();
   });
 });

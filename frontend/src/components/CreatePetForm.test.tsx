@@ -20,6 +20,10 @@ const tiltedGlassButtonStyles = readFileSync(
   "src/components/TiltedGlassButton.module.css",
   "utf8",
 );
+const screenAppBarStyles = readFileSync(
+  "src/components/ScreenAppBar.module.css",
+  "utf8",
+);
 
 const mocks = vi.hoisted(() => {
   class MockApiError extends Error {
@@ -179,6 +183,26 @@ describe("CreatePetForm", () => {
     expect(mocks.generatePetAssets).not.toHaveBeenCalled();
   });
 
+  it("returns from the custom input to the current creation stage", () => {
+    render(<CreatePetForm />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Свой вариант" }));
+    fireEvent.change(screen.getByLabelText("Свой вариант персонажа"), {
+      target: { value: "Стальной унитаз" },
+    });
+
+    expect(screen.getByRole("button", { name: "Назад" })).toBeInTheDocument();
+    expect(screenAppBarStyles).toContain("backdrop-filter: blur(18px)");
+    expect(screenAppBarStyles).toContain("-webkit-backdrop-filter: blur(18px)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Назад" }));
+
+    expect(screen.queryByLabelText("Свой вариант персонажа")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Кого хочешь создать?" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Свой вариант" })).toBeInTheDocument();
+    expect(mocks.generatePetAssets).not.toHaveBeenCalled();
+  });
+
   it("shows the Paper next button only for a non-empty custom answer", () => {
     render(<CreatePetForm />);
 
@@ -214,6 +238,9 @@ describe("CreatePetForm", () => {
       /\.title\s*\{[^}]*height: 52px;[^}]*align-items: flex-end;/u,
     );
     expect(createPetFormStyles).toContain("scale(0.6)");
+    expect(createPetFormStyles).toContain(
+      "animation: optionsStageIn 300ms ease-out backwards",
+    );
     expect(createPetFormStyles).toContain("outline: none");
   });
 

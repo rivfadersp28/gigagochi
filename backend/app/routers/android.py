@@ -19,6 +19,12 @@ from app.schemas import (
     LocalChatRequest,
     LocalChatResponse,
     LocalPetChatContext,
+    LocalProactiveRequest,
+    LocalProactiveResponse,
+    MemoryConsolidationRequest,
+    MemoryConsolidationResponse,
+    MemoryExtractionRequest,
+    MemoryExtractionResponse,
     OutfitSimplificationResponse,
     TravelVideoPrototypeResponse,
 )
@@ -47,6 +53,11 @@ from app.services.interactive_travel_service import scheduled_interactive_episod
 from app.services.outfit_service import (
     encode_outfit_generation_description,
     simplify_outfit_request,
+)
+from app.services.pet_reply_engine.lite_generator import generate_proactive_pet_message
+from app.services.pet_reply_engine.memory_operations import (
+    consolidate_user_memory,
+    extract_user_memory_operations,
 )
 from app.services.rate_limit_service import (
     RateLimitExceeded,
@@ -129,6 +140,21 @@ class AndroidGenerationJobEnvelope(BaseModel):
 
 
 class AndroidChatRequest(LocalChatRequest):
+    model_config = ConfigDict(extra="forbid")
+    requestKey: RequestKey
+
+
+class AndroidMemoryExtractionRequest(MemoryExtractionRequest):
+    model_config = ConfigDict(extra="forbid")
+    requestKey: RequestKey
+
+
+class AndroidMemoryConsolidationRequest(MemoryConsolidationRequest):
+    model_config = ConfigDict(extra="forbid")
+    requestKey: RequestKey
+
+
+class AndroidProactiveRequest(LocalProactiveRequest):
     model_config = ConfigDict(extra="forbid")
     requestKey: RequestKey
 
@@ -347,6 +373,13 @@ def _generate_scheduled_story_background(
             story_id=story_id,
             run_provider_job=run_provider_job,
         )
+        if (
+            episode.situation_image_url is None
+            or episode.situation_video_url is None
+            or any(value is None for value in episode.outcome_image_urls)
+            or any(value is None for value in episode.outcome_video_urls)
+        ):
+            raise RuntimeError("ANDROID_SCHEDULED_STORY_MEDIA_INCOMPLETE")
         plan = episode.plan
         episode_json = json.dumps(
             {
@@ -749,6 +782,130 @@ def chat(
         store,
         owner=owner,
         operation="chat",
+        request_key=payload.requestKey,
+        payload=request_payload,
+        response=result,
+    )
+    return result
+
+
+@router.post("/memory/extract", response_model=MemoryExtractionResponse, include_in_schema=False)
+def extract_memory(
+    payload: AndroidMemoryExtractionRequest,
+    response: Response,
+    identity: GoogleIdentity,
+    store: FeatureStore,
+) -> MemoryExtractionResponse:
+    _no_store(response)
+    owner = _owner(identity)
+    request_payload = _request_payload(payload)
+    attempt = _begin_sync(
+        store,
+        owner=owner,
+        operation="memory-extract",
+        request_key=payload.requestKey,
+        payload=request_payload,
+    )
+    if attempt.response_json is not None:
+        return MemoryExtractionResponse.model_validate_json(attempt.response_json)
+    _check_rate_limit_before_downstream(
+        store,
+        attempt=attempt,
+        owner=owner,
+        operation="memory-extract",
+        request_key=payload.requestKey,
+        bucket="chat",
+    )
+    request = MemoryExtractionRequest.model_validate(payload.model_dump(exclude={"requestKey"}))
+    result = extract_user_memory_operations(request)
+    _commit_model(
+        store,
+        owner=owner,
+        operation="memory-extract",
+        request_key=payload.requestKey,
+        payload=request_payload,
+        response=result,
+    )
+    return result
+
+
+@router.post(
+    "/memory/consolidate",
+    response_model=MemoryConsolidationResponse,
+    include_in_schema=False,
+)
+def consolidate_memory(
+    payload: AndroidMemoryConsolidationRequest,
+    response: Response,
+    identity: GoogleIdentity,
+    store: FeatureStore,
+) -> MemoryConsolidationResponse:
+    _no_store(response)
+    owner = _owner(identity)
+    request_payload = _request_payload(payload)
+    attempt = _begin_sync(
+        store,
+        owner=owner,
+        operation="memory-consolidate",
+        request_key=payload.requestKey,
+        payload=request_payload,
+    )
+    if attempt.response_json is not None:
+        return MemoryConsolidationResponse.model_validate_json(attempt.response_json)
+    _check_rate_limit_before_downstream(
+        store,
+        attempt=attempt,
+        owner=owner,
+        operation="memory-consolidate",
+        request_key=payload.requestKey,
+        bucket="chat",
+    )
+    request = MemoryConsolidationRequest.model_validate(payload.model_dump(exclude={"requestKey"}))
+    result = consolidate_user_memory(request)
+    _commit_model(
+        store,
+        owner=owner,
+        operation="memory-consolidate",
+        request_key=payload.requestKey,
+        payload=request_payload,
+        response=result,
+    )
+    return result
+
+
+@router.post("/proactive", response_model=LocalProactiveResponse, include_in_schema=False)
+def proactive(
+    payload: AndroidProactiveRequest,
+    response: Response,
+    identity: GoogleIdentity,
+    store: FeatureStore,
+) -> LocalProactiveResponse:
+    _no_store(response)
+    owner = _owner(identity)
+    request_payload = _request_payload(payload)
+    attempt = _begin_sync(
+        store,
+        owner=owner,
+        operation="proactive",
+        request_key=payload.requestKey,
+        payload=request_payload,
+    )
+    if attempt.response_json is not None:
+        return LocalProactiveResponse.model_validate_json(attempt.response_json)
+    _check_rate_limit_before_downstream(
+        store,
+        attempt=attempt,
+        owner=owner,
+        operation="proactive",
+        request_key=payload.requestKey,
+        bucket="chat",
+    )
+    request = LocalProactiveRequest.model_validate(payload.model_dump(exclude={"requestKey"}))
+    result = generate_proactive_pet_message(request)
+    _commit_model(
+        store,
+        owner=owner,
+        operation="proactive",
         request_key=payload.requestKey,
         payload=request_payload,
         response=result,

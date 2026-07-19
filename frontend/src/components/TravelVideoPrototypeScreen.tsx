@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowLeft, Check, Film, Image as ImageIcon, PenLine, Route } from "lucide-react";
+import { Check, Film, Image as ImageIcon, PenLine, Route } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import { SmoothBackgroundVideo } from "@/components/SmoothBackgroundVideo";
+import { ScreenAppBar } from "@/components/ScreenAppBar";
 import { getTravelVideoPrototype, startTravelVideoPrototype } from "@/lib/api";
 import { presentError } from "@/lib/errorPresentation";
 import {
@@ -150,15 +151,16 @@ export function TravelVideoPrototypeScreen({ petId }: TravelVideoPrototypeScreen
       <div className={styles.colorWash} aria-hidden="true" />
       <div className={styles.grain} aria-hidden="true" />
 
-      <header className={styles.header}>
-        <button type="button" className={styles.backButton} onClick={goBack} aria-label="Назад">
-          <ArrowLeft aria-hidden="true" />
-        </button>
-        <div className={styles.eyebrow}>
-          <Route aria-hidden="true" />
-          <span>Путешествие</span>
-        </div>
-      </header>
+      <ScreenAppBar
+        className={styles.header}
+        onBack={goBack}
+        title={(
+          <div className={styles.eyebrow}>
+            <Route aria-hidden="true" />
+            <span>Путешествие</span>
+          </div>
+        )}
+      />
 
       <section className={styles.content}>
         {localPet.status === "loading" ? (

@@ -4,6 +4,7 @@ import {
   appendRecentAmbientReply,
   clearRecentAmbientReplies,
   hasShownAmbientReplyInSession,
+  localPetAmbientStorageKey,
   markAmbientReplyShownInSession,
   readRecentAmbientReplies,
 } from "./localPetAmbientMemory";
@@ -37,6 +38,20 @@ describe("localPetAmbientMemory", () => {
     expect(readRecentAmbientReplies("pet-1")).toEqual(
       Array.from({ length: 30 }, (_, index) => `Реплика ${index + 2}`),
     );
+  });
+
+  it("drops cached replies that expose the JSON response contract", () => {
+    window.localStorage.setItem(
+      localPetAmbientStorageKey("pet-json-leak"),
+      JSON.stringify([
+        "Ого, строгий формат! Что мы будем делать в этом JSON?",
+        "Пойдём искать следы у ручья?",
+      ]),
+    );
+
+    expect(readRecentAmbientReplies("pet-json-leak")).toEqual([
+      "Пойдём искать следы у ручья?",
+    ]);
   });
 
   it("keeps a clear tombstone until persistent storage recovers", () => {

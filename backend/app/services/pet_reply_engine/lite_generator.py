@@ -153,6 +153,12 @@ GIGACHAT_GENERIC_SUPPORT_OPENER_RE = re.compile(
     r"^\s*я\s+(?:тут\s+)?(?:буду\s+)?рядом(?:\s*(?:[,—–-]|и)\s+|\.\s+)(?P<rest>\S.*)$",
     re.IGNORECASE,
 )
+AMBIENT_RESPONSE_CONTRACT_RE = re.compile(
+    r"(?:\bjson\b|json\s*schema|json[- ]?схем|"
+    r"строг(?:ий|ого|ому|им|ом|ая|ой|ую|ое|ие|их|ими)?\s+формат|"
+    r"формат\s+(?:ответа|вывода)|схем(?:а|е|у|ой|ы)\s+ответа)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -926,6 +932,10 @@ def _ambient_repeats_recent_question(reply: str, recent_replies: list[str]) -> b
             if overlap >= 2 and overlap / smaller_question_size >= 0.6:
                 return True
     return False
+
+
+def _ambient_mentions_response_contract(reply: str) -> bool:
+    return bool(AMBIENT_RESPONSE_CONTRACT_RE.search(_compact_spaces(reply)))
 
 
 def _recent_ambient_replies_block(replies: list[str]) -> str | None:
@@ -2950,12 +2960,15 @@ def generate_ambient_pet_message(
         payload.recentAmbientReplies,
     )
     truncated_reply = structured_reply.reply.endswith("…")
-    if repeated_question or truncated_reply:
+    response_contract_leak = _ambient_mentions_response_contract(structured_reply.reply)
+    if repeated_question or truncated_reply or response_contract_leak:
         retry_reasons = []
         if repeated_question:
             retry_reasons.append("повторила вопрос из недавних idle-реплик")
         if truncated_reply:
             retry_reasons.append("не уместилась в лимит и оборвалась многоточием")
+        if response_contract_leak:
+            retry_reasons.append("упомянула служебный формат ответа")
         retry_request_kwargs = {
             **request_kwargs,
             "messages": [
@@ -2998,6 +3011,17 @@ def generate_ambient_pet_message(
             payload.recentAmbientReplies,
         ):
             structured_reply.validation_flags.append("ambient_question_repeat_after_regeneration")
+        if _ambient_mentions_response_contract(structured_reply.reply):
+            structured_reply = _fallback_visible_reply_result(
+                surface="ambient",
+                reply_limit=reply_limit,
+                raw_reply=raw_reply,
+                validation_flags=[
+                    *structured_reply.validation_flags,
+                    "ambient_response_contract_leak_after_regeneration",
+                ],
+                parsed=structured_reply.debug.get("parsedResponse"),
+            )
     log_ambient_reply_diagnostic(
         "pet_reply/ambient",
         request_kwargs,

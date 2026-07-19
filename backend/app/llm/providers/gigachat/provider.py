@@ -274,6 +274,15 @@ def _uses_prompt_json_contract(request: LLMRequest, selected_model: str) -> bool
     )
 
 
+def _append_system_contract(messages: list[dict[str, Any]], contract: str) -> None:
+    for message in messages:
+        if message.get("role") == "system":
+            content = str(message.get("content") or "").strip()
+            message["content"] = f"{content}\n\n{contract}" if content else contract
+            return
+    messages.insert(0, {"role": "system", "content": contract})
+
+
 def _schema_allows_null(schema: Any) -> bool:
     if not isinstance(schema, Mapping):
         return False
@@ -565,17 +574,15 @@ class GigaChatProvider:
                 }
             )
         elif request.structured_output is not None:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": _PROMPT_JSON_CONTRACT_MESSAGE.format(
-                        schema=json.dumps(
-                            _legacy_schema(request.structured_output.schema),
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        )
-                    ),
-                }
+            _append_system_contract(
+                messages,
+                _PROMPT_JSON_CONTRACT_MESSAGE.format(
+                    schema=json.dumps(
+                        _legacy_schema(request.structured_output.schema),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                ),
             )
 
         if functions:

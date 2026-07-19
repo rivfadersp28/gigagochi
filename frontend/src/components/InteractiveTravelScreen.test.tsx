@@ -434,12 +434,25 @@ describe("InteractiveTravelScreen", () => {
     expect(document.querySelector(
       'video[src="/static/onboarding/bat-help/situation.mp4"]',
     )).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Птицы" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Насекомые" })).toBeDisabled();
-    const correct = screen.getByRole("button", { name: "Млекопитающие" });
-    expect(correct).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Птицы" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Насекомые" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Млекопитающие" })).toBeEnabled();
 
-    fireEvent.click(correct);
+    for (const choice of ["Птицы", "Насекомые", "Пресмыкающиеся"]) {
+      fireEvent.click(screen.getByRole("button", { name: choice }));
+      expect(screen.getByRole("button", { name: "Попробовать ещё раз" }))
+        .toBeInTheDocument();
+      expect(screen.queryByText("+200")).not.toBeInTheDocument();
+      expect(mocks.applyInteractiveTravelImpacts).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Попробовать ещё раз" }));
+      expect(screen.getByLabelText("К какой группе относится летучая мышь?"))
+        .toBeInTheDocument();
+    }
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Млекопитающие" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
 
     expect(screen.getByText("+200")).toBeInTheDocument();
     const outcome = screen.getByLabelText("Получено 200 единиц опыта");
@@ -487,6 +500,11 @@ describe("InteractiveTravelScreen", () => {
       petId: pet.petId,
       introductionPending: true,
     })?.stage).toBe("awaiting-travel");
+    expect(screen.queryByRole("button", { name: "Завершить" })).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(outcomeDelay);
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "Завершить" }));
 
@@ -1120,18 +1138,30 @@ describe("InteractiveTravelScreen", () => {
   });
 
   it("shows the complete final result with one finish action", async () => {
+    vi.useFakeTimers();
     const completedPart = resolvedFirstWithPendingSecond().parts[0];
     mocks.readLocalInteractiveTravel.mockReturnValue(
       restoredSession(travel([completedPart], true), "result"),
     );
 
     render(<InteractiveTravelScreen petId="pet-1" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
 
     expect(
-      await screen.findByText("Листик перешёл мост и добрался до башни."),
+      screen.getByText("Листик перешёл мост и добрался до башни."),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("travel-speech")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Завершить" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Завершить" })).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    const finishButton = screen.getByRole("button", { name: "Завершить" });
+    expect(finishButton).toBeInTheDocument();
+    expect(finishButton.className).toContain("animated");
   });
 
   it("adopts a part advanced by another tab instead of continuing it twice", async () => {

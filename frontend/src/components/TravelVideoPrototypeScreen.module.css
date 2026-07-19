@@ -46,29 +46,10 @@
 }
 
 .header {
-  position: relative;
-  z-index: 2;
-  display: grid;
-  min-height: 88px;
-  grid-template-columns: 48px 1fr 48px;
-  align-items: center;
-  padding: max(14px, var(--tma-safe-top)) max(18px, var(--tma-safe-right)) 8px
-    max(18px, var(--tma-safe-left));
+  --screen-appbar-line: var(--travel-line);
+  --screen-appbar-ink: var(--travel-ink);
+  --screen-appbar-button: rgb(12 21 17 / 64%);
 }
-
-.backButton {
-  display: grid;
-  width: 48px;
-  height: 48px;
-  place-items: center;
-  border: 1px solid var(--travel-line);
-  border-radius: 24px;
-  color: var(--travel-ink);
-  background: rgb(12 21 17 / 64%);
-  backdrop-filter: blur(18px);
-}
-
-.backButton svg { width: 23px; height: 23px; }
 
 .eyebrow {
   display: inline-flex;

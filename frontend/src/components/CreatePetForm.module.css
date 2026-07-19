@@ -91,12 +91,32 @@
   flex-direction: column;
   align-items: center;
   gap: 19px;
+  animation: optionsStageIn 300ms ease-out backwards;
+}
+
+@keyframes optionsStageIn {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .customForm {
   position: absolute;
   inset: 0;
   z-index: 2;
+}
+
+.customAppBar {
+  --screen-appbar-line: rgb(255 255 255 / 22%);
+  --screen-appbar-ink: #fff;
+  --screen-appbar-button: rgb(255 255 255 / 14%);
+  --screen-appbar-shadow: 0 8px 24px rgb(0 24 46 / 24%);
 }
 
 .customTitle {
@@ -281,6 +301,10 @@
   }
 
   .customNextButton {
+    animation: none;
+  }
+
+  .options {
     animation: none;
   }
 

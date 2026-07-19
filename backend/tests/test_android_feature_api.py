@@ -14,6 +14,9 @@ from app.schemas import (
     GeneratePetJobResponse,
     LocalChatResponse,
     LocalPetChatContext,
+    LocalProactiveResponse,
+    MemoryConsolidationResponse,
+    MemoryExtractionResponse,
     TravelVideoPrototypeResponse,
 )
 from app.services.android_feature_store import AndroidFeatureStore
@@ -61,9 +64,7 @@ class FakeGenerationService:
         self.by_key[(str(owner.storage_key), request_key)] = job
         return job
 
-    def find_by_request_key_for_owner(
-        self, request_key, owner, _description=None, _provider=None
-    ):
+    def find_by_request_key_for_owner(self, request_key, owner, _description=None, _provider=None):
         return self.by_key.get((str(owner.storage_key), request_key))
 
     def get_for_owner(self, job_id, owner):
@@ -123,6 +124,67 @@ def test_sync_completed_replay_is_exact_and_conflicting_payload_is_rejected(
     assert calls == 1
 
 
+def test_android_memory_and_proactive_routes_are_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    store = AndroidFeatureStore(tmp_path / "android.sqlite3")
+    calls = {"extract": 0, "consolidate": 0, "proactive": 0}
+
+    def extract(_payload):
+        calls["extract"] += 1
+        return MemoryExtractionResponse(operations=[{"type": "capture_learning"}])
+
+    def consolidate(_payload):
+        calls["consolidate"] += 1
+        return MemoryConsolidationResponse(operations=[{"type": "rewrite_summary"}])
+
+    def proactive(_payload):
+        calls["proactive"] += 1
+        return LocalProactiveResponse(reply="Как прошёл экзамен?")
+
+    monkeypatch.setattr(android, "extract_user_memory_operations", extract)
+    monkeypatch.setattr(android, "consolidate_user_memory", consolidate)
+    monkeypatch.setattr(android, "generate_proactive_pet_message", proactive)
+    monkeypatch.setattr(android, "_check_rate_limit", lambda *_args, **_kwargs: None)
+
+    extraction = android.AndroidMemoryExtractionRequest(
+        requestKey=KEY,
+        message="У меня завтра экзамен",
+        reply="Буду держать лапки.",
+        pet=pet(),
+    )
+    consolidation = android.AndroidMemoryConsolidationRequest(
+        requestKey=KEY_2,
+        pendingLearnings=[{"observation": "У пользователя экзамен"}],
+    )
+    proactive_request = android.AndroidProactiveRequest(
+        requestKey="33333333-3333-4333-8333-333333333333",
+        pet=pet(),
+        memoryContext={
+            "proactiveCandidate": {
+                "memoryIds": ["exam"],
+                "reason": "Сегодня экзамен пользователя",
+            }
+        },
+    )
+
+    first_extraction = android.extract_memory(extraction, Response(), identity(), store)
+    assert first_extraction == android.extract_memory(
+        extraction,
+        Response(),
+        identity(),
+        store,
+    )
+    assert android.consolidate_memory(
+        consolidation, Response(), identity(), store
+    ) == android.consolidate_memory(consolidation, Response(), identity(), store)
+    assert android.proactive(proactive_request, Response(), identity(), store) == android.proactive(
+        proactive_request, Response(), identity(), store
+    )
+    assert calls == {"extract": 1, "consolidate": 1, "proactive": 1}
+
+
 def test_generation_jobs_isolate_same_key_and_poll_by_google_owner(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -143,13 +205,12 @@ def test_generation_jobs_isolate_same_key_and_poll_by_google_owner(
     assert first.job.jobId != second.job.jobId
     assert replay == first
     assert service.submit_calls == 2
-    assert android.create_job_status(
-        first.job.jobId, Response(), identity("acct-a"), service
-    ).job == first.job
+    assert (
+        android.create_job_status(first.job.jobId, Response(), identity("acct-a"), service).job
+        == first.job
+    )
     with pytest.raises(HTTPException) as fenced:
-        android.create_job_status(
-            first.job.jobId, Response(), identity("acct-b"), service
-        )
+        android.create_job_status(first.job.jobId, Response(), identity("acct-b"), service)
     assert fenced.value.detail["code"] == "JOB_NOT_FOUND"
 
     outfit = android.AndroidOutfitJobRequest(
@@ -160,16 +221,13 @@ def test_generation_jobs_isolate_same_key_and_poll_by_google_owner(
         sadImageUrl="/static/generated/sad.png",
         happyImageUrl="/static/generated/happy.png",
     )
-    outfit_job = android.outfit_job(
-        outfit, Response(), identity("acct-a"), store, service
+    outfit_job = android.outfit_job(outfit, Response(), identity("acct-a"), store, service)
+    assert (
+        android.outfit_job_status(outfit_job.job.jobId, Response(), identity("acct-a"), service).job
+        == outfit_job.job
     )
-    assert android.outfit_job_status(
-        outfit_job.job.jobId, Response(), identity("acct-a"), service
-    ).job == outfit_job.job
     with pytest.raises(HTTPException):
-        android.outfit_job_status(
-            outfit_job.job.jobId, Response(), identity("acct-b"), service
-        )
+        android.outfit_job_status(outfit_job.job.jobId, Response(), identity("acct-b"), service)
 
 
 def test_travel_video_submit_replay_and_poll_are_owner_fenced(
@@ -228,13 +286,12 @@ def test_travel_video_submit_replay_and_poll_are_owner_fenced(
     assert "acct-a" not in first.jobId
     assert replay == first
     assert create_calls == 2
-    assert android.travel_video_status(
-        first.jobId, Response(), BackgroundTasks(), identity("acct-a")
-    ) == first
+    assert (
+        android.travel_video_status(first.jobId, Response(), BackgroundTasks(), identity("acct-a"))
+        == first
+    )
     with pytest.raises(HTTPException) as fenced:
-        android.travel_video_status(
-            first.jobId, Response(), BackgroundTasks(), identity("acct-b")
-        )
+        android.travel_video_status(first.jobId, Response(), BackgroundTasks(), identity("acct-b"))
     assert fenced.value.detail["code"] == "JOB_NOT_FOUND"
 
 
@@ -312,9 +369,9 @@ def test_rate_rejection_aborts_feature_reservation(
         android.chat(payload, Response(), identity(), store)
     assert rejected.value.status_code == 429
     with sqlite3.connect(store.path) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM android_feature_requests"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT COUNT(*) FROM android_feature_requests").fetchone()[0] == 0
+        )
 
 
 def test_rate_store_failure_aborts_reservation_without_provider_call(
@@ -340,9 +397,9 @@ def test_rate_store_failure_aborts_reservation_without_provider_call(
         android.chat(payload, Response(), identity(), store)
 
     with sqlite3.connect(store.path) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM android_feature_requests"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT COUNT(*) FROM android_feature_requests").fetchone()[0] == 0
+        )
     assert provider_calls == 0
 
 

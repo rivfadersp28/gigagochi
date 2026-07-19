@@ -72,6 +72,7 @@ import {
   isOnboardingBatTravelId,
   ONBOARDING_BAT_CORRECT_CHOICE,
   resolveOnboardingBatStory,
+  retryOnboardingBatStory,
 } from "@/lib/localPetOnboardingBatStory";
 import {
   hapticNotification,
@@ -409,6 +410,7 @@ export function InteractiveTravelScreen({
   const [isCharacterEntranceComplete, setIsCharacterEntranceComplete] = useState(false);
   const [exitingCharacterTravelId, setExitingCharacterTravelId] = useState<string | null>(null);
   const [isResettingTravel, setIsResettingTravel] = useState(false);
+  const [isFinalActionReady, setIsFinalActionReady] = useState(false);
   const travelResetInFlightRef = useRef(false);
   const demoAutoStartAttemptedRef = useRef(false);
   const submittingRef = useRef(false);
@@ -1570,27 +1572,30 @@ export function InteractiveTravelScreen({
     if (!pendingPart) {
       return;
     }
-    primeInteractiveTravelSuccessSound();
     if (isOnboardingBatSession) {
-      if (value !== ONBOARDING_BAT_CORRECT_CHOICE) {
-        return;
+      const next = resolveOnboardingBatStory(session, value);
+      if (value === ONBOARDING_BAT_CORRECT_CHOICE) {
+        primeInteractiveTravelSuccessSound();
+        const applied = localPet.applyInteractiveTravelImpacts(
+          { travelId: next.travel.travelId, parts: next.travel.parts },
+          pet.petId,
+        );
+        if (!applied) {
+          setError(STORAGE_ERROR);
+          hapticNotification("error");
+          return;
+        }
+        setSession({ ...next, appliedResultParts: applied.appliedResultParts });
+        void playInteractiveTravelSuccessSound();
+        hapticNotification("success");
+      } else {
+        setSession(next);
+        hapticNotification("warning");
       }
-      const next = resolveOnboardingBatStory(session);
-      const applied = localPet.applyInteractiveTravelImpacts(
-        { travelId: next.travel.travelId, parts: next.travel.parts },
-        pet.petId,
-      );
-      if (!applied) {
-        setError(STORAGE_ERROR);
-        hapticNotification("error");
-        return;
-      }
-      setSession({ ...next, appliedResultParts: applied.appliedResultParts });
       setVisibleBackgroundVideoUrl(next.travel.parts[0]?.backgroundVideoUrl ?? null);
-      void playInteractiveTravelSuccessSound();
-      hapticNotification("success");
       return;
     }
+    primeInteractiveTravelSuccessSound();
     if (automaticStoryToken) {
       submittingRef.current = true;
       const requestEpoch = ++requestEpochRef.current;
@@ -1870,6 +1875,12 @@ export function InteractiveTravelScreen({
     if (!session || !activePart || phase !== "result") {
       return;
     }
+    if (isOnboardingBatSession && !session.travel.completed) {
+      const next = retryOnboardingBatStory(session);
+      setSession(next);
+      setVisibleBackgroundVideoUrl(next.travel.parts[0]?.backgroundVideoUrl ?? null);
+      return;
+    }
     if (session.travel.completed) {
       if (isOnboardingBatSession) {
         if (firstSession) {
@@ -1996,6 +2007,18 @@ export function InteractiveTravelScreen({
     : STORY_CHARACTER_RISE_DURATION_MS
       + (resultReactionCharacterCount - 1) * STORY_CHARACTER_RISE_STAGGER_MS;
   const resultOutcomeDelay = storyRevealDuration + resultReactionDuration;
+  useEffect(() => {
+    if (phase !== "result" || !session?.travel.completed) {
+      setIsFinalActionReady(false);
+      return;
+    }
+
+    setIsFinalActionReady(false);
+    const timeoutId = window.setTimeout(() => {
+      setIsFinalActionReady(true);
+    }, resultOutcomeDelay);
+    return () => window.clearTimeout(timeoutId);
+  }, [phase, resultOutcomeDelay, session?.travel.completed, storyRevealKey]);
   const animatedStoryParagraphs = visibleStoryParagraphs.map((paragraph, index) => {
     const startIndex = visibleStoryParagraphs
       .slice(0, index)
@@ -2320,11 +2343,7 @@ export function InteractiveTravelScreen({
                       key={suggestion}
                       index={index}
                       delayMs={index * 200}
-                      disabled={
-                        isSubmitting
-                        || (isOnboardingBatSession
-                          && suggestion !== ONBOARDING_BAT_CORRECT_CHOICE)
-                      }
+                      disabled={isSubmitting}
                       onClick={() => void submitAdvice(suggestion)}
                     >
                       {suggestion}
@@ -2334,14 +2353,18 @@ export function InteractiveTravelScreen({
               </div>
             ) : (
               <div className={styles.storyResultActions}>
-                <TiltedGlassButton
-                  animate={false}
-                  onClick={handleNext}
-                  className={styles.storyResultButton}
-                  disabled={isSubmitting}
-                >
-                  {session.travel.completed ? "Завершить" : "Далее"}
-                </TiltedGlassButton>
+                {!session.travel.completed || isFinalActionReady ? (
+                  <TiltedGlassButton
+                    animate={session.travel.completed}
+                    onClick={handleNext}
+                    className={styles.storyResultButton}
+                    disabled={isSubmitting}
+                  >
+                    {isOnboardingBatSession && !session.travel.completed
+                      ? "Попробовать ещё раз"
+                      : session.travel.completed ? "Завершить" : "Далее"}
+                  </TiltedGlassButton>
+                ) : null}
               </div>
             )}
           </div>
