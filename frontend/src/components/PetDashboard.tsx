@@ -236,9 +236,9 @@ const TRAVEL_ENTRY_BACKGROUND_VIDEO =
 const PET_SCENE_ASPECT_RATIO = 720 / 1280;
 const PET_TAP_REGION = {
   left: 120 / 720,
-  top: 320 / 1280,
+  top: 180 / 1280,
   right: 600 / 720,
-  bottom: 1040 / 1280,
+  bottom: 840 / 1280,
 } as const;
 const accessibleStageLabels: Record<LocalPetState["stage"], string> = {
   baby: "малыш",

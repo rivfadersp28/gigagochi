@@ -404,8 +404,8 @@ def test_normalize_pet_scene_video_frame_bytes_crops_to_seedance_frame() -> None
     assert output.getpixel((719, 1279)) == (0, 160, 80)
 
 
-def test_pet_character_region_uses_fixed_centered_two_by_three_crop() -> None:
-    assert pet_character_region_box((720, 1280)) == (120, 320, 600, 1040)
+def test_pet_character_region_tracks_raised_scene_position() -> None:
+    assert pet_character_region_box((720, 1280)) == (120, 100, 600, 820)
 
 
 def test_composite_pet_character_region_preserves_pixels_outside_fixed_crop(tmp_path) -> None:

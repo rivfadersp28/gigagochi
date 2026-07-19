@@ -301,10 +301,16 @@ FAST_GENERATION_STATE_FALLBACKS = {
     "sad": ("teen", "idle"),
     "hungry": ("teen", "idle"),
 }
-PET_SCENE_COMPOSITION_PROMPT = "Добавь персонажа с первой картинки на вторую в центр"
+PET_SCENE_COMPOSITION_PROMPT = (
+    "Добавь персонажа с первой картинки на вторую. Сохрани вертикальную композицию, ракурс и "
+    "содержимое второй картинки; не приближай, не отдаляй и не перестраивай фон. Покажи "
+    "персонажа целиком и достаточно крупно, поставь по центру на верхнюю светлую травяную "
+    "площадку. Органично согласуй перспективу, контакт с землёй, освещение и тень персонажа "
+    "с фоном. Нижний лесной овраг должен остаться полностью видимым."
+)
 PET_SCENE_IMAGE_SIZE = "1024x1536"
 PET_CHARACTER_REGION_SIZE = "480x720"
-PET_CHARACTER_REGION_CENTER_Y_RATIO = 0.53125
+PET_CHARACTER_REGION_CENTER_Y_RATIO = 0.359375
 PET_CHARACTER_REGION_FEATHER_RATIO = 0.04
 PET_SCENE_BACKGROUND_PATH = (
     Path(__file__).resolve().parents[2] / "static" / "backgrounds" / "pet-generation-forest.png"

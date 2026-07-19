@@ -176,6 +176,11 @@
   adapter uses compact Russian templates for pet, story and travel. Keep full-body framing and
   source-species anatomy near the start of pet prompts; a landscape request or late English
   framing instruction produced close-ups and over-humanized creatures.
+- Pet scene composition intentionally remains a generative two-reference image edit: isolated
+  character first, vertical forest background second, followed by the fixed 720x1280 frame
+  normalization. Hard numeric head/feet coordinates make the image model recompose and zoom the
+  background to satisfy them. Keep placement constraints qualitative (upper clearing, full body,
+  preserve vertical composition) when the supplied background framing matters.
 - Kandinsky interprets toy, figurine, miniature, resin and macro wording as a small object. The
   active pet-creation direction now intentionally accepts that collectible-art-toy character,
   superseding the earlier full-size-creature experiment. Compensate with explicit full-body framing,
