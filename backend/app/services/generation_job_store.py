@@ -588,6 +588,22 @@ class GenerationJobStore:
             )
         return self._row(row) if row is not None else None
 
+    def request_keys_for_job(self, job_id: str, *, limit: int = 8) -> list[str]:
+        if limit not in range(1, 33):
+            raise ValueError("request key lookup limit must be in 1..32")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT request_key
+                FROM generation_job_request_keys
+                WHERE job_id = ?
+                ORDER BY created_at ASC, request_key ASC
+                LIMIT ?
+                """,
+                (job_id, limit),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
     @staticmethod
     def _request_key_row(
         connection: sqlite3.Connection,

@@ -20,6 +20,7 @@ from app.services.generation_job_service import (
     GenerationQueueFullError,
 )
 from app.services.generation_job_store import GenerationJobStore, StoredGenerationJob
+from app.services.prompt_debug import current_ai_log_context
 from app.services.telegram_auth_service import TelegramUserContext
 
 
@@ -148,6 +149,7 @@ def _test_service(
     generate_background_video=None,
     generate_happy_image=None,
     generate_happy_video=None,
+    build_failure=None,
     **kwargs,
 ) -> GenerationJobService:
     return GenerationJobService(
@@ -165,13 +167,65 @@ def _test_service(
         generate_happy_video=generate_happy_video
         or (lambda _image_set, _happy_path: Path("teen-happy.mp4")),
         build_response=_build_response,
-        build_failure=lambda _job_id, phase, exc, _owner_id: {
-            "code": "GENERATION_FAILED",
-            "message": str(exc),
-            "phase": phase,
-        },
+        build_failure=build_failure
+        or (
+            lambda _job_id, phase, exc, _owner_id: {
+                "code": "GENERATION_FAILED",
+                "message": str(exc),
+                "phase": phase,
+            }
+        ),
         **kwargs,
     )
+
+
+def test_google_generation_failure_context_contains_safe_android_correlation(
+    tmp_path: Path,
+) -> None:
+    contexts: list[dict[str, object]] = []
+    owner = FeatureOwner("google", f"google:{'a' * 64}")
+    request_key = "12345678-1234-4123-8123-123456789abc"
+
+    def fail_images(_description: str, _provider: str):
+        raise RuntimeError("provider failed")
+
+    def capture_failure(_job_id: str, phase: str, exc: Exception, _owner_id: int):
+        contexts.append(current_ai_log_context())
+        return {"code": "GENERATION_FAILED", "message": str(exc), "phase": phase}
+
+    service = _test_service(
+        tmp_path / "generation-jobs.sqlite3",
+        fail_images,
+        build_failure=capture_failure,
+    )
+    try:
+        submitted = service.submit_for_owner(
+            "мышонок",
+            owner,
+            request_key=request_key,
+        )
+        for _ in range(200):
+            failed = service.get_for_owner(submitted.jobId, owner)
+            if failed.status == "failed":
+                break
+            time.sleep(0.005)
+        else:
+            raise AssertionError("generation job did not fail")
+
+        assert contexts == [
+            {
+                "jobId": submitted.jobId,
+                "requestKeys": [request_key],
+                "operation": "create",
+                "owner": contexts[0]["owner"],
+                "endpoint": "/api/generate-pet",
+                "imageProvider": "openai",
+            }
+        ]
+        assert str(contexts[0]["owner"]).startswith("google:")
+        assert contexts[0]["owner"] != owner.storage_key
+    finally:
+        service.shutdown(wait=True)
 
 
 def test_foreground_result_is_available_before_background_assets(tmp_path: Path) -> None:

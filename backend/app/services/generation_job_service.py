@@ -848,9 +848,24 @@ class GenerationJobService:
             )
 
     def _prompt_context(self, job_id: str) -> Any:
+        with self._lock:
+            record = self._jobs.get(job_id)
+            owner_audit = (
+                stored_owner_audit_label(record.owner_namespace, record.owner_id)
+                if record is not None
+                else "unknown"
+            )
+            operation = (
+                "outfit"
+                if record is not None and record.description.startswith(OUTFIT_GENERATION_PREFIX)
+                else "create"
+            )
         return set_prompt_log_context(
             {
                 "jobId": job_id,
+                "requestKeys": self._store.request_keys_for_job(job_id),
+                "operation": operation,
+                "owner": owner_audit,
                 "endpoint": "/api/generate-pet",
                 "imageProvider": self._image_provider(job_id),
             }
