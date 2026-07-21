@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.llm.contracts import LLMProviderError
 from app.services.image_service import generation_error_code
 from app.services.jsonl_log import append_bounded_jsonl
+from app.services.openrouter_billing_alert_service import notify_openrouter_credits_exhausted
 from app.services.ops_alert_service import notify_ops
 from app.services.prompt_debug import current_ai_log_context
 
@@ -253,6 +254,17 @@ def log_ai_request_failure(
         "AI request failed: %s",
         json.dumps(log_payload, ensure_ascii=False, default=str),
     )
+    if get_settings().ai_provider == "openrouter":
+        provider_status = detail.get("providerStatus")
+        notify_openrouter_credits_exhausted(
+            status_code=(
+                int(provider_status)
+                if isinstance(provider_status, int | str) and str(provider_status).isdigit()
+                else None
+            ),
+            provider_message=detail.get("providerMessage") or detail.get("exceptionMessage"),
+            source=endpoint,
+        )
     notify_ops(
         f"ai:{endpoint}:{detail.get('code')}",
         "\n".join(

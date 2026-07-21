@@ -142,6 +142,8 @@ def test_prod_compose_does_not_override_backend_env_from_another_file() -> None:
         "OPENAI_MAX_RETRIES",
         "OPS_ALERTS_ENABLED",
         "OPS_ALERT_TELEGRAM_IDS",
+        "OPENROUTER_BILLING_ALERTS_ENABLED",
+        "OPENROUTER_BILLING_ALERT_TELEGRAM_IDS",
         "DIAGNOSTIC_TELEGRAM_IDS",
         "INTERACTIVE_TRAVEL_PILOT_TELEGRAM_IDS",
     }
