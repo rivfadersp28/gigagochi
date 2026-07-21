@@ -2547,20 +2547,31 @@
             "type": "string"
           },
           "kind": {
-            "enum": [
-              "user_fact",
-              "preference",
-              "event",
-              "deadline",
-              "relationship",
-              "routine",
-              "goal",
-              "promise",
-              "emotion",
-              "boundary"
+            "anyOf": [
+              {
+                "enum": [
+                  "user_fact",
+                  "preference",
+                  "event",
+                  "deadline",
+                  "relationship",
+                  "routine",
+                  "goal",
+                  "promise",
+                  "emotion",
+                  "boundary"
+                ],
+                "type": "string"
+              },
+              {
+                "enum": [
+                  "character_travel",
+                  "character_outfit"
+                ],
+                "type": "string"
+              }
             ],
-            "title": "Kind",
-            "type": "string"
+            "title": "Kind"
           },
           "lastMentionedAt": {
             "anyOf": [
