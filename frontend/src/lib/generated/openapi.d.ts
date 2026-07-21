@@ -1455,11 +1455,8 @@ export interface components {
             readonly dueAt?: string | null;
             /** Id */
             readonly id: string;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            readonly kind: "user_fact" | "preference" | "event" | "deadline" | "relationship" | "routine" | "goal" | "promise" | "emotion" | "boundary";
+            /** Kind */
+            readonly kind: ("user_fact" | "preference" | "event" | "deadline" | "relationship" | "routine" | "goal" | "promise" | "emotion" | "boundary") | ("character_travel" | "character_outfit");
             /** Lastmentionedat */
             readonly lastMentionedAt?: string | null;
             /**
