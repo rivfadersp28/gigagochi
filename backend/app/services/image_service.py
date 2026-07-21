@@ -68,6 +68,7 @@ from app.services.openai_service import (
     get_openrouter_video_model,
     get_openrouter_video_url,
 )
+from app.services.openrouter_billing_alert_service import notify_openrouter_credits_exhausted
 from app.services.prompt_debug import (
     log_chat_completion_prompt,
     log_chat_completion_response,
@@ -2005,6 +2006,11 @@ def _generate_openrouter_image_bytes(
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError:
+        notify_openrouter_credits_exhausted(
+            status_code=response.status_code,
+            provider_message=response.text,
+            source="image",
+        )
         logger.error(
             "openrouter_image_generation failed label=%s model=%s status=%s response=%s",
             label,
@@ -2525,6 +2531,11 @@ def _openrouter_video_error(response: httpx.Response) -> OpenRouterVideoHTTPErro
         payload = response.json()
     except ValueError:
         payload = response.text
+    notify_openrouter_credits_exhausted(
+        status_code=response.status_code,
+        provider_message=payload,
+        source="video",
+    )
     return OpenRouterVideoHTTPError(response.status_code, payload)
 
 
@@ -2658,6 +2669,11 @@ def _poll_openrouter_video_job(
         if status_value == "completed":
             return payload
         if status_value in {"failed", "cancelled", "canceled", "expired", "error"}:
+            notify_openrouter_credits_exhausted(
+                status_code=None,
+                provider_message=payload,
+                source="video.poll",
+            )
             raise OpenRouterVideoTaskError(f"OpenRouter video job failed: {payload}")
         time.sleep(poll_interval)
 
@@ -2675,6 +2691,11 @@ def _download_openrouter_video_bytes(settings: Any, job_id: str) -> bytes:
     ) as response:
         if response.status_code >= 400:
             response_preview = _read_streamed_error_preview(response)
+            notify_openrouter_credits_exhausted(
+                status_code=response.status_code,
+                provider_message=response_preview,
+                source="video.download",
+            )
             raise OpenRouterVideoHTTPError(response.status_code, response_preview)
         result = _read_streamed_result_bytes(
             response,

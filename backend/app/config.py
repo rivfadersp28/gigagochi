@@ -258,6 +258,9 @@ class Settings(BaseSettings):
     ops_alerts_enabled: bool = False
     ops_alert_telegram_ids: set[int] = Field(default_factory=set)
     ops_alert_dedup_seconds: int = Field(default=300, ge=30, le=3600)
+    openrouter_billing_alerts_enabled: bool = False
+    openrouter_billing_alert_telegram_ids: set[int] = Field(default_factory=set)
+    openrouter_billing_alert_dedup_seconds: int = Field(default=3600, ge=60, le=86_400)
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
     )

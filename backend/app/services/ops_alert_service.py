@@ -37,7 +37,26 @@ def _prune_dedup_keys(now: float, dedup_seconds: int) -> None:
 
 def notify_ops(key: str, text: str) -> None:
     settings = get_settings()
-    if not settings.ops_alerts_enabled or not settings.bot_token:
+    notify_telegram_alert(
+        key,
+        text,
+        enabled=settings.ops_alerts_enabled,
+        telegram_ids=settings.ops_alert_telegram_ids,
+        dedup_seconds=settings.ops_alert_dedup_seconds,
+    )
+
+
+def notify_telegram_alert(
+    key: str,
+    text: str,
+    *,
+    enabled: bool,
+    telegram_ids: set[int],
+    dedup_seconds: int,
+) -> None:
+    settings = get_settings()
+    recipients = tuple(sorted(telegram_ids))
+    if not enabled or not settings.bot_token or not recipients:
         return
     now = time.monotonic()
     normalized_key = _dedup_key(key)
@@ -45,15 +64,15 @@ def notify_ops(key: str, text: str) -> None:
         logger.warning("ops_alert_queue_full")
         return
     with _dedup_lock:
-        _prune_dedup_keys(now, settings.ops_alert_dedup_seconds)
+        _prune_dedup_keys(now, dedup_seconds)
         last_sent = _last_sent.get(normalized_key, 0.0)
-        if now - last_sent < settings.ops_alert_dedup_seconds:
+        if now - last_sent < dedup_seconds:
             _pending_slots.release()
             return
         _last_sent[normalized_key] = now
-        _prune_dedup_keys(now, settings.ops_alert_dedup_seconds)
+        _prune_dedup_keys(now, dedup_seconds)
     try:
-        _executor.submit(_send_alert_and_release, text[:3800])
+        _executor.submit(_send_alert_and_release, text[:3800], recipients)
     except RuntimeError:
         with _dedup_lock:
             if _last_sent.get(normalized_key) == now:
@@ -62,17 +81,17 @@ def notify_ops(key: str, text: str) -> None:
         logger.warning("ops_alert_executor_unavailable")
 
 
-def _send_alert_and_release(text: str) -> None:
+def _send_alert_and_release(text: str, telegram_ids: tuple[int, ...]) -> None:
     try:
-        _send_alert(text)
+        _send_alert(text, telegram_ids)
     finally:
         _pending_slots.release()
 
 
-def _send_alert(text: str) -> None:
+def _send_alert(text: str, telegram_ids: tuple[int, ...]) -> None:
     settings = get_settings()
     url = f"https://api.telegram.org/bot{settings.bot_token}/sendMessage"
-    for chat_id in settings.ops_alert_telegram_ids:
+    for chat_id in telegram_ids:
         try:
             response = httpx.post(
                 url,

@@ -11,7 +11,7 @@ def _settings(**overrides: object) -> SimpleNamespace:
         "ops_alerts_enabled": True,
         "bot_token": "fake-token",
         "ops_alert_dedup_seconds": 300,
-        "ops_alert_telegram_ids": set(),
+        "ops_alert_telegram_ids": {42},
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -27,7 +27,7 @@ def test_notify_ops_deduplicates_without_retaining_raw_key(monkeypatch) -> None:
     submitted: list[tuple[object, str]] = []
 
     class Executor:
-        def submit(self, callback, text):
+        def submit(self, callback, text, _telegram_ids):
             submitted.append((callback, text))
             return Future()
 
@@ -48,7 +48,7 @@ def test_notify_ops_drops_work_when_bounded_queue_is_full(monkeypatch, caplog) -
     submitted: list[str] = []
 
     class Executor:
-        def submit(self, _callback, text):
+        def submit(self, _callback, text, _telegram_ids):
             submitted.append(text)
             return Future()
 
@@ -68,13 +68,13 @@ def test_notify_ops_bounds_deduplication_keys(monkeypatch) -> None:
     _reset_state(monkeypatch)
 
     class Executor:
-        def submit(self, callback, text):
-            callback(text)
+        def submit(self, callback, text, telegram_ids):
+            callback(text, telegram_ids)
             return Future()
 
     monkeypatch.setattr(ops_alert_service, "get_settings", _settings)
     monkeypatch.setattr(ops_alert_service, "_executor", Executor())
-    monkeypatch.setattr(ops_alert_service, "_send_alert", lambda _text: None)
+    monkeypatch.setattr(ops_alert_service, "_send_alert", lambda _text, _ids: None)
 
     for index in range(ops_alert_service._MAX_DEDUP_KEYS + 20):
         monkeypatch.setattr(
@@ -91,7 +91,7 @@ def test_notify_ops_releases_slot_if_executor_is_shutting_down(monkeypatch, capl
     _reset_state(monkeypatch)
 
     class Executor:
-        def submit(self, _callback, _text):
+        def submit(self, _callback, _text, _telegram_ids):
             raise RuntimeError("cannot schedule new futures after shutdown")
 
     monkeypatch.setattr(ops_alert_service, "get_settings", _settings)
@@ -107,10 +107,10 @@ def test_notify_ops_releases_slot_if_executor_is_shutting_down(monkeypatch, capl
 
 def test_completed_alert_releases_bounded_queue_slot(monkeypatch) -> None:
     _reset_state(monkeypatch)
-    monkeypatch.setattr(ops_alert_service, "_send_alert", lambda _text: None)
+    monkeypatch.setattr(ops_alert_service, "_send_alert", lambda _text, _ids: None)
     assert ops_alert_service._pending_slots.acquire(blocking=False)
 
-    ops_alert_service._send_alert_and_release("message")
+    ops_alert_service._send_alert_and_release("message", (42,))
 
     acquired = 0
     while ops_alert_service._pending_slots.acquire(blocking=False):
