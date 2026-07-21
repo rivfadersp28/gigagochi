@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Annotated, Any, Literal, TypeVar
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -49,6 +50,7 @@ from app.services.generation_job_service import (
     GenerationQueueFullError,
 )
 from app.services.google_auth_session_store import GoogleUserIdentity
+from app.services.image_service import generation_error_code
 from app.services.interactive_travel_service import scheduled_interactive_episode_result
 from app.services.outfit_service import (
     encode_outfit_generation_description,
@@ -84,6 +86,7 @@ UUID4_PATTERN = r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-
 RequestKey = Annotated[str, Field(min_length=36, max_length=36, pattern=UUID4_PATTERN)]
 PetId = Annotated[str, Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")]
 T = TypeVar("T", bound=BaseModel)
+logger = logging.getLogger(__name__)
 DEFAULT_ANDROID_SCHEDULED_STORY_HOUR = 18
 DEFAULT_ANDROID_SCHEDULED_STORY_TIMEZONE = "Europe/Moscow"
 
@@ -120,6 +123,37 @@ def _android_scheduled_story_slot(settings: Any, now: datetime) -> datetime | No
         return None
     return local_now.replace(
         hour=max(due_hours),
+        minute=0,
+        second=0,
+        microsecond=0,
+    ).astimezone(UTC)
+
+
+def _previous_android_scheduled_story_slot(settings: Any, now: datetime) -> datetime:
+    timezone_name = str(
+        getattr(
+            settings,
+            "android_scheduled_story_timezone",
+            DEFAULT_ANDROID_SCHEDULED_STORY_TIMEZONE,
+        )
+    )
+    try:
+        timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        timezone = ZoneInfo(DEFAULT_ANDROID_SCHEDULED_STORY_TIMEZONE)
+    raw_hours = getattr(
+        settings,
+        "android_scheduled_story_hours",
+        [DEFAULT_ANDROID_SCHEDULED_STORY_HOUR],
+    )
+    hours = {
+        value
+        for value in raw_hours
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 23
+    } or {DEFAULT_ANDROID_SCHEDULED_STORY_HOUR}
+    previous_day = now.astimezone(timezone) - timedelta(days=1)
+    return previous_day.replace(
+        hour=max(hours),
         minute=0,
         second=0,
         microsecond=0,
@@ -406,12 +440,20 @@ def _generate_scheduled_story_background(
             episode_json=episode_json,
             created_at=created_at,
         )
-    except Exception:
+    except Exception as exc:
+        error_code = generation_error_code(exc)
+        logger.exception(
+            "android_scheduled_story_generation_failed storyId=%s slotUtc=%s code=%s",
+            story_id,
+            slot_utc,
+            error_code,
+        )
         store.mark_scheduled_story_outcome_unknown(
             owner=owner,
             pet_id=pet_id,
             slot_utc=slot_utc,
             story_id=story_id,
+            error_code=error_code,
         )
 
 
@@ -1153,10 +1195,18 @@ def due_scheduled_story(
         return AndroidDueStoryResponse()
     now = _story_now()
     slot = _android_scheduled_story_slot(settings, now)
-    if slot is None:
-        return AndroidDueStoryResponse()
     owner = _owner(identity)
     pet_id = str(payload.pet.petId)
+    if slot is None:
+        previous_slot = _previous_android_scheduled_story_slot(settings, now)
+        previous_slot_utc = previous_slot.isoformat().replace("+00:00", "Z")
+        if not store.scheduled_story_exists(
+            owner=owner,
+            pet_id=pet_id,
+            slot_utc=previous_slot_utc,
+        ):
+            return AndroidDueStoryResponse()
+        slot = previous_slot
     slot_utc = slot.isoformat().replace("+00:00", "Z")
     story_id = _scheduled_story_id(owner, pet_id, slot_utc)
     claim = store.claim_scheduled_story(

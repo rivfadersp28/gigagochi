@@ -13,6 +13,8 @@ from app.services.feature_owner import FeatureOwner
 
 SQLITE_BUSY_TIMEOUT_MS = 5_000
 REQUEST_IN_PROGRESS_MAX_AGE_MS = 5 * 60 * 1_000
+SCHEDULED_STORY_RETRY_DELAY_MS = 15 * 60 * 1_000
+SCHEDULED_STORY_MAX_ATTEMPTS = 3
 
 
 class AndroidFeatureIdempotencyConflictError(RuntimeError):
@@ -143,6 +145,19 @@ class AndroidFeatureStore:
                     ) WITHOUT ROWID
                     """
                 )
+                story_columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(android_scheduled_stories)")
+                }
+                if "attempt_count" not in story_columns:
+                    connection.execute(
+                        "ALTER TABLE android_scheduled_stories ADD COLUMN "
+                        "attempt_count INTEGER NOT NULL DEFAULT 1"
+                    )
+                if "last_error_code" not in story_columns:
+                    connection.execute(
+                        "ALTER TABLE android_scheduled_stories ADD COLUMN last_error_code TEXT"
+                    )
                 connection.commit()
             except BaseException:
                 connection.rollback()
@@ -280,7 +295,7 @@ class AndroidFeatureStore:
                     """
                     SELECT owner_key, pet_id, slot_utc, story_id, state, episode_json,
                            selected_request_key, selected_choice, result_json, created_at,
-                           updated_at_ms
+                           updated_at_ms, attempt_count
                     FROM android_scheduled_stories
                     WHERE owner_key = ? AND pet_id = ? AND slot_utc = ?
                     """,
@@ -315,6 +330,25 @@ class AndroidFeatureStore:
                     claim_state = "ready"
                 elif (
                     str(row[4]) == "outcome_unknown"
+                    and int(row[11]) < SCHEDULED_STORY_MAX_ATTEMPTS
+                    and now - int(row[10]) >= SCHEDULED_STORY_RETRY_DELAY_MS
+                ) or (
+                    str(row[4]) == "generating"
+                    and int(row[11]) < SCHEDULED_STORY_MAX_ATTEMPTS
+                    and now - int(row[10]) > REQUEST_IN_PROGRESS_MAX_AGE_MS
+                ):
+                    connection.execute(
+                        """
+                        UPDATE android_scheduled_stories
+                        SET state = 'generating', attempt_count = attempt_count + 1,
+                            last_error_code = NULL, updated_at_ms = ?
+                        WHERE owner_key = ? AND pet_id = ? AND slot_utc = ?
+                        """,
+                        (now, owner_key, pet_id, slot_utc),
+                    )
+                    claim_state = "created"
+                elif (
+                    str(row[4]) == "outcome_unknown"
                     or now - int(row[10]) > REQUEST_IN_PROGRESS_MAX_AGE_MS
                 ):
                     claim_state = "outcome_unknown"
@@ -325,6 +359,23 @@ class AndroidFeatureStore:
                 connection.rollback()
                 raise
         return AndroidScheduledStoryClaim(claim_state, self._story_record(row))
+
+    def scheduled_story_exists(
+        self,
+        *,
+        owner: FeatureOwner,
+        pet_id: str,
+        slot_utc: str,
+    ) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM android_scheduled_stories
+                WHERE owner_key = ? AND pet_id = ? AND slot_utc = ?
+                """,
+                (self._owner_key(owner), pet_id, slot_utc),
+            ).fetchone()
+        return row is not None
 
     def commit_scheduled_story(
         self,
@@ -365,16 +416,18 @@ class AndroidFeatureStore:
         pet_id: str,
         slot_utc: str,
         story_id: str,
+        error_code: str | None = None,
     ) -> None:
         with self._connect() as connection:
             connection.execute(
                 """
                 UPDATE android_scheduled_stories
-                SET state = 'outcome_unknown', updated_at_ms = ?
+                SET state = 'outcome_unknown', last_error_code = ?, updated_at_ms = ?
                 WHERE owner_key = ? AND pet_id = ? AND slot_utc = ? AND story_id = ?
                   AND state = 'generating'
                 """,
                 (
+                    error_code,
                     int(time.time() * 1_000),
                     self._owner_key(owner),
                     pet_id,

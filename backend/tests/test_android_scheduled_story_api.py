@@ -205,11 +205,62 @@ def test_android_schedule_catches_up_only_after_today_slot(now, expected) -> Non
     assert android._android_scheduled_story_slot(settings, now) == expected
 
 
-@pytest.mark.parametrize("cap", (0, 2))
+def test_previous_failed_slot_can_recover_before_next_daily_hour(monkeypatch, tmp_path) -> None:
+    store = AndroidFeatureStore(tmp_path / "android.sqlite3")
+    settings = SimpleNamespace(
+        android_scheduled_story_enabled=True,
+        android_scheduled_story_hours=[18],
+        android_scheduled_story_timezone="Europe/Moscow",
+    )
+    before_next_slot = datetime(2026, 7, 18, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(android, "get_settings", lambda: settings)
+    monkeypatch.setattr(android, "_story_now", lambda: before_next_slot)
+    monkeypatch.setattr(
+        android,
+        "generate_scheduled_short_story_episode",
+        lambda *, story_id, **_kwargs: episode(story_id),
+    )
+    owner = android._owner(identity("account-a"))
+    previous_slot = android._previous_android_scheduled_story_slot(settings, before_next_slot)
+    previous_slot_utc = previous_slot.isoformat().replace("+00:00", "Z")
+    story_id = android._scheduled_story_id(owner, "pet-shared", previous_slot_utc)
+    store.claim_scheduled_story(
+        owner=owner,
+        pet_id="pet-shared",
+        slot_utc=previous_slot_utc,
+        story_id=story_id,
+    )
+    store.mark_scheduled_story_outcome_unknown(
+        owner=owner,
+        pet_id="pet-shared",
+        slot_utc=previous_slot_utc,
+        story_id=story_id,
+        error_code="TEMPORARY_FAILURE",
+    )
+    with sqlite3.connect(store.path) as connection:
+        connection.execute(
+            "UPDATE android_scheduled_stories SET updated_at_ms = updated_at_ms - ?",
+            (16 * 60 * 1_000,),
+        )
+
+    retry, background = fetch_due(store, "account-a")
+    assert retry.story is None
+    assert len(background.tasks) == 1
+    run_background(background)
+    ready, _ = fetch_due(store, "account-a")
+    assert ready.story is not None
+    assert ready.story.storyId == story_id
+
+
+@pytest.mark.parametrize(
+    ("cap", "expected_ready"),
+    ((0, False), (2, False), (10, True)),
+)
 def test_android_story_media_respects_shared_daily_cap(
     monkeypatch,
     tmp_path,
     cap,
+    expected_ready,
 ) -> None:
     store = AndroidFeatureStore(tmp_path / "android.sqlite3")
     settings = SimpleNamespace(
@@ -259,7 +310,7 @@ def test_android_story_media_respects_shared_daily_cap(
     run_background(background)
     ready, _ = fetch_due(store, "account-a")
 
-    assert ready.story is None
+    assert (ready.story is not None) is expected_ready
     assert len(provider_calls) == cap
     slot = android._android_scheduled_story_slot(settings, NOW)
     assert slot is not None
@@ -275,6 +326,88 @@ def test_android_story_media_respects_shared_daily_cap(
         assert (media_dir / "interactive-travel-part-01.png").is_file()
         assert (media_dir / "interactive-travel-part-01.mp4").is_file()
         assert not (tmp_path / story_id).exists()
+
+
+def test_failed_android_story_retries_and_recovers_same_daily_slot(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    store = AndroidFeatureStore(tmp_path / "android.sqlite3")
+    enable_schedule(monkeypatch)
+    calls = 0
+
+    def generate(*, story_id, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("temporary provider failure")
+        return episode(story_id)
+
+    monkeypatch.setattr(android, "generate_scheduled_short_story_episode", generate)
+    initial, first_background = fetch_due(store, "account-a")
+    assert initial.story is None
+    run_background(first_background)
+
+    with sqlite3.connect(store.path) as connection:
+        state, attempt_count, error_code = connection.execute(
+            "SELECT state, attempt_count, last_error_code FROM android_scheduled_stories"
+        ).fetchone()
+        assert state == "outcome_unknown"
+        assert attempt_count == 1
+        assert error_code
+        connection.execute(
+            "UPDATE android_scheduled_stories SET updated_at_ms = updated_at_ms - ?",
+            (16 * 60 * 1_000,),
+        )
+
+    retry, retry_background = fetch_due(store, "account-a")
+    assert retry.story is None
+    assert len(retry_background.tasks) == 1
+    run_background(retry_background)
+
+    ready, final_background = fetch_due(store, "account-a")
+    assert ready.story is not None
+    assert final_background.tasks == []
+    assert calls == 2
+    with sqlite3.connect(store.path) as connection:
+        state, attempt_count, error_code = connection.execute(
+            "SELECT state, attempt_count, last_error_code FROM android_scheduled_stories"
+        ).fetchone()
+    assert state == "ready"
+    assert attempt_count == 2
+    assert error_code is None
+
+
+def test_failed_android_story_stops_after_three_attempts(monkeypatch, tmp_path) -> None:
+    store = AndroidFeatureStore(tmp_path / "android.sqlite3")
+    enable_schedule(monkeypatch)
+    calls = 0
+
+    def fail(**_kwargs):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("permanent provider failure")
+
+    monkeypatch.setattr(android, "generate_scheduled_short_story_episode", fail)
+    for _attempt in range(3):
+        response, background = fetch_due(store, "account-a")
+        assert response.story is None
+        assert len(background.tasks) == 1
+        run_background(background)
+        with sqlite3.connect(store.path) as connection:
+            connection.execute(
+                "UPDATE android_scheduled_stories SET updated_at_ms = updated_at_ms - ?",
+                (16 * 60 * 1_000,),
+            )
+
+    exhausted, exhausted_background = fetch_due(store, "account-a")
+    assert exhausted.story is None
+    assert exhausted_background.tasks == []
+    assert calls == 3
+    with sqlite3.connect(store.path) as connection:
+        assert connection.execute(
+            "SELECT state, attempt_count FROM android_scheduled_stories"
+        ).fetchone() == ("outcome_unknown", 3)
 
 
 def test_android_story_provider_retries_cannot_exceed_media_cap(
