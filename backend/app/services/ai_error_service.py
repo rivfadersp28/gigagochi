@@ -259,8 +259,7 @@ def log_ai_request_failure(
         notify_openrouter_credits_exhausted(
             status_code=(
                 int(provider_status)
-                if isinstance(provider_status, int | str)
-                and str(provider_status).isdigit()
+                if isinstance(provider_status, int | str) and str(provider_status).isdigit()
                 else None
             ),
             provider_message=detail.get("providerMessage") or detail.get("exceptionMessage"),
