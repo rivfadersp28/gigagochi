@@ -58,6 +58,8 @@ UserMemoryKind = Literal[
     "emotion",
     "boundary",
 ]
+CharacterExperienceKind = Literal["character_travel", "character_outfit"]
+MemoryContextKind = UserMemoryKind | CharacterExperienceKind
 FaceHintValue = Literal["happy", "excited", "curious", "content", "grumpy", "sleepy"]
 HappinessDeltaValue = Literal[-80, -60, -40, -20, 0, 30, 100]
 ComplimentKeyValue = Annotated[str, Field(min_length=1, max_length=120)]
@@ -243,7 +245,7 @@ class LocalVisibleContext(BaseModel):
 
 class LocalPetMemoryContextItem(BaseModel):
     id: str = Field(min_length=1, max_length=120)
-    kind: UserMemoryKind
+    kind: MemoryContextKind
     text: str = Field(min_length=1, max_length=500)
     memoryClass: Literal["core", "fact", "episode"] = "fact"
     recordedAt: str | None = Field(default=None, max_length=80)

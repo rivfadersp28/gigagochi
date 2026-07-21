@@ -124,6 +124,32 @@ def test_sync_completed_replay_is_exact_and_conflicting_payload_is_rejected(
     assert calls == 1
 
 
+@pytest.mark.parametrize("kind", ["character_travel", "character_outfit"])
+def test_android_chat_accepts_character_experience_memory(kind: str) -> None:
+    payload = android.AndroidChatRequest.model_validate(
+        {
+            "requestKey": KEY,
+            "message": "Что ты помнишь?",
+            "pet": pet().model_dump(mode="json"),
+            "memoryContext": {
+                "relevantMemories": [
+                    {
+                        "id": f"{kind}:{KEY}",
+                        "kind": kind,
+                        "text": "Недавнее приключение персонажа.",
+                        "memoryClass": "episode",
+                        "recordedAt": "2026-07-21T12:00:00Z",
+                        "occurredAt": "2026-07-21T12:00:00Z",
+                    }
+                ]
+            },
+        }
+    )
+
+    assert payload.memoryContext is not None
+    assert payload.memoryContext.relevantMemories[0].kind == kind
+
+
 def test_android_memory_and_proactive_routes_are_idempotent(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
