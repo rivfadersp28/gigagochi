@@ -42,7 +42,45 @@ def test_simplified_outfit_prompt_uses_accusative_item(monkeypatch) -> None:
 
     assert item == "футболку Аргентины"
     assert display_item == "футболка Аргентины"
-    assert prompt == "Одень персонажа в футболку Аргентины."
+    assert prompt == "Добавь персонажу футболку Аргентины."
+
+
+def test_simplified_outfit_prompt_supports_makeup(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        outfit_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            openai_chat_model="test-model",
+            openai_chat_timeout_seconds=10,
+        ),
+    )
+    monkeypatch.setattr(outfit_service, "resolve_llm_model", lambda *_args: "test-model")
+
+    def fake_complete_chat(_operation, payload):
+        captured.update(payload)
+        return SimpleNamespace(
+            content=(
+                '{"item":"чёрно-белый блэк-метал корпспейнт",'
+                '"displayItem":"чёрно-белый блэк-метал корпспейнт"}'
+            )
+        )
+
+    monkeypatch.setattr(outfit_service, "complete_chat", fake_complete_chat)
+
+    item, display_item, prompt = outfit_service.simplify_outfit_request(
+        "black metal corpse paint",
+        "старое описание больше не участвует",
+    )
+
+    messages = captured["messages"]
+    assert messages[1] == {"role": "user", "content": "black metal corpse paint"}
+    assert "макияж" in messages[0]["content"]
+    assert "стиль" in messages[0]["content"]
+    assert item == "чёрно-белый блэк-метал корпспейнт"
+    assert display_item == "чёрно-белый блэк-метал корпспейнт"
+    assert prompt == "Добавь персонажу чёрно-белый блэк-метал корпспейнт."
 
 
 def test_outfit_generation_edits_each_mood_reference(monkeypatch, tmp_path) -> None:
@@ -89,7 +127,10 @@ def test_outfit_generation_edits_each_mood_reference(monkeypatch, tmp_path) -> N
     ]
     assert all(call[3] == outfit_service.PET_SCENE_IMAGE_SIZE for call in calls)
     assert "Одень персонажа в футболку Аргентины." in calls[0][0]
-    assert all("Не генерируй и не переосмысляй одежду заново" in call[0] for call in calls[1:])
+    assert all(
+        "Не генерируй и не переосмысляй изменённую внешность заново" in call[0]
+        for call in calls[1:]
+    )
     assert "Сохрани абсолютно того же персонажа" in calls[0][0]
     assert all("Сохрани того же персонажа" in call[0] for call in calls[1:])
     assert image_set.scene_path == output_dir / "teen-idle.png"
