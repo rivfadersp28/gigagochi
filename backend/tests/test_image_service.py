@@ -1684,7 +1684,43 @@ def test_kandinsky_create_retries_pre_send_connect_failure(monkeypatch) -> None:
 
     assert task_id == "task-after-connect-retry"
     assert post_calls == 2
-    assert retry_delays == [3.0]
+    assert retry_delays == [1.0]
+
+
+def test_kandinsky_create_retries_internal_server_error_twice(monkeypatch) -> None:
+    post_calls = 0
+    retry_delays: list[float] = []
+
+    def fake_post(*_args, **_kwargs):
+        nonlocal post_calls
+        post_calls += 1
+        request = httpx.Request("POST", "https://studio.test/tasks/k6-image-t2i")
+        if post_calls < 3:
+            return httpx.Response(
+                500,
+                request=request,
+                json={"error": "Internal Server Error"},
+            )
+        return httpx.Response(200, request=request, json={"task_id": "task-after-retries"})
+
+    settings = SimpleNamespace(
+        kandinsky_api_key="kandinsky-token",
+        kandinsky_base_url="https://studio.test",
+        openai_image_timeout_seconds=180,
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
+
+    task_id = _kandinsky_create_task(
+        settings,
+        task_type="k6-image-t2i",
+        params={"query": "synthetic prompt"},
+        label="test/image",
+    )
+
+    assert task_id == "task-after-retries"
+    assert post_calls == 3
+    assert retry_delays == [1.0, 3.0]
 
 
 def test_generate_kandinsky_image_bytes_retries_transient_censor_result(monkeypatch) -> None:
@@ -1872,7 +1908,7 @@ def test_generate_openrouter_video_bytes_uses_fixed_aspect_ratio(monkeypatch, tm
     )
 
 
-def test_generate_openrouter_video_bytes_does_not_retry_ambiguous_server_error(
+def test_generate_openrouter_video_bytes_retries_internal_server_error(
     monkeypatch, tmp_path
 ) -> None:
     source_path = tmp_path / "teen-idle.png"
@@ -1929,11 +1965,43 @@ def test_generate_openrouter_video_bytes_does_not_retry_ambiguous_server_error(
     monkeypatch.setattr("app.services.image_service.httpx.stream", fake_stream)
     monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
 
-    with pytest.raises(RuntimeError, match="status=500"):
-        generate_openrouter_video_bytes(source_path, label="pet_creation/scene_video")
+    result = generate_openrouter_video_bytes(source_path, label="pet_creation/scene_video")
 
-    assert post_statuses == [200]
-    assert retry_delays == []
+    assert result == b"video-bytes"
+    assert post_statuses == []
+    assert retry_delays == [1.0]
+
+
+def test_openrouter_video_submit_stops_after_three_internal_server_errors(monkeypatch) -> None:
+    post_calls = 0
+    retry_delays: list[float] = []
+
+    def fake_post(*_args, **_kwargs):
+        nonlocal post_calls
+        post_calls += 1
+        return httpx.Response(
+            500,
+            request=httpx.Request("POST", "https://openrouter.test"),
+            json={"error": {"message": "Internal Server Error", "code": 500}},
+        )
+
+    settings = SimpleNamespace(
+        openrouter_api_key="sk-or-test",
+        openai_api_key=None,
+        openrouter_base_url="https://openrouter.ai/api/v1",
+    )
+    monkeypatch.setattr("app.services.image_service.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.image_service.time.sleep", retry_delays.append)
+
+    response = _submit_openrouter_video_job(
+        settings,
+        {"model": "test/video", "prompt": "synthetic prompt"},
+        label="test/video",
+    )
+
+    assert response.status_code == 500
+    assert post_calls == 3
+    assert retry_delays == [1.0, 3.0]
 
 
 def test_openrouter_video_submit_does_not_retry_ambiguous_read_timeout(monkeypatch) -> None:

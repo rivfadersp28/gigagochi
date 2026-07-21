@@ -121,8 +121,8 @@ class PromptRepairExhausted(RuntimeError):
     code = "OUTFIT_PROMPT_REPAIR_EXHAUSTED"
 
 
-KANDINSKY_HTTP_MAX_ATTEMPTS = 2
-KANDINSKY_HTTP_RETRY_SECONDS = (3.0,)
+KANDINSKY_HTTP_MAX_ATTEMPTS = 3
+KANDINSKY_HTTP_RETRY_SECONDS = (1.0, 3.0)
 KANDINSKY_RESULT_RETRY_WINDOW_SECONDS = 50.0
 KANDINSKY_RESULT_RETRY_INTERVAL_SECONDS = 3.0
 OPENROUTER_VIDEO_HTTP_MAX_ATTEMPTS = 3
@@ -1488,7 +1488,7 @@ def _is_safe_paid_submit_retry_error(exc: Exception) -> bool:
     if isinstance(exc, httpx.ConnectError | httpx.ConnectTimeout | httpx.PoolTimeout):
         return True
     if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code == 429
+        return exc.response.status_code in {429, 500}
     return False
 
 
@@ -2530,6 +2530,8 @@ def _openrouter_video_error(response: httpx.Response) -> OpenRouterVideoHTTPErro
 
 def _is_safe_openrouter_video_submit_response_retry(response: httpx.Response) -> bool:
     if response.status_code == 429:
+        return True
+    if response.status_code == 500:
         return True
     if response.status_code not in {502, 503, 504}:
         return False
