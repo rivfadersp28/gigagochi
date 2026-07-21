@@ -102,9 +102,7 @@ class GoogleAuthSessionStore:
                     for row in connection.execute("PRAGMA table_info(google_auth_users)")
                 }
                 if "account_id" not in columns:
-                    connection.execute(
-                        "ALTER TABLE google_auth_users ADD COLUMN account_id TEXT"
-                    )
+                    connection.execute("ALTER TABLE google_auth_users ADD COLUMN account_id TEXT")
                 missing_ids = connection.execute(
                     "SELECT id FROM google_auth_users WHERE account_id IS NULL"
                 ).fetchall()

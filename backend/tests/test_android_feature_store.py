@@ -42,12 +42,16 @@ def test_concurrent_duplicate_has_one_executor_and_restart_stays_in_progress(tmp
     payload = {"message": "Привет"}
 
     def begin() -> str:
-        return AndroidFeatureStore(path).begin_request(
-            owner=owner,
-            operation="chat",
-            request_key="11111111-1111-4111-8111-111111111111",
-            payload=payload,
-        ).state
+        return (
+            AndroidFeatureStore(path)
+            .begin_request(
+                owner=owner,
+                operation="chat",
+                request_key="11111111-1111-4111-8111-111111111111",
+                payload=payload,
+            )
+            .state
+        )
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         states = list(executor.map(lambda _: begin(), range(8)))

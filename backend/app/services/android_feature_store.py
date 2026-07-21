@@ -118,8 +118,7 @@ class AndroidFeatureStore:
                     )
                 if "executor_instance_id" not in request_columns:
                     connection.execute(
-                        "ALTER TABLE android_feature_requests ADD COLUMN "
-                        "executor_instance_id TEXT"
+                        "ALTER TABLE android_feature_requests ADD COLUMN executor_instance_id TEXT"
                     )
                     connection.execute(
                         "UPDATE android_feature_requests SET state = 'completed' "
@@ -180,9 +179,7 @@ class AndroidFeatureStore:
                     if str(row[0]) != fingerprint:
                         raise AndroidFeatureIdempotencyConflictError(request_key)
                     connection.commit()
-                    state: Literal[
-                        "created", "in_progress", "outcome_unknown", "completed"
-                    ]
+                    state: Literal["created", "in_progress", "outcome_unknown", "completed"]
                     if str(row[3]) == "completed" and row[2] is not None:
                         state = "completed"
                     elif now - int(row[5]) <= REQUEST_IN_PROGRESS_MAX_AGE_MS:
@@ -311,9 +308,9 @@ class AndroidFeatureStore:
                         None,
                         now,
                     )
-                    claim_state: Literal[
-                        "created", "in_progress", "outcome_unknown", "ready"
-                    ] = "created"
+                    claim_state: Literal["created", "in_progress", "outcome_unknown", "ready"] = (
+                        "created"
+                    )
                 elif str(row[4]) == "ready" and row[5] is not None:
                     claim_state = "ready"
                 elif (
