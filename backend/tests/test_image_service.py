@@ -746,9 +746,7 @@ def test_internal_reference_url_rewrites_only_own_public_origin(monkeypatch) -> 
     )
 
 
-def test_reference_image_reads_own_generated_asset_without_network(
-    monkeypatch, tmp_path
-) -> None:
+def test_reference_image_reads_own_generated_asset_without_network(monkeypatch, tmp_path) -> None:
     generated_root = tmp_path / "generated"
     image_path = generated_root / "pet" / "idle.png"
     image_path.parent.mkdir(parents=True)
@@ -779,8 +777,7 @@ def test_reference_image_uses_scene_when_isolated_character_asset_is_missing(
     scene_path.parent.mkdir(parents=True)
     scene_path.write_bytes(b"outfit-scene")
     character_url = (
-        "https://gigagochi.serega.works/static/generated/"
-        "outfit/teen-idle-character.png?v=42"
+        "https://gigagochi.serega.works/static/generated/outfit/teen-idle-character.png?v=42"
     )
     monkeypatch.setattr("app.services.image_service.GENERATED_ASSET_ROOT", generated_root)
     monkeypatch.setattr(
@@ -808,9 +805,7 @@ def test_local_reference_image_rejects_symlink_escape(monkeypatch, tmp_path) -> 
     monkeypatch.setattr("app.services.image_service.GENERATED_ASSET_ROOT", generated_root)
 
     with pytest.raises(RuntimeError, match="REFERENCE_IMAGE_PATH_INVALID"):
-        _local_reference_image_bytes(
-            "https://gigagochi.serega.works/static/generated/escape.png"
-        )
+        _local_reference_image_bytes("https://gigagochi.serega.works/static/generated/escape.png")
 
 
 def test_local_reference_image_rejects_oversized_file(monkeypatch, tmp_path) -> None:
@@ -822,9 +817,7 @@ def test_local_reference_image_rejects_oversized_file(monkeypatch, tmp_path) -> 
     monkeypatch.setattr("app.services.image_service.REFERENCE_IMAGE_MAX_BYTES", 3)
 
     with pytest.raises(RuntimeError, match="REFERENCE_IMAGE_TOO_LARGE"):
-        _local_reference_image_bytes(
-            "https://gigagochi.serega.works/static/generated/large.png"
-        )
+        _local_reference_image_bytes("https://gigagochi.serega.works/static/generated/large.png")
 
 
 def test_reference_download_falls_back_to_public_url(monkeypatch) -> None:

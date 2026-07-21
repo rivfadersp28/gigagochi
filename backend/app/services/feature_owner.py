@@ -27,9 +27,10 @@ class FeatureOwner:
 
     def __post_init__(self) -> None:
         if self.namespace == "google":
-            if not isinstance(self.storage_key, str) or re.fullmatch(
-                r"google:[a-f0-9]{64}", self.storage_key
-            ) is None:
+            if (
+                not isinstance(self.storage_key, str)
+                or re.fullmatch(r"google:[a-f0-9]{64}", self.storage_key) is None
+            ):
                 raise ValueError("google owner storage key must be opaque")
             if self.notification_target is not None:
                 raise ValueError("google owner cannot have Telegram notification capability")

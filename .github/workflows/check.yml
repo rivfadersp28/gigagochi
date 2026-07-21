@@ -45,7 +45,7 @@ jobs:
       - run: ruff check app tests scripts
       - run: ruff format app tests scripts --check
       - run: pytest -q
-      - run: python scripts/export_openapi.py ../frontend/openapi.json --check
+      - run: python -m scripts.export_openapi ../frontend/openapi.json --check
       - run: docker build --tag gigagochi-backend:ci .
       - run: test "$(docker image inspect gigagochi-backend:ci --format '{{.Config.User}}')" = gigagochi
 

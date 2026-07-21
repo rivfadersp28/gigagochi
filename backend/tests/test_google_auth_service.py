@@ -137,9 +137,9 @@ def test_duplicate_google_login_reuses_identity_key_not_email(tmp_path: Path) ->
 
     with sqlite3.connect(store.path) as connection:
         user_count = connection.execute("SELECT COUNT(*) FROM google_auth_users").fetchone()[0]
-        session_count = connection.execute(
-            "SELECT COUNT(*) FROM google_auth_sessions"
-        ).fetchone()[0]
+        session_count = connection.execute("SELECT COUNT(*) FROM google_auth_sessions").fetchone()[
+            0
+        ]
         account_id, provider, subject, email = connection.execute(
             "SELECT account_id, provider, provider_subject, email FROM google_auth_users"
         ).fetchone()

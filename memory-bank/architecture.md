@@ -74,6 +74,9 @@
   and failure status. The diagnostic Telegram user can view personal 30-day average, median, p95
   and recent timings in the debug panel; collection starts from the deployment of this telemetry.
   Metrics older than 365 days are pruned independently from the shorter job/idempotency retention.
+- Provider failures in the bounded persistent `logs/ai-failures.jsonl` include safe Android
+  correlation metadata: `jobId`, operation, up to eight durable request keys and a hashed owner
+  audit label. Prompts, auth tokens and raw Google account IDs are not added by this correlation.
 - Production operations alerts use the existing Telegram bot and a dedicated admin ID allowlist.
   AI failures, unexpected HTTP 500s, scheduler failures, queue saturation and stuck generation jobs
   are deduplicated before delivery so an incident does not create an alert storm. Dedup identities

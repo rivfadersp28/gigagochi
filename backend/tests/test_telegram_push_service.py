@@ -1870,9 +1870,7 @@ def test_scheduled_interactive_story_generates_five_videos(monkeypatch, tmp_path
     assert record["lastScheduledShortStoryAt"]
 
 
-def test_scheduled_interactive_story_retries_transient_provider_job(
-    monkeypatch, tmp_path
-) -> None:
+def test_scheduled_interactive_story_retries_transient_provider_job(monkeypatch, tmp_path) -> None:
     now = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
     record = {
         "telegramId": TEST_TELEGRAM_ID,
