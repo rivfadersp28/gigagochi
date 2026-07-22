@@ -87,7 +87,7 @@ RequestKey = Annotated[str, Field(min_length=36, max_length=36, pattern=UUID4_PA
 PetId = Annotated[str, Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")]
 T = TypeVar("T", bound=BaseModel)
 logger = logging.getLogger(__name__)
-DEFAULT_ANDROID_SCHEDULED_STORY_HOUR = 18
+DEFAULT_ANDROID_SCHEDULED_STORY_HOURS = (10, 12, 14, 16, 18)
 DEFAULT_ANDROID_SCHEDULED_STORY_TIMEZONE = "Europe/Moscow"
 
 
@@ -95,7 +95,7 @@ def _android_scheduled_story_slot(settings: Any, now: datetime) -> datetime | No
     raw_hours = getattr(
         settings,
         "android_scheduled_story_hours",
-        [DEFAULT_ANDROID_SCHEDULED_STORY_HOUR],
+        DEFAULT_ANDROID_SCHEDULED_STORY_HOURS,
     )
     if not isinstance(raw_hours, (list, tuple, set)):
         raw_hours = []
@@ -105,7 +105,7 @@ def _android_scheduled_story_slot(settings: Any, now: datetime) -> datetime | No
         if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 23
     }
     if not hours:
-        hours = {DEFAULT_ANDROID_SCHEDULED_STORY_HOUR}
+        hours = set(DEFAULT_ANDROID_SCHEDULED_STORY_HOURS)
     timezone_name = str(
         getattr(
             settings,
@@ -144,13 +144,13 @@ def _previous_android_scheduled_story_slot(settings: Any, now: datetime) -> date
     raw_hours = getattr(
         settings,
         "android_scheduled_story_hours",
-        [DEFAULT_ANDROID_SCHEDULED_STORY_HOUR],
+        DEFAULT_ANDROID_SCHEDULED_STORY_HOURS,
     )
     hours = {
         value
         for value in raw_hours
         if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 23
-    } or {DEFAULT_ANDROID_SCHEDULED_STORY_HOUR}
+    } or set(DEFAULT_ANDROID_SCHEDULED_STORY_HOURS)
     previous_day = now.astimezone(timezone) - timedelta(days=1)
     return previous_day.replace(
         hour=max(hours),

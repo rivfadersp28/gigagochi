@@ -153,7 +153,7 @@ class Settings(BaseSettings):
     scheduled_short_story_telegram_ids: set[int] = Field(default_factory=set)
     android_scheduled_story_enabled: bool = True
     android_scheduled_story_hours: list[ScheduleHour] = Field(
-        default_factory=lambda: [18],
+        default_factory=lambda: [10, 12, 14, 16, 18],
         min_length=1,
         max_length=24,
     )

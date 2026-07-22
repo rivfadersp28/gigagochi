@@ -184,7 +184,23 @@ def test_disabled_android_schedule_does_not_claim_slot(monkeypatch, tmp_path) ->
 @pytest.mark.parametrize(
     ("now", "expected"),
     (
-        (datetime(2026, 7, 17, 14, 59, tzinfo=UTC), None),
+        (datetime(2026, 7, 17, 6, 59, tzinfo=UTC), None),
+        (
+            datetime(2026, 7, 17, 7, 0, tzinfo=UTC),
+            datetime(2026, 7, 17, 7, 0, tzinfo=UTC),
+        ),
+        (
+            datetime(2026, 7, 17, 9, 0, tzinfo=UTC),
+            datetime(2026, 7, 17, 9, 0, tzinfo=UTC),
+        ),
+        (
+            datetime(2026, 7, 17, 11, 0, tzinfo=UTC),
+            datetime(2026, 7, 17, 11, 0, tzinfo=UTC),
+        ),
+        (
+            datetime(2026, 7, 17, 13, 0, tzinfo=UTC),
+            datetime(2026, 7, 17, 13, 0, tzinfo=UTC),
+        ),
         (
             datetime(2026, 7, 17, 15, 0, tzinfo=UTC),
             datetime(2026, 7, 17, 15, 0, tzinfo=UTC),
@@ -193,12 +209,12 @@ def test_disabled_android_schedule_does_not_claim_slot(monkeypatch, tmp_path) ->
             datetime(2026, 7, 17, 20, 45, tzinfo=UTC),
             datetime(2026, 7, 17, 15, 0, tzinfo=UTC),
         ),
-        (datetime(2026, 7, 18, 14, 0, tzinfo=UTC), None),
+        (datetime(2026, 7, 18, 6, 0, tzinfo=UTC), None),
     ),
 )
-def test_android_schedule_catches_up_only_after_today_slot(now, expected) -> None:
+def test_android_schedule_selects_latest_of_five_daily_slots(now, expected) -> None:
     settings = SimpleNamespace(
-        android_scheduled_story_hours=[18],
+        android_scheduled_story_hours=[10, 12, 14, 16, 18],
         android_scheduled_story_timezone="Europe/Moscow",
     )
 

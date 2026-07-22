@@ -91,11 +91,11 @@ def test_google_auth_is_unconfigured_by_default_and_refresh_outlives_access() ->
         )
 
 
-def test_android_story_schedule_defaults_are_independent_and_once_daily() -> None:
+def test_android_story_schedule_defaults_are_independent_and_five_times_daily() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.android_scheduled_story_enabled is True
-    assert settings.android_scheduled_story_hours == [18]
+    assert settings.android_scheduled_story_hours == [10, 12, 14, 16, 18]
     assert settings.android_scheduled_story_timezone == "Europe/Moscow"
     assert settings.scheduled_short_story_enabled is False
     assert settings.scheduled_short_story_hours == list(range(10, 22))
