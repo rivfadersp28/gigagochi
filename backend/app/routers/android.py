@@ -31,6 +31,7 @@ from app.schemas import (
     TravelVideoPrototypeResponse,
 )
 from app.services.android_feature_store import (
+    SCHEDULED_STORY_MAX_ATTEMPTS,
     AndroidFeatureIdempotencyConflictError,
     AndroidFeatureRequestAttempt,
     AndroidFeatureSessionBusyError,
@@ -294,6 +295,7 @@ class AndroidScheduledStory(BaseModel):
 class AndroidDueStoryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     story: AndroidScheduledStory | None = None
+    pending: bool = False
 
 
 @lru_cache(maxsize=1)
@@ -1267,7 +1269,15 @@ def due_scheduled_story(
     if claim.state == "ready":
         return AndroidDueStoryResponse(story=_scheduled_story_model(claim.record))
     if claim.state != "created":
-        return AndroidDueStoryResponse()
+        return AndroidDueStoryResponse(
+            pending=(
+                claim.state == "in_progress"
+                or (
+                    claim.state == "outcome_unknown"
+                    and claim.record.attempt_count < SCHEDULED_STORY_MAX_ATTEMPTS
+                )
+            )
+        )
     background_tasks.add_task(
         _generate_scheduled_story_background,
         store=store,
@@ -1278,7 +1288,7 @@ def due_scheduled_story(
         story_id=story_id,
         created_at=now.isoformat().replace("+00:00", "Z"),
     )
-    return AndroidDueStoryResponse()
+    return AndroidDueStoryResponse(pending=True)
 
 
 @router.post(

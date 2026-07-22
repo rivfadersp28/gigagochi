@@ -52,6 +52,7 @@ class AndroidScheduledStoryRecord:
     selected_choice: str | None
     result_json: str | None
     created_at: str | None
+    attempt_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -522,4 +523,5 @@ class AndroidFeatureStore:
             selected_choice=str(row[7]) if row[7] is not None else None,
             result_json=str(row[8]) if row[8] is not None else None,
             created_at=str(row[9]) if row[9] is not None else None,
+            attempt_count=int(row[11]) if len(row) > 11 else 0,
         )

@@ -109,7 +109,9 @@ def test_due_not_due_first_replay_and_owner_isolation(monkeypatch, tmp_path) -> 
     first, first_background = fetch_due(store, "raw-account-a")
     before_completion, duplicate_background = fetch_due(store, "raw-account-a")
     assert first.story is None
+    assert first.pending is True
     assert before_completion.story is None
+    assert before_completion.pending is True
     assert calls == []
     assert len(first_background.tasks) == 1
     assert duplicate_background.tasks == []
@@ -121,6 +123,7 @@ def test_due_not_due_first_replay_and_owner_isolation(monkeypatch, tmp_path) -> 
     other, _ = fetch_due(store, "raw-account-b")
 
     assert replay.story is not None
+    assert replay.pending is False
     assert replay_background.tasks == []
     assert other_initial.story is None
     assert replay.story.storyId != other.story.storyId
@@ -132,6 +135,7 @@ def test_due_not_due_first_replay_and_owner_isolation(monkeypatch, tmp_path) -> 
     monkeypatch.setattr(android, "_story_now", lambda: NOW.replace(hour=2))
     not_due, _ = fetch_due(store, "raw-account-a")
     assert not_due.story is None
+    assert not_due.pending is False
     assert len(calls) == 2
 
 
@@ -154,6 +158,7 @@ def test_android_schedule_is_independent_from_telegram_settings(monkeypatch, tmp
     due, background = fetch_due(store, "account-a")
 
     assert due.story is None
+    assert due.pending is True
     assert len(background.tasks) == 1
 
 
@@ -174,6 +179,7 @@ def test_disabled_android_schedule_does_not_claim_slot(monkeypatch, tmp_path) ->
     due, background = fetch_due(store, "account-a")
 
     assert due.story is None
+    assert due.pending is False
     assert background.tasks == []
     with sqlite3.connect(store.path) as connection:
         assert (
@@ -261,6 +267,7 @@ def test_previous_failed_slot_can_recover_before_next_daily_hour(monkeypatch, tm
 
     retry, background = fetch_due(store, "account-a")
     assert retry.story is None
+    assert retry.pending is True
     assert len(background.tasks) == 1
     run_background(background)
     ready, _ = fetch_due(store, "account-a")
@@ -418,6 +425,7 @@ def test_failed_android_story_stops_after_three_attempts(monkeypatch, tmp_path) 
 
     exhausted, exhausted_background = fetch_due(store, "account-a")
     assert exhausted.story is None
+    assert exhausted.pending is False
     assert exhausted_background.tasks == []
     assert calls == 3
     with sqlite3.connect(store.path) as connection:
@@ -529,6 +537,7 @@ def test_generation_failure_claim_is_not_replayed(monkeypatch, tmp_path) -> None
     replay, replay_background = fetch_due(store, "account-a")
 
     assert replay.story is None
+    assert replay.pending is True
     assert replay_background.tasks == []
     assert calls == 1
 
