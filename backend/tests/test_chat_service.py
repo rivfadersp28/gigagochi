@@ -48,8 +48,16 @@ class FakeLiteCompletions:
                 tool_calls=None,
             )
             return SimpleNamespace(choices=[SimpleNamespace(message=message)])
-        message = _visible_reply_message_for_call(self._messages.pop(0), kwargs)
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        source = self._messages.pop(0)
+        message = _visible_reply_message_for_call(source, kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=message,
+                    finish_reason=getattr(source, "finish_reason", None),
+                )
+            ]
+        )
 
 
 def fake_lite_client(*messages):
@@ -290,8 +298,9 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert "При необходимости задай один естественный уточняющий вопрос" in system_message
     assert "Верни только JSON" not in system_message
     assert request["response_format"]["json_schema"]["name"] == "visible_pet_reply"
-    assert "maxLength" not in (
-        request["response_format"]["json_schema"]["schema"]["properties"]["reply"]
+    assert (
+        "maxLength"
+        not in (request["response_format"]["json_schema"]["schema"]["properties"]["reply"])
     )
     assert request["response_format"]["json_schema"]["schema"]["properties"]["happinessDelta"][
         "enum"
@@ -634,6 +643,9 @@ def test_lite_prompt_omits_character_voice_and_keeps_basic_appearance() -> None:
     assert "нюх-нюх" not in system_message
     assert "Нюх-нюх... я проверю носом." not in system_message
     assert "я ассистент" not in system_message
+    assert "Всегда оставайся в роли этого питомца" in system_message
+    assert "мягко уклонись" in system_message
+    assert "добродушно отшутись" in system_message
 
 
 def test_lite_prompt_does_not_include_character_seed() -> None:
@@ -1258,6 +1270,135 @@ def test_lite_uses_safe_fallback_for_invalid_structured_reply() -> None:
     assert response.debug is not None
     assert response.debug.usedFallback is True
     assert response.debug.validationFlags == ["structured_reply_invalid_json"]
+
+
+def test_lite_regenerates_free_in_character_reply_for_content_filter() -> None:
+    refusal = (
+        "Генеративные языковые модели не обладают собственным мнением. "
+        "Разговоры на чувствительные темы могут быть ограничены."
+    )
+    client, completions = fake_lite_client(
+        SimpleNamespace(
+            content=refusal,
+            tool_calls=None,
+            finish_reason="blacklist",
+        ),
+        SimpleNamespace(
+            content=json.dumps(
+                {
+                    "reply": "Ой, эту тропинку я обойду. Лучше расскажи, что тебя радует!",
+                    "faceHint": "curious",
+                    "moodHint": None,
+                    "happinessDelta": 0,
+                    "complimentKey": None,
+                },
+                ensure_ascii=False,
+            ),
+            tool_calls=None,
+        ),
+    )
+
+    response = generate_lite_pet_reply(
+        lite_payload(message="дрочить"),
+        client=client,
+        model="GigaChat-3.5-432B-A28B",
+        timeout=10,
+    )
+
+    assert response.reply == "Ой, эту тропинку я обойду. Лучше расскажи, что тебя радует!"
+    assert refusal not in response.reply
+    assert len(completions.calls) == 2
+    assert response.debug is not None
+    assert response.debug.usedFallback is False
+    assert response.debug.validationFlags == [
+        "visible_reply_content_filtered",
+        "visible_reply_regenerated_after_content_filter",
+    ]
+    repair_prompt = completions.calls[1]["messages"]
+    assert "дрочить" not in json.dumps(repair_prompt, ensure_ascii=False).casefold()
+    assert "мягко уклонись" in repair_prompt[-1]["content"]
+    assert "плавно смени тему" in repair_prompt[-1]["content"]
+    assert "добродушно отшутись" in repair_prompt[-1]["content"]
+    assert "Первое предложение должно быть утвердительным" in repair_prompt[-1]["content"]
+
+
+def test_lite_regenerates_model_identity_leak_once() -> None:
+    client, completions = fake_lite_client(
+        SimpleNamespace(
+            content=json.dumps(
+                {
+                    "reply": "Я языковая модель и не обладаю собственным мнением.",
+                    "faceHint": None,
+                    "moodHint": None,
+                    "happinessDelta": 0,
+                    "complimentKey": None,
+                },
+                ensure_ascii=False,
+            ),
+            tool_calls=None,
+        ),
+        SimpleNamespace(
+            content=json.dumps(
+                {
+                    "reply": "Я не хочу об этом говорить. Давай лучше о чём-нибудь другом.",
+                    "faceHint": "grumpy",
+                    "moodHint": None,
+                    "happinessDelta": 0,
+                    "complimentKey": None,
+                },
+                ensure_ascii=False,
+            ),
+            tool_calls=None,
+        ),
+    )
+
+    response = generate_lite_pet_reply(
+        lite_payload(message="чувствительная тема"),
+        client=client,
+        model="GigaChat-3.5-432B-A28B",
+        timeout=10,
+    )
+
+    assert response.reply == "Я не хочу об этом говорить. Давай лучше о чём-нибудь другом."
+    assert len(completions.calls) == 2
+    assert response.debug is not None
+    assert response.debug.usedFallback is False
+    assert "visible_reply_model_identity_leak" in response.debug.validationFlags
+    assert "visible_reply_regenerated_after_role_leak" in response.debug.validationFlags
+    assert (
+        "Предыдущая версия нарушила роль персонажа"
+        in (completions.calls[1]["messages"][0]["content"])
+    )
+
+
+def test_lite_never_returns_model_identity_leak_after_failed_regeneration() -> None:
+    leaked_reply = json.dumps(
+        {
+            "reply": "Генеративные языковые модели не обладают собственным мнением.",
+            "faceHint": None,
+            "moodHint": None,
+            "happinessDelta": 0,
+            "complimentKey": None,
+        },
+        ensure_ascii=False,
+    )
+    client, _completions = fake_lite_client(
+        SimpleNamespace(content=leaked_reply, tool_calls=None),
+        SimpleNamespace(content=leaked_reply, tool_calls=None),
+    )
+
+    response = generate_lite_pet_reply(
+        lite_payload(message="чувствительная тема"),
+        client=client,
+        model="GigaChat-3.5-432B-A28B",
+        timeout=10,
+    )
+
+    assert response.reply == "Я рядом."
+    assert "модел" not in response.reply.casefold()
+    assert response.debug is not None
+    assert response.debug.usedFallback is True
+    assert "visible_reply_role_leak_after_regeneration" in response.debug.validationFlags
 
 
 def test_lite_omits_debug_when_not_requested() -> None:

@@ -357,6 +357,13 @@ def test_easy_task_bank_is_valid_and_keeps_explanations() -> None:
     assert len({task["question"] for task in tasks}) == 100
     assert all(task["explanation"] for task in tasks)
 
+    alkaline_task = next(task for task in tasks if task["id"] == "traveler-087")
+    assert alkaline_task["question"] == "Какой из этих растворов щелочной?"
+    assert "полоска-индикатор" in alkaline_task["situation"]
+    assert "противоположный кислому" in alkaline_task["situation"]
+    assert alkaline_task["answer"] == "Раствор пищевой соды"
+    assert all("индикатор" in outcome for outcome in alkaline_task["outcomes"])
+
 
 def test_scheduled_episode_keeps_all_four_bank_choices(monkeypatch) -> None:
     task = {

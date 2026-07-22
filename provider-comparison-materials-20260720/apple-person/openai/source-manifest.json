@@ -1,0 +1,36 @@
+{
+  "bundleId": "provider-comparison-20260720",
+  "character": "человек яблоко",
+  "generatedAt": "2026-07-20T09:39:14.316018+00:00",
+  "imageModel": "gpt-image-2",
+  "interactiveStoryStart": {
+    "animatedVariants": [],
+    "choices": [
+      "Магнитное поле",
+      "Цвет облаков",
+      "Запах камней",
+      "Тепло дороги"
+    ],
+    "correctChoice": "Магнитное поле",
+    "imagePath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/interactive-travel-9b8626a20a2c572bab5ba0524a28a4ee/interactive-travel-part-01.png",
+    "imageUrl": "/static/generated/interactive-travel-9b8626a20a2c572bab5ba0524a28a4ee/interactive-travel-part-01.png",
+    "question": "Какой ориентир используют птицы?",
+    "storyText": "Я оказался под ночным небом. Я увидел перелётных птиц под густыми облаками. Чтобы не лишить их невидимого ориентира, нужно понять, что помогает им лететь.",
+    "title": "Птицы под облаками",
+    "videoPath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/interactive-travel-9b8626a20a2c572bab5ba0524a28a4ee/interactive-travel-part-01.mp4",
+    "videoUrl": "/static/generated/interactive-travel-9b8626a20a2c572bab5ba0524a28a4ee/interactive-travel-part-01.mp4"
+  },
+  "normal": {
+    "imagePath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/227fa172-765b-5f52-b32d-be53afee0236/teen-idle.png",
+    "imageUrl": "/static/generated/227fa172-765b-5f52-b32d-be53afee0236/teen-idle.png",
+    "videoPath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/227fa172-765b-5f52-b32d-be53afee0236/teen-idle.mp4",
+    "videoUrl": "/static/generated/227fa172-765b-5f52-b32d-be53afee0236/teen-idle.mp4"
+  },
+  "outfit": {
+    "imagePath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/524557cd-5ff6-51cd-84cf-6f1bf959b935/teen-idle.png",
+    "imageUrl": "/static/generated/524557cd-5ff6-51cd-84cf-6f1bf959b935/teen-idle.png",
+    "request": "Одень персонажа в футболку Iron Maiden."
+  },
+  "provider": "openai",
+  "videoModel": "bytedance/seedance-2.0"
+}

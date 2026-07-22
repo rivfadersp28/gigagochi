@@ -1,0 +1,36 @@
+{
+  "bundleId": "provider-comparison-20260720",
+  "character": "человек яблоко",
+  "generatedAt": "2026-07-20T10:17:52.052453+00:00",
+  "imageModel": "kandinsky",
+  "interactiveStoryStart": {
+    "animatedVariants": [],
+    "choices": [
+      "Магнитное поле",
+      "Цвет облаков",
+      "Запах камней",
+      "Тепло дороги"
+    ],
+    "correctChoice": "Магнитное поле",
+    "imagePath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/interactive-travel-347b2838b5b6590a9bea8ce19472ba6c/interactive-travel-part-01.png",
+    "imageUrl": "/static/generated/interactive-travel-347b2838b5b6590a9bea8ce19472ba6c/interactive-travel-part-01.png",
+    "question": "Какой ориентир используют птицы?",
+    "storyText": "Я оказался под ночным небом. Я увидел перелётных птиц под густыми облаками. Чтобы не лишить их невидимого ориентира, нужно понять, что помогает им лететь.",
+    "title": "Птицы под облаками",
+    "videoPath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/interactive-travel-347b2838b5b6590a9bea8ce19472ba6c/interactive-travel-part-01.mp4",
+    "videoUrl": "/static/generated/interactive-travel-347b2838b5b6590a9bea8ce19472ba6c/interactive-travel-part-01.mp4"
+  },
+  "normal": {
+    "imagePath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/1707c2ef-025f-588a-bb8e-ed58ce167ac9/teen-idle.png",
+    "imageUrl": "/static/generated/1707c2ef-025f-588a-bb8e-ed58ce167ac9/teen-idle.png",
+    "videoPath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/1707c2ef-025f-588a-bb8e-ed58ce167ac9/teen-idle.mp4",
+    "videoUrl": "/static/generated/1707c2ef-025f-588a-bb8e-ed58ce167ac9/teen-idle.mp4"
+  },
+  "outfit": {
+    "imagePath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/c69af940-85a5-5def-b62b-c2d3af90c256/teen-idle.png",
+    "imageUrl": "/static/generated/c69af940-85a5-5def-b62b-c2d3af90c256/teen-idle.png",
+    "request": "Одень персонажа в футболку Iron Maiden."
+  },
+  "provider": "kandinsky",
+  "videoModel": "kandinsky"
+}
