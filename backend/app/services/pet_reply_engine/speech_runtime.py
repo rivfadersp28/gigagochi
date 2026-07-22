@@ -194,9 +194,6 @@ def validate_speech_runtime_config(config: Any) -> None:
     _required_int(config, ("stateLayer", "thresholds", "energyHighMin"))
     _required_int(config, ("backgroundStory", "maxStoryChars"))
     _required_int(config, ("backgroundStory", "maxRagChars"))
-    visible_reply_max_chars = _required_int(config, ("visibleReply", "maxChars"))
-    if not 1 <= visible_reply_max_chars <= 300:
-        raise ValueError("visibleReply.maxChars must be between 1 and 300")
     _required_string(config, ("visibleReply", "model"))
     visible_reply_reasoning_effort = _required_string(
         config,
@@ -418,13 +415,6 @@ def memory_usage_rule() -> str:
 
 def transient_context_rule() -> str:
     return _required_string(speech_runtime_config(), ("visibleReply", "transientContextRule"))
-
-
-def visible_reply_limit(requested: int | None = None) -> int:
-    configured = _required_int(speech_runtime_config(), ("visibleReply", "maxChars"))
-    if requested is None:
-        return configured
-    return max(1, min(requested, configured))
 
 
 def visible_reply_model() -> str:

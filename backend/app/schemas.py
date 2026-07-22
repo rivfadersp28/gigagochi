@@ -288,7 +288,6 @@ class LocalChatRequest(BaseModel):
     memoryContext: LocalPetMemoryContext | None = None
     nowIso: str | None = Field(default=None, max_length=80)
     timezone: str | None = Field(default=None, max_length=80)
-    replyMaxChars: int | None = Field(default=None, ge=1, le=300)
     includeDebug: bool = False
 
 
@@ -658,7 +657,6 @@ class LocalAmbientRequest(BaseModel):
     history: list[LocalChatHistoryItem] = Field(default_factory=list, max_length=12)
     recentAmbientReplies: list[RecentAmbientReply] = Field(default_factory=list, max_length=30)
     memoryContext: LocalPetMemoryContext | None = None
-    replyMaxChars: int | None = Field(default=None, ge=1, le=300)
     nowIso: str | None = Field(default=None, max_length=80)
     timezone: str | None = Field(default=None, max_length=80)
     includeDebug: bool = False

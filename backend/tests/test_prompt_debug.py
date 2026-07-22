@@ -156,6 +156,28 @@ def test_prompt_debug_logs_neutral_response_without_raw_payload(monkeypatch, tmp
     }
 
 
+def test_pet_reply_log_keeps_exact_final_reply_and_context(monkeypatch, tmp_path) -> None:
+    reply_log_path = tmp_path / "pet-replies.jsonl"
+    monkeypatch.setattr(prompt_debug, "PET_REPLY_LOG_PATH", reply_log_path)
+    token = prompt_debug.set_prompt_log_context(
+        {"requestKey": "chat-17", "endpoint": "/api/android/chat"}
+    )
+    try:
+        prompt_debug.log_pet_reply(
+            "chat",
+            "Это длинная, но полностью законченная реплика без обрезки.",
+        )
+    finally:
+        prompt_debug.reset_prompt_log_context(token)
+
+    payload = json.loads(reply_log_path.read_text(encoding="utf-8"))
+    assert payload["event"] == "pet_reply"
+    assert payload["surface"] == "chat"
+    assert payload["requestKey"] == "chat-17"
+    assert payload["reply"] == "Это длинная, но полностью законченная реплика без обрезки."
+    assert payload["replyChars"] == len(payload["reply"])
+
+
 def test_prompt_debug_redacts_prompt_content_by_default(monkeypatch, tmp_path) -> None:
     log_path = tmp_path / "ai-prompts.jsonl"
     monkeypatch.delenv("AI_PROMPT_LOG_FULL", raising=False)

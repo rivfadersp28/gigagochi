@@ -53,7 +53,6 @@ from app.services.pet_reply_engine.recent_events import (
     _recent_story_events_from_pet,
     _select_recent_events_for_text,
 )
-from app.services.pet_reply_engine.reply_limits import MAX_REPLY_CHARS, clamp_reply_text
 from app.services.pet_reply_engine.speech_runtime import (
     age_role_hint,
     ambient_dialogue_impulse,
@@ -73,7 +72,6 @@ from app.services.pet_reply_engine.speech_runtime import (
     state_param_usage_rule,
     surface_prompt,
     transient_context_rule,
-    visible_reply_limit,
     visible_reply_model,
     visible_reply_reasoning_effort,
     world_seed_system_prompt,
@@ -82,6 +80,7 @@ from app.services.prompt_debug import (
     log_ambient_reply_diagnostic,
     log_chat_completion_prompt,
     log_chat_completion_response,
+    log_pet_reply,
 )
 from app.services.temporal_context import format_current_time, format_temporal_reference
 from app.services.tone_runtime import tone_context_payload, tone_prompt_block
@@ -99,11 +98,6 @@ VISIBLE_REPLY_FALLBACKS: dict[PhraseSurface, str] = {
     "proactive": "Я рядом и хочу услышать тебя.",
     "push": "Я рядом. Загляни ко мне?",
 }
-PUSH_REPLY_MAX_CHARS = 120
-PUSH_SENTENCE_RE = re.compile(
-    r".*?(?:[.!?…]+(?:[\"'»”’\)\]\}]*)?(?=\s|$)|$)",
-    re.DOTALL,
-)
 MAX_MEMORY_CONTEXT_ITEMS = 5
 MAX_RECENT_AMBIENT_REPLIES = 30
 MAX_RECENT_HISTORY_MESSAGES = 8
@@ -164,7 +158,6 @@ AMBIENT_RESPONSE_CONTRACT_RE = re.compile(
 @dataclass(frozen=True)
 class PhrasePlan:
     surface: PhraseSurface
-    reply_limit: int
     identity_line: str
     persona_contract: str
     tone_block: str | None = None
@@ -407,16 +400,13 @@ def _remove_gigachat_generic_support_opener(reply: str) -> str:
 
 
 def _visible_reply_response_format(
-    reply_limit: int,
     *,
     include_happiness_delta: bool = False,
 ) -> dict[str, Any]:
-    limit = max(1, min(reply_limit, MAX_REPLY_CHARS))
     properties: dict[str, Any] = {
         "reply": {
             "type": "string",
             "minLength": 1,
-            "maxLength": limit,
         },
         "faceHint": {
             "type": ["string", "null"],
@@ -498,7 +488,7 @@ def _normalize_structured_hint(value: Any, allowed: tuple[str, ...]) -> str | No
     return normalized if normalized in allowed else None
 
 
-def _normalized_visible_reply(value: Any, reply_limit: int) -> str | None:
+def _normalized_visible_reply(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     text = _compact_spaces(value)
@@ -512,28 +502,17 @@ def _normalized_visible_reply(value: Any, reply_limit: int) -> str | None:
         or "MOOD:" in upper_text
     ):
         return None
-    return clamp_reply_text(text, reply_limit)
-
-
-def _limit_push_reply_sentences(value: str) -> str:
-    sentences = [
-        match.group(0).strip()
-        for match in PUSH_SENTENCE_RE.finditer(value.strip())
-        if match.group(0).strip()
-    ]
-    limited = " ".join(sentences[:2]) if sentences else value.strip()
-    return clamp_reply_text(limited, PUSH_REPLY_MAX_CHARS)
+    return text
 
 
 def _fallback_visible_reply_result(
     *,
     surface: PhraseSurface,
-    reply_limit: int,
     raw_reply: str,
     validation_flags: list[str],
     parsed: dict[str, Any] | None = None,
 ) -> VisibleReplyResult:
-    fallback = clamp_reply_text(VISIBLE_REPLY_FALLBACKS[surface], reply_limit)
+    fallback = VISIBLE_REPLY_FALLBACKS[surface]
     debug = {
         "rawResponse": _truncate_text(raw_reply or "", 1000),
         "parsedResponse": parsed,
@@ -563,19 +542,17 @@ def _parse_visible_reply_response(
     raw_reply: str,
     *,
     surface: PhraseSurface,
-    reply_limit: int,
 ) -> VisibleReplyResult:
     validation_flags: list[str] = []
     parsed = _json_record_from_text(raw_reply)
     if not parsed:
         return _fallback_visible_reply_result(
             surface=surface,
-            reply_limit=reply_limit,
             raw_reply=raw_reply,
             validation_flags=["structured_reply_invalid_json"],
         )
 
-    reply = _normalized_visible_reply(parsed.get("reply"), reply_limit)
+    reply = _normalized_visible_reply(parsed.get("reply"))
     if not reply:
         validation_flags.append("structured_reply_invalid_reply")
 
@@ -606,7 +583,6 @@ def _parse_visible_reply_response(
     if not reply:
         return _fallback_visible_reply_result(
             surface=surface,
-            reply_limit=reply_limit,
             raw_reply=raw_reply,
             validation_flags=validation_flags,
             parsed=parsed,
@@ -1499,7 +1475,6 @@ def _identity_line_for_pet(
     surface: PhraseSurface,
     pet: Any,
     description: str,
-    reply_limit: int,
 ) -> str:
     flags = state_layer_surface_flags(surface)
     age_hint = ""
@@ -1514,18 +1489,16 @@ def _identity_line_for_pet(
             "description": description,
             "age_hint": age_hint,
             "state_modifier": state_modifier or "",
-            "reply_limit": str(reply_limit),
         },
     )
     return re.sub(r"[ \t]{2,}", " ", system_content).strip()
 
 
-def _chat_identity_line(payload: LocalChatRequest, reply_limit: int) -> str:
+def _chat_identity_line(payload: LocalChatRequest) -> str:
     system_content = _identity_line_for_pet(
         surface="chat",
         pet=payload.pet,
         description=_short_character_description(payload),
-        reply_limit=reply_limit,
     )
     return system_content
 
@@ -1537,11 +1510,9 @@ def _phrase_plan_for_chat(
     context_routing: ContextRoutingDecision | ContextPlan | None = None,
     recent_events_block: str | None = None,
 ) -> PhrasePlan:
-    reply_limit = visible_reply_limit(payload.replyMaxChars)
     return PhrasePlan(
         surface="chat",
-        reply_limit=reply_limit,
-        identity_line=_chat_identity_line(payload, reply_limit),
+        identity_line=_chat_identity_line(payload),
         persona_contract=surface_prompt("chat"),
         tone_block=None,
         character_block=_combine_character_blocks(
@@ -2343,16 +2314,11 @@ def generate_lite_pet_reply(
     structured_reply_debug: dict[str, Any] | None = None
     structured_reply_used_fallback = False
     structured_reply_validation_flags: list[str] = []
-    reply_limit = visible_reply_limit(payload.replyMaxChars)
-
     for round_index in range(MAX_LITE_TOOL_ROUNDS + 1):
         request_kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "response_format": _visible_reply_response_format(
-                reply_limit,
-                include_happiness_delta=True,
-            ),
+            "response_format": _visible_reply_response_format(include_happiness_delta=True),
             "timeout": timeout,
             **chat_reasoning_effort_kwargs("none" if tools else visible_reply_reasoning_effort()),
         }
@@ -2372,7 +2338,6 @@ def generate_lite_pet_reply(
             structured_reply = _parse_visible_reply_response(
                 completion.content or "",
                 surface="chat",
-                reply_limit=reply_limit,
             )
             reply = structured_reply.reply
             mood_hint = structured_reply.mood_hint
@@ -2414,7 +2379,6 @@ def generate_lite_pet_reply(
     if structured_reply_debug is None:
         structured_reply = _fallback_visible_reply_result(
             surface="chat",
-            reply_limit=reply_limit,
             raw_reply="",
             validation_flags=["structured_reply_missing_final_response"],
         )
@@ -2448,6 +2412,7 @@ def generate_lite_pet_reply(
             storyLibraryDebug=_story_context_debug(context_bundle),
             contextRoutingDebug=context_debug,
         )
+    log_pet_reply("chat", reply)
     return LocalChatResponse(
         reply=reply,
         moodHint=mood_hint,
@@ -2560,15 +2525,12 @@ def build_proactive_messages(
             context_routing=context_plan,
         )
     reason = _reason_from_payload(payload)
-    reply_limit = visible_reply_limit()
     plan = PhrasePlan(
         surface="proactive",
-        reply_limit=reply_limit,
         identity_line=_identity_line_for_pet(
             surface="proactive",
             pet=payload.pet,
             description=_reply_identity_label(payload.pet),
-            reply_limit=reply_limit,
         ),
         persona_contract=surface_prompt("proactive", {"reason": reason}),
         tone_block=None,
@@ -2617,15 +2579,12 @@ def build_push_messages(
             payload=payload,
             context_routing=context_plan,
         )
-    reply_limit = min(PUSH_REPLY_MAX_CHARS, visible_reply_limit())
     plan = PhrasePlan(
         surface="push",
-        reply_limit=reply_limit,
         identity_line=_identity_line_for_pet(
             surface="push",
             pet=payload.pet,
             description=_reply_identity_label(payload.pet),
-            reply_limit=reply_limit,
         ),
         persona_contract=surface_prompt("push", {"reason": _reason_from_payload(payload)}),
         tone_block=None,
@@ -2679,7 +2638,6 @@ def generate_proactive_pet_message(
         context_routing=context_plan,
     )
 
-    reply_limit = visible_reply_limit()
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": build_proactive_messages(
@@ -2687,7 +2645,7 @@ def generate_proactive_pet_message(
             context_bundle=context_bundle,
             context_plan=context_plan,
         ),
-        "response_format": _visible_reply_response_format(reply_limit),
+        "response_format": _visible_reply_response_format(),
         "timeout": timeout,
         **chat_reasoning_effort_kwargs(visible_reply_reasoning_effort()),
     }
@@ -2697,7 +2655,6 @@ def generate_proactive_pet_message(
     structured_reply = _parse_visible_reply_response(
         completion.content or "",
         surface="proactive",
-        reply_limit=reply_limit,
     )
     proactive_candidate = (
         payload.memoryContext.proactiveCandidate if payload.memoryContext else None
@@ -2716,6 +2673,7 @@ def generate_proactive_pet_message(
             storyLibraryDebug=_story_context_debug(context_bundle),
             contextRoutingDebug=context_plan.debug,
         )
+    log_pet_reply("proactive", structured_reply.reply)
     return LocalProactiveResponse(
         reply=structured_reply.reply,
         moodHint=structured_reply.mood_hint,
@@ -2758,7 +2716,6 @@ def generate_push_pet_message(
         context_routing=context_plan,
     )
 
-    reply_limit = min(PUSH_REPLY_MAX_CHARS, visible_reply_limit())
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": build_push_messages(
@@ -2766,7 +2723,7 @@ def generate_push_pet_message(
             context_bundle=context_bundle,
             context_plan=context_plan,
         ),
-        "response_format": _visible_reply_response_format(reply_limit),
+        "response_format": _visible_reply_response_format(),
         "timeout": timeout,
         **chat_reasoning_effort_kwargs(visible_reply_reasoning_effort()),
     }
@@ -2776,12 +2733,7 @@ def generate_push_pet_message(
     structured_reply = _parse_visible_reply_response(
         completion.content or "",
         surface="push",
-        reply_limit=reply_limit,
     )
-    push_reply = _limit_push_reply_sentences(structured_reply.reply)
-    if push_reply != structured_reply.reply:
-        structured_reply.validation_flags.append("push_sentence_limit_applied")
-        structured_reply.debug["normalizedResponse"]["reply"] = push_reply
     debug = None
     if payload.includeDebug:
         debug = LocalChatDebug(
@@ -2793,8 +2745,9 @@ def generate_push_pet_message(
             storyLibraryDebug=_story_context_debug(context_bundle),
             contextRoutingDebug=context_plan.debug,
         )
+    log_pet_reply("push", structured_reply.reply)
     return LocalProactiveResponse(
-        reply=push_reply,
+        reply=structured_reply.reply,
         moodHint=structured_reply.mood_hint,
         innerThought=None,
         faceHint=structured_reply.face_hint,
@@ -2813,7 +2766,6 @@ def build_ambient_messages(
         surface="ambient",
         routing=context_routing,
     )
-    reply_limit = visible_reply_limit(payload.replyMaxChars)
     memory_block = (
         _ambient_memory_context_block(payload.memoryContext)
         if _source_enabled(
@@ -2854,12 +2806,10 @@ def build_ambient_messages(
     )
     plan = PhrasePlan(
         surface="ambient",
-        reply_limit=reply_limit,
         identity_line=_identity_line_for_pet(
             surface="ambient",
             pet=payload.pet,
             description=_reply_identity_label(payload.pet),
-            reply_limit=reply_limit,
         ),
         persona_contract=surface_prompt("ambient", {"recent_replies": ""}),
         tone_block=None,
@@ -2892,8 +2842,8 @@ def build_ambient_messages(
         ambient_request = (
             "Скажи одну компактную реплику владельцу. Используй только доступную "
             "память, текущий контекст или базовые факты внешности. Не изображай "
-            "особую манеру речи или характер. Используй 1–2 законченных предложения "
-            "до 40 символов каждое, без многоточия."
+            "особую манеру речи или характер. Используй 1–2 коротких законченных "
+            "предложения без многоточия."
         )
     return [
         {"role": "system", "content": plan.system_content()},
@@ -2934,7 +2884,6 @@ def generate_ambient_pet_message(
         context_routing=context_plan,
     )
 
-    reply_limit = visible_reply_limit(payload.replyMaxChars)
     request_kwargs: dict[str, Any] = {
         "model": model,
         "messages": build_ambient_messages(
@@ -2942,7 +2891,7 @@ def generate_ambient_pet_message(
             context_bundle=context_bundle,
             context_plan=context_plan,
         ),
-        "response_format": _visible_reply_response_format(reply_limit),
+        "response_format": _visible_reply_response_format(),
         "timeout": timeout,
         **chat_reasoning_effort_kwargs(visible_reply_reasoning_effort()),
     }
@@ -2953,7 +2902,6 @@ def generate_ambient_pet_message(
     structured_reply = _parse_visible_reply_response(
         raw_reply,
         surface="ambient",
-        reply_limit=reply_limit,
     )
     repeated_question = _ambient_repeats_recent_question(
         structured_reply.reply,
@@ -2966,7 +2914,7 @@ def generate_ambient_pet_message(
         if repeated_question:
             retry_reasons.append("повторила вопрос из недавних idle-реплик")
         if truncated_reply:
-            retry_reasons.append("не уместилась в лимит и оборвалась многоточием")
+            retry_reasons.append("оборвалась многоточием")
         if response_contract_leak:
             retry_reasons.append("упомянула служебный формат ответа")
         retry_request_kwargs = {
@@ -2978,8 +2926,8 @@ def generate_ambient_pet_message(
                     "content": (
                         f"{request_kwargs['messages'][-1]['content']}\n\n"
                         f"Первая версия {' и '.join(retry_reasons)}. "
-                        "Сгенерируй реплику заново. Она должна целиком уместиться в лимит, "
-                        "состоять из законченных предложений без многоточия. Если вопрос "
+                        "Сгенерируй реплику заново. Она должна состоять из коротких "
+                        "законченных предложений без многоточия. Если вопрос "
                         "повторился, выбери другой факт, тему, вопрос и начало."
                     ),
                 },
@@ -3001,7 +2949,6 @@ def generate_ambient_pet_message(
         structured_reply = _parse_visible_reply_response(
             raw_reply,
             surface="ambient",
-            reply_limit=reply_limit,
         )
         structured_reply.validation_flags.append("ambient_reply_regenerated")
         if structured_reply.reply.endswith("…"):
@@ -3014,7 +2961,6 @@ def generate_ambient_pet_message(
         if _ambient_mentions_response_contract(structured_reply.reply):
             structured_reply = _fallback_visible_reply_result(
                 surface="ambient",
-                reply_limit=reply_limit,
                 raw_reply=raw_reply,
                 validation_flags=[
                     *structured_reply.validation_flags,
@@ -3045,6 +2991,7 @@ def generate_ambient_pet_message(
                 ),
             },
         )
+    log_pet_reply("ambient", structured_reply.reply)
     return LocalChatResponse(
         reply=structured_reply.reply,
         moodHint=structured_reply.mood_hint,

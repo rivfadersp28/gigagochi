@@ -1907,19 +1907,6 @@
             "title": "Recentambientreplies",
             "type": "array"
           },
-          "replyMaxChars": {
-            "anyOf": [
-              {
-                "maximum": 300.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Replymaxchars"
-          },
           "timezone": {
             "anyOf": [
               {
@@ -2195,19 +2182,6 @@
           },
           "pet": {
             "$ref": "#/components/schemas/LocalPetChatContext"
-          },
-          "replyMaxChars": {
-            "anyOf": [
-              {
-                "maximum": 300.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Replymaxchars"
           },
           "timezone": {
             "anyOf": [

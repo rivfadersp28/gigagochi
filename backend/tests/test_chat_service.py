@@ -266,7 +266,7 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
 
     response = chat_with_local_pet(lite_payload())
 
-    assert response.reply == "Я стою и слушаю. Говори"
+    assert response.reply == "Я стою и слушаю. Говори."
     assert response.debug is not None
     assert len(completions.calls) == 1
     request = completions.calls[0]
@@ -290,9 +290,8 @@ def test_chat_service_uses_lite_prompt_and_raw_text(monkeypatch) -> None:
     assert "При необходимости задай один естественный уточняющий вопрос" in system_message
     assert "Верни только JSON" not in system_message
     assert request["response_format"]["json_schema"]["name"] == "visible_pet_reply"
-    assert (
-        request["response_format"]["json_schema"]["schema"]["properties"]["reply"]["maxLength"]
-        == 120
+    assert "maxLength" not in (
+        request["response_format"]["json_schema"]["schema"]["properties"]["reply"]
     )
     assert request["response_format"]["json_schema"]["schema"]["properties"]["happinessDelta"][
         "enum"
@@ -431,7 +430,7 @@ def test_lite_prompt_includes_age_role_hint() -> None:
     )
 
 
-def test_lite_prompt_uses_request_reply_limit() -> None:
+def test_lite_prompt_ignores_legacy_request_reply_limit() -> None:
     system_message = build_lite_chat_messages(lite_payload(replyMaxChars=40))[0]["content"]
 
     assert "До 40 символов" not in system_message
@@ -565,24 +564,11 @@ def test_speech_runtime_rejects_state_params_auto() -> None:
         raise AssertionError("stateParams=auto must be rejected")
 
 
-def test_visible_reply_limit_uses_runtime_cap_and_honors_lower_request() -> None:
+def test_visible_reply_runtime_keeps_model_and_reasoning_without_character_cap() -> None:
     assert speech_runtime.visible_reply_model() == "gpt-5.4-mini"
     assert speech_runtime.visible_reply_reasoning_effort() == "high"
-    assert speech_runtime.visible_reply_limit() == 120
-    assert speech_runtime.visible_reply_limit(220) == 120
-    assert speech_runtime.visible_reply_limit(40) == 40
-
-
-def test_speech_runtime_rejects_invalid_visible_reply_limit() -> None:
     runtime = json.loads(speech_runtime.DATA_PATH.read_text(encoding="utf-8"))
-    runtime["visibleReply"]["maxChars"] = 301
-
-    try:
-        speech_runtime.validate_speech_runtime_config(runtime)
-    except ValueError as exc:
-        assert "visibleReply.maxChars" in str(exc)
-    else:
-        raise AssertionError("visibleReply.maxChars above schema limit must be rejected")
+    assert "maxChars" not in runtime["visibleReply"]
 
 
 def test_speech_runtime_rejects_invalid_visible_reply_reasoning() -> None:
@@ -1019,7 +1005,7 @@ def test_chat_history_auto_uses_deterministic_context_plan(monkeypatch, tmp_path
     finally:
         speech_runtime.speech_runtime_config.cache_clear()
 
-    assert response.reply == "Я тут"
+    assert response.reply == "Я тут."
     assert len(completions.calls) == 1
     assert response.debug is not None
     assert response.debug.contextRoutingDebug is not None
@@ -1064,7 +1050,7 @@ def test_visible_context_router_is_skipped_without_auto_sources(monkeypatch, tmp
     finally:
         speech_runtime.speech_runtime_config.cache_clear()
 
-    assert response.reply == "Без лишнего контекста"
+    assert response.reply == "Без лишнего контекста."
     assert len(completions.calls) == 1
     assert completions.calls[0]["messages"][0]["content"].startswith("Ты Громм.")
     assert response.debug is not None
@@ -1136,13 +1122,12 @@ def test_speech_runtime_config_controls_reply_and_extractor_prompts(
     assert "Recent event canonical facts" in extraction_messages[0]["content"]
 
 
-def test_lite_clamps_reply_to_runtime_limit() -> None:
+def test_lite_preserves_long_complete_reply() -> None:
     client, _completions = fake_lite_client(SimpleNamespace(content="а" * 420, tool_calls=None))
 
     response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
 
-    assert len(response.reply) <= 120
-    assert response.reply.endswith("…")
+    assert response.reply == "а" * 420
 
 
 def test_lite_reads_structured_face_and_mood_hints() -> None:
@@ -1164,7 +1149,7 @@ def test_lite_reads_structured_face_and_mood_hints() -> None:
 
     response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
 
-    assert response.reply == "Я рядом, слышу тебя"
+    assert response.reply == "Я рядом, слышу тебя."
     assert response.innerThought is None
     assert response.faceHint == "content"
     assert response.moodHint == "happy"
@@ -1198,11 +1183,11 @@ def test_lite_removes_gigachat_generic_support_opener() -> None:
         timeout=10,
     )
 
-    assert response.reply == "Тебя зовут Серега"
+    assert response.reply == "Тебя зовут Серега."
     assert response.debug is not None
     assert "gigachat_generic_support_opener_removed" in response.debug.validationFlags
     assert response.debug.structuredReplyDebug["normalizedResponse"]["reply"] == (
-        "Тебя зовут Серега"
+        "Тебя зовут Серега."
     )
 
 
@@ -1269,7 +1254,7 @@ def test_lite_uses_safe_fallback_for_invalid_structured_reply() -> None:
 
     response = generate_lite_pet_reply(lite_payload(), client=client, model="gpt-5.5", timeout=10)
 
-    assert response.reply == "Я рядом"
+    assert response.reply == "Я рядом."
     assert response.debug is not None
     assert response.debug.usedFallback is True
     assert response.debug.validationFlags == ["structured_reply_invalid_json"]
@@ -1287,7 +1272,7 @@ def test_lite_omits_debug_when_not_requested() -> None:
         timeout=10,
     )
 
-    assert response.reply == "Я рядом"
+    assert response.reply == "Я рядом."
     assert response.debug is None
 
 
@@ -1822,7 +1807,7 @@ def test_ambient_generation_returns_story_context_debug() -> None:
     )
 
     assert len(completions.calls) == 1
-    assert response.reply == "Лист шепчет: крошка сегодня светится"
+    assert response.reply == "Лист шепчет: крошка сегодня светится."
     assert response.debug is not None
     assert response.debug.storyLibraryDebug is not None
     assert response.debug.storyLibraryDebug["mode"] == "ambient"
@@ -1943,7 +1928,7 @@ def test_lite_tools_do_not_expose_character_json() -> None:
         timeout=10,
     )
 
-    assert response.reply == "Я ем мокрую глину после дождя"
+    assert response.reply == "Я ем мокрую глину после дождя."
     assert len(completions.calls) == 1
     assert "tools" not in completions.calls[0]
     assert completions.calls[0]["reasoning_effort"] == "high"
@@ -1965,7 +1950,7 @@ def test_lite_story_library_context_is_disabled_without_story_tools() -> None:
     )
 
     assert len(completions.calls) == 1
-    assert response.reply == "Да, но они чаще странные, чем злые"
+    assert response.reply == "Да, но они чаще странные, чем злые."
     request = completions.calls[0]
     system_message = request["messages"][0]["content"]
     assert "WORLD_CONTEXT" not in system_message
@@ -2024,7 +2009,7 @@ def test_lite_character_profile_uses_core_but_not_unselected_durable_facts() -> 
         timeout=10,
     )
 
-    assert response.reply == "Я Громм, каменный и спокойный"
+    assert response.reply == "Я Громм, каменный и спокойный."
     system_message = completions.calls[0]["messages"][0]["content"]
     assert "CHARACTER_PROFILE" not in system_message
     assert "гигантский земляной великан" in system_message
@@ -2124,7 +2109,7 @@ def test_lite_tool_updates_pet_name() -> None:
     )
 
     assert len(completions.calls) == 2
-    assert response.reply == "Дружок звучит тепло"
+    assert response.reply == "Дружок звучит тепло."
     assert response.petPatch is not None
     assert response.petPatch.name == "Дружок"
     assert response.debug is not None
@@ -2181,7 +2166,7 @@ def test_lite_world_tool_bootstrap_is_disabled() -> None:
         timeout=10,
     )
 
-    assert response.reply == "Я сам решу, где мой дом"
+    assert response.reply == "Я сам решу, где мой дом."
     assert response.debug is not None
     assert response.debug.liteToolCalls == []
     assert response.debug.liteOverlayPatch is None
@@ -2498,7 +2483,7 @@ def test_memory_consolidation_promotes_learning() -> None:
     assert response.debug.memoryDebug["consolidationOperations"] == response.operations
 
 
-def test_proactive_reply_is_clamped() -> None:
+def test_proactive_reply_is_not_clamped() -> None:
     client, _completions = fake_lite_client(SimpleNamespace(content="б" * 420, tool_calls=None))
 
     response = generate_proactive_pet_message(
@@ -2526,7 +2511,6 @@ def test_proactive_reply_is_clamped() -> None:
         timeout=10,
     )
 
-    assert len(response.reply) <= 120
-    assert response.reply.endswith("…")
+    assert response.reply == "б" * 420
     assert response.debug is not None
     assert response.debug.memoryDebug["selectedMemoryIds"] == ["m1"]
