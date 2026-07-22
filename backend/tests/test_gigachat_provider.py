@@ -422,6 +422,50 @@ def test_gigachat_35_structured_output_uses_system_json_contract_without_functio
     }
 
 
+def test_blacklist_notice_is_not_promoted_to_structured_reply() -> None:
+    refusal = (
+        "Генеративные языковые модели не обладают собственным мнением. "
+        "Разговоры на чувствительные темы могут быть ограничены."
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/token":
+            return httpx.Response(200, json={"tok": "token"})
+        return httpx.Response(
+            200,
+            json={
+                "model": "GigaChat-3.5-432B-A28B",
+                "choices": [
+                    {
+                        "finish_reason": "blacklist",
+                        "message": {"role": "assistant", "content": refusal},
+                    }
+                ],
+            },
+        )
+
+    response = _provider(
+        handler,
+        default_model="GigaChat-3.5-432B-A28B",
+    ).complete(
+        LLMRequest(
+            messages=[{"role": "user", "content": "чувствительная тема"}],
+            structured_output=StructuredOutputSchema(
+                name="visible_pet_reply",
+                schema={
+                    "type": "object",
+                    "properties": {"reply": {"type": "string"}},
+                    "required": ["reply"],
+                },
+            ),
+        )
+    )
+
+    assert response.finish_reason == "blacklist"
+    assert response.content is None
+    assert response.tool_calls == ()
+
+
 def test_gigachat_35_omits_reasoning_effort() -> None:
     payloads: list[dict] = []
 

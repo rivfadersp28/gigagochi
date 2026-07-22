@@ -1281,8 +1281,6 @@ export interface components {
             readonly pet: components["schemas"]["LocalPetChatContext"];
             /** Recentambientreplies */
             readonly recentAmbientReplies?: readonly string[];
-            /** Replymaxchars */
-            readonly replyMaxChars?: number | null;
             /** Timezone */
             readonly timezone?: string | null;
         };
@@ -1376,8 +1374,6 @@ export interface components {
             /** Nowiso */
             readonly nowIso?: string | null;
             readonly pet: components["schemas"]["LocalPetChatContext"];
-            /** Replymaxchars */
-            readonly replyMaxChars?: number | null;
             /** Timezone */
             readonly timezone?: string | null;
             readonly visibleContext?: components["schemas"]["LocalVisibleContext"] | null;

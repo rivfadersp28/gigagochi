@@ -1,0 +1,36 @@
+{
+  "bundleId": "provider-comparison-20260720",
+  "character": "унитаз",
+  "generatedAt": "2026-07-20T10:01:08.631806+00:00",
+  "imageModel": "kandinsky",
+  "interactiveStoryStart": {
+    "animatedVariants": [],
+    "choices": [
+      "Кислород",
+      "Углекислый газ",
+      "Азот",
+      "Водород"
+    ],
+    "correctChoice": "Кислород",
+    "imagePath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/interactive-travel-0845f93f69355193b8b18b3b8e9e74fa/interactive-travel-part-01.png",
+    "imageUrl": "/static/generated/interactive-travel-0845f93f69355193b8b18b3b8e9e74fa/interactive-travel-part-01.png",
+    "question": "Какой газ в пене?",
+    "storyText": "Я оказался в лаборатории. Я увидел, как дрожжи вспенили слабую перекись водорода. Чтобы выбрать сосуд с нужным газом и открыть замок, нужно определить состав пузырьков.",
+    "title": "Пена с кислородом",
+    "videoPath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/interactive-travel-0845f93f69355193b8b18b3b8e9e74fa/interactive-travel-part-01.mp4",
+    "videoUrl": "/static/generated/interactive-travel-0845f93f69355193b8b18b3b8e9e74fa/interactive-travel-part-01.mp4"
+  },
+  "normal": {
+    "imagePath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/34c5fcc1-c26f-5933-9fbd-8d144126d784/teen-idle.png",
+    "imageUrl": "/static/generated/34c5fcc1-c26f-5933-9fbd-8d144126d784/teen-idle.png",
+    "videoPath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/34c5fcc1-c26f-5933-9fbd-8d144126d784/teen-idle.mp4",
+    "videoUrl": "/static/generated/34c5fcc1-c26f-5933-9fbd-8d144126d784/teen-idle.mp4"
+  },
+  "outfit": {
+    "imagePath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/7c555d77-fb61-5ca1-afb3-93ca1708b386/teen-idle.png",
+    "imageUrl": "/static/generated/7c555d77-fb61-5ca1-afb3-93ca1708b386/teen-idle.png",
+    "request": "Одень персонажа в футболку Iron Maiden."
+  },
+  "provider": "kandinsky",
+  "videoModel": "kandinsky"
+}

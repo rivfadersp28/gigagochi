@@ -76,6 +76,7 @@ _PROMPT_JSON_CONTRACT_MESSAGE = (
     "Верни только JSON object без markdown, без пояснений и без текста вне JSON. "
     "JSON schema: {schema}"
 )
+_CONTENT_FILTER_FINISH_REASONS = frozenset({"blacklist", "content_filter"})
 
 
 def _required_text(value: Any, *, field_name: str) -> str:
@@ -935,6 +936,11 @@ class GigaChatProvider:
         choice = choices[0]
         if not isinstance(choice, Mapping):
             raise GigaChatResponseError("GigaChat completion choice must be an object")
+        finish_reason_value = choice.get("finish_reason")
+        finish_reason = str(finish_reason_value) if finish_reason_value is not None else None
+        content_filtered = bool(
+            finish_reason and finish_reason.strip().casefold() in _CONTENT_FILTER_FINISH_REASONS
+        )
         message = choice.get("message")
         if not isinstance(message, Mapping):
             raise GigaChatResponseError("GigaChat completion choice has no message")
@@ -990,7 +996,13 @@ class GigaChatProvider:
         content = structured_content
         if content is None:
             content = _content_text(message.get("content"))
-        if request.structured_output is not None and not tool_calls:
+        if content_filtered:
+            # GigaChat can return a natural-language moderation notice together with
+            # finish_reason=blacklist. It is provider metadata, not assistant output,
+            # and must never be promoted into a structured visible reply.
+            content = None
+            tool_calls = []
+        elif request.structured_output is not None and not tool_calls:
             if content is None:
                 raise GigaChatResponseError("GigaChat returned no structured output")
             try:
@@ -1019,8 +1031,6 @@ class GigaChatProvider:
                 total_tokens=_optional_int(usage_value.get("total_tokens")),
             )
 
-        finish_reason_value = choice.get("finish_reason")
-        finish_reason = str(finish_reason_value) if finish_reason_value is not None else None
         if finish_reason == "function_call":
             finish_reason = "tool_calls" if tool_calls else "stop"
         model_value = body.get("model")

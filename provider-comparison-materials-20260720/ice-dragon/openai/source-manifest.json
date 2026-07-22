@@ -1,0 +1,36 @@
+{
+  "bundleId": "provider-comparison-20260720",
+  "character": "ледяной дракон",
+  "generatedAt": "2026-07-20T09:29:56.940840+00:00",
+  "imageModel": "gpt-image-2",
+  "interactiveStoryStart": {
+    "animatedVariants": [],
+    "choices": [
+      "Пигменты пищи",
+      "Розовая вода",
+      "Солнечный свет",
+      "Цветная пыль"
+    ],
+    "correctChoice": "Пигменты пищи",
+    "imagePath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/interactive-travel-ceada62c31c857d88ebab64c43af14d3/interactive-travel-part-01.png",
+    "imageUrl": "/static/generated/interactive-travel-ceada62c31c857d88ebab64c43af14d3/interactive-travel-part-01.png",
+    "question": "Что окрашивает перья?",
+    "storyText": "Я оказался у птичьего пруда. Я увидел серого птенца рядом с розовыми взрослыми птицами. Чтобы правильно подобрать ему корм и продолжить путь, нужно понять источник цвета.",
+    "title": "Розовые перья",
+    "videoPath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/interactive-travel-ceada62c31c857d88ebab64c43af14d3/interactive-travel-part-01.mp4",
+    "videoUrl": "/static/generated/interactive-travel-ceada62c31c857d88ebab64c43af14d3/interactive-travel-part-01.mp4"
+  },
+  "normal": {
+    "imagePath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/021220cf-fbda-5f57-82e6-1271ce568771/teen-idle.png",
+    "imageUrl": "/static/generated/021220cf-fbda-5f57-82e6-1271ce568771/teen-idle.png",
+    "videoPath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/021220cf-fbda-5f57-82e6-1271ce568771/teen-idle.mp4",
+    "videoUrl": "/static/generated/021220cf-fbda-5f57-82e6-1271ce568771/teen-idle.mp4"
+  },
+  "outfit": {
+    "imagePath": "/Users/sergejegorov/tamagochi_tlg/tamagochi-main/backend/static/generated/a40f0efa-8100-5add-8c2b-3780853ecb23/teen-idle.png",
+    "imageUrl": "/static/generated/a40f0efa-8100-5add-8c2b-3780853ecb23/teen-idle.png",
+    "request": "Одень персонажа в футболку Iron Maiden."
+  },
+  "provider": "openai",
+  "videoModel": "bytedance/seedance-2.0"
+}
