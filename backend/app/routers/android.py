@@ -17,6 +17,7 @@ from app.dependencies import get_google_account_identity
 from app.schemas import (
     GeneratePetJobResponse,
     InteractiveTravelResult,
+    LocalAmbientRequest,
     LocalChatRequest,
     LocalChatResponse,
     LocalPetChatContext,
@@ -56,7 +57,10 @@ from app.services.outfit_service import (
     encode_outfit_generation_description,
     simplify_outfit_request,
 )
-from app.services.pet_reply_engine.lite_generator import generate_proactive_pet_message
+from app.services.pet_reply_engine.lite_generator import (
+    generate_ambient_pet_message,
+    generate_proactive_pet_message,
+)
 from app.services.pet_reply_engine.memory_operations import (
     consolidate_user_memory,
     extract_user_memory_operations,
@@ -174,6 +178,11 @@ class AndroidGenerationJobEnvelope(BaseModel):
 
 
 class AndroidChatRequest(LocalChatRequest):
+    model_config = ConfigDict(extra="forbid")
+    requestKey: RequestKey
+
+
+class AndroidAmbientRequest(LocalAmbientRequest):
     model_config = ConfigDict(extra="forbid")
     requestKey: RequestKey
 
@@ -824,6 +833,46 @@ def chat(
         store,
         owner=owner,
         operation="chat",
+        request_key=payload.requestKey,
+        payload=request_payload,
+        response=result,
+    )
+    return result
+
+
+@router.post("/ambient", response_model=LocalChatResponse, include_in_schema=False)
+def ambient(
+    payload: AndroidAmbientRequest,
+    response: Response,
+    identity: GoogleIdentity,
+    store: FeatureStore,
+) -> LocalChatResponse:
+    _no_store(response)
+    owner = _owner(identity)
+    request_payload = _request_payload(payload)
+    attempt = _begin_sync(
+        store,
+        owner=owner,
+        operation="ambient",
+        request_key=payload.requestKey,
+        payload=request_payload,
+    )
+    if attempt.response_json is not None:
+        return LocalChatResponse.model_validate_json(attempt.response_json)
+    _check_rate_limit_before_downstream(
+        store,
+        attempt=attempt,
+        owner=owner,
+        operation="ambient",
+        request_key=payload.requestKey,
+        bucket="chat",
+    )
+    request = LocalAmbientRequest.model_validate(payload.model_dump(exclude={"requestKey"}))
+    result = generate_ambient_pet_message(request)
+    _commit_model(
+        store,
+        owner=owner,
+        operation="ambient",
         request_key=payload.requestKey,
         payload=request_payload,
         response=result,

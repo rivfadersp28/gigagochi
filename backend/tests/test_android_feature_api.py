@@ -124,6 +124,45 @@ def test_sync_completed_replay_is_exact_and_conflicting_payload_is_rejected(
     assert calls == 1
 
 
+def test_android_ambient_is_idempotent_and_forwards_memory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    store = AndroidFeatureStore(tmp_path / "android.sqlite3")
+    calls = []
+
+    def provider(payload):
+        calls.append(payload)
+        return LocalChatResponse(reply="Сергей, я заметил смешное облако.")
+
+    monkeypatch.setattr(android, "generate_ambient_pet_message", provider)
+    monkeypatch.setattr(android, "_check_rate_limit", lambda *_args, **_kwargs: None)
+    payload = android.AndroidAmbientRequest.model_validate(
+        {
+            "requestKey": KEY,
+            "pet": pet().model_dump(mode="json"),
+            "recentAmbientReplies": ["Вчера я смотрел на дождь."],
+            "memoryContext": {
+                "relevantMemories": [
+                    {
+                        "id": "owner-name",
+                        "kind": "user_fact",
+                        "text": "Пользователя зовут Сергей.",
+                    }
+                ]
+            },
+        }
+    )
+
+    first = android.ambient(payload, Response(), identity(), store)
+    replay = android.ambient(payload, Response(), identity(), store)
+
+    assert first == replay == LocalChatResponse(reply="Сергей, я заметил смешное облако.")
+    assert len(calls) == 1
+    assert calls[0].memoryContext is not None
+    assert calls[0].memoryContext.relevantMemories[0].text == "Пользователя зовут Сергей."
+
+
 @pytest.mark.parametrize("kind", ["character_travel", "character_outfit"])
 def test_android_chat_accepts_character_experience_memory(kind: str) -> None:
     payload = android.AndroidChatRequest.model_validate(
