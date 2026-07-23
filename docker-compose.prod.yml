@@ -48,7 +48,8 @@ services:
       TMPDIR: /app/static/generated/.private/processing-tmp
       BACKEND_INTERNAL_URL: http://backend:8000
       ALLOW_DEV_TMA_AUTH: "false"
-      ENABLE_IN_MEMORY_RATE_LIMIT: "false"
+      # Legacy flag name; the implementation is durable SQLite and cross-process.
+      ENABLE_IN_MEMORY_RATE_LIMIT: "true"
       STORAGE_HEALTH_MIN_FREE_BYTES: "${STORAGE_HEALTH_MIN_FREE_BYTES:-1073741824}"
       STORAGE_HEALTH_MIN_FREE_PERCENT: "${STORAGE_HEALTH_MIN_FREE_PERCENT:-5}"
       STORAGE_HEALTH_PROBE_CACHE_SECONDS: "${STORAGE_HEALTH_PROBE_CACHE_SECONDS:-10}"
@@ -115,7 +116,8 @@ services:
     environment:
       TMPDIR: /app/static/generated/.private/processing-tmp
       BACKEND_INTERNAL_URL: http://backend:8000
-      ENABLE_IN_MEMORY_RATE_LIMIT: "false"
+      # Legacy flag name; the implementation is durable SQLite and cross-process.
+      ENABLE_IN_MEMORY_RATE_LIMIT: "true"
       STORAGE_HEALTH_MIN_FREE_BYTES: "${STORAGE_HEALTH_MIN_FREE_BYTES:-1073741824}"
       STORAGE_HEALTH_MIN_FREE_PERCENT: "${STORAGE_HEALTH_MIN_FREE_PERCENT:-5}"
       STORAGE_HEALTH_PROBE_CACHE_SECONDS: "${STORAGE_HEALTH_PROBE_CACHE_SECONDS:-10}"

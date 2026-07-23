@@ -15,6 +15,7 @@ SQLITE_BUSY_TIMEOUT_MS = 5_000
 REQUEST_IN_PROGRESS_MAX_AGE_MS = 5 * 60 * 1_000
 SCHEDULED_STORY_RETRY_DELAY_MS = 15 * 60 * 1_000
 SCHEDULED_STORY_MAX_ATTEMPTS = 3
+PRIVACY_ACTIVE_WORK_MAX_AGE_MS = 30 * 60 * 1_000
 
 
 class AndroidFeatureIdempotencyConflictError(RuntimeError):
@@ -26,6 +27,10 @@ class AndroidFeatureSessionBusyError(RuntimeError):
 
 
 class AndroidFeatureSessionOutcomeUnknownError(RuntimeError):
+    pass
+
+
+class AndroidFeatureOwnerDeletionBusyError(RuntimeError):
     pass
 
 
@@ -509,6 +514,101 @@ class AndroidFeatureStore:
                 connection.rollback()
                 raise
         return self.read_scheduled_story(owner=owner, story_id=story_id)
+
+    def delete_owner(self, owner: FeatureOwner) -> tuple[str, ...]:
+        """Delete owner-bound requests/stories and return media-bearing JSON values."""
+
+        owner_key = self._owner_key(owner)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._assert_owner_not_busy(connection, owner_key)
+                request_rows = connection.execute(
+                    """
+                    SELECT response_json FROM android_feature_requests
+                    WHERE owner_key = ? AND response_json IS NOT NULL
+                    """,
+                    (owner_key,),
+                ).fetchall()
+                story_rows = connection.execute(
+                    """
+                    SELECT episode_json, result_json FROM android_scheduled_stories
+                    WHERE owner_key = ?
+                    """,
+                    (owner_key,),
+                ).fetchall()
+                connection.execute(
+                    "DELETE FROM android_feature_requests WHERE owner_key = ?",
+                    (owner_key,),
+                )
+                connection.execute(
+                    "DELETE FROM android_scheduled_stories WHERE owner_key = ?",
+                    (owner_key,),
+                )
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
+        values = [str(row[0]) for row in request_rows if row[0] is not None]
+        values.extend(
+            str(value)
+            for row in story_rows
+            for value in row
+            if value is not None
+        )
+        return tuple(values)
+
+    def owner_values_for_deletion(self, owner: FeatureOwner) -> tuple[str, ...]:
+        owner_key = self._owner_key(owner)
+        with self._connect() as connection:
+            self._assert_owner_not_busy(connection, owner_key)
+            request_rows = connection.execute(
+                """
+                SELECT response_json FROM android_feature_requests
+                WHERE owner_key = ? AND response_json IS NOT NULL
+                """,
+                (owner_key,),
+            ).fetchall()
+            story_rows = connection.execute(
+                """
+                SELECT episode_json, result_json FROM android_scheduled_stories
+                WHERE owner_key = ?
+                """,
+                (owner_key,),
+            ).fetchall()
+        values = [str(row[0]) for row in request_rows if row[0] is not None]
+        values.extend(
+            str(value)
+            for row in story_rows
+            for value in row
+            if value is not None
+        )
+        return tuple(values)
+
+    @staticmethod
+    def _assert_owner_not_busy(
+        connection: sqlite3.Connection,
+        owner_key: str,
+    ) -> None:
+        cutoff = int(time.time() * 1_000) - PRIVACY_ACTIVE_WORK_MAX_AGE_MS
+        active_request = connection.execute(
+            """
+            SELECT 1 FROM android_feature_requests
+            WHERE owner_key = ? AND state = 'in_progress' AND updated_at_ms >= ?
+            LIMIT 1
+            """,
+            (owner_key, cutoff),
+        ).fetchone()
+        active_story = connection.execute(
+            """
+            SELECT 1 FROM android_scheduled_stories
+            WHERE owner_key = ? AND state = 'generating' AND updated_at_ms >= ?
+            LIMIT 1
+            """,
+            (owner_key, cutoff),
+        ).fetchone()
+        if active_request is not None or active_story is not None:
+            raise AndroidFeatureOwnerDeletionBusyError(owner_key)
 
     @staticmethod
     def _story_record(row: sqlite3.Row | tuple[Any, ...]) -> AndroidScheduledStoryRecord:
