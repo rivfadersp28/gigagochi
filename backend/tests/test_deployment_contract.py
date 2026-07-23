@@ -1,4 +1,6 @@
+import hashlib
 import re
+import ssl
 import stat
 import subprocess
 from pathlib import Path
@@ -8,6 +10,38 @@ import yaml
 from app.config import Settings
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_gigachat_trusted_root_is_pinned_mounted_and_configured() -> None:
+    repository_root = BACKEND_ROOT.parent
+    ca_path = repository_root / "deploy/ca/gigachat-ca.pem"
+    ca_bytes = ca_path.read_bytes()
+
+    assert ca_bytes.startswith(b"-----BEGIN CERTIFICATE-----\n")
+    assert ca_bytes.endswith(b"-----END CERTIFICATE-----\n")
+    certificate_der = ssl.PEM_cert_to_DER_cert(ca_bytes.decode("ascii"))
+    assert hashlib.sha256(certificate_der).hexdigest() == (
+        "d26d2d0231b7c39f92cc738512ba54103519e4405d68b5bd703e9788ca8ecf31"
+    )
+
+    expected_mount = "./deploy/ca:/app/ca:ro"
+    compose = yaml.safe_load(
+        (repository_root / "docker-compose.prod.yml").read_text(encoding="utf-8")
+    )
+    for service_name in ("backend", "bot"):
+        assert expected_mount in compose["services"][service_name]["volumes"]
+
+    for env_example in (
+        BACKEND_ROOT / ".env.example",
+        repository_root / "deploy/backend.env.production.example",
+    ):
+        values = dict(
+            line.split("=", maxsplit=1)
+            for line in env_example.read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#") and "=" in line
+        )
+        assert values["GIGACHAT_SSL_VERIFY"] == "true"
+        assert values["GIGACHAT_CA_BUNDLE"] == "/app/ca/gigachat-ca.pem"
 
 
 def test_backend_mounts_existing_test_pet_references_read_only() -> None:

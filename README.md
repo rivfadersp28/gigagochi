@@ -148,9 +148,10 @@ docker compose --env-file .env.production -f docker-compose.prod.yml \
 После успешного health всё равно отправьте одну тестовую реплику: endpoint не
 делает платный сетевой запрос и не может заранее проверить валидность ключа.
 
-TLS-проверка GigaChat включена. Для своего центра сертификации положите CA-файл
-в `deploy/ca/` и задайте контейнерный путь, например
-`GIGACHAT_CA_BUNDLE=/app/ca/gigachat-ca.pem`, а не отключайте проверку.
+TLS-проверка GigaChat включена. Официальный `Russian Trusted Root CA` уже
+добавлен в `deploy/ca/gigachat-ca.pem` и монтируется в контейнеры. Задайте
+`GIGACHAT_CA_BUNDLE=/app/ca/gigachat-ca.pem`; не отключайте проверку
+сертификатов.
 
 Профиль может задавать один provider/model по умолчанию и переопределения по
 задачам. Для модели, поддерживаемой LiteLLM, установите опциональный transport:
