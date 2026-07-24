@@ -534,6 +534,72 @@ def test_definite_http_rejection_releases_admission_before_retry(
     assert submit_calls == 2
 
 
+def test_embedded_http_rejection_releases_admission_and_redacts_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    receipt_path = tmp_path / "provider-receipts.sqlite3"
+    settings = _openrouter_settings()
+    settings.provider_task_receipt_store_path = str(receipt_path)
+    submit_calls = 0
+
+    def submit(*_args, **_kwargs):
+        nonlocal submit_calls
+        submit_calls += 1
+        if submit_calls == 1:
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", "https://openrouter.ai/api/v1/videos"),
+                json={
+                    "error": {
+                        "code": 400,
+                        "message": "private provider moderation detail request-id-secret",
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", "https://openrouter.ai/api/v1/videos"),
+            json={"id": "accepted-after-embedded-rejection", "status": "queued"},
+        )
+
+    monkeypatch.setattr("app.services.image_service.get_settings", lambda: settings)
+    monkeypatch.setattr("app.services.image_service._submit_openrouter_video_job", submit)
+    monkeypatch.setattr(
+        "app.services.image_service._poll_openrouter_video_job",
+        lambda *_args, **_kwargs: {"status": "completed"},
+    )
+    monkeypatch.setattr(
+        "app.services.image_service._download_openrouter_video_bytes",
+        lambda *_args, **_kwargs: b"accepted",
+    )
+
+    with pytest.raises(OpenRouterVideoHTTPError) as rejected:
+        generate_openrouter_video_bytes(
+            None,
+            source_bytes=b"moderated",
+            label="story/video",
+        )
+    assert rejected.value.status_code == 400
+    assert "private provider moderation detail" not in str(rejected.value)
+    assert "request-id-secret" not in str(rejected.value)
+
+    with sqlite3.connect(receipt_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM provider_tasks WHERE state = 'admitted'"
+        ).fetchone() == (0,)
+
+    assert (
+        generate_openrouter_video_bytes(
+            None,
+            source_bytes=b"moderated",
+            label="story/video",
+        )
+        == b"accepted"
+    )
+    assert submit_calls == 2
+
+
 def test_generation_orphan_admission_blocks_every_retry() -> None:
     fingerprint = provider_task_payload_fingerprint({"prompt": "ambiguous"})
 
