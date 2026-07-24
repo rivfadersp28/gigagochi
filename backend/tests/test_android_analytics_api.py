@@ -56,9 +56,7 @@ def _client(tmp_path: Path, monkeypatch: Any) -> tuple[TestClient, RecordingForw
     forwarder = RecordingForwarder()
     identity = GoogleUserIdentity(1, "acct-test", "guest:test", None, None)
     app.dependency_overrides[get_google_account_identity] = lambda: identity
-    app.dependency_overrides[android_analytics.get_android_analytics_forwarder] = (
-        lambda: forwarder
-    )
+    app.dependency_overrides[android_analytics.get_android_analytics_forwarder] = lambda: forwarder
     monkeypatch.setattr(
         android_analytics,
         "get_settings",
@@ -89,27 +87,32 @@ def test_android_analytics_accepts_only_strict_bounded_events(
     assert forwarder.accepted[0][0] == "acct-test"
 
     invalid = _event(properties={"prompt": "private"})
-    assert client.post(
-        "/api/android/analytics/events",
-        json={"schemaVersion": 1, "events": [invalid]},
-    ).status_code == 422
-    assert client.post(
-        "/api/android/analytics/events",
-        json={"schemaVersion": 1, "events": [_event(extra="forbidden")]},
-    ).status_code == 422
-    assert client.post(
-        "/api/android/analytics/events",
-        json={
-            "schemaVersion": 1,
-            "events": [
-                _event(
-                    occurredAtEpochMillis=int(
-                        (time.time() - 9 * 24 * 60 * 60) * 1_000
-                    )
-                )
-            ],
-        },
-    ).status_code == 422
+    assert (
+        client.post(
+            "/api/android/analytics/events",
+            json={"schemaVersion": 1, "events": [invalid]},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/android/analytics/events",
+            json={"schemaVersion": 1, "events": [_event(extra="forbidden")]},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/android/analytics/events",
+            json={
+                "schemaVersion": 1,
+                "events": [
+                    _event(occurredAtEpochMillis=int((time.time() - 9 * 24 * 60 * 60) * 1_000))
+                ],
+            },
+        ).status_code
+        == 422
+    )
 
 
 def test_forwarder_deduplicates_and_prioritizes_deletion(tmp_path: Path) -> None:

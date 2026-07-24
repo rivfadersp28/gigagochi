@@ -550,12 +550,7 @@ class AndroidFeatureStore:
                 connection.rollback()
                 raise
         values = [str(row[0]) for row in request_rows if row[0] is not None]
-        values.extend(
-            str(value)
-            for row in story_rows
-            for value in row
-            if value is not None
-        )
+        values.extend(str(value) for row in story_rows for value in row if value is not None)
         return tuple(values)
 
     def owner_values_for_deletion(self, owner: FeatureOwner) -> tuple[str, ...]:
@@ -577,12 +572,7 @@ class AndroidFeatureStore:
                 (owner_key,),
             ).fetchall()
         values = [str(row[0]) for row in request_rows if row[0] is not None]
-        values.extend(
-            str(value)
-            for row in story_rows
-            for value in row
-            if value is not None
-        )
+        values.extend(str(value) for row in story_rows for value in row if value is not None)
         return tuple(values)
 
     @staticmethod

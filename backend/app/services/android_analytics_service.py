@@ -79,9 +79,7 @@ class AndroidAnalyticsOutbox:
                 )
                 deletion_columns = {
                     str(row[1])
-                    for row in connection.execute(
-                        "PRAGMA table_info(android_analytics_deletions)"
-                    )
+                    for row in connection.execute("PRAGMA table_info(android_analytics_deletions)")
                 }
                 if "completed_at" not in deletion_columns:
                     connection.execute(
