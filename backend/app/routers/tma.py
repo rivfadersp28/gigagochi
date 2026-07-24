@@ -138,6 +138,7 @@ from app.services.ops_alert_service import notify_ops
 from app.services.outfit_service import (
     encode_outfit_generation_description,
     generate_outfit_image_asset_set,
+    generate_outfit_mood_video_with_retry,
     generated_outfit_mood_path,
     is_outfit_generation_description,
     is_outfit_image_set,
@@ -918,7 +919,13 @@ def _generation_job_service() -> GenerationJobService:
                 )
             ),
             generate_background_video=lambda image_set, sad_scene_path: (
-                generate_pet_sad_video_for_image_asset_set(image_set, sad_scene_path)
+                generate_outfit_mood_video_with_retry(
+                    image_set,
+                    "sad",
+                    generate_pet_sad_video_for_image_asset_set,
+                )
+                if is_outfit_image_set(image_set)
+                else generate_pet_sad_video_for_image_asset_set(image_set, sad_scene_path)
             ),
             generate_happy_image=lambda image_set, image_provider: (
                 generated_outfit_mood_path(image_set, "happy")
@@ -929,7 +936,13 @@ def _generation_job_service() -> GenerationJobService:
                 )
             ),
             generate_happy_video=lambda image_set, happy_scene_path: (
-                generate_pet_happy_video_for_image_asset_set(image_set, happy_scene_path)
+                generate_outfit_mood_video_with_retry(
+                    image_set,
+                    "happy",
+                    generate_pet_happy_video_for_image_asset_set,
+                )
+                if is_outfit_image_set(image_set)
+                else generate_pet_happy_video_for_image_asset_set(image_set, happy_scene_path)
             ),
             build_response=build_pet_asset_set_response,
             build_failure=_build_generation_failure,
