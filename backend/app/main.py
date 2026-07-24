@@ -16,7 +16,8 @@ from app.llm.runtime import llm_runtime_status
 from app.media.runtime import media_runtime_status
 from app.middleware import RequestBodyLimitMiddleware
 from app.public_media import PublicMediaStaticFiles
-from app.routers import android, auth, local_admin, tma
+from app.routers import android, android_analytics, android_privacy, auth, local_admin, tma
+from app.services.android_analytics_service import analytics_flush_loop
 from app.services.ops_alert_service import notify_ops
 from app.services.provider_task_checkpoint import provider_task_runtime_status
 from app.services.storage_health_service import storage_runtime_status
@@ -38,6 +39,17 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tma.start_generation_jobs()
+    analytics_forwarder = android_analytics.get_android_analytics_forwarder()
+    analytics_task = (
+        asyncio.create_task(
+            analytics_flush_loop(
+                analytics_forwarder,
+                interval_seconds=settings.gigagochi_stats_flush_interval_seconds,
+            )
+        )
+        if analytics_forwarder.configured
+        else None
+    )
     push_task = start_daily_push_scheduler()
     story_task = start_background_story_scheduler()
     short_story_task = start_scheduled_short_story_scheduler()
@@ -49,6 +61,7 @@ async def lifespan(app: FastAPI):
         "scheduledShortStory": short_story_task,
         "generatedMediaCleanup": cleanup_task,
         "travelVideoRecovery": travel_video_recovery_task,
+        "androidAnalytics": analytics_task,
     }
     try:
         yield
@@ -61,6 +74,7 @@ async def lifespan(app: FastAPI):
                 short_story_task,
                 cleanup_task,
                 travel_video_recovery_task,
+                analytics_task,
             )
             if task is not None
         ]
@@ -75,6 +89,10 @@ app = FastAPI(title="AI Tamagotchi API", lifespan=lifespan)
 app.add_middleware(
     RequestBodyLimitMiddleware,
     max_body_bytes=settings.http_request_max_body_bytes,
+    path_max_body_bytes={
+        "/api/android/analytics/events": 128 * 1_024,
+        "/api/android/privacy/delete": 1_024,
+    },
 )
 
 
@@ -117,7 +135,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", None)
-    logger.exception("unhandled_request_error requestId=%s path=%s", request_id, request.url.path)
+    logger.error(
+        "unhandled_request_error requestId=%s path=%s exceptionType=%s",
+        request_id,
+        request.url.path,
+        type(exc).__name__,
+    )
     notify_ops(
         f"http:{request.url.path}:{type(exc).__name__}",
         f"HTTP 500: {request.url.path}\n{type(exc).__name__}\nrequest: {request_id}",
@@ -153,6 +176,8 @@ app.mount("/static", PublicMediaStaticFiles(directory=static_dir), name="static"
 app.include_router(local_admin.router)
 app.include_router(auth.router)
 app.include_router(android.router)
+app.include_router(android_analytics.router)
+app.include_router(android_privacy.router)
 app.include_router(tma.router)
 
 

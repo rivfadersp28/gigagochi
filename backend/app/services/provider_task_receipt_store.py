@@ -287,6 +287,22 @@ class ProviderTaskReceiptStore:
             )
         return cursor.rowcount == 1
 
+    def delete_generation_jobs(self, job_ids: list[str]) -> int:
+        """Delete provider references belonging to stopped generation jobs."""
+
+        if not job_ids:
+            return 0
+        deleted = 0
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for job_id in job_ids:
+                cursor = connection.execute(
+                    "DELETE FROM provider_tasks WHERE scope_key LIKE ?",
+                    (f"job:{job_id}:%",),
+                )
+                deleted += max(0, cursor.rowcount)
+        return deleted
+
     def stale_admissions(
         self,
         *,

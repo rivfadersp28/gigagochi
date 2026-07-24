@@ -325,12 +325,9 @@ class GenerationJobService:
                 )
         self._record_metric_queued(job_id)
         logger.info(
-            "pet_generation_queued jobId=%s ownerId=%s username=%s firstName=%s "
-            "imageWorkers=%s videoWorkers=%s",
+            "pet_generation_queued jobId=%s ownerId=%s imageWorkers=%s videoWorkers=%s",
             job_id,
             owner.audit_label,
-            owner.username,
-            owner.first_name,
             self._image_workers,
             self._video_workers,
         )

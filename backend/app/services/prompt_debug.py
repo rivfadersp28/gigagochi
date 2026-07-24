@@ -96,16 +96,18 @@ def write_response_log_line(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def log_pet_reply(surface: str, reply: str) -> dict[str, Any]:
-    """Persist the exact finalized text shown or sent to the owner."""
+    """Persist bounded diagnostics without production conversation content."""
     context = current_ai_log_context()
     line_payload = {
         "timestamp": _now_iso(),
         **context,
         "event": "pet_reply",
         "surface": surface,
-        "reply": reply,
         "replyChars": len(reply),
+        "replyHash": _text_hash(reply),
     }
+    if _full_prompt_logging_enabled():
+        line_payload["reply"] = _truncate_log_text(reply)
     settings = get_settings()
     append_bounded_jsonl(
         PET_REPLY_LOG_PATH,

@@ -149,6 +149,9 @@ class GoogleAuthService:
             return None
         return self._store.identity_for_access_token(access_token, now_ms=self._now_ms())
 
+    def delete_account(self, account_id: str) -> bool:
+        return self._store.delete_account(account_id)
+
     def revoke_refresh_token(self, refresh_token: str) -> bool:
         if not refresh_token or len(refresh_token) > 1_024:
             return False

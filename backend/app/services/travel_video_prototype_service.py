@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import uuid
 from collections.abc import Sequence
@@ -67,6 +68,10 @@ class TravelVideoPrototypeNotFoundError(RuntimeError):
 
 
 class TravelVideoPrototypeIdempotencyConflictError(RuntimeError):
+    pass
+
+
+class TravelVideoPrototypeDeletionBusyError(RuntimeError):
     pass
 
 
@@ -322,6 +327,39 @@ def should_resume_travel_video_prototype_for_owner(
             and not record.get("notificationSentAt")
         )
     return True
+
+
+def delete_travel_video_prototypes_for_owner(owner: FeatureOwner) -> int:
+    """Remove terminal prototype jobs owned by one account; refuse active work."""
+
+    try:
+        candidates = [
+            path
+            for path in GENERATED_ROOT.iterdir()
+            if path.is_dir() and JOB_ID_PATTERN.fullmatch(path.name)
+        ]
+    except FileNotFoundError:
+        return 0
+    deleted = 0
+    for candidate in candidates:
+        with _job_lock(candidate.name, blocking=False) as locked:
+            if not locked:
+                raise TravelVideoPrototypeDeletionBusyError(candidate.name)
+            try:
+                record = _read_record(candidate.name)
+            except TravelVideoPrototypeNotFoundError:
+                continue
+            if not _record_matches_owner(record, owner):
+                continue
+            if record.get("status") not in {"ready", "failed"}:
+                raise TravelVideoPrototypeDeletionBusyError(candidate.name)
+            if candidate.is_symlink() or candidate.resolve(strict=False).parent != (
+                GENERATED_ROOT.resolve(strict=False)
+            ):
+                raise RuntimeError("unsafe travel prototype path")
+            shutil.rmtree(candidate)
+            deleted += 1
+    return deleted
 
 
 def _character_context(pet: LocalPetChatContext) -> str:

@@ -360,6 +360,34 @@ class GoogleAuthSessionStore:
                 raise
         return cursor.rowcount == 1
 
+    def delete_account(self, account_id: str) -> bool:
+        """Remove an account and all access/refresh token digests bound to it."""
+
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = connection.execute(
+                    "SELECT id FROM google_auth_users WHERE account_id = ?",
+                    (account_id,),
+                ).fetchone()
+                if row is None:
+                    connection.commit()
+                    return False
+                user_id = int(row[0])
+                connection.execute(
+                    "DELETE FROM google_auth_sessions WHERE user_id = ?",
+                    (user_id,),
+                )
+                connection.execute(
+                    "DELETE FROM google_auth_users WHERE id = ?",
+                    (user_id,),
+                )
+                connection.commit()
+                return True
+            except BaseException:
+                connection.rollback()
+                raise
+
     def _new_token(self) -> str:
         value = self._token_factory()
         if not value or len(value) > 1_024:
