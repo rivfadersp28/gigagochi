@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -98,6 +99,16 @@ def travel_error_message(code: str) -> str:
 
 def _compact_error_text(value: str) -> str:
     return " ".join(value.split())[:MAX_PROVIDER_ERROR_CHARS]
+
+
+def _private_error_summary(value: object, prefix: str) -> dict[str, object]:
+    text = _compact_error_text(str(value)) if value is not None else ""
+    if not text:
+        return {}
+    return {
+        f"{prefix}Chars": len(text),
+        f"{prefix}Hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    }
 
 
 def _payload_error_message(payload: object) -> str | None:
@@ -241,10 +252,10 @@ def log_ai_request_failure(
         "error": detail.get("error"),
         "message": detail.get("message"),
         "providerStatus": detail.get("providerStatus"),
-        "providerMessage": detail.get("providerMessage"),
         "requestId": detail.get("requestId"),
         "exceptionType": type(exc).__name__,
-        "exceptionMessage": _compact_error_text(str(exc)) if str(exc) else None,
+        **_private_error_summary(detail.get("providerMessage"), "providerMessage"),
+        **_private_error_summary(str(exc), "exceptionMessage"),
     }
     try:
         write_ai_failure_log_line(log_payload)

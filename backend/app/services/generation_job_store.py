@@ -33,6 +33,10 @@ class GenerationJobCreateResult:
     conflict: Literal["request_key", "owner_active", "capacity", "job_id"] | None = None
 
 
+class GenerationOwnerDeletionBusyError(RuntimeError):
+    pass
+
+
 class GenerationJobStore:
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
@@ -687,6 +691,68 @@ class GenerationJobStore:
                 "DELETE FROM generation_job_metrics WHERE queued_at < ?",
                 (cutoff.isoformat(),),
             )
+
+    def delete_owner(self, owner_id: int | str) -> tuple[StoredGenerationJob, ...]:
+        """Atomically refuse active work or remove every durable owner job row."""
+
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                active = connection.execute(
+                    """
+                    SELECT 1 FROM generation_jobs
+                    WHERE owner_id = ? AND status IN ('queued', 'running')
+                    LIMIT 1
+                    """,
+                    (owner_id,),
+                ).fetchone()
+                if active is not None:
+                    raise GenerationOwnerDeletionBusyError(str(owner_id))
+                rows = connection.execute(
+                    """
+                    SELECT owner_id, username, first_name, description,
+                           image_provider, response_json, owner_namespace,
+                           notification_chat_id
+                    FROM generation_jobs WHERE owner_id = ?
+                    """,
+                    (owner_id,),
+                ).fetchall()
+                connection.execute(
+                    "DELETE FROM generation_job_metrics WHERE owner_id = ?",
+                    (owner_id,),
+                )
+                connection.execute(
+                    "DELETE FROM generation_jobs WHERE owner_id = ?",
+                    (owner_id,),
+                )
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
+        return tuple(self._row(row) for row in rows)
+
+    def owner_jobs_for_deletion(self, owner_id: int | str) -> tuple[StoredGenerationJob, ...]:
+        with self._connect() as connection:
+            active = connection.execute(
+                """
+                SELECT 1 FROM generation_jobs
+                WHERE owner_id = ? AND status IN ('queued', 'running')
+                LIMIT 1
+                """,
+                (owner_id,),
+            ).fetchone()
+            if active is not None:
+                raise GenerationOwnerDeletionBusyError(str(owner_id))
+            rows = connection.execute(
+                """
+                SELECT owner_id, username, first_name, description,
+                       image_provider, response_json, owner_namespace,
+                       notification_chat_id
+                FROM generation_jobs WHERE owner_id = ?
+                """,
+                (owner_id,),
+            ).fetchall()
+        return tuple(self._row(row) for row in rows)
 
     @staticmethod
     def _row(row: tuple[object, ...]) -> StoredGenerationJob:

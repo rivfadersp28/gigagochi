@@ -250,3 +250,106 @@ def test_outfit_generation_marks_two_failed_repairs_as_exhausted(monkeypatch, tm
         assert exc.code == "OUTFIT_PROMPT_REPAIR_EXHAUSTED"
     else:
         raise AssertionError("PromptRepairExhausted was not raised")
+
+
+def _prepare_outfit_output_dir(monkeypatch, tmp_path) -> tuple[SimpleNamespace, list[str]]:
+    output_dir = tmp_path / "output-assets"
+    output_dir.mkdir(parents=True)
+    (output_dir / "teen-idle.png").write_bytes(_png_bytes("navy"))
+    (output_dir / "teen-happy.png").write_bytes(_png_bytes("green"))
+
+    regenerated: list[str] = []
+
+    @contextmanager
+    def fake_reserve(_prompt, source_path, *, label, size=None, provider=None):
+        regenerated.append(label)
+        assert source_path.name == "teen-idle.png"
+        yield _png_bytes("red")
+
+    monkeypatch.setattr(outfit_service, "generated_dir_for", lambda _asset_id: output_dir)
+    monkeypatch.setattr(outfit_service, "reserve_image_edit_bytes", fake_reserve)
+    return SimpleNamespace(asset_set_id=uuid.uuid4()), regenerated
+
+
+def _input_moderation_error() -> outfit_service.OpenRouterVideoHTTPError:
+    return outfit_service.OpenRouterVideoHTTPError(
+        400,
+        {
+            "error": {
+                "code": 400,
+                "message": (
+                    'HTTP 400: {"error":{"code":'
+                    '"InputImageSensitiveContentDetected.PrivacyInformation"}}'
+                ),
+            }
+        },
+    )
+
+
+def test_outfit_mood_video_retry_regenerates_static_and_succeeds(monkeypatch, tmp_path) -> None:
+    image_set, regenerated = _prepare_outfit_output_dir(monkeypatch, tmp_path)
+    attempts: list[str] = []
+
+    def flaky_video(_image_set, scene_path):
+        attempts.append(scene_path.name)
+        if len(attempts) < 2:
+            raise _input_moderation_error()
+        return scene_path.with_suffix(".mp4")
+
+    result = outfit_service.generate_outfit_mood_video_with_retry(
+        image_set,
+        "happy",
+        flaky_video,
+    )
+
+    assert result.name == "teen-happy.mp4"
+    assert len(attempts) == 2
+    assert regenerated == ["pet_outfit/happy_image_retry"]
+
+
+def test_outfit_mood_video_retry_raises_after_exhausting_attempts(monkeypatch, tmp_path) -> None:
+    image_set, regenerated = _prepare_outfit_output_dir(monkeypatch, tmp_path)
+    attempts: list[str] = []
+
+    def always_blocked(_image_set, scene_path):
+        attempts.append(scene_path.name)
+        raise _input_moderation_error()
+
+    try:
+        outfit_service.generate_outfit_mood_video_with_retry(
+            image_set,
+            "happy",
+            always_blocked,
+        )
+    except outfit_service.OpenRouterVideoHTTPError as exc:
+        assert exc.input_moderation_rejection is True
+    else:
+        raise AssertionError("expected the exhausted retry to raise")
+
+    assert len(attempts) == outfit_service.OUTFIT_VIDEO_RETRY_ATTEMPTS
+    assert regenerated == ["pet_outfit/happy_image_retry"] * (
+        outfit_service.OUTFIT_VIDEO_RETRY_ATTEMPTS - 1
+    )
+
+
+def test_outfit_mood_video_does_not_retry_ambiguous_failure(monkeypatch, tmp_path) -> None:
+    image_set, regenerated = _prepare_outfit_output_dir(monkeypatch, tmp_path)
+    attempts: list[str] = []
+
+    def ambiguous_failure(_image_set, scene_path):
+        attempts.append(scene_path.name)
+        raise TimeoutError("submit outcome unknown")
+
+    try:
+        outfit_service.generate_outfit_mood_video_with_retry(
+            image_set,
+            "happy",
+            ambiguous_failure,
+        )
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("expected ambiguous failure to propagate")
+
+    assert attempts == ["teen-happy.png"]
+    assert regenerated == []

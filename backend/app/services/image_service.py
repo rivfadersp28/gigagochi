@@ -104,12 +104,22 @@ class OpenRouterVideoTaskError(RuntimeError):
     pass
 
 
+def _is_openrouter_input_moderation_rejection(payload: object) -> bool:
+    try:
+        serialized = json.dumps(payload, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        serialized = str(payload)
+    return "inputimagesensitivecontentdetected" in serialized.casefold()
+
+
 class OpenRouterVideoHTTPError(RuntimeError):
     def __init__(self, status_code: int, payload: object) -> None:
         self.status_code = status_code
-        super().__init__(
-            f"OpenRouter video generation failed: status={status_code} response={payload}"
-        )
+        self.input_moderation_rejection = _is_openrouter_input_moderation_rejection(payload)
+        # Provider payloads may contain prompts, moderation details or remote request IDs.
+        # Keep them out of exception strings because background generation failures are
+        # logged with tracebacks by callers.
+        super().__init__(f"OpenRouter video generation failed: status={status_code}")
 
 
 class MediaResultError(RuntimeError):
@@ -2539,6 +2549,31 @@ def _openrouter_video_error(response: httpx.Response) -> OpenRouterVideoHTTPErro
     return OpenRouterVideoHTTPError(response.status_code, payload)
 
 
+def _openrouter_video_embedded_rejection(
+    payload: object,
+) -> OpenRouterVideoHTTPError | None:
+    """Recognize a definite 4xx rejection wrapped in an HTTP 2xx response."""
+
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    raw_status = error.get("code")
+    try:
+        status_code = int(raw_status)
+    except (TypeError, ValueError):
+        return None
+    if not 400 <= status_code < 500:
+        return None
+    notify_openrouter_credits_exhausted(
+        status_code=status_code,
+        provider_message=payload,
+        source="video",
+    )
+    return OpenRouterVideoHTTPError(status_code, payload)
+
+
 def _is_safe_openrouter_video_submit_response_retry(response: httpx.Response) -> bool:
     if response.status_code == 429:
         return True
@@ -3160,9 +3195,13 @@ def generate_openrouter_video_bytes(
                 release_current_provider_task_admission(operation)
                 raise _openrouter_video_error(response)
             submit_payload = response.json()
+            embedded_rejection = _openrouter_video_embedded_rejection(submit_payload)
+            if embedded_rejection is not None:
+                release_current_provider_task_admission(operation)
+                raise embedded_rejection
             job_id = str(submit_payload.get("id") or "").strip()
             if not job_id:
-                raise RuntimeError(f"OpenRouter video response missing job id: {submit_payload}")
+                raise RuntimeError("OpenRouter video response missing job id")
 
             polling_url_value = submit_payload.get("polling_url")
             polling_url = (

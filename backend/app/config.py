@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AIProvider = Literal["openai", "openrouter"]
@@ -30,6 +30,22 @@ class Settings(BaseSettings):
         ge=60 * 60,
         le=365 * 24 * 60 * 60,
     )
+    gigagochi_stats_base_url: str | None = Field(default=None, max_length=2_048)
+    gigagochi_stats_ingest_token: SecretStr | None = None
+    gigagochi_stats_actor_secret: SecretStr | None = None
+    gigagochi_stats_outbox_path: str = Field(
+        default="data/push/gigagochi_stats_outbox.sqlite3",
+        min_length=1,
+        max_length=4_096,
+    )
+    gigagochi_stats_flush_interval_seconds: int = Field(default=30, ge=5, le=3_600)
+    gigagochi_stats_outbox_max_events: int = Field(default=10_000, ge=100, le=100_000)
+    android_analytics_batches_per_minute: int = Field(default=12, ge=1, le=1_000)
+    android_analytics_burst_per_10_seconds: int = Field(default=4, ge=1, le=100)
+    auth_guest_ip_rate_limit_per_minute: int = Field(default=20, ge=1, le=10_000)
+    auth_guest_installation_rate_limit_per_hour: int = Field(default=6, ge=1, le=1_000)
+    auth_google_ip_rate_limit_per_minute: int = Field(default=20, ge=1, le=10_000)
+    auth_refresh_ip_rate_limit_per_minute: int = Field(default=60, ge=1, le=10_000)
     allow_dev_tma_auth: bool = False
     enable_in_memory_rate_limit: bool = False
     rate_limit_store_path: str = "data/push/rate_limits.sqlite3"
@@ -288,9 +304,9 @@ class Settings(BaseSettings):
             raise ValueError("provider task receipt store must be a SQLite file path")
         return cleaned
 
-    @field_validator("auth_session_store_path")
+    @field_validator("auth_session_store_path", "gigagochi_stats_outbox_path")
     @classmethod
-    def require_durable_auth_session_store_path(cls, value: str) -> str:
+    def require_durable_session_store_path(cls, value: str) -> str:
         cleaned = value.strip()
         if "\x00" in cleaned or Path(cleaned).suffix.lower() not in {
             ".db",
@@ -298,6 +314,18 @@ class Settings(BaseSettings):
             ".sqlite3",
         }:
             raise ValueError("auth session store must be a SQLite file path")
+        return cleaned
+
+    @field_validator("gigagochi_stats_base_url", mode="before")
+    @classmethod
+    def normalize_stats_base_url(cls, value: object) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        cleaned = str(value).strip().rstrip("/")
+        if not cleaned.startswith("https://") and not cleaned.startswith(
+            ("http://127.0.0.1", "http://localhost")
+        ):
+            raise ValueError("stats base URL must use HTTPS or loopback HTTP")
         return cleaned
 
     @field_validator("google_auth_web_client_id", mode="before")
