@@ -15,6 +15,7 @@ from app.services.image_service import (
     FAST_GENERATION_STAGE,
     PET_GENERATION_METADATA_FILENAME,
     PET_SCENE_IMAGE_SIZE,
+    OpenRouterVideoHTTPError,
     PetAssetImageSet,
     PromptRepairExhausted,
     _atomic_write_nonempty,
@@ -412,17 +413,17 @@ def generate_outfit_mood_video_with_retry(
 ) -> Path:
     """Generate a mood video, regenerating the static frame between failed attempts.
 
-    ``generate_video`` is called with ``(image_set, scene_path)``. On any failure we
-    regenerate the mood frame fresh and retry, up to ``attempts`` times. When every
-    attempt fails the last exception propagates so the job is marked failed rather
-    than silently committed with a missing video.
+    ``generate_video`` is called with ``(image_set, scene_path)``. Only an explicit
+    input-image moderation rejection is safe and useful to retry with a new frame.
+    Ambiguous transport/provider failures propagate without changing the payload so
+    the paid-task receipt continues to prevent a duplicate submission.
     """
     scene_path = generated_outfit_mood_path(image_set, mood)
     for attempt in range(1, attempts + 1):
         try:
             return generate_video(image_set, scene_path)
-        except Exception:
-            if attempt >= attempts:
+        except OpenRouterVideoHTTPError as exc:
+            if not exc.input_moderation_rejection or attempt >= attempts:
                 raise
             logger.warning(
                 "outfit_mood_video_retry mood=%s attempt=%s maxAttempts=%s assetSetId=%s",

@@ -271,6 +271,21 @@ def _prepare_outfit_output_dir(monkeypatch, tmp_path) -> tuple[SimpleNamespace, 
     return SimpleNamespace(asset_set_id=uuid.uuid4()), regenerated
 
 
+def _input_moderation_error() -> outfit_service.OpenRouterVideoHTTPError:
+    return outfit_service.OpenRouterVideoHTTPError(
+        400,
+        {
+            "error": {
+                "code": 400,
+                "message": (
+                    'HTTP 400: {"error":{"code":'
+                    '"InputImageSensitiveContentDetected.PrivacyInformation"}}'
+                ),
+            }
+        },
+    )
+
+
 def test_outfit_mood_video_retry_regenerates_static_and_succeeds(monkeypatch, tmp_path) -> None:
     image_set, regenerated = _prepare_outfit_output_dir(monkeypatch, tmp_path)
     attempts: list[str] = []
@@ -278,7 +293,7 @@ def test_outfit_mood_video_retry_regenerates_static_and_succeeds(monkeypatch, tm
     def flaky_video(_image_set, scene_path):
         attempts.append(scene_path.name)
         if len(attempts) < 2:
-            raise RuntimeError("InputImageSensitiveContentDetected")
+            raise _input_moderation_error()
         return scene_path.with_suffix(".mp4")
 
     result = outfit_service.generate_outfit_mood_video_with_retry(
@@ -298,7 +313,7 @@ def test_outfit_mood_video_retry_raises_after_exhausting_attempts(monkeypatch, t
 
     def always_blocked(_image_set, scene_path):
         attempts.append(scene_path.name)
-        raise RuntimeError("InputImageSensitiveContentDetected")
+        raise _input_moderation_error()
 
     try:
         outfit_service.generate_outfit_mood_video_with_retry(
@@ -306,8 +321,8 @@ def test_outfit_mood_video_retry_raises_after_exhausting_attempts(monkeypatch, t
             "happy",
             always_blocked,
         )
-    except RuntimeError as exc:
-        assert "InputImageSensitiveContentDetected" in str(exc)
+    except outfit_service.OpenRouterVideoHTTPError as exc:
+        assert exc.input_moderation_rejection is True
     else:
         raise AssertionError("expected the exhausted retry to raise")
 
@@ -315,3 +330,26 @@ def test_outfit_mood_video_retry_raises_after_exhausting_attempts(monkeypatch, t
     assert regenerated == ["pet_outfit/happy_image_retry"] * (
         outfit_service.OUTFIT_VIDEO_RETRY_ATTEMPTS - 1
     )
+
+
+def test_outfit_mood_video_does_not_retry_ambiguous_failure(monkeypatch, tmp_path) -> None:
+    image_set, regenerated = _prepare_outfit_output_dir(monkeypatch, tmp_path)
+    attempts: list[str] = []
+
+    def ambiguous_failure(_image_set, scene_path):
+        attempts.append(scene_path.name)
+        raise TimeoutError("submit outcome unknown")
+
+    try:
+        outfit_service.generate_outfit_mood_video_with_retry(
+            image_set,
+            "happy",
+            ambiguous_failure,
+        )
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("expected ambiguous failure to propagate")
+
+    assert attempts == ["teen-happy.png"]
+    assert regenerated == []

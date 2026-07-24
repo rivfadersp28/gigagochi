@@ -104,9 +104,18 @@ class OpenRouterVideoTaskError(RuntimeError):
     pass
 
 
+def _is_openrouter_input_moderation_rejection(payload: object) -> bool:
+    try:
+        serialized = json.dumps(payload, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        serialized = str(payload)
+    return "inputimagesensitivecontentdetected" in serialized.casefold()
+
+
 class OpenRouterVideoHTTPError(RuntimeError):
     def __init__(self, status_code: int, payload: object) -> None:
         self.status_code = status_code
+        self.input_moderation_rejection = _is_openrouter_input_moderation_rejection(payload)
         # Provider payloads may contain prompts, moderation details or remote request IDs.
         # Keep them out of exception strings because background generation failures are
         # logged with tracebacks by callers.
