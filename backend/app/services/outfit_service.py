@@ -26,6 +26,8 @@ from app.services.image_service import (
 
 OUTFIT_GENERATION_PREFIX = "__OUTFIT_V1__"
 OUTFIT_PROMPT_REPAIR_ATTEMPTS = 2
+OUTFIT_VIDEO_RETRY_ATTEMPTS = 3
+OUTFIT_IMAGE_PROVIDER = "openai"
 logger = logging.getLogger(__name__)
 GENERATED_ROOT = Path(__file__).resolve().parents[2] / "static" / "generated"
 TEST_PET_ROOT = Path(__file__).resolve().parents[3] / "frontend" / "public" / "test-pet"
@@ -368,6 +370,73 @@ def generated_outfit_mood_path(image_set: PetAssetImageSet, mood: str) -> Path:
     if mood not in {"sad", "happy"} or not _is_valid_image_file(path):
         raise ValueError(f"generated outfit {mood} image is missing")
     return path
+
+
+def regenerate_outfit_mood_image(
+    image_set: PetAssetImageSet,
+    mood: str,
+    *,
+    image_provider: str = OUTFIT_IMAGE_PROVIDER,
+) -> Path:
+    """Re-run the mood edit off the idle frame, replacing the cached PNG in place.
+
+    A drifted static frame (e.g. an off-model, photorealistic face) makes the
+    downstream video provider reject the input for moderation on every retry, so
+    the only way a retry can succeed is to produce a fresh, likely on-model frame.
+    """
+    if mood not in {"sad", "happy"}:
+        raise ValueError(f"cannot regenerate outfit mood {mood}")
+    output_dir = generated_dir_for(image_set.asset_set_id)
+    idle_path = output_dir / "teen-idle.png"
+    if not _is_valid_image_file(idle_path):
+        raise ValueError("outfit idle reference image is missing")
+    mood_path = output_dir / f"teen-{mood}.png"
+    with reserve_image_edit_bytes(
+        _outfit_mood_prompt(mood),
+        idle_path,
+        label=f"pet_outfit/{mood}_image_retry",
+        size=PET_SCENE_IMAGE_SIZE,
+        provider=image_provider,
+    ) as image_bytes:
+        _atomic_write_nonempty(mood_path, image_bytes)
+    return mood_path
+
+
+def generate_outfit_mood_video_with_retry(
+    image_set: PetAssetImageSet,
+    mood: str,
+    generate_video,
+    *,
+    image_provider: str = OUTFIT_IMAGE_PROVIDER,
+    attempts: int = OUTFIT_VIDEO_RETRY_ATTEMPTS,
+) -> Path:
+    """Generate a mood video, regenerating the static frame between failed attempts.
+
+    ``generate_video`` is called with ``(image_set, scene_path)``. On any failure we
+    regenerate the mood frame fresh and retry, up to ``attempts`` times. When every
+    attempt fails the last exception propagates so the job is marked failed rather
+    than silently committed with a missing video.
+    """
+    scene_path = generated_outfit_mood_path(image_set, mood)
+    for attempt in range(1, attempts + 1):
+        try:
+            return generate_video(image_set, scene_path)
+        except Exception:
+            if attempt >= attempts:
+                raise
+            logger.warning(
+                "outfit_mood_video_retry mood=%s attempt=%s maxAttempts=%s assetSetId=%s",
+                mood,
+                attempt,
+                attempts,
+                image_set.asset_set_id,
+            )
+            scene_path = regenerate_outfit_mood_image(
+                image_set,
+                mood,
+                image_provider=image_provider,
+            )
+    raise AssertionError("unreachable")
 
 
 def is_outfit_image_set(image_set: PetAssetImageSet) -> bool:

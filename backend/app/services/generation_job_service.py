@@ -979,16 +979,42 @@ class GenerationJobService:
             if next_result is not None:
                 next_result = next_result.model_copy(update={"kandinskyAssets": comparison})
             has_errors = completed_with_errors or record.response.comparisonError is not None
-            record.response = record.response.model_copy(
-                update={
-                    "status": "succeeded" if comparison_complete else "running",
-                    "phase": "completed" if comparison_complete else "generating_kandinsky",
-                    "updatedAt": self._now(),
-                    "result": next_result,
-                }
+            is_outfit = record.description.startswith(OUTFIT_GENERATION_PREFIX)
+            # An outfit whose media is incomplete strands the client, which requires
+            # all three mood videos, so surface it as a hard failure instead of a
+            # "succeeded" job with a missing asset.
+            outfit_incomplete = (
+                is_outfit
+                and comparison_complete
+                and (completed_with_errors or record.response.backgroundError is not None)
             )
+            if outfit_incomplete:
+                record.response = record.response.model_copy(
+                    update={
+                        "status": "failed",
+                        "phase": "failed",
+                        "updatedAt": self._now(),
+                        "result": next_result,
+                        "error": record.response.backgroundError
+                        or {
+                            "code": "GENERATION_FAILED",
+                            "message": "Outfit generation did not produce all assets.",
+                        },
+                    }
+                )
+            else:
+                record.response = record.response.model_copy(
+                    update={
+                        "status": "succeeded" if comparison_complete else "running",
+                        "phase": "completed" if comparison_complete else "generating_kandinsky",
+                        "updatedAt": self._now(),
+                        "result": next_result,
+                    }
+                )
             persisted = self._persist_locked(job_id)
-            if persisted and comparison_complete:
+            if persisted and outfit_incomplete:
+                self._mark_metric(job_id, "failed_at", status="failed")
+            elif persisted and comparison_complete:
                 self._mark_metric(
                     job_id,
                     "completed_at",

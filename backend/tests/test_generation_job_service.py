@@ -364,6 +364,33 @@ def test_outfit_completes_only_after_all_three_videos(tmp_path: Path) -> None:
         service.shutdown(wait=True)
 
 
+def test_outfit_fails_when_a_mood_video_cannot_be_produced(tmp_path: Path) -> None:
+    outfit_notifications: list[int] = []
+
+    service = _test_service(
+        tmp_path / "generation-jobs.sqlite3",
+        lambda _description, _provider: SimpleNamespace(asset_set_id="asset-1"),
+        generate_video=lambda _image_set: Path("teen-idle.mp4"),
+        generate_background_image=lambda _image_set, _provider: Path("teen-sad.png"),
+        generate_background_video=lambda _image_set, _sad_path: Path("teen-sad.mp4"),
+        generate_happy_image=lambda _image_set, _provider: Path("teen-happy.png"),
+        generate_happy_video=lambda _image_set, _happy_path: (_ for _ in ()).throw(
+            RuntimeError("InputImageSensitiveContentDetected")
+        ),
+        notify_outfit_ready=outfit_notifications.append,
+    )
+    try:
+        submitted = service.submit("__OUTFIT_V1__{}", _user())
+        completed = _wait_for(service, submitted.jobId, lambda job: job.status == "failed")
+
+        assert completed.status == "failed"
+        assert completed.error is not None
+        assert completed.error["message"] == "InputImageSensitiveContentDetected"
+        assert outfit_notifications == []
+    finally:
+        service.shutdown(wait=True)
+
+
 def test_background_failure_keeps_foreground_result(tmp_path: Path) -> None:
     service = GenerationJobService(
         store=GenerationJobStore(tmp_path / "generation-jobs.sqlite3"),
